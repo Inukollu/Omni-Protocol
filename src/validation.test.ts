@@ -93,6 +93,7 @@ describe("validateManifest", () => {
     ["an unknown channel", manifest({ channel: "fax" }), "manifest.channel"],
     ["no protocol versions", manifest({ supportedProtocolVersions: [] }), "manifest.supportedProtocolVersions"],
     ["a non-integer version", manifest({ supportedProtocolVersions: [1.5] }), "manifest.supportedProtocolVersions.value"],
+    ["no version this host speaks", manifest({ supportedProtocolVersions: [99] }), "manifest.supportedProtocolVersions.interoperable"],
     ["no authentication method", manifest({ authenticationMethods: [] }), "manifest.authenticationMethods"],
     ["an unknown authentication method", manifest({ authenticationMethods: ["magic-link"] }), "manifest.authenticationMethod"],
     ["an unknown phase label", manifest({ phaseLabels: { ringing: "Ringing" } }), "manifest.phaseLabels.phase"],
@@ -148,7 +149,9 @@ describe("validateTask", () => {
   it("ties browser reuse to an isolation scheme in both directions", () => {
     const browser = (over: Record<string, unknown>) =>
       check({ browsers: [{ id: "b", name: "B", purpose: "P", url: "https://x.example.com", ...over }] });
-    expect(browser({ reuse: true })).toContain("task.browser.isolationScheme");
+    // The guide names the rule for a reusing browser that declares no scheme.
+    expect(browser({ reuse: true })).toContain("task.browser.isolationScheme.required");
+    expect(browser({ reuse: true })).not.toContain("task.browser.isolationScheme");
     expect(browser({ reuse: true, isolationScheme: "Nonsense" })).toContain("task.browser.isolationScheme");
     expect(browser({ reuse: false, isolationScheme: "TabName" })).toContain("task.browser.isolationScheme.unexpected");
     expect(browser({})).toContain("task.browser.reuse");
@@ -527,5 +530,16 @@ describe("consulting a lead", () => {
     const ended = (outcome: unknown) => envelope({ type: "task-ended", taskId: "call-42", outcome });
     expect(rules(validateEventEnvelope(ended({ type: "left" }), manifest()))).toEqual([]);
     expect(rules(validateEventEnvelope(ended({ type: "vanished" }), manifest()))).toContain("event.taskEnded.outcome.type");
+  });
+});
+
+describe("protocol-version interoperability", () => {
+  it("is checked on the manifest, as the guide's validator table promises", () => {
+    // An adapter that speaks only a version this package does not is one Omni must refuse...
+    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [99] })))).toContain("manifest.supportedProtocolVersions.interoperable");
+    // ...and the controls: declaring this version among others is fine, and a list with a bad
+    // entry beside a good one is reported for the entry, not for interoperability.
+    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [99, 1] })))).toEqual([]);
+    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [1, 1.5] })))).toEqual(["manifest.supportedProtocolVersions.value"]);
   });
 });
