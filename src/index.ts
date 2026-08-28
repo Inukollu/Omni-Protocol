@@ -446,7 +446,19 @@ export interface TaskHandlingStep {
   by?: UserId;
 }
 
-export interface Task<C extends Channel = Channel> {
+/**
+ * How the task ends, and how long after handling the provider allows for it.
+ *
+ * The allowance is coupled to the mode. Under `provider-automatic` the provider acts on it, so it
+ * is required. Under `agent-command` the provider will not complete the task itself, so it may
+ * omit the allowance to say it imposes no deadline -- and Omni then counts nothing down. Omitted
+ * and `0` are different claims: no deadline to see, and a deadline of now.
+ */
+export type TaskCompletion =
+  | { completionMode: "agent-command"; completionAllowance?: DurationSeconds }
+  | { completionMode: "provider-automatic"; completionAllowance: DurationSeconds };
+
+export type Task<C extends Channel = Channel> = {
   id: TaskId;
   title: string;
   channel: C;
@@ -458,11 +470,9 @@ export interface Task<C extends Channel = Channel> {
   phase: TaskPhase;
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
-  completionMode: CompletionMode;
-  completionAllowance: DurationSeconds;
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingStep[];
-}
+} & TaskCompletion;
 
 /** What the provider wants of Omni's acceptance policy for one offer. */
 export type AcceptanceMode =

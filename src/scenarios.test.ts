@@ -192,6 +192,16 @@ describe("assertWrapTimeout", () => {
   it("rejects an unparseable time", () => {
     expect(() => assertWrapTimeout(voiceTask, "just now", "2026-08-21T01:01:00.000Z")).toThrow(/valid ISO-8601/);
   });
+
+  it("treats a task with no allowance as having no deadline, in both directions", () => {
+    const untimed = { completionMode: "agent-command" } satisfies Pick<Task, "completionMode" | "completionAllowance">;
+    // No allowance, nothing counted down: conforming.
+    expect(() => assertWrapTimeout(untimed, "2026-08-21T01:00:00.000Z", undefined)).not.toThrow();
+    // A host counting down what the provider left open is the violation...
+    expect(() => assertWrapTimeout(untimed, "2026-08-21T01:00:00.000Z", "2026-08-21T01:01:00.000Z")).toThrow(/no deadline/);
+    // ...and so is a host counting nothing down when the provider set a clock.
+    expect(() => assertWrapTimeout(voiceTask, "2026-08-21T01:00:00.000Z", undefined)).toThrow(/no deadline was observed/);
+  });
 });
 
 describe("browser isolation", () => {
