@@ -118,7 +118,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
     browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
-    agentDisconnect: true, callback: true, blindTransfer: true, conference: true, recording: true,
+    agentDisconnect: true, callback: true, blindTransfer: true, consultTransfer: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, reject: true, hold: true }),
   email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, reject: true }),
@@ -587,6 +587,23 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
   });
 }
 
+/** Present only while consulting, and only on voice: elsewhere there is nobody to consult. */
+function validateConsultation(value: unknown, channel: string, path: string, into: Collector): void {
+  if (value === undefined) return;
+  if (!into.require(channel === "voice", "task.consultation.channel", path,
+    `a ${channel} task cannot carry a consultation`)) return;
+  if (!isPlainObject(value)) {
+    into.add("task.consultation.shape", path, "a consultation must be an object when present");
+    return;
+  }
+  into.filled(value.destination, "task.consultation.destination", `${path}.destination`,
+    "a consultation names the destination being consulted");
+  if (value.label !== undefined) {
+    into.filled(value.label, "task.consultation.label", `${path}.label`, "a label must not be empty when present");
+  }
+  if (value.since !== undefined) into.timestamp(value.since, "task.consultation.since", `${path}.since`);
+}
+
 export interface TaskValidationContext {
   /** The provider's channel, from its manifest. A task must agree with it. */
   channel: string;
@@ -632,6 +649,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into);
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into);
+  validateConsultation(task.consultation, context.channel, `${path}.consultation`, into);
 
   const capabilities = task.capabilities;
   if (!isPlainObject(capabilities)) {
@@ -647,6 +665,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
       case "dispositions": validateDispositions(declared, `${path}.capabilities.dispositions`, into); break;
       case "custom": validateCustomCapabilities(declared, `${path}.capabilities.custom`, into); break;
       case "blindTransfer":
+      case "consultTransfer":
       case "conference": validateDestinationDirectory(declared, `${path}.capabilities.${name}`, into); break;
       default:
         // Presence is the permission: the flag capabilities carry no payload, so anything but

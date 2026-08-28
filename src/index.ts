@@ -336,6 +336,8 @@ export type TaskCapabilities<C extends Channel = Channel> =
         /** Reach the party again while `completing`; the task returns to `in-progress`. */
         callback?: true;
         blindTransfer?: true | DestinationDirectory;
+        /** Park the customer and call a destination first; then `complete` or `cancel`. */
+        consultTransfer?: true | DestinationDirectory;
         conference?: true | DestinationDirectory;
         recording?: true;
       }
@@ -460,6 +462,17 @@ export type TaskCompletion =
   | { completionMode: "agent-command"; completionAllowance?: DurationSeconds }
   | { completionMode: "provider-automatic"; completionAllowance: DurationSeconds };
 
+/**
+ * A consultation in progress on a task: who is being consulted, and since when where the provider
+ * records it. Present between `transfer` `consult` and whichever of `complete` or `cancel`
+ * follows; its presence is what makes those two issuable.
+ */
+export interface TaskConsultation {
+  destination: string;
+  label?: string;
+  since?: IsoTimestamp;
+}
+
 export type Task<C extends Channel = Channel> = {
   id: TaskId;
   title: string;
@@ -474,7 +487,9 @@ export type Task<C extends Channel = Channel> = {
   reference?: string;
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingStep[];
-} & TaskCompletion;
+} & TaskCompletion
+  // Consulting is a voice affair, and the arm is what makes it a compile error elsewhere.
+  & (C extends "voice" ? { consultation?: TaskConsultation } : { consultation?: never });
 
 /** What the provider wants of Omni's acceptance policy for one offer. */
 export type AcceptanceMode =
@@ -519,7 +534,14 @@ export type VoiceTaskCommand =
   | { type: "disconnect" }
   /** Issuable only in `completing`, under the `callback` capability. Carries no destination. */
   | { type: "callback" }
-  | { type: "transfer"; destination: string }
+  /** Blind: hand the customer to `destination` with nobody consulted. Gated by `blindTransfer`. */
+  | { type: "transfer"; destination: string; action?: never }
+  /** Park the customer and call `destination` first. Gated by `consultTransfer`. */
+  | { type: "transfer"; action: "consult"; destination: string }
+  /** Hand the customer to the consulted destination and leave. Needs `Task.consultation`. */
+  | { type: "transfer"; action: "complete" }
+  /** Drop the consulted destination and return to the customer. Needs `Task.consultation`. */
+  | { type: "transfer"; action: "cancel" }
   | { type: "conference"; participant: string; action: "add" | "remove" }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);

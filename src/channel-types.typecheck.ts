@@ -101,3 +101,17 @@ export const voiceCallback: TaskCommand<"voice"> = { type: "callback" };
 export const chatCallbackCapability: Task<"chat">["capabilities"] = { callback: true };
 // @ts-expect-error Email has nobody to call back.
 export const emailCallback: TaskCommand<"email"> = { type: "callback" };
+
+// A transfer is blind with a destination, or one of the three consult steps; never both at once.
+export const blindTransfer: TaskCommand<"voice"> = { type: "transfer", destination: "+14155550111" };
+export const consult: TaskCommand<"voice"> = { type: "transfer", action: "consult", destination: "+14155550111" };
+export const completeConsultation: TaskCommand<"voice"> = { type: "transfer", action: "complete" };
+export const cancelConsultation: TaskCommand<"voice"> = { type: "transfer", action: "cancel" };
+// @ts-expect-error A transfer says where the customer goes, or which consult step it is.
+export const aimlessTransfer: TaskCommand<"voice"> = { type: "transfer" };
+// @ts-expect-error Completing a consultation names no destination: there is exactly one already.
+export const overdeterminedCompletion: TaskCommand<"voice"> = { type: "transfer", action: "complete", destination: "+14155550111" };
+// The consultation in progress is voice-only, like the capability that starts it.
+export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { consultTransfer: true }, phase: "paused", consultation: { destination: "+14155550111" } } satisfies Task<"voice">;
+// @ts-expect-error Email has nobody to consult.
+export const consultingEmailTask: Task<"email"> = { ...emailTask, id: "email-6", consultation: { destination: "+14155550111" } };
