@@ -4,11 +4,11 @@ name: Publish
 #
 # A release is a version bump in package.json, so that file is the trigger; a push that leaves
 # the version alone is skipped after the guard, and a push that changes nothing here starts no
-# run at all. The workflow runs only over code already merged to main, which is why it may hold
-# the publishing secret where CI may not.
+# run at all. The workflow runs only over code already merged to main.
 #
-# Needs one repository secret: NPM_TOKEN, a granular npmjs access token for the xema scope with
-# write access to packages and 2FA bypass enabled for automation.
+# npmjs trusts this workflow through GitHub's OIDC identity, so publishing needs no long-lived
+# registry token. The package's Trusted Publisher settings must name Inukollu/Omni-Protocol and
+# the workflow filename publish.yml.
 on:
   push:
     branches: [main]
@@ -28,7 +28,8 @@ concurrency:
 jobs:
   publish:
     name: Publish to npmjs
-    runs-on: ${{ fromJSON(vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
+    # npm trusted publishing currently requires a GitHub-hosted runner.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       # The release, and the tag it creates, on the commit that was published.
@@ -37,7 +38,7 @@ jobs:
       id-token: write
     steps:
       - name: Check out main
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -46,14 +47,13 @@ jobs:
         with:
           run_install: false
 
-      # registry-url makes setup-node write an .npmrc that reads the token from NODE_AUTH_TOKEN,
-      # which is set on the publish step only.
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
-          cache: pnpm
+          # Trusted publishing requires Node >=22.14 and npm >=11.5.1.
+          node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
@@ -96,10 +96,9 @@ jobs:
       # workflow is that check -- it runs on main, at one commit, after install, build and test.
       - name: Publish
         if: steps.version.outputs.published == 'false'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: "true"
-        run: pnpm publish --access public --no-git-checks
+        # npm exchanges GitHub's OIDC identity for a short-lived registry credential and adds
+        # provenance automatically. Do not add NODE_AUTH_TOKEN to this step.
+        run: npm publish --access public
 
       # Creating the release creates the tag on this commit; no git push and no gh binary,
       # which a self-hosted runner may not have.
