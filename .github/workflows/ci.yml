@@ -32,11 +32,10 @@ jobs:
           persist-credentials: false
           allow-unsafe-pr-checkout: true
 
-      # The version comes from package.json's packageManager field, so the action and the
-      # repository cannot disagree about which pnpm this is.
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
+          version: 11.7.0
           run_install: false
 
       - name: Install Node.js
