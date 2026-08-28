@@ -2630,6 +2630,10 @@ trigger it; but from then on it is an outstanding task the provider counts again
 stated ceiling like any other, nothing more is allocated to the lead while it stands, and a
 provider whose lead is already at the ceiling answers the join `failed`.
 
+**A lead assists one call at a time.** A `join` from a lead already on a call -- their own or one
+they joined -- is answered `failed`, whatever their ceiling; the request stands for another lead,
+or until it is withdrawn or declined.
+
 **On `decline`, or a request the agent withdraws with `{ type: "lead", action: "cancel" }`, the
 provider clears `lead` from the agent's task** and drops the request from every roster. Nothing
 else changes; the agent is still on the call.
