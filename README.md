@@ -62,9 +62,9 @@ assignments, break denial and retry, command idempotency, wrap timeout, browser 
 ## Building
 
 ```
-npm install
-npm run build     # emits dist/
-npm test          # type-checks the tests, then runs them
+pnpm install
+pnpm build        # emits dist/
+pnpm test         # type-checks the tests, then runs them
 ```
 
 ## The guide is authoritative

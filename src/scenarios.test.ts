@@ -1,12 +1,12 @@
-import {  BROWSER_ISOLATION_SCHEMES,
- describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  BrowserIsolationScheme,
+  BROWSER_ISOLATION_SCHEMES,
   browserSessionKey,
+  type DialRequest,
   type ProviderEventEnvelope,
   type Snapshot,
   type Task,
-  type DialRequest,
+  type TaskBrowser,
 } from "./index.js";
 import {
   assertAuthenticationRestoreAndExpiry,
@@ -23,11 +23,12 @@ const voiceTask = {
   id: "call-42",
   title: "Customer call",
   channel: "voice",
-  taskTypeName: "Customer Support",
+  taskType: "Customer Support",
   capabilities: { browsers: true, hold: true },
   phase: "in-progress",
   browsers: [],
-  completionMode: "agent-command", completionAllowance: 60,
+  completionMode: "agent-command",
+  completionAllowance: 60,
 } satisfies Task<"voice">;
 
 const statusEvent = {
@@ -84,7 +85,6 @@ describe("assertDuplicateEventDelivery", () => {
   });
 });
 
-
 describe("assertReconnectWithMissedAssignments", () => {
   const before: Snapshot<"voice"> = { status: "active", sessionId: "session-1", sessionCapabilities: {}, break: { approval: "not-requested", accepting: true }, tasks: [] };
   const reconnect = {
@@ -139,27 +139,35 @@ describe("assertDeniedAndRetriedBreak", () => {
 });
 
 describe("assertDialIdempotency", () => {
-  const makeDial = (retryStatus: "already-applied" | "applied") => {
-    let applied = false;
+  // Each method answers in its own words: a retried dial says already-dialled, because what it
+  // did was dial. A provider answering with a second `dialled` has placed a second call.
+  const makeDial = (retryStatus: "already-dialled" | "dialled") => {
+    let dialled = false;
     return vi.fn(async (request: DialRequest) => {
-      const status = applied ? retryStatus : ("applied" as const);
-      applied = true;
+      const status = dialled ? retryStatus : ("dialled" as const);
+      dialled = true;
       return { commandId: request.commandId, status };
     });
   };
   const request: DialRequest = { commandId: "dial-1", destination: "+14155550100" };
 
   it("accepts a retry that places no second call", async () => {
-    const dial = makeDial("already-applied");
+    const dial = makeDial("already-dialled");
     await expect(assertDialIdempotency({ dial }, request)).resolves.toBeUndefined();
     expect(dial).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a retry that places another call", async () => {
-    await expect(assertDialIdempotency({ dial: makeDial("applied") }, request)).rejects.toThrow(/must return already-applied/);
+    await expect(assertDialIdempotency({ dial: makeDial("dialled") }, request)).rejects.toThrow(/must return already-dialled/);
   });
 
-  it("rejects a backend that enables dial without implementing it", async () => {
+  it("rejects a dial that failed outright", async () => {
+    const dial = vi.fn(async (request: DialRequest) =>
+      ({ commandId: request.commandId, status: "failed" as const, failure: { code: "omni.destination-not-permitted", message: "Not permitted", retryable: false } }));
+    await expect(assertDialIdempotency({ dial }, request)).rejects.toThrow(/Dial failed: omni.destination-not-permitted/);
+  });
+
+  it("rejects a provider that enables dial without implementing it", async () => {
     await expect(assertDialIdempotency({}, request)).rejects.toThrow(/requires Connection.dial/);
   });
 });
@@ -194,54 +202,59 @@ describe("browser isolation", () => {
     url: "https://crm.example.test/customer/42",
     reuse: true,
     isolationScheme: BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME,
-  } as const;
+  } as const satisfies TaskBrowser;
+  const isolated = { ...browser, reuse: false, isolationScheme: undefined } as const satisfies TaskBrowser;
 
   it("shares one session across tasks under a task-type scheme", () => {
     expect(() => assertBrowserIsolationAndReuse(
-      { providerName: "VoiceCo", taskId: "call-1", taskTypeName: "Support", browser },
-      { providerName: "VoiceCo", taskId: "call-2", taskTypeName: "Support", browser: { ...browser, id: "crm-copy" } },
+      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-2", taskType: "Support", browser: { ...browser, id: "crm-copy" } },
       true,
     )).not.toThrow();
   });
 
   it("never shares a session when reuse is false", () => {
     expect(() => assertBrowserIsolationAndReuse(
-      { providerName: "VoiceCo", taskId: "call-1", taskTypeName: "Support", browser },
-      { providerName: "VoiceCo", taskId: "call-1", taskTypeName: "Support", browser: { ...browser, reuse: false, isolationScheme: undefined } },
+      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser: isolated },
       false,
     )).not.toThrow();
-    expect(browserSessionKey({ providerName: "VoiceCo", taskId: "c", taskTypeName: "Support", browser: { ...browser, reuse: false, isolationScheme: undefined } })).toBeUndefined();
+    // Two isolated browsers do not share with each other either: "no key" is not a matching key.
+    expect(() => assertBrowserIsolationAndReuse(
+      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser: isolated },
+      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser: isolated },
+      false,
+    )).not.toThrow();
+    expect(browserSessionKey({ providerId: "voiceco", taskId: "c", taskType: "Support", browser: isolated })).toBeUndefined();
   });
 
   it("reports a mismatch between expected and derived reuse", () => {
     expect(() => assertBrowserIsolationAndReuse(
-      { providerName: "VoiceCo", taskId: "call-1", taskTypeName: "Support", browser },
-      { providerName: "OtherCo", taskId: "call-1", taskTypeName: "Support", browser },
+      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
+      { providerId: "otherco", taskId: "call-1", taskType: "Support", browser },
       true,
     )).toThrow(/Browser reuse mismatch/);
-  });
-
-  it("does not let a value containing the separator forge another key", () => {
-    // `encodeURIComponent` leaves `.` unescaped, so joining raw parts once made
-    // provider "Acme.Voice" + type "Support" collide with "Acme" + "Voice.Support".
-    const left = browserSessionKey({ providerName: "Acme.Voice", taskId: "t1", taskTypeName: "Support", browser });
-    const right = browserSessionKey({ providerName: "Acme", taskId: "t1", taskTypeName: "Voice.Support", browser });
-    expect(left).not.toBe(right);
+    // And in the other direction, so the helper is known to check rather than to throw.
+    expect(() => assertBrowserIsolationAndReuse(
+      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-2", taskType: "Support", browser },
+      false,
+    )).toThrow(/Browser reuse mismatch/);
   });
 
   it("keeps every adversarial naming variant in its own session", () => {
     const variants = ["Acme.Voice", "Acme", "acme", "Acme Voice", "Acme-Voice", "Acme%2EVoice"];
     expect(() => assertNoBrowserSessionKeyCollisions(
-      variants.flatMap(providerName => ["Support", "Voice.Support", "support"].map(taskType => ({
-        providerName, taskId: "t1", taskType, browser,
+      variants.flatMap(providerId => ["Support", "Voice.Support", "support"].map(taskType => ({
+        providerId, taskId: "t1", taskType, browser,
       }))),
     )).not.toThrow();
   });
 
   it("detects a genuine collision when one exists", () => {
     expect(() => assertNoBrowserSessionKeyCollisions([
-      { providerName: "VoiceCo", taskId: "call-1", taskTypeName: "Support", browser },
-      { providerName: "VoiceCo", taskId: "call-2", taskTypeName: "Support", browser },
+      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-2", taskType: "Support", browser },
     ])).toThrow(/collision/);
   });
 });

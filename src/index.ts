@@ -78,6 +78,15 @@ export interface ProtocolFailure {
   retryAfterMs?: number;
 }
 
+/** One broken rule. Validators return every violation they find rather than throwing. */
+export interface ProtocolViolation {
+  /** Stable machine-readable rule id, such as `task.browser.url.scheme`. */
+  rule: string;
+  /** Dotted path to the offending value, such as `snapshot.tasks[0].browsers[1].url`. */
+  path: string;
+  message: string;
+}
+
 // ---------------------------------------------------------------------------
 // Manifest.
 // ---------------------------------------------------------------------------
@@ -101,6 +110,19 @@ export type DialDestinationPolicy = "contacts-only" | "any-number";
 export interface DialCapability {
   destinationPolicy: DialDestinationPolicy;
 }
+
+/** Every idle capability a provider may declare. Only voice may `dial`; the channel arm says so. */
+export const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;
+
+export type IdleCapability = (typeof IDLE_CAPABILITIES)[number];
+
+/** What Omni calls each idle capability. */
+export const IDLE_CAPABILITY_UI = {
+  dial: "Dialpad",
+  personalBrowser: "Browser",
+  calendar: "Calendar",
+  contacts: "Contacts",
+} as const satisfies Readonly<Record<IdleCapability, string>>;
 
 /**
  * Actions Omni may offer while the agent has no active task.
@@ -876,43 +898,84 @@ export const userKey = (providerId: string, userId: UserId): string =>
   `${encodeURIComponent(providerId)}:${encodeURIComponent(userId)}`;
 
 /** Every handling step somebody takes part in. `queued` is the one nobody does. */
-export const HANDLING_STEPS_WITH_A_PERSON: readonly HandlingStep[] =
-  ["offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"] as const;
+export const HANDLING_STEPS_WITH_A_PERSON = [
+  "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered",
+] as const satisfies readonly HandlingStep[];
+
+// Pinned both ways: a step added to `HandlingStep` has to be placed here, and a step listed here
+// has to exist there. `satisfies` covers the second; this covers the first.
+type Assert<T extends true> = T;
+type _EveryStepButQueuedIsListed = Assert<
+  [Exclude<HandlingStep, "queued">] extends [(typeof HANDLING_STEPS_WITH_A_PERSON)[number]] ? true : false
+>;
 
 /** Whether an absent `by` means "could not attribute" rather than "nobody was involved". */
 export function handlingStepExpectsAPerson(step: HandlingStep): boolean {
-  return HANDLING_STEPS_WITH_A_PERSON.includes(step);
+  return (HANDLING_STEPS_WITH_A_PERSON as readonly HandlingStep[]).includes(step);
 }
 
 export interface BrowserSessionKeyInput {
-  scheme: BrowserIsolationScheme;
-  providerName: string;
+  /** `Manifest.id`, never `displayName`: only the id is unique across an installation and stable. */
+  providerId: string;
   taskId: TaskId;
-  taskTypeName: string;
-  tabName: string;
+  /** `Task.taskType`. */
+  taskType: string;
+  browser: TaskBrowser;
 }
 
 /**
- * The session key a reusing browser shares.
+ * The storage-profile key a reusing browser shares, or `undefined` where it shares nothing.
  *
- * Every part is encoded before joining, so a tab called `a.b` cannot collide with a provider
- * called `a` and a tab called `b`.
+ * Fails closed. A browser with `reuse: false` has no key; nor does a reusing one whose scheme is
+ * missing or unknown -- the type forbids that, but an adapter compiled against another version can
+ * still send it, and the safe reading is "do not share", never "share with everyone named the
+ * same". Every part is encoded, separator included, before joining, so a tab called `a.b`
+ * cannot collide with a provider called `a` and a tab called `b`.
  */
-export function browserSessionKey(input: BrowserSessionKeyInput): string {
-  const part = (value: string) => encodeURIComponent(value);
-  const { scheme, providerName, taskId, taskTypeName, tabName } = input;
-  switch (scheme) {
+export function browserSessionKey(input: BrowserSessionKeyInput): string | undefined {
+  const { providerId, taskId, taskType, browser } = input;
+  if (browser.reuse !== true) return undefined;
+  // `encodeURIComponent` leaves `.` untouched, and `.` is the separator: a raw join would let
+  // provider `Acme.Voice` with type `Support` forge the key of `Acme` with `Voice.Support`.
+  const part = (value: string) => encodeURIComponent(value).replaceAll(".", "%2E");
+  switch (browser.isolationScheme) {
     case BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_ID__TAB_NAME:
-      return `${part(providerName)}.${part(taskId)}.${part(tabName)}`;
+      return `${part(providerId)}.${part(taskId)}.${part(browser.name)}`;
     case BROWSER_ISOLATION_SCHEMES.TAB_NAME:
-      return part(tabName);
+      return part(browser.name);
     case BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME:
-      return `${part(providerName)}.${part(taskTypeName)}.${part(tabName)}`;
+      return `${part(providerId)}.${part(taskType)}.${part(browser.name)}`;
     case BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TAB_NAME:
-      return `${part(providerName)}.${part(tabName)}`;
+      return `${part(providerId)}.${part(browser.name)}`;
     case BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME:
-      return `${part(providerName)}.${part(taskTypeName)}`;
+      return `${part(providerId)}.${part(taskType)}`;
     case BROWSER_ISOLATION_SCHEMES.TASK_TYPE_NAME__TAB_NAME:
-      return `${part(taskTypeName)}.${part(tabName)}`;
+      return `${part(taskType)}.${part(browser.name)}`;
+    default:
+      return undefined;
   }
+}
+
+/**
+ * The comparison key for a contact number. Never for display: keep the original value for that.
+ *
+ * Applies NFKC, strips whitespace, brackets, slashes, periods and every Unicode dash, and rewrites
+ * a leading `00` to `+`, so `+1 (415) 555-0100`, `+1.415.555.0100` and `0014155550100` all merge.
+ * Cross-provider merging is reliable only for E.164 input: a national-format number carries no
+ * country context, nothing in this protocol supplies one, and so it does not merge with its
+ * `+`-prefixed twin.
+ */
+export function normalizeContactNumber(number: string): string {
+  const compact = number
+    .normalize("NFKC")
+    .trim()
+    .replace(/[\s\p{Pd}().\/\\[\]]/gu, "")
+    .replace(/^00/, "+");
+  const digits = compact.replace(/\D/g, "");
+  return compact.startsWith("+") ? `+${digits}` : digits;
+}
+
+/** The comparison key for a contact email. Never for display. */
+export function normalizeContactEmail(email: string): string {
+  return email.normalize("NFKC").trim().toLocaleLowerCase("en-US");
 }

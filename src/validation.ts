@@ -5,19 +5,42 @@
 // every violation it found rather than throwing on the first, so a caller can report all of them
 // at once.
 //
-// The constant lists below are the contract's published constants. They live here for now because
-// the declarations in index.ts still describe the previous protocol; when the types are updated
-// they move there and this file imports them. Until then this file is the authority on what a
-// conforming value looks like at runtime.
+// The contract's closed sets are declared as types in index.ts and needed here as runtime lists.
+// Each list is pinned to its type both ways -- a member the type lacks, or a member the list
+// lacks, fails to compile -- so what the validators accept cannot drift from what the
+// declarations say.
 
-/** One broken rule. Validators return every violation they find rather than throwing. */
-export interface ProtocolViolation {
-  /** Stable machine-readable rule id, such as `task.browser.url.scheme`. */
-  rule: string;
-  /** Dotted path to the offending value, such as `snapshot.tasks[0].browsers[1].url`. */
-  path: string;
-  message: string;
-}
+import {
+  ALLOWED_BROWSER_URL_SCHEMES,
+  BREAK_KINDS,
+  BROWSER_ISOLATION_SCHEMES,
+  IDLE_CAPABILITIES,
+  type AcceptanceMode,
+  type AuthenticationMethod,
+  type AuthenticationState,
+  type BreakApproval,
+  type BrowserAccessPolicy,
+  type Channel,
+  type CompletionMode,
+  type ConnectionStatus,
+  type CustomCapability,
+  type Destination,
+  type DialDestinationPolicy,
+  type DispositionPolicy,
+  type HandlingStep,
+  type IdleCapabilities,
+  type IdleCapability,
+  type PersonalBrowserCapability,
+  type ProtocolViolation,
+  type ProviderEvent,
+  type SessionCapabilities,
+  type TaskCapabilities,
+  type TaskOutcome,
+  type TaskPhase,
+  type TeamMemberAvailability,
+} from "./index.js";
+
+export type { ProtocolViolation } from "./index.js";
 
 export class ProtocolConformanceError extends Error {
   readonly violations: readonly ProtocolViolation[];
@@ -36,62 +59,87 @@ export function assertNoViolations(violations: readonly ProtocolViolation[], sum
 }
 
 // ---------------------------------------------------------------------------
-// The contract's closed sets.
+// The contract's closed sets, as runtime lists pinned to their types.
 // ---------------------------------------------------------------------------
 
-const CHANNELS = ["voice", "chat", "email"] as const;
-const TASK_PHASES = ["pending", "confirmed", "preparing", "in-progress", "paused", "completing"] as const;
-const COMPLETION_MODES = ["agent-command", "provider-automatic"] as const;
-const ACCEPTANCE_MODES = ["no-preference", "require-agent-acceptance", "require-automatic-acceptance"] as const;
-const CONNECTION_STATUSES = ["connecting", "active", "error"] as const;
-const AUTHENTICATION_METHODS = ["browser-sso", "credentials"] as const;
-const AUTHENTICATION_STATUSES = ["signed-out", "authenticating", "authenticated", "refreshing", "expired"] as const;
-const BREAK_APPROVALS = ["not-requested", "awaiting-decision", "granted", "starting-after-task", "in-effect"] as const;
-const TEAM_AVAILABILITIES = ["ready", "on-task", "on-break", "signed-out"] as const;
-const HANDLING_STEPS = ["queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"] as const;
-const DESTINATION_KINDS = ["queue", "agent", "external"] as const;
-const CUSTOM_UI_KINDS = ["button", "toggle", "menu-item"] as const;
-const CUSTOM_UI_PLACEMENTS = ["primary", "secondary", "overflow"] as const;
-const NOTES_POLICIES = ["required", "optional", "hidden"] as const;
-const ACCESS_MODES = ["allow-all", "block-all"] as const;
-const ACCESS_POLICY_SCOPES = ["initial-url", "all-navigation"] as const;
-const DIAL_DESTINATION_POLICIES = ["contacts-only", "any-number"] as const;
-const SNAPSHOT_REASONS = ["reconnected", "provider-requested"] as const;
+/**
+ * Every member of a contract union, as a list.
+ *
+ * `Record<U, true>` is what makes it complete: a key the union lacks is an excess property and a
+ * union member the object lacks is a missing one, so either mistake is a compile error here
+ * rather than a validator that quietly accepts or rejects the wrong thing.
+ */
+const membersOf = <U extends string>(members: Record<U, true>): readonly U[] =>
+  Object.keys(members) as U[];
 
-export const ALLOWED_BROWSER_URL_SCHEMES = ["http:", "https:"] as const;
-
-export const BREAK_KINDS = [
-  "short-break", "meal", "rest", "training", "coaching",
-  "meeting", "administrative", "technical", "personal", "other",
-] as const;
-
-/** Every handling step somebody takes part in. `queued` is the one nobody does. */
-export const HANDLING_STEPS_WITH_A_PERSON = HANDLING_STEPS.filter(step => step !== "queued");
-
-export const BROWSER_ISOLATION_SCHEMES = {
-  PROVIDER_NAME__TASK_ID__TAB_NAME: "ProviderName.TaskId.TabName",
-  TAB_NAME: "TabName",
-  PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME: "ProviderName.TaskTypeName.TabName",
-  PROVIDER_NAME__TAB_NAME: "ProviderName.TabName",
-  PROVIDER_NAME__TASK_TYPE_NAME: "ProviderName.TaskTypeName",
-  TASK_TYPE_NAME__TAB_NAME: "TaskTypeName.TabName",
-} as const;
+const CHANNELS = membersOf<Channel>({ voice: true, chat: true, email: true });
+const TASK_PHASES = membersOf<TaskPhase>({
+  pending: true, confirmed: true, preparing: true, "in-progress": true, paused: true, completing: true,
+});
+const COMPLETION_MODES = membersOf<CompletionMode>({ "agent-command": true, "provider-automatic": true });
+const ACCEPTANCE_MODES = membersOf<AcceptanceMode>({
+  "no-preference": true, "require-agent-acceptance": true, "require-automatic-acceptance": true,
+});
+const CONNECTION_STATUSES = membersOf<ConnectionStatus>({ connecting: true, active: true, error: true });
+const AUTHENTICATION_METHODS = membersOf<AuthenticationMethod>({ "browser-sso": true, credentials: true });
+const AUTHENTICATION_STATUSES = membersOf<AuthenticationState["status"]>({
+  "signed-out": true, authenticating: true, authenticated: true, refreshing: true, expired: true,
+});
+const BREAK_APPROVALS = membersOf<BreakApproval>({
+  "not-requested": true, "awaiting-decision": true, granted: true, "starting-after-task": true, "in-effect": true,
+});
+const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
+  ready: true, "on-task": true, "on-break": true, "signed-out": true,
+});
+const HANDLING_STEPS = membersOf<HandlingStep>({
+  queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
+});
+const DESTINATION_KINDS = membersOf<Destination["kind"]>({ queue: true, agent: true, external: true });
+const CUSTOM_UI_KINDS = membersOf<CustomCapability["ui"]["kind"]>({ button: true, toggle: true, "menu-item": true });
+const CUSTOM_UI_PLACEMENTS = membersOf<CustomCapability["ui"]["placement"]>({ primary: true, secondary: true, overflow: true });
+const NOTES_POLICIES = membersOf<NonNullable<DispositionPolicy["notes"]>>({ required: true, optional: true, hidden: true });
+const ACCESS_MODES = membersOf<BrowserAccessPolicy["mode"]>({ "allow-all": true, "block-all": true });
+const ACCESS_POLICY_SCOPES = membersOf<NonNullable<PersonalBrowserCapability["accessPolicyScope"]>>({
+  "initial-url": true, "all-navigation": true,
+});
+const DIAL_DESTINATION_POLICIES = membersOf<DialDestinationPolicy>({ "contacts-only": true, "any-number": true });
+const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
+  reconnected: true, "provider-requested": true,
+});
+const SESSION_CAPABILITIES = membersOf<keyof SessionCapabilities>({ breaks: true, teamBreakControl: true });
+const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
+const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
+  pending: true, confirmed: true, preparing: true,
+});
 
 const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATION_SCHEMES);
 
-/** Capabilities each channel may declare on a task. The channel arms of `TaskCapabilities`. */
-const TASK_CAPABILITIES: Record<string, readonly string[]> = {
-  voice: ["browsers", "dispositions", "custom", "decline", "mute", "hold", "agentDisconnect", "blindTransfer", "conference", "recording"],
-  chat: ["browsers", "dispositions", "custom", "reject", "hold"],
-  email: ["browsers", "dispositions", "custom", "reject"],
+/** The capabilities each channel arm of `TaskCapabilities` declares, keyed off the type itself. */
+const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
+  voice: membersOf<keyof TaskCapabilities<"voice">>({
+    browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
+    agentDisconnect: true, blindTransfer: true, conference: true, recording: true,
+  }),
+  chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, reject: true, hold: true }),
+  email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, reject: true }),
 };
 
-/** Idle capabilities each channel may declare. Only voice may dial. */
-const IDLE_CAPABILITIES: Record<string, readonly string[]> = {
-  voice: ["personalBrowser", "calendar", "contacts", "dial"],
-  chat: ["personalBrowser", "calendar", "contacts"],
-  email: ["personalBrowser", "calendar", "contacts"],
+// The published list and the type's keys are the same set, or one of them is wrong.
+type Assert<T extends true> = T;
+type _IdleCapabilitiesMatchTheType = Assert<
+  [keyof IdleCapabilities<"voice">] extends [IdleCapability]
+    ? ([IdleCapability] extends [keyof IdleCapabilities<"voice">] ? true : false)
+    : false
+>;
+
+/** Idle capabilities each channel may declare. Only voice may dial, and runtime has to say so too. */
+const IDLE_CAPABILITIES_BY_CHANNEL: Readonly<Record<Channel, readonly string[]>> = {
+  voice: IDLE_CAPABILITIES,
+  chat: IDLE_CAPABILITIES.filter(name => name !== "dial"),
+  email: IDLE_CAPABILITIES.filter(name => name !== "dial"),
 };
+
+const isChannel = (value: string): value is Channel => (CHANNELS as readonly string[]).includes(value);
 
 // ---------------------------------------------------------------------------
 // Semantic types. Each is a primitive on the wire with its own validation rule.
@@ -245,7 +293,7 @@ function validateIdleCapabilities(value: unknown, channel: string, path: string,
     into.add("manifest.idleCapabilities.shape", path, "idleCapabilities must be an object when present");
     return;
   }
-  const allowed = IDLE_CAPABILITIES[channel] ?? IDLE_CAPABILITIES.voice!;
+  const allowed = isChannel(channel) ? IDLE_CAPABILITIES_BY_CHANNEL[channel] : IDLE_CAPABILITIES_BY_CHANNEL.voice;
   for (const [name, declared] of Object.entries(value)) {
     if (declared === undefined) continue;
     // Only voice may dial, and the channel arms are what make that a compile error. Runtime
@@ -582,7 +630,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.add("task.capabilities.shape", `${path}.capabilities`, "a task needs a capabilities object");
     return;
   }
-  const allowed = TASK_CAPABILITIES[context.channel] ?? TASK_CAPABILITIES.voice!;
+  const allowed = isChannel(context.channel) ? TASK_CAPABILITIES[context.channel] : TASK_CAPABILITIES.voice;
   for (const [name, declared] of Object.entries(capabilities)) {
     if (declared === undefined) continue;
     if (!into.require(allowed.includes(name), "task.capability.channel", `${path}.capabilities.${name}`,
@@ -732,7 +780,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   } else {
     for (const [name, declared] of Object.entries(sessionCapabilities)) {
       if (declared === undefined) continue;
-      if (!into.require(["breaks", "teamBreakControl"].includes(name), "snapshot.sessionCapability.unknown",
+      if (!into.require((SESSION_CAPABILITIES as readonly string[]).includes(name), "snapshot.sessionCapability.unknown",
         `${path}.sessionCapabilities.${name}`, `unsupported session capability: ${name}`)) continue;
       into.require(declared === true, "snapshot.sessionCapability.value", `${path}.sessionCapabilities.${name}`,
         `${name} is declared by presence: send true or omit it`);
@@ -801,7 +849,7 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
   }
   switch (value.type) {
     case "completed":
-      into.oneOf(value.by, ["agent", "provider"], "event.taskEnded.outcome.completed", `${path}.by`);
+      into.oneOf(value.by, COMPLETED_BY, "event.taskEnded.outcome.completed", `${path}.by`);
       break;
     case "transferred":
       if (value.destination !== undefined) {
@@ -817,7 +865,7 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
       break;
     case "expired":
       // Only the phases in which a task is still waiting on somebody can expire.
-      into.oneOf(value.phase, ["pending", "confirmed", "preparing"], "event.taskEnded.outcome.expired", `${path}.phase`);
+      into.oneOf(value.phase, EXPIRABLE_PHASES, "event.taskEnded.outcome.expired", `${path}.phase`);
       break;
     case "failed":
       if (!isPlainObject(value.failure)) {

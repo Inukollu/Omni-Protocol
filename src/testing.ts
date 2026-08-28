@@ -7,10 +7,10 @@ import {
   type Snapshot,
   type Task,
   type BreakApproval,
+  type BrowserSessionKeyInput,
   type Channel,
   type ConnectContext,
   type DialRequest,
-  type TaskBrowser,
   type TaskCommandRequest,
 } from "./index.js";
 import {
@@ -39,9 +39,10 @@ export interface ExerciseAdapterOptions {
 }
 
 /**
- * Adopter conformance exercise: validates the manifest, opens an authenticated
- * session, connects, subscribes, validates the snapshot and every delivered
- * event, signals zero capacity, then unsubscribes and disconnects.
+ * Adapter conformance exercise: validates the manifest, opens an authenticated session,
+ * connects, checks that every method the declarations require is implemented, subscribes,
+ * validates the snapshot and every delivered event, states a capacity, then unsubscribes and
+ * disconnects.
  *
  * Violations are collected rather than thrown from inside the adapter's own
  * dispatch path. Throwing from a subscribe listener unwinds through the provider
@@ -81,15 +82,24 @@ export async function exerciseAdapter<C extends Channel>(
     }
 
     connection = await adapter.connect(context);
-    // Dial is declared by presence now: the capability object carries a destination policy
-    // rather than an `enabled` flag, so its presence is the declaration.
-    if (adapter.manifest.idleCapabilities?.dial !== undefined && typeof connection.dial !== "function") {
-      violations.push({
-        rule: "connection.dial.required",
-        path: "connection.dial",
-        message: "the manifest declares dial but the connection does not implement dial()",
-      });
-    }
+    const live = connection;
+    // The optional methods are optional only until something declares a need for them. Each
+    // check pairs a method with the declaration that requires it, as the guide's Live-connection
+    // table does; a missing one is a control the agent would be shown and could never use.
+    const requireMethod = (name: keyof Connection<C>, because: string) => {
+      if (typeof live[name] !== "function") {
+        violations.push({
+          rule: `connection.${name}.required`,
+          path: `connection.${name}`,
+          message: `${because}, but the connection does not implement ${name}()`,
+        });
+      }
+    };
+    // Dial is declared by presence: the capability object carries a destination policy rather
+    // than an `enabled` flag, so its presence is the declaration.
+    if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod("dial", "the manifest declares dial");
+    // Every voice task's audio lands in Omni, so there is no voice adapter that does not open it.
+    if (adapter.manifest.channel === "voice") requireMethod("openMedia", "the manifest channel is voice");
 
     const eventIds = new Set<string>();
     unsubscribe = connection.subscribe(envelope => {
@@ -101,11 +111,21 @@ export async function exerciseAdapter<C extends Channel>(
       events.push(envelope);
     });
 
-    violations.push(...validateSnapshot(await connection.snapshot() as Snapshot, adapter.manifest));
+    const snapshot = await connection.snapshot() as Snapshot;
+    violations.push(...validateSnapshot(snapshot, adapter.manifest));
+    if (snapshot?.sessionCapabilities?.breaks === true) {
+      // The four stand or fall together: `granted` is a promise to honour a later commit, and
+      // an adapter with requestBreak but no commitBreak leaves an agent a break that never starts.
+      for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak"] as const) {
+        requireMethod(method, "the snapshot declares sessionCapabilities.breaks");
+      }
+    }
+    if (snapshot?.team?.breakControl === true) requireMethod("executeTeamBreak", "the roster carries breakControl");
+    if (publishesUserIds(snapshot)) requireMethod("describeUsers", "the snapshot publishes a UserId");
 
-    // Capacity is stated, not requested: nothing may be allocated until it is, so a
-      // connection that will not accept one is a connection nothing can be given to.
-      const capacity = await connection.setCapacity({ count: 1 });
+    // Capacity is stated, not requested: nothing may be allocated until it is, so a connection
+    // that will not accept one is a connection nothing can be given to.
+    const capacity = await connection.setCapacity({ count: 1 });
     if (capacity.status === "failed") {
       violations.push({
         rule: "connection.setCapacity.failed",
@@ -136,6 +156,19 @@ export async function exerciseAdapter<C extends Channel>(
     disconnectWasClean,
     violations,
   };
+}
+
+/**
+ * Whether a snapshot carries any `UserId`, which is what obliges an adapter to describe users.
+ * The snapshot is untrusted input that has already been reported on, so nothing here assumes
+ * its shape.
+ */
+function publishesUserIds(snapshot: Snapshot | undefined): boolean {
+  if (snapshot?.break?.imposed?.by !== undefined) return true;
+  if (Array.isArray(snapshot?.team?.members) && snapshot.team.members.length > 0) return true;
+  if (!Array.isArray(snapshot?.tasks)) return false;
+  return snapshot.tasks.some(task =>
+    Array.isArray(task?.handlingHistory) && task.handlingHistory.some(step => step?.by !== undefined));
 }
 
 /** Verifies the at-most-once contract by issuing the same command twice. */
@@ -272,30 +305,11 @@ export function assertWrapTimeout(
   }
 }
 
-export interface BrowserIsolationScenario {
-  providerName: string;
-  taskId: string;
-  taskType: string;
-  browser: TaskBrowser;
-}
+/** One browser in one task of one provider. `providerId` is `Manifest.id`, never `displayName`. */
+export type BrowserIsolationScenario = BrowserSessionKeyInput;
 
-/**
- * The session key one scenario derives, or `undefined` where the browser does not reuse.
- *
- * Reuse and the scheme travel together in the contract, so a browser with `reuse: false` has no
- * key and cannot share with anything.
- */
-function sessionKeyFor(scenario: BrowserIsolationScenario): string | undefined {
-  const browser = scenario.browser;
-  if (browser.reuse !== true) return undefined;
-  return browserSessionKey({
-    scheme: browser.isolationScheme,
-    providerName: scenario.providerName,
-    taskId: scenario.taskId,
-    taskTypeName: scenario.taskType,
-    tabName: browser.name,
-  });
-}
+/** The session key one scenario derives, or `undefined` where the browser shares nothing. */
+const sessionKeyFor = (scenario: BrowserIsolationScenario): string | undefined => browserSessionKey(scenario);
 
 /** Validates whether two task-browser definitions should share one browser session. */
 export function assertBrowserIsolationAndReuse(
@@ -330,8 +344,8 @@ export function assertNoBrowserSessionKeyCollisions(scenarios: readonly BrowserI
     if (existing) {
       throw new Error(
         `Browser session key collision on '${key}': ` +
-        `${JSON.stringify({ provider: existing.providerName, taskType: existing.taskType, tab: existing.browser.name })} and ` +
-        `${JSON.stringify({ provider: scenario.providerName, taskType: scenario.taskType, tab: scenario.browser.name })}`,
+        `${JSON.stringify({ provider: existing.providerId, taskType: existing.taskType, tab: existing.browser.name })} and ` +
+        `${JSON.stringify({ provider: scenario.providerId, taskType: scenario.taskType, tab: scenario.browser.name })}`,
       );
     }
     byKey.set(key, scenario);

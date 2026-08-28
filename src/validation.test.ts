@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BREAK_KINDS, BROWSER_ISOLATION_SCHEMES, IDLE_CAPABILITIES } from "./index.js";
 import {
   assertNoViolations,
   ProtocolConformanceError,
@@ -384,5 +385,43 @@ describe("validateContact", () => {
     expect(rules(validateContact({ name: "  " }))).toContain("contact.name");
     expect(rules(validateContact({ attributes: [{ key: "", value: "x" }] }))).toContain("attribute.key");
     expect(rules(validateContact("Asha"))).toContain("contact.shape");
+  });
+});
+
+describe("the validators accept exactly what the contract publishes", () => {
+  // The runtime lists are pinned to the declarations at compile time; these prove the pin holds
+  // at runtime from both sides, because a validator that accepted everything would pass a
+  // suite that only ever fed it published values.
+  it("every published isolation scheme, and no unpublished one", () => {
+    const reusing = (isolationScheme: unknown) =>
+      task({ browsers: [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", reuse: true, isolationScheme }] });
+    for (const scheme of Object.values(BROWSER_ISOLATION_SCHEMES)) {
+      expect(rules(validateTask(reusing(scheme), { channel: "voice" }))).toEqual([]);
+    }
+    expect(rules(validateTask(reusing("ProviderName.Whatever"), { channel: "voice" }))).toContain("task.browser.isolationScheme");
+  });
+
+  it("every published break kind, and no unpublished one", () => {
+    const withKind = (kind: unknown) => snapshot({ break: { approval: "not-requested", accepting: true, reasons: [{ id: "r1", label: "Rest", kind }] } });
+    for (const kind of BREAK_KINDS) {
+      expect(rules(validateSnapshot(withKind(kind), manifest()))).toEqual([]);
+    }
+    expect(rules(validateSnapshot(withKind("nap"), manifest()))).toContain("break.reason.kind");
+  });
+
+  it("every published idle capability on voice, and dial on nothing else", () => {
+    const declaring = (name: string, channel: string) => {
+      const value = name === "dial" ? { destinationPolicy: "any-number" }
+        : name === "personalBrowser" ? { access: { mode: "allow-all" } }
+        : true;
+      return manifest({ channel, idleCapabilities: { [name]: value } });
+    };
+    for (const name of IDLE_CAPABILITIES) {
+      expect(rules(validateManifest(declaring(name, "voice")))).toEqual([]);
+      const onChat = rules(validateManifest(declaring(name, "chat")));
+      if (name === "dial") expect(onChat).toContain("manifest.idleCapability.channel");
+      else expect(onChat).toEqual([]);
+    }
+    expect(rules(validateManifest(manifest({ idleCapabilities: { media: true } })))).toContain("manifest.idleCapability.channel");
   });
 });
