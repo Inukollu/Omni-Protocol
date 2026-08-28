@@ -914,10 +914,17 @@ is applied.
 
 ### 6. An unsettled result is unknown, and unknown is not retried
 
-A settled result is a fact. A promise that rejects with no result — the transport died — means
-*unknown*: the provider may have done it or not, and neither Omni nor an adapter on the agent's PC
-can find out in time to make a repeat safe. Omni does not retry. The next snapshot shows what the
-provider actually did, and if the agent acts again it is a new command.
+A settled result is a fact. A promise that rejects with no result means *unknown*: the provider
+may have done it or not, and neither Omni nor an adapter on the agent's PC can find out in time to
+make a repeat safe. Omni does not retry; if the agent acts again it is a new command.
+
+On a persistent ordered transport there is only one way a command goes unsettled: the connection
+went away underneath it. **An adapter that cannot settle a command has lost its transport, and
+says so** — `provider-status` `connecting`, reconnect, snapshot — whichever channel the command
+actually travelled on. An unsettled promise is therefore always followed by a snapshot, and that
+snapshot is the answer; Omni waits for it rather than calling `snapshot()` itself. While the
+transport is up, a result says the provider accepted the command, and the event that follows —
+`task-updated`, `break-state` — says what it did.
 
 A command therefore carries no key. The provider names its own records — a task, a lead request, a
 member — and Omni refers to them by those names; **Omni never asks a provider to remember a name
@@ -933,6 +940,11 @@ unknown, not failed. Within a moment the provider offers the resulting call thro
 and the agent is on it; had nothing been placed, nothing arrives and the agent dials again. What
 Omni must not do is dial again on the agent's behalf — the one outcome worse than a lost answer is
 two phones ringing at the customer.
+
+An agent presses Hold while the provider is reconnecting. Nothing is queued at either end: the
+adapter answers `failed` with `omni.unavailable`, Omni shows the refusal, and the agent presses
+again once the provider is `active` — against the state as it is then, rather than a held press
+fired into a state that has moved on.
 
 ### 7. Work is pulled, never pushed
 
@@ -2207,8 +2219,8 @@ answer and ask again when they want to. `decisionReason` may carry the words att
 decision, but `approval` does not remain denied.
 
 A provider reports `starting-after-task` only after Omni commits a `granted` request while
-work is still active. Omni does not retry the original request, because asking again would not move
-it; it retries the commit when its delivery is uncertain.
+work is still active. Omni does not send the request again, because asking again would not move
+it; it sends the commit again only from a reconnect snapshot that shows the grant still standing.
 
 `accepting: false` is what lets Omni withdraw the control rather than let an agent ask and be
 refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest period is not
@@ -2425,10 +2437,13 @@ Omni coordinates one attempt as follows:
    causes Omni to take the cancel path.
 4. If every participant reports `granted`, durably choose commit, enter `committing-break`,
    and send `commitBreak()` to every participant. A provider then stops offering new work
-   and reports `starting-after-task` or `in-effect`. Omni enters `on-break` once every participant
-   it can still reach reports `in-effect`, and no later than the **commit bound** — ten seconds
-   from the decision, tunable per deployment. A participant that has not applied the commit by then
-   is set aside as unreconciled; the break begins without it.
+   and reports `starting-after-task` or `in-effect`. The **commit bound** — ten seconds from the
+   decision, tunable per deployment — decides who is kept: a participant that has not applied the
+   commit by then, still `granted` or unreachable, is set aside as unreconciled and the break
+   begins without it. `in-effect` decides `on-break`: Omni enters it once every kept participant
+   reports `in-effect`. A kept participant reporting `starting-after-task` has applied the commit
+   and is finishing a task; the bound is on delivery, not on that task. Omni shows the break as
+   settled and beginning when the task ends, and offers no cancel, because the commit is durable.
 5. If any participant fails or denies the request, cannot be reconciled within the bounded
    decision timeout, or the agent cancels before commit, durably choose cancel and enter
    `cancelling-break`. Send `cancelBreak()` to every participant still reporting
@@ -2467,7 +2482,13 @@ snapshot before anything else, and the snapshot decides:
   against an agent who is already on break elsewhere. **A new login is this case too**: the grant
   belonged to the old session.
 
-The provider must not offer work in the meantime, and the commit is what stops it.
+The provider must not offer work in the meantime, and the commit is what stops it; Omni gives it
+no capacity until it is reconciled.
+
+**If the agent has already ended the break elsewhere, the attempt is over** and the returning
+provider is reconciled to that instead: still `granted` gets `cancelBreak()`, because committing
+would stop an agent who is working again; `starting-after-task` or `in-effect` gets `endBreak()`.
+Never rolling back is about a break that is still on, not one the agent has finished.
 
 Omni may tell the agent which platforms the break has not yet reached, as it already does when a
 break cannot be paired across every provider.
@@ -2833,10 +2854,18 @@ Applies a `TaskCommandRequest` to one provider-local task.
 - `applied` confirms the side effect completed. `failed` confirms it did **not**, with a typed
   `ProtocolFailure`; a provider that will not and one that cannot report the same shape, and `code`
   says which.
+- A command sent while `provider-status` is not `active` answers `failed` with `omni.unavailable`.
+  Neither Omni nor the adapter queues it.
+- **A command that asks for a state answers `applied` when that state holds, whoever brought it
+  about; a command that acts answers `failed` when it cannot act.** Declining a lead request
+  already gone is `applied`; joining one already gone is `failed`, since nobody joined. A lead
+  deciding a member's break that another lead has already decided is `applied` when the decisions
+  agree and `failed`, saying so in `message`, when they differ. `commitBreak()` on a break already
+  in effect is `committed` for the same reason.
 - **A settled result is a fact; an unsettled promise is not.** Transport uncertainty may reject the
-  promise with no result at all, and that means *unknown*, not *failed*. `failed` must never be
-  returned for something the provider is unsure of, because Omni will show the agent it did not
-  happen.
+  promise with no result at all, and that means *unknown*, not *failed*, and a snapshot follows —
+  see **An unsettled result is unknown**. `failed` must never be returned for something the
+  provider is unsure of, because Omni will show the agent it did not happen.
 
 ### `ProtocolFailure`
 
@@ -2858,7 +2887,7 @@ react rather than only display the message:
 | `omni.task-not-found` | The provider-local task id is unknown, typically after the task already ended. |
 | `omni.destination-not-permitted` | The dial or transfer destination violates the provider's policy. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
-| `omni.unavailable` | The provider is temporarily unable to serve the action. |
+| `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `provider-status` is not `active`. |
 | `omni.break-already-committed` | Cancellation lost the commit/cancel race; Omni must finish commit recovery. |
 
 They are published as `OMNI_FAILURE_CODES`.
@@ -2915,9 +2944,10 @@ healthy provider from a dead one.
 
 #### Requesting a resync
 
-Omni may call `snapshot()` at any time, not only at connect, and must do so on any loss of
-confidence in its provider state. `reason: "provider-requested"` covers the
-opposite direction — the provider asking Omni to reconcile — and neither replaces the other.
+Omni calls `snapshot()` at connect; after that, snapshots come to it — on reconnect, and when the
+provider asks. It may still call `snapshot()` at any time, but never to learn a command's fate:
+the reconnect snapshot already carries it. `reason: "provider-requested"` covers the opposite
+direction — the provider asking Omni to reconcile — and neither replaces the other.
 
 ### `snapshot`
 
@@ -2959,9 +2989,9 @@ reasons, retry details, and any imposed break.
 For a multi-provider attempt, "every provider" is the participant set frozen when the attempt
 entered `requesting-break`. Omni commits only after every participant reports `granted` —
 that one is unconditional, because nothing has stopped yet and waiting costs only time. It enters
-`on-break` once every participant it can still reach reports `in-effect`, and no later than the
-commit bound: past that a participant is set aside as unreconciled rather than holding a break that
-has already begun elsewhere. Otherwise it follows the two-phase rules under **Coordinating a
+`on-break` once every kept participant reports `in-effect`; the commit bound decides who is kept,
+setting aside a participant that has not applied the commit rather than holding a break that has
+already begun elsewhere. Otherwise it follows the two-phase rules under **Coordinating a
 multi-provider break**.
 
 ### `task-offered`

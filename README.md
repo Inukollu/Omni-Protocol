@@ -59,9 +59,11 @@ assignments, break denial and retry, wrap timeout, browser isolation.
 > conforming one. A suite that only asserts "this conforming case does not throw" passes unchanged
 > if the helper is gutted, so pair every positive case with the violating twin.
 
-## Two things TypeScript will not catch for you
+## Three things TypeScript will not catch for you
 
-Both found by adapters against this contract, and both produce a green build over a wrong shape.
+All found by adapters against this contract, and all produce a green build over a wrong shape.
+Two share one cause: TypeScript checks extra keys only on a literal that is the thing directly
+assigned. Move the literal anywhere else and the check is gone.
 
 **Conditional spreads are the blind spot on a task literal.** A key inside
 `...(cond ? { … } : {})` is never checked against the task type, and `satisfies Task<C>` on the
@@ -86,6 +88,19 @@ switch (command.action) {
   case "complete": return completeConsultation();
   case "cancel":   return cancelConsultation();
 }
+```
+
+**A `const` fixture escapes excess-property checking.** Park a literal in a variable and it is no
+longer the thing directly assigned — the same reason the conditional spread escapes — so a shared
+test fixture keeps a field the contract has dropped: `tsc` says nothing and the suite is
+confidently green over a shape that no longer exists. Annotate the `const` or `satisfies` it where
+it is declared; either names the field on the next build.
+
+```ts
+take({ reasonId, requestedAt });                                // error: requestedAt
+const request = { reasonId, requestedAt }; take(request);      // no error — the hole
+const request: BreakRequest = { reasonId, requestedAt };        // error: requestedAt
+const request = { reasonId, requestedAt } satisfies BreakRequest; // error: requestedAt
 ```
 
 ## Building
