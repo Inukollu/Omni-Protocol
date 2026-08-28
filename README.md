@@ -59,6 +59,35 @@ assignments, break denial and retry, command idempotency, wrap timeout, browser 
 > conforming one. A suite that only asserts "this conforming case does not throw" passes unchanged
 > if the helper is gutted, so pair every positive case with the violating twin.
 
+## Two things TypeScript will not catch for you
+
+Both found by adapters against this contract, and both produce a green build over a wrong shape.
+
+**Conditional spreads are the blind spot on a task literal.** A key inside
+`...(cond ? { … } : {})` is never checked against the task type, and `satisfies Task<C>` on the
+surrounding literal does not reach it. Put the check on the spread operand itself:
+
+```ts
+const task = {
+  id, title, channel: "voice", taskType, capabilities, browsers, phase, completionMode,
+  ...(contact ? { contact } satisfies Partial<Task<"voice">> : {}),
+};
+```
+
+**The blind transfer arm is `action?: never`.** Switch on `command.action` with `case undefined`
+for it, never a `default`: a `default` turns a future action into a silent blind transfer, and
+switching on `command.action ?? "blind"` loses the narrowing that lets you read `destination`
+without a cast. Dropping an arm then fails the build — indirectly, as a missing return.
+
+```ts
+switch (command.action) {
+  case undefined:  return blindTransfer(command.destination);
+  case "consult":  return consultTransfer(command.destination);
+  case "complete": return completeConsultation();
+  case "cancel":   return cancelConsultation();
+}
+```
+
 ## Building
 
 ```
