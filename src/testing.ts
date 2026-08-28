@@ -250,9 +250,13 @@ export function assertReconnectWithMissedAssignments<C extends Channel>(
  * There is no `denied` approval: a refusal returns the agent to `not-requested`, because a
  * pending request nobody is coming to decide is worse than none. So the scenario is a request
  * that goes back to not-requested, and a later one that is granted.
+ *
+ * A request shows as `awaiting-decision` where a person decides, and as `granted` at once where
+ * the provider decides alone; either is the request being made, and the rule is the same for
+ * both.
  */
 export function assertDeniedAndRetriedBreak(approvals: readonly BreakApproval[]): void {
-  const asked = approvals.indexOf("awaiting-decision");
+  const asked = approvals.findIndex(approval => approval === "awaiting-decision" || approval === "granted");
   if (asked < 0) throw new Error("Break retry scenario requires an initial request");
   const refused = approvals.indexOf("not-requested", asked + 1);
   if (refused < 0) throw new Error("A refused break must return to not-requested, leaving nothing pending");

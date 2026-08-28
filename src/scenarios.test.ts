@@ -120,8 +120,21 @@ describe("assertDeniedAndRetriedBreak", () => {
     expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "awaiting-decision", "in-effect"])).not.toThrow();
   });
 
+  it("accepts a provider that decides alone: granted at once, refused, granted again", () => {
+    // No approver, so the request never waits on a person -- it is granted the moment it is
+    // made. The rule is unchanged: the refusal still has to return to not-requested first.
+    expect(() => assertDeniedAndRetriedBreak(["granted", "not-requested", "granted"])).not.toThrow();
+    expect(() => assertDeniedAndRetriedBreak(["granted", "not-requested", "granted", "in-effect"])).not.toThrow();
+  });
+
   it("rejects a sequence that was never asked for", () => {
-    expect(() => assertDeniedAndRetriedBreak(["granted"])).toThrow(/requires an initial request/);
+    expect(() => assertDeniedAndRetriedBreak(["not-requested"])).toThrow(/requires an initial request/);
+    expect(() => assertDeniedAndRetriedBreak([])).toThrow(/requires an initial request/);
+  });
+
+  it("rejects a grant that was never refused, however the request was made", () => {
+    expect(() => assertDeniedAndRetriedBreak(["granted"])).toThrow(/leaving nothing pending/);
+    expect(() => assertDeniedAndRetriedBreak(["granted", "in-effect"])).toThrow(/leaving nothing pending/);
   });
 
   it("rejects a refusal that leaves the request pending", () => {
