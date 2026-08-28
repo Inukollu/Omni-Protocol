@@ -12,6 +12,8 @@ on:
     branches: [main]
     paths-ignore:
       - .github/**
+      # The README is read on GitHub, not from the package; guide.md ships in the tarball and does publish.
+      - README.md
   workflow_dispatch:
 
 permissions:
