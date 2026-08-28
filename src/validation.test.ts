@@ -444,3 +444,14 @@ describe("the completion allowance follows the completion mode", () => {
     expect(rules(validateTask(task({ completionMode: "agent-command", completionAllowance: "60" }), voice))).toContain("task.completionAllowance");
   });
 });
+
+describe("callback is a voice capability", () => {
+  it("is accepted on voice and refused on every other channel, like the rest of the voice arm", () => {
+    expect(rules(validateTask(task({ capabilities: { callback: true } }), { channel: "voice" }))).toEqual([]);
+    for (const channel of ["chat", "email"]) {
+      expect(rules(validateTask(task({ channel, capabilities: { callback: true } }), { channel }))).toContain("task.capability.channel");
+    }
+    // Presence is the permission: the flag carries no payload.
+    expect(rules(validateTask(task({ capabilities: { callback: false } }), { channel: "voice" }))).toContain("task.capability.value");
+  });
+});

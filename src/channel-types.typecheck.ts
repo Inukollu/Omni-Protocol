@@ -93,3 +93,11 @@ export const untimedAgentCommandTask = { ...emailTask, id: "email-3", completion
 export const timedProviderAutomaticTask = { ...emailTask, id: "email-4", completionMode: "provider-automatic", completionAllowance: 0 } satisfies Task<"email">;
 // @ts-expect-error provider-automatic completion needs an allowance to act on.
 export const untimedProviderAutomaticTask: Task<"email"> = { ...emailTask, id: "email-5", completionMode: "provider-automatic", completionAllowance: undefined };
+
+// Calling back belongs to voice: the capability and the command exist on no other channel.
+export const callbackCapableVoiceTask = { ...emailTask, id: "call-9", channel: "voice", capabilities: { callback: true, dispositions: true } } satisfies Task<"voice">;
+export const voiceCallback: TaskCommand<"voice"> = { type: "callback" };
+// @ts-expect-error Chat has nobody to call back.
+export const chatCallbackCapability: Task<"chat">["capabilities"] = { callback: true };
+// @ts-expect-error Email has nobody to call back.
+export const emailCallback: TaskCommand<"email"> = { type: "callback" };
