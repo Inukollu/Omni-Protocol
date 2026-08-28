@@ -1,13 +1,13 @@
 import {
   browserSessionKey,
-  type BackendAdapter,
-  type BackendAuthenticationState,
-  type BackendEventEnvelope,
-  type BackendConnection,
-  type BackendSnapshot,
-  type BackendTask,
+  type Adapter,
+  type AuthenticationState,
+  type ProviderEventEnvelope,
+  type Connection,
+  type Snapshot,
+  type Task,
   type BreakApproval,
-  type ChannelKind,
+  type Channel,
   type ConnectContext,
   type DialRequest,
   type TaskBrowser,
@@ -25,8 +25,8 @@ import {
 export { ProtocolConformanceError, assertNoViolations, type ProtocolViolation } from "./validation.js";
 
 export interface AdapterContractResult {
-  events: BackendEventEnvelope[];
-  authenticationState: BackendAuthenticationState;
+  events: ProviderEventEnvelope[];
+  authenticationState: AuthenticationState;
   /** True only when `disconnect()` and `close()` both settled without throwing. */
   disconnectWasClean: boolean;
   /** Every violation observed. Non-empty only when `collectOnly` suppressed the throw. */
@@ -48,13 +48,13 @@ export interface ExerciseAdapterOptions {
  * for a synchronous emitter, and is swallowed as an unhandled rejection for an
  * asynchronous one — which would let a non-conforming async adapter pass.
  */
-export async function exerciseAdapter<C extends ChannelKind>(
-  adapter: BackendAdapter<C>,
+export async function exerciseAdapter<C extends Channel>(
+  adapter: Adapter<C>,
   context: ConnectContext,
   options: ExerciseAdapterOptions = {},
 ): Promise<AdapterContractResult> {
   const violations: ProtocolViolation[] = [...validateManifest(adapter.manifest)];
-  const events: BackendEventEnvelope<C>[] = [];
+  const events: ProviderEventEnvelope<C>[] = [];
 
   const storedSecrets = new Map<string, string>();
   const authentication = await adapter.createAuthenticationSession({
@@ -66,9 +66,9 @@ export async function exerciseAdapter<C extends ChannelKind>(
     },
   });
 
-  let connection: BackendConnection<C> | undefined;
+  let connection: Connection<C> | undefined;
   let unsubscribe: (() => void) | undefined;
-  let authenticationState: BackendAuthenticationState | undefined;
+  let authenticationState: AuthenticationState | undefined;
   let disconnectWasClean = false;
 
   try {
@@ -93,7 +93,7 @@ export async function exerciseAdapter<C extends ChannelKind>(
 
     const eventIds = new Set<string>();
     unsubscribe = connection.subscribe(envelope => {
-      violations.push(...validateEventEnvelope(envelope as BackendEventEnvelope, adapter.manifest));
+      violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest));
       if (typeof envelope?.id === "string") {
         if (eventIds.has(envelope.id)) return;
         eventIds.add(envelope.id);
@@ -101,14 +101,16 @@ export async function exerciseAdapter<C extends ChannelKind>(
       events.push(envelope);
     });
 
-    violations.push(...validateSnapshot(await connection.snapshot() as BackendSnapshot, adapter.manifest));
+    violations.push(...validateSnapshot(await connection.snapshot() as Snapshot, adapter.manifest));
 
-    const capacity = await connection.requestWork({ count: 0, composite: [] });
-    if (capacity.status === "rejected") {
+    // Capacity is stated, not requested: nothing may be allocated until it is, so a
+      // connection that will not accept one is a connection nothing can be given to.
+      const capacity = await connection.setCapacity({ count: 1 });
+    if (capacity.status === "failed") {
       violations.push({
-        rule: "connection.requestWork.rejected",
-        path: "connection.requestWork",
-        message: `backend rejected a zero-capacity signal: ${capacity.failure.code}`,
+        rule: "connection.setCapacity.failed",
+        path: "connection.setCapacity",
+        message: `the provider would not accept a capacity: ${capacity.failure.code}`,
       });
     }
   } finally {
@@ -129,8 +131,8 @@ export async function exerciseAdapter<C extends ChannelKind>(
   if (!options.collectOnly) assertNoViolations(violations);
 
   return {
-    events: events as BackendEventEnvelope[],
-    authenticationState: authenticationState as BackendAuthenticationState,
+    events: events as ProviderEventEnvelope[],
+    authenticationState: authenticationState as AuthenticationState,
     disconnectWasClean,
     violations,
   };
@@ -138,13 +140,13 @@ export async function exerciseAdapter<C extends ChannelKind>(
 
 /** Verifies the at-most-once contract by issuing the same command twice. */
 export async function assertCommandIdempotency(
-  connection: Pick<BackendConnection, "execute">,
+  connection: Pick<Connection, "execute">,
   request: TaskCommandRequest,
 ): Promise<void> {
   const first = await connection.execute(request);
   if (first.commandId !== request.commandId) throw new Error("Command result id mismatch");
-  if (first.status === "rejected") {
-    throw new Error(`Command was rejected: ${first.failure.code}`);
+  if (first.status === "failed") {
+    throw new Error(`Command failed: ${first.failure.code}`);
   }
 
   const retry = await connection.execute(request);
@@ -156,7 +158,7 @@ export async function assertCommandIdempotency(
 
 /** Validates restored authentication followed by a refresh failure or expiry. */
 export function assertAuthenticationRestoreAndExpiry(
-  states: readonly BackendAuthenticationState[],
+  states: readonly AuthenticationState[],
 ): void {
   if (states.length < 2 || states[0]?.status !== "authenticated") {
     throw new Error("Authentication scenario must start with a restored authenticated state");
@@ -172,10 +174,10 @@ export function assertAuthenticationRestoreAndExpiry(
 }
 
 /** Validates duplicate delivery and returns the event sequence Omni applies once per ID. */
-export function assertDuplicateEventDelivery<C extends ChannelKind>(
-  envelopes: readonly BackendEventEnvelope<C>[],
-): BackendEventEnvelope<C>[] {
-  const byId = new Map<string, BackendEventEnvelope<C>>();
+export function assertDuplicateEventDelivery<C extends Channel>(
+  envelopes: readonly ProviderEventEnvelope<C>[],
+): ProviderEventEnvelope<C>[] {
+  const byId = new Map<string, ProviderEventEnvelope<C>>();
   let duplicateFound = false;
   for (const envelope of envelopes) {
     const existing = byId.get(envelope.id);
@@ -192,39 +194,10 @@ export function assertDuplicateEventDelivery<C extends ChannelKind>(
   return [...byId.values()];
 }
 
-/**
- * Validates that a per-provider `sequence` increases by exactly one per distinct
- * event, and that redelivery repeats the original sequence. Returns the gaps found,
- * which is what tells Omni it must resync rather than apply the events it has.
- */
-export function findSequenceGaps<C extends ChannelKind>(
-  envelopes: readonly BackendEventEnvelope<C>[],
-): Array<{ after: number; next: number }> {
-  const seen = new Map<string, number>();
-  const gaps: Array<{ after: number; next: number }> = [];
-  let previous: number | undefined;
-  for (const envelope of envelopes) {
-    if (envelope.sequence === undefined) continue;
-    const known = seen.get(envelope.id);
-    if (known !== undefined) {
-      if (known !== envelope.sequence) {
-        throw new Error(`Redelivered event '${envelope.id}' changed its sequence from ${known} to ${envelope.sequence}`);
-      }
-      continue;
-    }
-    seen.set(envelope.id, envelope.sequence);
-    if (previous !== undefined && envelope.sequence !== previous + 1) {
-      gaps.push({ after: previous, next: envelope.sequence });
-    }
-    previous = envelope.sequence;
-  }
-  return gaps;
-}
-
 /** Validates an authoritative reconnect snapshot containing assignments missed while offline. */
-export function assertReconnectWithMissedAssignments<C extends ChannelKind>(
-  before: BackendSnapshot<C>,
-  reconnect: BackendEventEnvelope<C>,
+export function assertReconnectWithMissedAssignments<C extends Channel>(
+  before: Snapshot<C>,
+  reconnect: ProviderEventEnvelope<C>,
   missedTaskIds: readonly string[],
 ): void {
   if (reconnect.event.type !== "snapshot" || reconnect.event.reason !== "reconnected") {
@@ -238,30 +211,42 @@ export function assertReconnectWithMissedAssignments<C extends ChannelKind>(
   }
 }
 
-/** Validates a denied break followed by a later retry and approval. */
+/**
+ * Validates a refused break followed by a later request that is granted.
+ *
+ * There is no `denied` approval: a refusal returns the agent to `not-requested`, because a
+ * pending request nobody is coming to decide is worse than none. So the scenario is a request
+ * that goes back to not-requested, and a later one that is granted.
+ */
 export function assertDeniedAndRetriedBreak(approvals: readonly BreakApproval[]): void {
-  const deniedIndex = approvals.indexOf("denied");
-  if (deniedIndex < 0) throw new Error("Break retry scenario requires an initial denial");
-  const approvedIndex = approvals.lastIndexOf("approved");
-  if (approvedIndex <= deniedIndex) throw new Error("Break retry scenario must approve after denial");
-  if (approvals.at(-1) !== "approved") {
-    throw new Error(`Break retry scenario must end approved, ended ${String(approvals.at(-1))}`);
+  const asked = approvals.indexOf("awaiting-decision");
+  if (asked < 0) throw new Error("Break retry scenario requires an initial request");
+  const refused = approvals.indexOf("not-requested", asked + 1);
+  if (refused < 0) throw new Error("A refused break must return to not-requested, leaving nothing pending");
+  const granted = approvals.findIndex((approval, index) =>
+    index > refused && (approval === "granted" || approval === "in-effect"));
+  if (granted < 0) throw new Error("Break retry scenario must grant a later request");
+  const last = approvals.at(-1);
+  if (last !== "granted" && last !== "in-effect") {
+    throw new Error(`Break retry scenario must end granted or in effect, ended ${String(last)}`);
   }
 }
 
 /** Verifies that retrying one dial command cannot place a second call. */
 export async function assertDialIdempotency(
-  connection: Pick<BackendConnection, "dial">,
+  connection: Pick<Connection, "dial">,
   request: DialRequest,
 ): Promise<void> {
-  if (!connection.dial) throw new Error("Dial capability requires BackendConnection.dial()");
+  if (!connection.dial) throw new Error("Dial capability requires Connection.dial()");
   const first = await connection.dial(request);
   if (first.commandId !== request.commandId) throw new Error("Dial result id mismatch");
-  if (first.status === "rejected") throw new Error(`Dial was rejected: ${first.failure.code}`);
+  if (first.status === "failed") throw new Error(`Dial failed: ${first.failure.code}`);
   const retry = await connection.dial(request);
   if (retry.commandId !== request.commandId) throw new Error("Retried dial result id mismatch");
-  if (retry.status !== "already-applied") {
-    throw new Error(`Retried dial must return already-applied, received ${retry.status}`);
+  // Each method answers in its own words: a retried dial says already-dialled, not
+  // already-applied, because what it did was dial.
+  if (retry.status !== "already-dialled") {
+    throw new Error(`Retried dial must return already-dialled, received ${retry.status}`);
   }
 }
 
@@ -271,7 +256,7 @@ export async function assertDialIdempotency(
  * an exact match.
  */
 export function assertWrapTimeout(
-  task: Pick<BackendTask, "wrapSeconds">,
+  task: Pick<Task, "completionAllowance">,
   mediaEndedAt: string,
   observedDeadline: string,
   toleranceMs = 1_000,
@@ -279,7 +264,7 @@ export function assertWrapTimeout(
   const ended = Date.parse(mediaEndedAt);
   const deadline = Date.parse(observedDeadline);
   if (Number.isNaN(ended) || Number.isNaN(deadline)) throw new Error("Wrap scenario requires valid ISO-8601 times");
-  const expected = ended + task.wrapSeconds * 1_000;
+  const expected = ended + task.completionAllowance * 1_000;
   if (Math.abs(deadline - expected) > toleranceMs) {
     throw new Error(
       `Wrap deadline mismatch: expected ${new Date(expected).toISOString()} within ${toleranceMs}ms, received ${observedDeadline}`,
@@ -294,14 +279,34 @@ export interface BrowserIsolationScenario {
   browser: TaskBrowser;
 }
 
+/**
+ * The session key one scenario derives, or `undefined` where the browser does not reuse.
+ *
+ * Reuse and the scheme travel together in the contract, so a browser with `reuse: false` has no
+ * key and cannot share with anything.
+ */
+function sessionKeyFor(scenario: BrowserIsolationScenario): string | undefined {
+  const browser = scenario.browser;
+  if (browser.reuse !== true) return undefined;
+  return browserSessionKey({
+    scheme: browser.isolationScheme,
+    providerName: scenario.providerName,
+    taskId: scenario.taskId,
+    taskTypeName: scenario.taskType,
+    tabName: browser.name,
+  });
+}
+
 /** Validates whether two task-browser definitions should share one browser session. */
 export function assertBrowserIsolationAndReuse(
   left: BrowserIsolationScenario,
   right: BrowserIsolationScenario,
   expectedReuse: boolean,
 ): void {
-  const leftKey = browserSessionKey(left);
-  const rightKey = browserSessionKey(right);
+  const leftKey = sessionKeyFor(left);
+  const rightKey = sessionKeyFor(right);
+  // A browser that does not reuse has no session key at all, so two of them never share one.
+  // Treating "no key" as a match would report reuse nobody asked for.
   const actualReuse = leftKey !== undefined && leftKey === rightKey;
   if (actualReuse !== expectedReuse) {
     throw new Error(
@@ -319,7 +324,7 @@ export function assertBrowserIsolationAndReuse(
 export function assertNoBrowserSessionKeyCollisions(scenarios: readonly BrowserIsolationScenario[]): void {
   const byKey = new Map<string, BrowserIsolationScenario>();
   for (const scenario of scenarios) {
-    const key = browserSessionKey(scenario);
+    const key = sessionKeyFor(scenario);
     if (key === undefined) continue;
     const existing = byKey.get(key);
     if (existing) {

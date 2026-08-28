@@ -1,8 +1,8 @@
 import {
-  BackendAuthenticationMethod,
+  AuthenticationMethod,
   OMNI_PROTOCOL_VERSION,
-  type BackendManifest,
-  type BackendTask,
+  type Manifest,
+  type Task,
 } from "./index.js";
 
 export const voiceManifest = {
@@ -10,24 +10,24 @@ export const voiceManifest = {
   displayName: "Voice Provider",
   channel: "voice",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
-  authenticationMethods: [BackendAuthenticationMethod.BrowserSSO],
+  authenticationMethods: ["browser-sso"],
   idleCapabilities: {
-    dial: { enabled: true, destinationPolicy: "any-number" },
+    dial: { destinationPolicy: "any-number" },
   },
-} satisfies BackendManifest<"voice">;
+} satisfies Manifest<"voice">;
 
 export const chatManifest = {
   id: "chat-provider",
   displayName: "Chat Provider",
   channel: "chat",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
-  authenticationMethods: [BackendAuthenticationMethod.Credentials],
+  authenticationMethods: ["credentials"],
   idleCapabilities: {
     contacts: true,
     // @ts-expect-error Dial is available only to a voice backend.
-    dial: { enabled: true, destinationPolicy: "any-number" },
+    dial: { destinationPolicy: "any-number" },
   },
-} satisfies BackendManifest<"chat">;
+} satisfies Manifest<"chat">;
 
 export const emailTask = {
   id: "email-1",
@@ -35,10 +35,10 @@ export const emailTask = {
   channel: "email",
   taskType: "Customer Support",
   capabilities: { browsers: true, dispositions: true },
-  phase: "active",
+  phase: "in-progress",
   browsers: [],
-  wrapSeconds: 60,
-} satisfies BackendTask<"email">;
+  completionMode: "agent-command", completionAllowance: 60,
+} satisfies Task<"email">;
 
 export const invalidEmailTask = {
   id: "email-2",
@@ -49,7 +49,7 @@ export const invalidEmailTask = {
     // @ts-expect-error Hold is not an email task capability.
     hold: true,
   },
-  phase: "active",
+  phase: "in-progress",
   browsers: [],
-  wrapSeconds: 60,
-} satisfies BackendTask<"email">;
+  completionMode: "agent-command", completionAllowance: 60,
+} satisfies Task<"email">;

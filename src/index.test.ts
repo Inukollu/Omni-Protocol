@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { HANDLING_STEPS_WITH_AN_AGENT, TASK_HANDLING_STEPS, handlingStepExpectsAnAgent, IDLE_CAPABILITIES, IDLE_CAPABILITY_UI, BackendAuthenticationMethod, BrowserIsolationScheme, OMNI_FAILURE_CODES, OMNI_SUPPORTED_PROTOCOL_VERSIONS, TASK_CAPABILITIES, TASK_CAPABILITY_UI, defineBackendAdapter, isAllowedBrowserUrl, isHostActuatedCommand, negotiateProtocolVersion, normalizeContactEmail, normalizeContactNumber, OMNI_PROTOCOL_VERSION, taskKey, type BackendEvent, type TaskBrowser, type TaskCommandRequest, browserSessionKey, DEFAULT_TASK_ITEM_LABEL, taskItemName, taskItemPlural } from "./index.js";
+import { HANDLING_STEPS_WITH_A_PERSON, TASK_HANDLING_STEPS, handlingStepExpectsAPerson, IDLE_CAPABILITIES, IDLE_CAPABILITY_UI, AuthenticationMethod, BrowserIsolationScheme, OMNI_FAILURE_CODES, OMNI_SUPPORTED_PROTOCOL_VERSIONS, TASK_CAPABILITIES, TASK_CAPABILITY_UI, defineAdapter, isAllowedBrowserUrl, isHostActuatedCommand, negotiateProtocolVersion, normalizeContactEmail, normalizeContactNumber, OMNI_PROTOCOL_VERSION, taskKey, type ProviderEvent, type TaskBrowser, type TaskCommandRequest, browserSessionKey, DEFAULT_TASK_ITEM_LABEL, taskItemName, taskItemPlural } from "./index.js";
 import { assertCommandIdempotency, exerciseAdapter } from "./testing.js";
 
 describe("Omni backend protocol", () => {
@@ -115,7 +115,7 @@ describe("Omni backend protocol", () => {
   });
 
   it("models rich announcements with accessible fallback and optional expiry", () => {
-    const event: BackendEvent = {
+    const event: ProviderEvent = {
       type: "announcement",
       announcement: {
         id: "service-1",
@@ -151,7 +151,7 @@ describe("Omni backend protocol", () => {
 
   it("exercises a backend-neutral conforming adapter", async () => {
     const disconnect = vi.fn(async () => undefined);
-    const adapter = defineBackendAdapter({
+    const adapter = defineAdapter({
       manifest: {
         id: "test-provider",
         displayName: "Test Provider",
@@ -161,15 +161,15 @@ describe("Omni backend protocol", () => {
         supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
         // Cast because the declarations still carry the previous protocol's enum. The
         // validator is the authority on the wire value until the types are updated.
-        authenticationMethods: ["browser-sso"] as unknown as BackendAuthenticationMethod[],
+        authenticationMethods: ["browser-sso"] as unknown as AuthenticationMethod[],
         idleCapabilities: {},
       },
       async createAuthenticationSession() {
         return {
           state: () => ({ status: "authenticated" as const, identity: { id: "agent-1", displayName: "Agent One" } }),
           subscribe: () => () => undefined,
-          start: async () => ({ status: "rejected" as const, failure: { code: "already-authenticated", message: "Already authenticated", retryable: false } }),
-          complete: async () => ({ status: "rejected" as const, failure: { code: "no-flow", message: "No authentication flow", retryable: false } }),
+          start: async () => ({ status: "failed" as const, failure: { code: "already-authenticated", message: "Already authenticated", retryable: false } }),
+          complete: async () => ({ status: "failed" as const, failure: { code: "no-flow", message: "No authentication flow", retryable: false } }),
           cancelAuthentication: async () => ({ status: "accepted" as const }),
           signOut: async () => ({ status: "accepted" as const }),
           close: async () => undefined,
@@ -182,7 +182,7 @@ describe("Omni backend protocol", () => {
             listener({ id: "event-1", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "provider-status", status: "active" } } as never);
             return () => undefined;
           },
-          requestWork: async demand => (expect(demand.count).toBe(0), { status: "accepted" as const }),
+          setCapacity: async demand => (expect(demand.count).toBe(0), { status: "accepted" as const }),
           requestBreak: async () => ({ status: "accepted" }),
           cancelBreak: async () => ({ status: "accepted" }),
           resume: async () => ({ status: "accepted" }),
@@ -192,16 +192,16 @@ describe("Omni backend protocol", () => {
       },
     });
 
-    const result = await exerciseAdapter(adapter, { agent: { id: "A-1", displayName: "Ada" } });
+    const result = await exerciseAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1" });
     expect(result.events.map(item => item.event)).toEqual([{ type: "provider-status", status: "active" }]);
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
   it("models an authoritative reconnect snapshot", () => {
-    const event: BackendEvent = {
+    const event: ProviderEvent = {
       type: "snapshot",
       reason: "reconnected",
-      snapshot: { status: "active", break: { approval: "starting-after-task", accepting: true }, tasks: [] },
+      snapshot: { status: "active", sessionId: "session-1", sessionCapabilities: {}, break: { approval: "starting-after-task", accepting: true }, tasks: [] },
     };
     expect(event.snapshot.break.approval).toBe("starting-after-task");
   });
@@ -251,16 +251,16 @@ describe("isHostActuatedCommand", () => {
   });
 });
 
-describe("handlingStepExpectsAnAgent", () => {
+describe("handlingStepExpectsAPerson", () => {
   it("says which steps have a participant, so an absent agent can be read correctly", () => {
     // queued is the only step nobody takes part in: an absent agent there is not a gap.
-    expect(handlingStepExpectsAnAgent("queued")).toBe(false);
+    expect(handlingStepExpectsAPerson("queued")).toBe(false);
     // The control that matters: every other step does expect one, so an absent agent on any
     // of them means "handled, could not attribute" rather than "nobody involved".
     for (const step of TASK_HANDLING_STEPS.filter(s => s !== "queued")) {
-      expect(handlingStepExpectsAnAgent(step)).toBe(true);
+      expect(handlingStepExpectsAPerson(step)).toBe(true);
     }
-    expect(HANDLING_STEPS_WITH_AN_AGENT).not.toContain("queued");
-    expect(HANDLING_STEPS_WITH_AN_AGENT).toHaveLength(TASK_HANDLING_STEPS.length - 1);
+    expect(HANDLING_STEPS_WITH_A_PERSON).not.toContain("queued");
+    expect(HANDLING_STEPS_WITH_A_PERSON).toHaveLength(TASK_HANDLING_STEPS.length - 1);
   });
 });

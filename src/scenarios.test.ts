@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import {  BROWSER_ISOLATION_SCHEMES,
+ describe, expect, it, vi } from "vitest";
 import {
   BrowserIsolationScheme,
   browserSessionKey,
-  type BackendEventEnvelope,
-  type BackendSnapshot,
-  type BackendTask,
+  type ProviderEventEnvelope,
+  type Snapshot,
+  type Task,
   type DialRequest,
 } from "./index.js";
 import {
@@ -16,25 +17,24 @@ import {
   assertNoBrowserSessionKeyCollisions,
   assertReconnectWithMissedAssignments,
   assertWrapTimeout,
-  findSequenceGaps,
 } from "./testing.js";
 
 const voiceTask = {
   id: "call-42",
   title: "Customer call",
   channel: "voice",
-  taskType: "Customer Support",
+  taskTypeName: "Customer Support",
   capabilities: { browsers: true, hold: true },
-  phase: "active",
+  phase: "in-progress",
   browsers: [],
-  wrapSeconds: 60,
-} satisfies BackendTask<"voice">;
+  completionMode: "agent-command", completionAllowance: 60,
+} satisfies Task<"voice">;
 
 const statusEvent = {
-  id: "event-1",
+  id: "event-1", sessionId: "session-1",
   occurredAt: "2026-08-21T01:00:00Z",
   event: { type: "provider-status", status: "active" },
-} as const satisfies BackendEventEnvelope<"voice">;
+} as const satisfies ProviderEventEnvelope<"voice">;
 
 describe("assertAuthenticationRestoreAndExpiry", () => {
   it("accepts a restored session that refreshes and then expires", () => {
@@ -79,50 +79,31 @@ describe("assertDuplicateEventDelivery", () => {
   });
 
   it("rejects a reused id whose payload changed", () => {
-    const mutated = { ...statusEvent, event: { type: "provider-status", status: "error" } } as BackendEventEnvelope<"voice">;
+    const mutated = { ...statusEvent, event: { type: "provider-status", status: "error" } } as ProviderEventEnvelope<"voice">;
     expect(() => assertDuplicateEventDelivery([statusEvent, mutated])).toThrow(/changed its payload/);
   });
 });
 
-describe("findSequenceGaps", () => {
-  const at = (id: string, sequence: number) => ({ ...statusEvent, id, sequence }) as BackendEventEnvelope<"voice">;
-
-  it("finds no gap in a contiguous stream", () => {
-    expect(findSequenceGaps([at("a", 1), at("b", 2), at("c", 3)])).toEqual([]);
-  });
-
-  it("ignores redelivery of an event it already counted", () => {
-    expect(findSequenceGaps([at("a", 1), at("b", 2), at("a", 1), at("c", 3)])).toEqual([]);
-  });
-
-  it("reports the gap left by a dropped event", () => {
-    expect(findSequenceGaps([at("a", 1), at("c", 4)])).toEqual([{ after: 1, next: 4 }]);
-  });
-
-  it("rejects redelivery that changed its sequence", () => {
-    expect(() => findSequenceGaps([at("a", 1), at("a", 9)])).toThrow(/changed its sequence/);
-  });
-});
 
 describe("assertReconnectWithMissedAssignments", () => {
-  const before: BackendSnapshot<"voice"> = { status: "active", break: { approval: "not-requested", accepting: true }, tasks: [] };
+  const before: Snapshot<"voice"> = { status: "active", sessionId: "session-1", sessionCapabilities: {}, break: { approval: "not-requested", accepting: true }, tasks: [] };
   const reconnect = {
-    id: "event-2",
+    id: "event-2", sessionId: "session-1",
     occurredAt: "2026-08-21T01:01:00Z",
-    event: { type: "snapshot", reason: "reconnected", snapshot: { status: "active", break: { approval: "not-requested", accepting: true }, tasks: [voiceTask] } },
-  } as const satisfies BackendEventEnvelope<"voice">;
+    event: { type: "snapshot", reason: "reconnected", snapshot: { status: "active", sessionId: "session-1", sessionCapabilities: {}, break: { approval: "not-requested", accepting: true }, tasks: [voiceTask] } },
+  } as const satisfies ProviderEventEnvelope<"voice">;
 
   it("accepts a reconnect snapshot carrying the missed assignment", () => {
     expect(() => assertReconnectWithMissedAssignments(before, reconnect, [voiceTask.id])).not.toThrow();
   });
 
   it("rejects a reconnect snapshot that lost the missed assignment", () => {
-    const empty = { ...reconnect, event: { ...reconnect.event, snapshot: before } } as BackendEventEnvelope<"voice">;
+    const empty = { ...reconnect, event: { ...reconnect.event, snapshot: before } } as ProviderEventEnvelope<"voice">;
     expect(() => assertReconnectWithMissedAssignments(before, empty, [voiceTask.id])).toThrow(/missing task/);
   });
 
   it("rejects a task that was already present and therefore never missed", () => {
-    const populated: BackendSnapshot<"voice"> = { ...before, tasks: [voiceTask] };
+    const populated: Snapshot<"voice"> = { ...before, tasks: [voiceTask] };
     expect(() => assertReconnectWithMissedAssignments(populated, reconnect, [voiceTask.id])).toThrow(/was not missed/);
   });
 
@@ -132,20 +113,28 @@ describe("assertReconnectWithMissedAssignments", () => {
 });
 
 describe("assertDeniedAndRetriedBreak", () => {
-  it("accepts a denial that is retried and later approved", () => {
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "denied", "awaiting-decision", "approved"])).not.toThrow();
+  it("accepts a refusal that returns to not-requested and a later grant", () => {
+    // There is no `denied` approval: a refusal leaves nothing pending, because a request
+    // nobody is coming to decide is worse than none.
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "awaiting-decision", "granted"])).not.toThrow();
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "awaiting-decision", "in-effect"])).not.toThrow();
   });
 
-  it("rejects a sequence that was never denied", () => {
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "approved"])).toThrow(/requires an initial denial/);
+  it("rejects a sequence that was never asked for", () => {
+    expect(() => assertDeniedAndRetriedBreak(["granted"])).toThrow(/requires an initial request/);
   });
 
-  it("rejects an approval that came before the denial", () => {
-    expect(() => assertDeniedAndRetriedBreak(["approved", "denied"])).toThrow(/must approve after denial/);
+  it("rejects a refusal that leaves the request pending", () => {
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "granted"])).toThrow(/leaving nothing pending/);
   });
 
-  it("rejects a sequence that ends denied again", () => {
-    expect(() => assertDeniedAndRetriedBreak(["denied", "approved", "denied"])).toThrow(/must end approved/);
+  it("rejects a sequence that never grants after the refusal", () => {
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested"])).toThrow(/must grant a later request/);
+  });
+
+  it("rejects a sequence that ends back at not-requested", () => {
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "granted", "not-requested"]))
+      .toThrow(/must end granted or in effect/);
   });
 });
 
@@ -158,7 +147,7 @@ describe("assertDialIdempotency", () => {
       return { commandId: request.commandId, status };
     });
   };
-  const request: DialRequest = { commandId: "dial-1", destination: "+14155550100", source: "manual" };
+  const request: DialRequest = { commandId: "dial-1", destination: "+14155550100" };
 
   it("accepts a retry that places no second call", async () => {
     const dial = makeDial("already-applied");
@@ -171,7 +160,7 @@ describe("assertDialIdempotency", () => {
   });
 
   it("rejects a backend that enables dial without implementing it", async () => {
-    await expect(assertDialIdempotency({}, request)).rejects.toThrow(/requires BackendConnection.dial/);
+    await expect(assertDialIdempotency({}, request)).rejects.toThrow(/requires Connection.dial/);
   });
 });
 
@@ -204,30 +193,30 @@ describe("browser isolation", () => {
     purpose: "Customer record",
     url: "https://crm.example.test/customer/42",
     reuse: true,
-    isolationScheme: BrowserIsolationScheme.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME,
+    isolationScheme: BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME,
   } as const;
 
   it("shares one session across tasks under a task-type scheme", () => {
     expect(() => assertBrowserIsolationAndReuse(
-      { providerName: "VoiceCo", taskId: "call-1", taskType: "Support", browser },
-      { providerName: "VoiceCo", taskId: "call-2", taskType: "Support", browser: { ...browser, id: "crm-copy" } },
+      { providerName: "VoiceCo", taskId: "call-1", taskTypeName: "Support", browser },
+      { providerName: "VoiceCo", taskId: "call-2", taskTypeName: "Support", browser: { ...browser, id: "crm-copy" } },
       true,
     )).not.toThrow();
   });
 
   it("never shares a session when reuse is false", () => {
     expect(() => assertBrowserIsolationAndReuse(
-      { providerName: "VoiceCo", taskId: "call-1", taskType: "Support", browser },
-      { providerName: "VoiceCo", taskId: "call-1", taskType: "Support", browser: { ...browser, reuse: false, isolationScheme: undefined } },
+      { providerName: "VoiceCo", taskId: "call-1", taskTypeName: "Support", browser },
+      { providerName: "VoiceCo", taskId: "call-1", taskTypeName: "Support", browser: { ...browser, reuse: false, isolationScheme: undefined } },
       false,
     )).not.toThrow();
-    expect(browserSessionKey({ providerName: "VoiceCo", taskId: "c", taskType: "Support", browser: { ...browser, reuse: false, isolationScheme: undefined } })).toBeUndefined();
+    expect(browserSessionKey({ providerName: "VoiceCo", taskId: "c", taskTypeName: "Support", browser: { ...browser, reuse: false, isolationScheme: undefined } })).toBeUndefined();
   });
 
   it("reports a mismatch between expected and derived reuse", () => {
     expect(() => assertBrowserIsolationAndReuse(
-      { providerName: "VoiceCo", taskId: "call-1", taskType: "Support", browser },
-      { providerName: "OtherCo", taskId: "call-1", taskType: "Support", browser },
+      { providerName: "VoiceCo", taskId: "call-1", taskTypeName: "Support", browser },
+      { providerName: "OtherCo", taskId: "call-1", taskTypeName: "Support", browser },
       true,
     )).toThrow(/Browser reuse mismatch/);
   });
@@ -235,8 +224,8 @@ describe("browser isolation", () => {
   it("does not let a value containing the separator forge another key", () => {
     // `encodeURIComponent` leaves `.` unescaped, so joining raw parts once made
     // provider "Acme.Voice" + type "Support" collide with "Acme" + "Voice.Support".
-    const left = browserSessionKey({ providerName: "Acme.Voice", taskId: "t1", taskType: "Support", browser });
-    const right = browserSessionKey({ providerName: "Acme", taskId: "t1", taskType: "Voice.Support", browser });
+    const left = browserSessionKey({ providerName: "Acme.Voice", taskId: "t1", taskTypeName: "Support", browser });
+    const right = browserSessionKey({ providerName: "Acme", taskId: "t1", taskTypeName: "Voice.Support", browser });
     expect(left).not.toBe(right);
   });
 
@@ -251,8 +240,8 @@ describe("browser isolation", () => {
 
   it("detects a genuine collision when one exists", () => {
     expect(() => assertNoBrowserSessionKeyCollisions([
-      { providerName: "VoiceCo", taskId: "call-1", taskType: "Support", browser },
-      { providerName: "VoiceCo", taskId: "call-2", taskType: "Support", browser },
+      { providerName: "VoiceCo", taskId: "call-1", taskTypeName: "Support", browser },
+      { providerName: "VoiceCo", taskId: "call-2", taskTypeName: "Support", browser },
     ])).toThrow(/collision/);
   });
 });

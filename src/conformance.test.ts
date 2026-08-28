@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  BackendAuthenticationMethod,
+  AuthenticationMethod,
   BrowserIsolationScheme,
   OMNI_PROTOCOL_VERSION,
-  type BackendAdapter,
-  type BackendConnection,
-  type BackendEventEnvelope,
-  type BackendManifest,
-  type BackendSnapshot,
+  type Adapter,
+  type Connection,
+  type ProviderEventEnvelope,
+  type Manifest,
+  type Snapshot,
 } from "./index.js";
 import { ProtocolConformanceError, exerciseAdapter } from "./testing.js";
 
-const context = { agent: { id: "A-1", displayName: "Ada" } };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1" };
 
 // The approved protocol's shapes. Declared as `unknown` rather than `satisfies` because the
 // declarations in index.ts still describe the previous protocol -- the validators are the
@@ -68,8 +68,8 @@ const conformingSnapshot: Record<string, unknown> = {
 interface AdapterOverrides {
   manifest?: unknown;
   snapshot?: unknown;
-  emit?: (listener: (envelope: BackendEventEnvelope<"voice">) => void) => void;
-  connection?: Partial<BackendConnection<"voice">>;
+  emit?: (listener: (envelope: ProviderEventEnvelope<"voice">) => void) => void;
+  connection?: Partial<Connection<"voice">>;
   authenticated?: boolean;
   disconnect?: () => Promise<void>;
   close?: () => Promise<void>;
@@ -80,15 +80,15 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
   const close = vi.fn(overrides.close ?? (async () => undefined));
   const unsubscribe = vi.fn(() => undefined);
   const adapter = {
-    manifest: (overrides.manifest ?? conformingManifest) as BackendManifest<"voice">,
+    manifest: (overrides.manifest ?? conformingManifest) as Manifest<"voice">,
     async createAuthenticationSession() {
       return {
         state: () => overrides.authenticated === false
           ? { status: "signed-out" as const }
           : { status: "authenticated" as const, identity: { id: "1042", displayName: "Asha Rao" }, expiresAt: "2026-08-21T12:00:00Z" },
         subscribe: () => () => undefined,
-        start: async () => ({ status: "rejected" as const, failure: { code: "already-authenticated", message: "Already authenticated", retryable: false } }),
-        complete: async () => ({ status: "rejected" as const, failure: { code: "no-flow", message: "No authentication flow", retryable: false } }),
+        start: async () => ({ status: "failed" as const, failure: { code: "already-authenticated", message: "Already authenticated", retryable: false } }),
+        complete: async () => ({ status: "failed" as const, failure: { code: "no-flow", message: "No authentication flow", retryable: false } }),
         cancelAuthentication: async () => ({ status: "accepted" as const }),
         signOut: async () => ({ status: "accepted" as const }),
         close,
@@ -100,13 +100,13 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
           // Give any queued asynchronous emission a chance to land before shutdown.
           await Promise.resolve();
           await Promise.resolve();
-          return (overrides.snapshot ?? conformingSnapshot) as BackendSnapshot<"voice">;
+          return (overrides.snapshot ?? conformingSnapshot) as Snapshot<"voice">;
         },
-        subscribe: (listener: (envelope: BackendEventEnvelope<"voice">) => void) => {
+        subscribe: (listener: (envelope: ProviderEventEnvelope<"voice">) => void) => {
           overrides.emit?.(listener);
           return unsubscribe;
         },
-        requestWork: async () => ({ status: "accepted" as const }),
+        setCapacity: async () => ({ status: "accepted" as const }),
         requestBreak: async () => ({ status: "accepted" as const }),
         cancelBreak: async () => ({ status: "accepted" as const }),
         resume: async () => ({ status: "accepted" as const }),
@@ -114,13 +114,13 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         execute: async (request: { commandId: string }) => ({ commandId: request.commandId, status: "applied" as const }),
         disconnect,
         ...overrides.connection,
-      } as BackendConnection<"voice">;
+      } as Connection<"voice">;
     },
-  } as BackendAdapter<"voice">;
+  } as Adapter<"voice">;
   return { adapter, disconnect, close, unsubscribe };
 }
 
-const badEnvelope = { id: "", sessionId: "session-1", occurredAt: "not-a-time", event: { type: "provider-status", status: "active" } } as unknown as BackendEventEnvelope<"voice">;
+const badEnvelope = { id: "", sessionId: "session-1", occurredAt: "not-a-time", event: { type: "provider-status", status: "active" } } as unknown as ProviderEventEnvelope<"voice">;
 
 describe("exerciseAdapter", () => {
   it("accepts a rich conforming adapter and releases its resources", async () => {
@@ -135,7 +135,7 @@ describe("exerciseAdapter", () => {
   });
 
   it("collects delivered events and deduplicates repeated ids", async () => {
-    const good = { id: "event-1", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "provider-status", status: "active" } } as BackendEventEnvelope<"voice">;
+    const good = { id: "event-1", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "provider-status", status: "active" } } as ProviderEventEnvelope<"voice">;
     const { adapter } = makeAdapter({ emit: listener => { listener(good); listener(good); } });
     const result = await exerciseAdapter(adapter, context);
     expect(result.events).toEqual([good]);
@@ -172,10 +172,10 @@ describe("exerciseAdapter", () => {
   });
 
   it("catches a bad event from a synchronous emitter without unwinding the provider", async () => {
-    const emit = vi.fn((listener: (envelope: BackendEventEnvelope<"voice">) => void) => {
+    const emit = vi.fn((listener: (envelope: ProviderEventEnvelope<"voice">) => void) => {
       listener(badEnvelope);
       // Reached only if the listener did not throw back into provider dispatch.
-      listener({ id: "event-2", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "provider-status", status: "active" } } as BackendEventEnvelope<"voice">);
+      listener({ id: "event-2", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "provider-status", status: "active" } } as ProviderEventEnvelope<"voice">);
     });
     const { adapter } = makeAdapter({ emit });
     const result = await exerciseAdapter(adapter, context, { collectOnly: true });
@@ -202,9 +202,9 @@ describe("exerciseAdapter", () => {
 
   it("flags a backend that rejects a zero-capacity signal", async () => {
     const { adapter } = makeAdapter({
-      connection: { requestWork: async () => ({ status: "rejected", failure: { code: "omni.unavailable", message: "down", retryable: true } }) },
+      connection: { setCapacity: async () => ({ status: "failed", failure: { code: "omni.unavailable", message: "down", retryable: true } }) },
     });
     const result = await exerciseAdapter(adapter, context, { collectOnly: true });
-    expect(result.violations.map(violation => violation.rule)).toContain("connection.requestWork.rejected");
+    expect(result.violations.map(violation => violation.rule)).toContain("connection.setCapacity.rejected");
   });
 });
