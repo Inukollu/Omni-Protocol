@@ -25,6 +25,10 @@ concurrency:
 jobs:
   publish:
     name: Publish to npmjs
+    # Only the repository npm trusts. A fork that mirrors main would otherwise run this too, fail
+    # at publish, and leave a version-bump commit on its own main on the way -- which is exactly
+    # what happened to the first mirror.
+    if: github.repository == 'Inukollu/Omni-Protocol'
     # npm trusted publishing currently requires a GitHub-hosted runner.
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -66,6 +70,11 @@ jobs:
       # Keep an intentionally selected unpublished version (for example, a minor bump). When the
       # source version already exists, allocate the next free patch version. Query failures other
       # than a genuine first-publish 404 stop the release.
+      #
+      # Two sources of "taken", because the registry's version list lags a publish by up to a
+      # minute or so: two merges a minute apart once made this step allocate 0.1.2 twice, and the
+      # second publish failed with E409. The release tags this workflow creates are in this
+      # repository and read back at once, so a version with a v-tag is taken whatever npm says yet.
       - name: Allocate the release version
         id: version
         run: |
@@ -83,24 +92,39 @@ jobs:
             console.error(view.stderr || view.stdout);
             process.exit(1);
           }
+          const tags = spawnSync("git", ["ls-remote", "--tags", "--refs", "origin"], { encoding: "utf8" });
+          if (tags.status !== 0) {
+            console.error(tags.stderr);
+            process.exit(1);
+          }
+          const released = tags.stdout.split("\n")
+            .map(line => line.split("refs/tags/")[1])
+            .filter(tag => tag && /^v\d+\.\d+\.\d+$/.test(tag))
+            .map(tag => tag.slice(1));
+          const taken = new Set([...versions, ...released]);
 
           const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(manifest.version);
           if (!match) throw new Error(`Automatic releases require a stable semver version; got ${manifest.version}`);
-          let version = manifest.version;
-          while (versions.includes(version)) {
+          const source = manifest.version;
+          let version = source;
+          while (taken.has(version)) {
             version = `${match[1]}.${match[2]}.${Number(version.split(".")[2]) + 1}`;
           }
           manifest.version = version;
           fs.writeFileSync("package.json", `${JSON.stringify(manifest, null, 2)}\n`);
-          console.error(`${name}@${version}: allocated from ${versions.length} published version${versions.length === 1 ? "" : "s"}`);
+          console.error(`${name}@${version}: allocated from ${versions.length} published version${versions.length === 1 ? "" : "s"} and ${released.length} release tag${released.length === 1 ? "" : "s"}`);
           console.log(`name=${name}`);
           console.log(`version=${version}`);
+          console.log(`changed=${version !== source}`);
           JS
 
       # A GITHUB_TOKEN-authored commit does not start another workflow run, so recording the
-      # allocated version cannot recurse into a second release.
+      # allocated version cannot recurse into a second release. Skipped when main already says
+      # this version: the API commits identical content as a new, empty commit, and one of those
+      # landed on main when a lagging registry allocated the same version twice.
       - name: Record the release version on main
         id: commit
+        if: steps.version.outputs.changed == 'true'
         uses: actions/github-script@v7
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -149,7 +173,7 @@ jobs:
             const release = await github.rest.repos.createRelease({
               ...context.repo,
               tag_name: tag,
-              target_commitish: "${{ steps.commit.outputs.sha }}",
+              target_commitish: "${{ steps.commit.outputs.sha || github.sha }}",
               name: `${NAME}@${VERSION}`,
               body: `https://www.npmjs.com/package/${NAME}/v/${VERSION}`,
               generate_release_notes: true,
