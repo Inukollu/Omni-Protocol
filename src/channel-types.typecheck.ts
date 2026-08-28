@@ -115,3 +115,15 @@ export const overdeterminedCompletion: TaskCommand<"voice"> = { type: "transfer"
 export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { consultTransfer: true }, phase: "paused", consultation: { destination: "+14155550111" } } satisfies Task<"voice">;
 // @ts-expect-error Email has nobody to consult.
 export const consultingEmailTask: Task<"email"> = { ...emailTask, id: "email-6", consultation: { destination: "+14155550111" } };
+
+// Consulting a lead: the agent asks and withdraws; the lead takes over or leaves. Voice only.
+export const askLead: TaskCommand<"voice"> = { type: "lead", action: "request", note: "Refund dispute" };
+export const withdrawLead: TaskCommand<"voice"> = { type: "lead", action: "cancel" };
+export const leadTakesOver: TaskCommand<"voice"> = { type: "lead", action: "take-over" };
+export const leadLeaves: TaskCommand<"voice"> = { type: "lead", action: "leave" };
+// @ts-expect-error A chat has no call for a lead to join.
+export const chatAskLead: TaskCommand<"chat"> = { type: "lead", action: "request" };
+export const leadRequestedTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: { consultLead: true }, lead: { status: "requested", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
+export const leadsOwnTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: {}, assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } } satisfies Task<"voice">;
+// @ts-expect-error An email task cannot be a joined call.
+export const emailAssisting: Task<"email"> = { ...emailTask, id: "email-7", assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } };

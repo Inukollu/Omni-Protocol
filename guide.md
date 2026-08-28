@@ -338,6 +338,7 @@ type TaskCapabilities<C extends Channel = Channel> =
         callback?: true;
         blindTransfer?: true | DestinationDirectory;
         consultTransfer?: true | DestinationDirectory;
+        consultLead?: true;
         conference?: true | DestinationDirectory;
         recording?: true;
       }
@@ -428,6 +429,19 @@ type TaskConsultation = {
   since?: IsoTimestamp;
 };
 
+type TaskLead = {
+  status: "requested" | "joined";
+  leadId?: UserId;
+  note?: string;
+  since: IsoTimestamp;
+};
+
+type TaskAssisting = {
+  memberId: UserId;
+  note?: string;
+  since: IsoTimestamp;
+};
+
 type Task<C extends Channel = Channel> = {
   id: TaskId;
   title: string;
@@ -440,7 +454,11 @@ type Task<C extends Channel = Channel> = {
   reference?: string;
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingStep[];
-} & TaskCompletion & (C extends "voice" ? { consultation?: TaskConsultation } : { consultation?: never });
+} & TaskCompletion & (
+  C extends "voice"
+    ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting }
+    : { consultation?: never; lead?: never; assisting?: never }
+);
 
 type AcceptanceMode =
   | "no-preference"
@@ -452,6 +470,7 @@ type TaskOutcome =
   | { type: "transferred"; destination?: string }
   | { type: "cancelled"; reason?: string }
   | { type: "expired"; phase: "pending" | "confirmed" | "preparing" }
+  | { type: "left" }
   | { type: "failed"; failure: ProtocolFailure };
 ```
 
@@ -469,6 +488,7 @@ const TASK_COMMAND_NAMES = {
     "disconnect",
     "callback",
     "transfer",
+    "lead",
     "conference",
     "recording",
     "complete",
@@ -495,6 +515,10 @@ type VoiceTaskCommand =
   | { type: "transfer"; action: "consult"; destination: string }
   | { type: "transfer"; action: "complete" }
   | { type: "transfer"; action: "cancel" }
+  | { type: "lead"; action: "request"; note?: string }
+  | { type: "lead"; action: "cancel" }
+  | { type: "lead"; action: "take-over" }
+  | { type: "lead"; action: "leave" }
   | { type: "conference"; participant: string; action: "add" | "remove" }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);
@@ -577,10 +601,24 @@ type TeamMember = {
   break?: BreakApproval;
 };
 
+type LeadRequest = {
+  id: string;
+  memberId: UserId;
+  taskId: TaskId;
+  note?: string;
+  since: IsoTimestamp;
+};
+
 type TeamRoster = {
   members: TeamMember[];
   breakControl?: true;
+  consultControl?: true;
+  requests?: LeadRequest[];
 };
+
+type TeamConsultCommand =
+  | { type: "join"; requestId: string }
+  | { type: "decline"; requestId: string; reason?: string };
 
 type TeamBreakCommand =
   | { type: "decide"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
@@ -1437,6 +1475,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `cancelBreak(requestId)` | `sessionCapabilities.breaks` is declared. |
 | `endBreak()` | `sessionCapabilities.breaks` is declared. |
 | `executeTeamBreak(command)` | The adapter publishes a `TeamRoster` carrying `breakControl`. |
+| `executeTeamConsult(command)` | The adapter publishes a `TeamRoster` carrying `consultControl`. |
 | `openMedia(request)` | The manifest channel is `voice`. Every voice task's audio lands in Omni, so there is no voice adapter that does not implement it. |
 
 **The four break methods stand or fall together.** Declaring `sessionCapabilities.breaks` and then
@@ -1635,6 +1674,8 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `handlingHistory` | Optional ordered handling history for this currently open task. It is live task data, not a permanent archive. |
 | `consultation` | Voice only. Present while the agent is consulting a transfer destination: who is being consulted, and since when where the provider records it. Its presence is what makes `transfer` `complete` and `cancel` issuable. See **Consult transfer**. |
+| `lead` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Consulting a lead**. |
+| `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead` `take-over` and `leave` issuable. See **Consulting a lead**. |
 
 `TaskAttribute` entries carry typed detail alongside the task:
 
@@ -1961,6 +2002,7 @@ const taskCapabilities = {
 | `callback` | Completing-task button: Call back | Omni may have the provider call the task's party back while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance disposes at provider end. See **Calling back during completion**. |
 | `blindTransfer` | Secondary menu item: Blind transfer | Omni may transfer the caller directly to a destination. |
 | `consultTransfer` | Secondary menu item: Consult transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Consult transfer**. |
+| `consultLead` | Secondary menu item: Consult lead | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.lead`. See **Consulting a lead**. |
 | `conference` | Secondary button: Conference | Omni may add or remove participants from the active call. |
 | `recording` | Overflow menu item: Recording | Omni may expose start, pause, resume, and stop recording controls. |
 | `dispositions` | Primary button: Complete | Omni may request task disposal with a provider disposition and notes. |
@@ -2494,6 +2536,8 @@ A lead who also takes calls sees their team on the idle dashboard. `Snapshot.tea
 | --- | --- |
 | `members` | Every member of this lead's team, whatever their state. `[]` says the lead has a team with nobody in it; omitting the roster says something else entirely — see **Its presence is the permission** below. |
 | `breakControl` | Present when this lead decides their team's breaks, absent when they do not. |
+| `consultControl` | Present when this lead may join a member's call on request, absent when they may not. |
+| `requests` | The members currently asking this lead to join a call, each with the task and the note. Omitted when the lead may not be asked; `[]` when nobody is asking. See **Consulting a lead**. |
 
 | `TeamMember` field | Contract |
 | --- | --- |
@@ -2550,6 +2594,70 @@ on their own `BreakState`, or they are stopped from working with no way to see w
 
 What happens when no lead is online — auto-approving, for instance — is the provider's decision and is
 never expressed here.
+
+### Consulting a lead
+
+An agent on a call may ask a lead to join it -- a dispute that needs approval, a customer who
+asks for a manager, a moment the agent wants a second pair of ears. The capability is
+`consultLead` on the task; the lead's side is the roster, which is already the lead's view of the
+team, and a second lead method beside `executeTeamBreak`:
+
+```ts
+executeTeamConsult({ commandId, command: TeamConsultCommand }): Promise<TeamCommandResult>
+```
+
+Required when the roster carries `consultControl`, and gated by it exactly as `executeTeamBreak`
+is by `breakControl`. The flow, in order:
+
+```ts
+// 1. The agent asks, with a small note. Their task carries `lead` from here on.
+execute({ commandId, taskId: "call-42", command: { type: "lead", action: "request", note: "Refund dispute, needs approval" } })
+//    task.lead = { status: "requested", note: "Refund dispute, needs approval", since }
+
+// 2. Every lead entitled to it sees the request on their roster.
+//    team-updated: requests: [{ id: "req-7", memberId: "A-1", taskId: "call-42", note, since }]
+
+// 3. A lead joins, or declines.
+executeTeamConsult({ commandId, command: { type: "join", requestId: "req-7" } })
+executeTeamConsult({ commandId, command: { type: "decline", requestId: "req-7", reason: "In a call" } })
+```
+
+**On `join` the provider bridges three parties and the lead is on a task of their own**, on the
+same task id, arriving on the lead's connection as `task-offered` with `require-automatic-acceptance`
+-- the way a call an agent placed themselves arrives -- and carrying `assisting`. The agent's task
+moves to `lead: { status: "joined", leadId }`. A join is the lead's own act, so capacity does not
+trigger it; but from then on it is an outstanding task the provider counts against the lead's
+stated ceiling like any other, nothing more is allocated to the lead while it stands, and a
+provider whose lead is already at the ceiling answers the join `failed`.
+
+**On `decline`, or a request the agent withdraws with `{ type: "lead", action: "cancel" }`, the
+provider clears `lead` from the agent's task** and drops the request from every roster. Nothing
+else changes; the agent is still on the call.
+
+The lead then has two commands on their copy, gated by `assisting` being present, and a third
+choice that is no command at all:
+
+| The lead | The agent's task | The lead's task |
+| --- | --- | --- |
+| `{ type: "lead", action: "take-over" }` | `task-ended` with `{ type: "transferred", destination: leadId }`, straight from `in-progress`: **no `completing` window**, the agent is idle at once | Continues alone, and ends as any call does |
+| `{ type: "lead", action: "leave" }` | Continues; `lead` is cleared | `task-ended` with `{ type: "left" }` -- the call goes on without them |
+| Stays until the customer hangs up | `task-media-ended`, `completing`, its own disposition | The same, independently: **both have the disposal window** |
+
+`left` is the one outcome that ends a task without ending the call: this agent left a call that
+continues without them. It reads as neither a completion nor a cancellation, because it is
+neither.
+
+```ts
+const consultLeadCapable = {
+  channel: "voice",
+  capabilities: { hold: true, consultLead: true, dispositions: true },
+  phase: "in-progress",
+  lead: { status: "joined", leadId: "L-9", note: "Refund dispute, needs approval", since: "2026-08-21T09:04:00Z" },
+} satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "lead">;
+```
+
+Lead and member alike are `UserId`s of this provider, so an adapter publishing them implements
+`describeUsers()`; names never travel on a task or a roster.
 
 ### A member waiting for a break
 
@@ -2713,6 +2821,8 @@ declared:
 | `callback` | The `callback` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | `transfer` with `action: "consult"` | The `consultTransfer` capability. Blind `transfer` is gated by `blindTransfer`; the two are declared and offered separately. |
 | `transfer` with `action: "complete"` or `"cancel"` | A consultation in progress -- `Task.consultation` present. Without one there is nothing to complete or cancel, and a provider that receives either answers `failed`. |
+| `lead` with `action: "request"` or `"cancel"` | The `consultLead` capability. `cancel` needs a request standing -- `Task.lead` with status `requested`. |
+| `lead` with `action: "take-over"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |
 | Everything else | Its own named capability. |
 
 Declining or rejecting a pending offer ends it without accepting or completing it. The provider
@@ -2892,6 +3002,9 @@ Every outcome ends the task for this agent. On `task-ended`, Omni:
 - stops task timers and media;
 - releases task-scoped resources; and
 - selects another task or returns to the idle workspace.
+
+A `left` outcome ends the task for this agent alone: the call continues without them, as it does
+when a lead who joined it leaves -- see **Consulting a lead**.
 
 A successful `complete` or `transfer` command does not clear the task. Omni waits for `task-ended`.
 The `task-media-ended` event and the `completing` phase are likewise non-terminal. A replacement

@@ -35,6 +35,7 @@ import {
   type ProviderEvent,
   type SessionCapabilities,
   type TaskCapabilities,
+  type TaskLead,
   type TaskOutcome,
   type TaskPhase,
   type TeamMemberAvailability,
@@ -118,7 +119,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
     browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
-    agentDisconnect: true, callback: true, blindTransfer: true, consultTransfer: true, conference: true, recording: true,
+    agentDisconnect: true, callback: true, blindTransfer: true, consultTransfer: true, consultLead: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, reject: true, hold: true }),
   email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, reject: true }),
@@ -604,6 +605,41 @@ function validateConsultation(value: unknown, channel: string, path: string, int
   if (value.since !== undefined) into.timestamp(value.since, "task.consultation.since", `${path}.since`);
 }
 
+const LEAD_STATUSES = membersOf<TaskLead["status"]>({ requested: true, joined: true });
+
+/** The agent's request for a lead. Voice only; `joined` names the lead, `requested` cannot. */
+function validateLead(value: unknown, channel: string, path: string, into: Collector): void {
+  if (value === undefined) return;
+  if (!into.require(channel === "voice", "task.lead.channel", path, `a ${channel} task cannot carry a lead request`)) return;
+  if (!isPlainObject(value)) {
+    into.add("task.lead.shape", path, "lead must be an object when present");
+    return;
+  }
+  if (into.oneOf(value.status, LEAD_STATUSES, "task.lead.status", `${path}.status`)) {
+    if (value.status === "joined") {
+      into.require(isUserId(value.leadId), "task.lead.leadId", `${path}.leadId`, "a joined lead is named by their user id");
+    } else {
+      into.require(value.leadId === undefined, "task.lead.leadId.unexpected", `${path}.leadId`,
+        "nobody has joined a requested lead, so there is no lead to name");
+    }
+  }
+  if (value.note !== undefined) into.filled(value.note, "task.lead.note", `${path}.note`, "a note must not be empty when present");
+  into.timestamp(value.since, "task.lead.since", `${path}.since`);
+}
+
+/** The lead's own task for a call they joined. Voice only. */
+function validateAssisting(value: unknown, channel: string, path: string, into: Collector): void {
+  if (value === undefined) return;
+  if (!into.require(channel === "voice", "task.assisting.channel", path, `a ${channel} task cannot be a joined call`)) return;
+  if (!isPlainObject(value)) {
+    into.add("task.assisting.shape", path, "assisting must be an object when present");
+    return;
+  }
+  into.require(isUserId(value.memberId), "task.assisting.memberId", `${path}.memberId`, "a joined call names the member who asked");
+  if (value.note !== undefined) into.filled(value.note, "task.assisting.note", `${path}.note`, "a note must not be empty when present");
+  into.timestamp(value.since, "task.assisting.since", `${path}.since`);
+}
+
 export interface TaskValidationContext {
   /** The provider's channel, from its manifest. A task must agree with it. */
   channel: string;
@@ -650,6 +686,8 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateTaskAttributes(task.attributes, `${path}.attributes`, into);
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into);
   validateConsultation(task.consultation, context.channel, `${path}.consultation`, into);
+  validateLead(task.lead, context.channel, `${path}.lead`, into);
+  validateAssisting(task.assisting, context.channel, `${path}.assisting`, into);
 
   const capabilities = task.capabilities;
   if (!isPlainObject(capabilities)) {
@@ -767,6 +805,35 @@ function validateTeamRosterInto(roster: unknown, path: string, into: Collector):
   if (roster.breakControl !== undefined) {
     into.require(roster.breakControl === true, "team.breakControl", `${path}.breakControl`,
       "breakControl is declared by presence: send true or omit it");
+  }
+  if (roster.consultControl !== undefined) {
+    into.require(roster.consultControl === true, "team.consultControl", `${path}.consultControl`,
+      "consultControl is declared by presence: send true or omit it");
+  }
+  if (roster.requests !== undefined) {
+    // Requests are what a lead acts on, so a lead who may not act has no business receiving them.
+    into.require(roster.consultControl === true, "team.requests.capability", `${path}.requests`,
+      "requests require consultControl: a lead who may not join has nothing to decide");
+    if (!Array.isArray(roster.requests)) {
+      into.add("team.requests.shape", `${path}.requests`, "requests must be an array when present");
+    } else {
+      const seenRequests = new Set<string>();
+      roster.requests.forEach((request: unknown, index: number) => {
+        const at = `${path}.requests[${index}]`;
+        if (!isPlainObject(request)) {
+          into.add("team.request.shape", at, "each request must be an object");
+          return;
+        }
+        if (into.filled(request.id, "team.request.id", `${at}.id`, "a request needs an id")) {
+          if (seenRequests.has(request.id as string)) into.add("team.request.unique", `${at}.id`, `duplicate request id: ${request.id}`);
+          seenRequests.add(request.id as string);
+        }
+        into.require(isUserId(request.memberId), "team.request.memberId", `${at}.memberId`, "a request names the member asking");
+        into.require(isTaskId(request.taskId), "team.request.taskId", `${at}.taskId`, "a request names the task the lead would join");
+        if (request.note !== undefined) into.filled(request.note, "team.request.note", `${at}.note`, "a note must not be empty when present");
+        into.timestamp(request.since, "team.request.since", `${at}.since`);
+      });
+    }
   }
   if (!Array.isArray(roster.members)) {
     into.add("team.members.shape", `${path}.members`, "a roster must carry a members array");
@@ -893,6 +960,8 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
     case "expired":
       // Only the phases in which a task is still waiting on somebody can expire.
       into.oneOf(value.phase, EXPIRABLE_PHASES, "event.taskEnded.outcome.expired", `${path}.phase`);
+      break;
+    case "left":
       break;
     case "failed":
       if (!isPlainObject(value.failure)) {

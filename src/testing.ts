@@ -121,6 +121,7 @@ export async function exerciseAdapter<C extends Channel>(
       }
     }
     if (snapshot?.team?.breakControl === true) requireMethod("executeTeamBreak", "the roster carries breakControl");
+    if (snapshot?.team?.consultControl === true) requireMethod("executeTeamConsult", "the roster carries consultControl");
     if (publishesUserIds(snapshot)) requireMethod("describeUsers", "the snapshot publishes a UserId");
 
     // Capacity is stated, not requested: nothing may be allocated until it is, so a connection
