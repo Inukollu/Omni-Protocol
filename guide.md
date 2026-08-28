@@ -337,6 +337,7 @@ type TaskCapabilities<C extends Channel = Channel> =
         agentDisconnect?: true;
         callback?: true;
         blindTransfer?: true | DestinationDirectory;
+        consultTransfer?: true | DestinationDirectory;
         conference?: true | DestinationDirectory;
         recording?: true;
       }
@@ -421,6 +422,12 @@ type TaskCompletion =
   | { completionMode: "agent-command"; completionAllowance?: DurationSeconds }
   | { completionMode: "provider-automatic"; completionAllowance: DurationSeconds };
 
+type TaskConsultation = {
+  destination: string;
+  label?: string;
+  since?: IsoTimestamp;
+};
+
 type Task<C extends Channel = Channel> = {
   id: TaskId;
   title: string;
@@ -433,7 +440,7 @@ type Task<C extends Channel = Channel> = {
   reference?: string;
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingStep[];
-} & TaskCompletion;
+} & TaskCompletion & (C extends "voice" ? { consultation?: TaskConsultation } : { consultation?: never });
 
 type AcceptanceMode =
   | "no-preference"
@@ -484,7 +491,10 @@ type VoiceTaskCommand =
   | { type: "resume" }
   | { type: "disconnect" }
   | { type: "callback" }
-  | { type: "transfer"; destination: string }
+  | { type: "transfer"; destination: string; action?: never }
+  | { type: "transfer"; action: "consult"; destination: string }
+  | { type: "transfer"; action: "complete" }
+  | { type: "transfer"; action: "cancel" }
   | { type: "conference"; participant: string; action: "add" | "remove" }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);
@@ -1624,6 +1634,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `completionAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `handlingHistory` | Optional ordered handling history for this currently open task. It is live task data, not a permanent archive. |
+| `consultation` | Voice only. Present while the agent is consulting a transfer destination: who is being consulted, and since when where the provider records it. Its presence is what makes `transfer` `complete` and `cancel` issuable. See **Consult transfer**. |
 
 `TaskAttribute` entries carry typed detail alongside the task:
 
@@ -1659,7 +1670,9 @@ The canonical task transitions are:
 | `pending` | Provider withdraws the allocation | Removed by `task-ended` with `cancelled` outcome |
 | No task | Snapshot reports work already underway | `in-progress` |
 | `in-progress` | Provider or agent pauses the task | `paused` |
+| `in-progress` | Agent consults a transfer destination (`transfer` `consult`); the customer is parked | `paused` |
 | `paused` | Provider or agent resumes the task | `in-progress` |
+| `paused` | Agent cancels a consultation (`transfer` `cancel`) | `in-progress` |
 | `in-progress` or `paused` | Contact handling ends and follow-up work remains | `completing` |
 | `completing` | Agent calls the party back (`callback`) | `in-progress` |
 | Any phase | Provider emits `task-ended` | Removed |
@@ -1947,13 +1960,14 @@ const taskCapabilities = {
 | `agentDisconnect` | Primary button: Disconnect | Omni may disconnect real-time media without disposing the task. |
 | `callback` | Completing-task button: Call back | Omni may have the provider call the task's party back while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance disposes at provider end. See **Calling back during completion**. |
 | `blindTransfer` | Secondary menu item: Blind transfer | Omni may transfer the caller directly to a destination. |
+| `consultTransfer` | Secondary menu item: Consult transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Consult transfer**. |
 | `conference` | Secondary button: Conference | Omni may add or remove participants from the active call. |
 | `recording` | Overflow menu item: Recording | Omni may expose start, pause, resume, and stop recording controls. |
 | `dispositions` | Primary button: Complete | Omni may request task disposal with a provider disposition and notes. |
 
 ### Publishing codes and destinations
 
-Three capabilities accept an object instead of `true` when the provider wants Omni to render real
+Four capabilities accept an object instead of `true` when the provider wants Omni to render real
 choices. `true` remains valid and means "offer the control with nothing published".
 
 #### `dispositions`
@@ -1980,7 +1994,7 @@ capabilities: {
 With `dispositions: true` Omni shows a Complete control and sends `complete` with no code, because
 the provider published none.
 
-#### `blindTransfer` and `conference`
+#### `blindTransfer`, `consultTransfer` and `conference`
 
 ```ts
 capabilities: {
@@ -2011,6 +2025,42 @@ capabilities: {
 A destination the agent types is not in the directory and has no `kind`. Omni treats it as
 `external` unless the provider says otherwise in its response, because that is the assumption that
 does not overstate what the provider can still see.
+
+#### Consult transfer
+
+A consult transfer parks the customer, calls the destination so the agent can speak to it first,
+and then either hands the customer over or returns to them. It is its own capability, distinct
+from `blindTransfer` (a hand-over with nobody consulted) and from `conference` (everybody on one
+call): a queue may offer any of the three without the others, and each is declared on its own.
+
+```ts
+// 1. Consult. The provider parks the customer and calls the destination; the task reports
+//    `paused` and carries `consultation` while the call to the destination stands.
+{ type: "transfer", action: "consult", destination: "+14155550111" }
+
+// 2a. Hand the customer to the consulted destination and leave.
+{ type: "transfer", action: "complete" }
+
+// 2b. Or drop the destination and return to the customer.
+{ type: "transfer", action: "cancel" }
+```
+
+`consult` is gated by the `consultTransfer` capability and takes a destination exactly as a blind
+transfer does, from the same kind of directory. While the consultation stands the task carries
+`consultation`, and that presence is what makes `complete` and `cancel` issuable -- they name no
+destination because there is exactly one they could mean. A consultation that could be started
+but not finished would strand the customer and the destination both, which is why all three are
+commands and a provider that offers `consultTransfer` implements all three.
+
+`applied` on `complete` says the provider is bridging the customer to the destination and
+dropping the agent's leg. What follows is what follows any transfer: the agent's media ends and
+the provider reports `task-media-ended`, any completion allowance runs, and the task ends with a
+`transferred` outcome naming the destination. `applied` on `cancel` says the destination is
+dropped; the task returns to `in-progress` with `consultation` gone. Omni waits for the
+provider's report of both, as it does for every command.
+
+A destination that does not answer is a consultation that ended: the provider clears
+`consultation`, returns the task to `in-progress`, and the agent is back with the customer.
 
 ### Chat capabilities
 
@@ -2661,6 +2711,8 @@ declared:
 | `start-call` | The `preparing` phase. It starts the contact a preview gave the agent time to read, so the phase is the gate and there is no capability. |
 | `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. |
 | `callback` | The `callback` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
+| `transfer` with `action: "consult"` | The `consultTransfer` capability. Blind `transfer` is gated by `blindTransfer`; the two are declared and offered separately. |
+| `transfer` with `action: "complete"` or `"cancel"` | A consultation in progress -- `Task.consultation` present. Without one there is nothing to complete or cancel, and a provider that receives either answers `failed`. |
 | Everything else | Its own named capability. |
 
 Declining or rejecting a pending offer ends it without accepting or completing it. The provider

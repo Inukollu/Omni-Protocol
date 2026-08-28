@@ -455,3 +455,27 @@ describe("callback is a voice capability", () => {
     expect(rules(validateTask(task({ capabilities: { callback: false } }), { channel: "voice" }))).toContain("task.capability.value");
   });
 });
+
+describe("consult transfer", () => {
+  const voice = { channel: "voice" };
+  it("is its own capability, declared like the other directories, and voice only", () => {
+    expect(rules(validateTask(task({ capabilities: { consultTransfer: true } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { consultTransfer: { allowManualEntry: false, destinations: [{ id: "t2", label: "Tier 2", address: "+14155550111", kind: "queue" }] } } }), voice))).toEqual([]);
+    // The same directory rules as blindTransfer: a directory with nothing in it must allow typing.
+    expect(rules(validateTask(task({ capabilities: { consultTransfer: { allowManualEntry: false } } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { consultTransfer: { destinations: [] } } }), voice))).toContain("task.destinations.allowManualEntry");
+    for (const channel of ["chat", "email"]) {
+      expect(rules(validateTask(task({ channel, capabilities: { consultTransfer: true } }), { channel }))).toContain("task.capability.channel");
+    }
+  });
+
+  it("carries the consultation in progress on voice, and nowhere else", () => {
+    expect(rules(validateTask(task({ consultation: { destination: "+14155550111", label: "Tier 2", since: "2026-08-21T09:05:00Z" } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ consultation: { destination: "+14155550111" } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ consultation: { destination: "" } }), voice))).toContain("task.consultation.destination");
+    expect(rules(validateTask(task({ consultation: { destination: "+14155550111", since: "yesterday" } }), voice))).toContain("task.consultation.since");
+    expect(rules(validateTask(task({ consultation: "+14155550111" }), voice))).toContain("task.consultation.shape");
+    expect(rules(validateTask(task({ channel: "email", capabilities: {}, consultation: { destination: "+14155550111" } }), { channel: "email" })))
+      .toContain("task.consultation.channel");
+  });
+});
