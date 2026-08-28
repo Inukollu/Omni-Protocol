@@ -114,16 +114,16 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
           return unsubscribe;
         },
         setCapacity: async () => ({ status: "accepted" }),
-        execute: async request => ({ commandId: request.commandId, status: "applied" }),
+        execute: async () => ({ status: "applied" }),
         disconnect,
         describeUsers: async ids => ids.map(id => ({ id, displayName: `User ${id}` })),
-        dial: async request => ({ commandId: request.commandId, status: "dialled" }),
-        requestBreak: async request => ({ requestId: request.requestId, status: "requested" }),
-        commitBreak: async requestId => ({ requestId, status: "committed" }),
-        cancelBreak: async requestId => ({ requestId, status: "cancelled" }),
+        dial: async () => ({ status: "dialled" }),
+        requestBreak: async () => ({ status: "requested" }),
+        commitBreak: async () => ({ status: "committed" }),
+        cancelBreak: async () => ({ status: "cancelled" }),
         endBreak: async () => ({ status: "ended" }),
-        executeTeamBreak: async request => ({ commandId: request.commandId, status: "applied" }),
-        executeTeamConsult: async request => ({ commandId: request.commandId, status: "applied" }),
+        executeTeamBreak: async () => ({ status: "applied" }),
+        executeTeamConsult: async () => ({ status: "applied" }),
         openMedia: async () => ({ status: "unavailable", failure: { code: "test", message: "No media in a test", retryable: false } }),
       };
       return { ...connection, ...overrides.connection } as Connection<"voice">;

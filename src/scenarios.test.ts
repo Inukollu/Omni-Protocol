@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BROWSER_ISOLATION_SCHEMES,
   browserSessionKey,
-  type DialRequest,
   type ProviderEventEnvelope,
   type Snapshot,
   type Task,
@@ -12,7 +11,6 @@ import {
   assertAuthenticationRestoreAndExpiry,
   assertBrowserIsolationAndReuse,
   assertDeniedAndRetriedBreak,
-  assertDialIdempotency,
   assertDuplicateEventDelivery,
   assertNoBrowserSessionKeyCollisions,
   assertReconnectWithMissedAssignments,
@@ -148,40 +146,6 @@ describe("assertDeniedAndRetriedBreak", () => {
   it("rejects a sequence that ends back at not-requested", () => {
     expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "granted", "not-requested"]))
       .toThrow(/must end granted or in effect/);
-  });
-});
-
-describe("assertDialIdempotency", () => {
-  // Each method answers in its own words: a retried dial says already-dialled, because what it
-  // did was dial. A provider answering with a second `dialled` has placed a second call.
-  const makeDial = (retryStatus: "already-dialled" | "dialled") => {
-    let dialled = false;
-    return vi.fn(async (request: DialRequest) => {
-      const status = dialled ? retryStatus : ("dialled" as const);
-      dialled = true;
-      return { commandId: request.commandId, status };
-    });
-  };
-  const request: DialRequest = { commandId: "dial-1", destination: "+14155550100" };
-
-  it("accepts a retry that places no second call", async () => {
-    const dial = makeDial("already-dialled");
-    await expect(assertDialIdempotency({ dial }, request)).resolves.toBeUndefined();
-    expect(dial).toHaveBeenCalledTimes(2);
-  });
-
-  it("rejects a retry that places another call", async () => {
-    await expect(assertDialIdempotency({ dial: makeDial("dialled") }, request)).rejects.toThrow(/must return already-dialled/);
-  });
-
-  it("rejects a dial that failed outright", async () => {
-    const dial = vi.fn(async (request: DialRequest) =>
-      ({ commandId: request.commandId, status: "failed" as const, failure: { code: "omni.destination-not-permitted", message: "Not permitted", retryable: false } }));
-    await expect(assertDialIdempotency({ dial }, request)).rejects.toThrow(/Dial failed: omni.destination-not-permitted/);
-  });
-
-  it("rejects a provider that enables dial without implementing it", async () => {
-    await expect(assertDialIdempotency({}, request)).rejects.toThrow(/requires Connection.dial/);
   });
 });
 

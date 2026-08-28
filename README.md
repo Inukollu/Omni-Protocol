@@ -53,7 +53,7 @@ expect(result.disconnectWasClean).toBe(true);
 ```
 
 Run the contract scenarios beside it — authentication restore and expiry, reconnect with missed
-assignments, break denial and retry, command idempotency, wrap timeout, browser isolation.
+assignments, break denial and retry, wrap timeout, browser isolation.
 
 > **Assert both directions.** Every helper rejects a violating input as well as accepting a
 > conforming one. A suite that only asserts "this conforming case does not throw" passes unchanged
