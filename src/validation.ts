@@ -15,6 +15,8 @@ import {
   BREAK_KINDS,
   BROWSER_ISOLATION_SCHEMES,
   IDLE_CAPABILITIES,
+  OMNI_SUPPORTED_PROTOCOL_VERSIONS,
+  negotiateProtocolVersion,
   type AcceptanceMode,
   type AuthenticationMethod,
   type AuthenticationState,
@@ -350,6 +352,12 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
         "manifest.supportedProtocolVersions.value", `${path}.supportedProtocolVersions[${index}]`,
         "a protocol version must be a positive integer");
     });
+    // Interoperability: the adapter must speak a version this package does, or Omni must refuse
+    // to connect. Reported here so it is found with the manifest rather than at connect time.
+    const declared = versions.filter((version): version is number => typeof version === "number");
+    into.require(negotiateProtocolVersion(declared) !== undefined,
+      "manifest.supportedProtocolVersions.interoperable", `${path}.supportedProtocolVersions`,
+      `this host speaks protocol version${OMNI_SUPPORTED_PROTOCOL_VERSIONS.length === 1 ? "" : "s"} ${OMNI_SUPPORTED_PROTOCOL_VERSIONS.join(", ")}; the adapter declares none of them`);
   }
 
   const methods = manifest.authenticationMethods;
@@ -515,11 +523,16 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
 
     // Reuse and its scheme travel together. A reusing browser with no scheme would otherwise
     // inherit whatever a host happened to default to, which is how two tasks end up sharing a
-    // session nobody intended.
+    // session nobody intended. The guide names the rule for the missing case.
     if (browser.reuse === true) {
-      into.require(ISOLATION_SCHEME_VALUES.includes(browser.isolationScheme as string),
-        "task.browser.isolationScheme", `${at}.isolationScheme`,
-        `a reusing browser must declare one of: ${ISOLATION_SCHEME_VALUES.join(", ")}`);
+      if (browser.isolationScheme === undefined) {
+        into.add("task.browser.isolationScheme.required", `${at}.isolationScheme`,
+          `a reusing browser must declare one of: ${ISOLATION_SCHEME_VALUES.join(", ")}`);
+      } else {
+        into.require(ISOLATION_SCHEME_VALUES.includes(browser.isolationScheme as string),
+          "task.browser.isolationScheme", `${at}.isolationScheme`,
+          `an isolation scheme must be one of: ${ISOLATION_SCHEME_VALUES.join(", ")}`);
+      }
     } else if (browser.reuse === false) {
       into.require(browser.isolationScheme === undefined, "task.browser.isolationScheme.unexpected",
         `${at}.isolationScheme`, "a browser that does not reuse must not declare an isolation scheme");
