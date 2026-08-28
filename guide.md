@@ -926,6 +926,11 @@ snapshot is the answer; Omni waits for it rather than calling `snapshot()` itsel
 transport is up, a result says the provider accepted the command, and the event that follows —
 `task-updated`, `break-state` — says what it did.
 
+**Classify on the rejection, never on a connection status published separately from it.** The
+status is a report about the wire and races the rejection; the rejection is the event. A rejection
+is the provider's answer only when it carries the provider's answer — a failure the provider
+named. Every other rejection is transport loss, whatever the last `provider-status` said.
+
 A command therefore carries no key. The provider names its own records — a task, a lead request, a
 member — and Omni refers to them by those names; **Omni never asks a provider to remember a name
 Omni made up.**
@@ -2584,6 +2589,15 @@ that value does.
 decides who leads a team: no roster means nothing is shown, which is the correct rendering for an
 agent who leads nobody. The same rule governs `TeamRoster.breakControl` — present when this lead
 decides their team's breaks, absent when they do not.
+
+**The roster never carries the agent it is published to — not in `members`, and not in
+`requests`.** A lead does not report to themself: their own break request and their own ask for a
+lead go up to whoever leads them and appear on *that* person's roster, while the requester sees
+only their own `BreakState` and their task's `lead` move. An adapter whose platform lists the lead
+among their own members filters the signed-in identity out before publishing. **Entitlement is a
+role the provider knows, never inferred from who is listed:** a lead with nobody in their team
+publishes `[]`, an agent with no such role publishes nothing, and no member count can tell those
+two apart.
 
 ### Lead commands
 
