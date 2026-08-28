@@ -335,6 +335,7 @@ type TaskCapabilities<C extends Channel = Channel> =
         mute?: true;
         hold?: true;
         agentDisconnect?: true;
+        callback?: true;
         blindTransfer?: true | DestinationDirectory;
         conference?: true | DestinationDirectory;
         recording?: true;
@@ -459,6 +460,7 @@ const TASK_COMMAND_NAMES = {
     "hold",
     "resume",
     "disconnect",
+    "callback",
     "transfer",
     "conference",
     "recording",
@@ -481,6 +483,7 @@ type VoiceTaskCommand =
   | { type: "hold" }
   | { type: "resume" }
   | { type: "disconnect" }
+  | { type: "callback" }
   | { type: "transfer"; destination: string }
   | { type: "conference"; participant: string; action: "add" | "remove" }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
@@ -1658,6 +1661,7 @@ The canonical task transitions are:
 | `in-progress` | Provider or agent pauses the task | `paused` |
 | `paused` | Provider or agent resumes the task | `in-progress` |
 | `in-progress` or `paused` | Contact handling ends and follow-up work remains | `completing` |
+| `completing` | Agent calls the party back (`callback`) | `in-progress` |
 | Any phase | Provider emits `task-ended` | Removed |
 
 Allocation, acceptance, and progress are distinct. Acceptance follows `autoAcceptTasks` and the
@@ -1711,6 +1715,42 @@ Here the customer has hung up, `task-media-ended` has been sent on time, the tas
 and the agent takes as long as the work needs. Moving the task to `completing` late to avoid a
 deadline is not an alternative on a media channel: the clock starts at a real event, and delaying
 that event would falsify the phase and everything timed from it.
+
+#### Calling back during completion
+
+A task that declares `callback` lets the agent reach the party again while the task is
+`completing` -- to finish what the call left unfinished, on the same task rather than a new one.
+Omni issues `{ type: "callback" }`; it is issuable only in `completing`, and only where the
+capability is declared. The provider knows who the party is; the command carries no destination.
+
+On `applied` the provider is placing the call and the task returns to `in-progress`: the agent is
+working again, and the completion allowance is **discarded, not paused**. From there the call is
+reported as any call is -- `paused`, `in-progress`, and when its media ends, `task-media-ended`
+again, which starts a fresh allowance from that instant. A party who does not answer is a call
+whose media ended: the task returns to `completing` through the same event and the clock starts
+again from there. At no point is an agent dialling against a deadline.
+
+**The control exists only while there is a window to use it in.** Under `agent-command` the task
+stays `completing` until the agent completes it, so the window is open for as long as they need.
+Under `provider-automatic` the window is the allowance -- and with `completionAllowance: 0` there
+is none: the provider disposes the task at provider end, and Omni does not offer Call back, whatever
+the task declares. A capability names a control that can be used; on a task with no `completing`
+window it cannot, and declaring it there changes nothing.
+
+```ts
+const callbackCapable = {
+  channel: "voice",
+  capabilities: { hold: true, callback: true, dispositions: true },
+  phase: "completing",
+  completionMode: "provider-automatic",
+  completionAllowance: 30,
+} satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "completionMode" | "completionAllowance">;
+```
+
+With ten seconds of the thirty left, the agent presses Call back: `execute({ command: { type:
+"callback" } })` returns `applied`, the task is `in-progress`, and the thirty seconds are gone.
+The second call ends: `task-media-ended`, the task is `completing`, and a new thirty seconds runs
+from that instant.
 
 ```ts
 const immediateProviderCompletion = {
@@ -1905,6 +1945,7 @@ const taskCapabilities = {
 | `mute` | Primary toggle: Mute | Omni may mute and unmute the agent's outbound audio. |
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
 | `agentDisconnect` | Primary button: Disconnect | Omni may disconnect real-time media without disposing the task. |
+| `callback` | Completing-task button: Call back | Omni may have the provider call the task's party back while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance disposes at provider end. See **Calling back during completion**. |
 | `blindTransfer` | Secondary menu item: Blind transfer | Omni may transfer the caller directly to a destination. |
 | `conference` | Secondary button: Conference | Omni may add or remove participants from the active call. |
 | `recording` | Overflow menu item: Recording | Omni may expose start, pause, resume, and stop recording controls. |
@@ -2619,6 +2660,7 @@ declared:
 | `decline`, `reject` | The channel's decline or reject capability, **and** Omni provisioning permitting rejection. |
 | `start-call` | The `preparing` phase. It starts the contact a preview gave the agent time to read, so the phase is the gate and there is no capability. |
 | `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. |
+| `callback` | The `callback` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | Everything else | Its own named capability. |
 
 Declining or rejecting a pending offer ends it without accepting or completing it. The provider

@@ -333,6 +333,8 @@ export type TaskCapabilities<C extends Channel = Channel> =
         mute?: true;
         hold?: true;
         agentDisconnect?: true;
+        /** Reach the party again while `completing`; the task returns to `in-progress`. */
+        callback?: true;
         blindTransfer?: true | DestinationDirectory;
         conference?: true | DestinationDirectory;
         recording?: true;
@@ -494,7 +496,7 @@ export type TaskOutcome =
 
 export const TASK_COMMAND_NAMES = {
   voice: ["answer", "decline", "start-call", "mute", "hold", "resume", "disconnect",
-          "transfer", "conference", "recording", "complete"],
+          "callback", "transfer", "conference", "recording", "complete"],
   chat: ["accept", "reject", "pause", "resume", "complete"],
   email: ["accept", "reject", "complete"],
 } as const;
@@ -515,6 +517,8 @@ export type VoiceTaskCommand =
   | { type: "hold" }
   | { type: "resume" }
   | { type: "disconnect" }
+  /** Issuable only in `completing`, under the `callback` capability. Carries no destination. */
+  | { type: "callback" }
   | { type: "transfer"; destination: string }
   | { type: "conference"; participant: string; action: "add" | "remove" }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
