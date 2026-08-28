@@ -1,10 +1,8 @@
 name: Publish
 
-# Publishes the package to npmjs when main carries a version the registry does not have.
-#
-# A release is a version bump in package.json, so that file is the trigger; a push that leaves
-# the version alone is skipped after the guard, and a push that changes nothing here starts no
-# run at all. The workflow runs only over code already merged to main.
+# Publishes every non-workflow merge to main. An explicitly changed unpublished version wins;
+# otherwise the workflow increments the patch version until it finds one npm has not published.
+# It records that version back on main before publishing it.
 #
 # npmjs trusts this workflow through GitHub's OIDC identity, so publishing needs no long-lived
 # registry token. The package's Trusted Publisher settings must name Inukollu/Omni-Protocol and
@@ -12,8 +10,8 @@ name: Publish
 on:
   push:
     branches: [main]
-    paths:
-      - package.json
+    paths-ignore:
+      - .github/**
   workflow_dispatch:
 
 permissions:
@@ -65,17 +63,17 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # Asks the registry for every version it holds and looks for this one. Asking for the one
-      # version directly would not do: `npm view name@x.y.z version` exits 0 and prints nothing
-      # when the version is absent, which reads as "published" to a shell test. A 404 means the
-      # package has never been published; any other failure is a failed question, not an answer,
-      # and stops the run rather than being read as "not yet".
-      - name: Decide whether this version is already published
+      # Keep an intentionally selected unpublished version (for example, a minor bump). When the
+      # source version already exists, allocate the next free patch version. Query failures other
+      # than a genuine first-publish 404 stop the release.
+      - name: Allocate the release version
         id: version
         run: |
           node - <<'JS' >> "$GITHUB_OUTPUT"
-          const { name, version } = require("./package.json");
+          const fs = require("node:fs");
           const { spawnSync } = require("node:child_process");
+          const manifest = require("./package.json");
+          const { name } = manifest;
           const view = spawnSync("npm", ["view", name, "versions", "--json"], { encoding: "utf8" });
           let versions = [];
           if (view.status === 0) {
@@ -85,17 +83,46 @@ jobs:
             console.error(view.stderr || view.stdout);
             process.exit(1);
           }
-          const published = versions.includes(version);
-          console.error(`${name}@${version}: ${published ? "already on the registry" : `not published (registry has ${versions.length} version${versions.length === 1 ? "" : "s"})`}`);
+
+          const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(manifest.version);
+          if (!match) throw new Error(`Automatic releases require a stable semver version; got ${manifest.version}`);
+          let version = manifest.version;
+          while (versions.includes(version)) {
+            version = `${match[1]}.${match[2]}.${Number(version.split(".")[2]) + 1}`;
+          }
+          manifest.version = version;
+          fs.writeFileSync("package.json", `${JSON.stringify(manifest, null, 2)}\n`);
+          console.error(`${name}@${version}: allocated from ${versions.length} published version${versions.length === 1 ? "" : "s"}`);
           console.log(`name=${name}`);
           console.log(`version=${version}`);
-          console.log(`published=${published}`);
           JS
 
-      # --no-git-checks: pnpm would otherwise insist on a clean tree on a release branch. The
-      # workflow is that check -- it runs on main, at one commit, after install, build and test.
+      # A GITHUB_TOKEN-authored commit does not start another workflow run, so recording the
+      # allocated version cannot recurse into a second release.
+      - name: Record the release version on main
+        id: commit
+        uses: actions/github-script@v7
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const current = await github.rest.repos.getContent({
+              ...context.repo,
+              path: "package.json",
+              ref: context.sha,
+            });
+            const updated = await github.rest.repos.createOrUpdateFileContents({
+              ...context.repo,
+              path: "package.json",
+              branch: context.ref.replace("refs/heads/", ""),
+              message: `Bump package version to ${process.env.VERSION}`,
+              content: fs.readFileSync("package.json", "base64"),
+              sha: current.data.sha,
+            });
+            core.setOutput("sha", updated.data.commit.sha);
+
       - name: Publish
-        if: steps.version.outputs.published == 'false'
         # npm exchanges GitHub's OIDC identity for a short-lived registry credential and adds
         # provenance automatically. Do not add NODE_AUTH_TOKEN to this step.
         run: npm publish --access public
@@ -103,7 +130,6 @@ jobs:
       # Creating the release creates the tag on this commit; no git push and no gh binary,
       # which a self-hosted runner may not have.
       - name: Create the GitHub release
-        if: steps.version.outputs.published == 'false'
         uses: actions/github-script@v7
         env:
           NAME: ${{ steps.version.outputs.name }}
@@ -123,13 +149,9 @@ jobs:
             const release = await github.rest.repos.createRelease({
               ...context.repo,
               tag_name: tag,
-              target_commitish: context.sha,
+              target_commitish: "${{ steps.commit.outputs.sha }}",
               name: `${NAME}@${VERSION}`,
               body: `https://www.npmjs.com/package/${NAME}/v/${VERSION}`,
               generate_release_notes: true,
             });
             core.info(`Created ${release.data.html_url}`);
-
-      - name: Nothing to publish
-        if: steps.version.outputs.published == 'true'
-        run: echo "${{ steps.version.outputs.name }}@${{ steps.version.outputs.version }} is already on the registry; bump the version in package.json to release."

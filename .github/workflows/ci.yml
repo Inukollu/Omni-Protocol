@@ -30,7 +30,6 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
           persist-credentials: false
-          allow-unsafe-pr-checkout: true
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
