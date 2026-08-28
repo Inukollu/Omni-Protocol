@@ -1,0 +1,1053 @@
+// Runtime validation for the approved protocol.
+//
+// An adapter is loaded from a separate package and may be compiled against a different protocol
+// version, so its output is untrusted input. Every validator here takes `unknown` and returns
+// every violation it found rather than throwing on the first, so a caller can report all of them
+// at once.
+//
+// The contract's closed sets are declared as types in index.ts and needed here as runtime lists.
+// Each list is pinned to its type both ways -- a member the type lacks, or a member the list
+// lacks, fails to compile -- so what the validators accept cannot drift from what the
+// declarations say.
+
+import {
+  ALLOWED_BROWSER_URL_SCHEMES,
+  BREAK_KINDS,
+  BROWSER_ISOLATION_SCHEMES,
+  IDLE_CAPABILITIES,
+  type AcceptanceMode,
+  type AuthenticationMethod,
+  type AuthenticationState,
+  type BreakApproval,
+  type BrowserAccessPolicy,
+  type Channel,
+  type CompletionMode,
+  type ConnectionStatus,
+  type CustomCapability,
+  type Destination,
+  type DialDestinationPolicy,
+  type DispositionPolicy,
+  type HandlingStep,
+  type IdleCapabilities,
+  type IdleCapability,
+  type PersonalBrowserCapability,
+  type ProtocolViolation,
+  type ProviderEvent,
+  type SessionCapabilities,
+  type TaskCapabilities,
+  type TaskOutcome,
+  type TaskPhase,
+  type TeamMemberAvailability,
+} from "./index.js";
+
+export type { ProtocolViolation } from "./index.js";
+
+export class ProtocolConformanceError extends Error {
+  readonly violations: readonly ProtocolViolation[];
+
+  constructor(violations: readonly ProtocolViolation[], summary = "Adapter violates the Omni protocol") {
+    const detail = violations.map(violation => `  ${violation.rule} at ${violation.path}: ${violation.message}`).join("\n");
+    super(`${summary} (${violations.length} violation${violations.length === 1 ? "" : "s"}):\n${detail}`);
+    this.name = "ProtocolConformanceError";
+    this.violations = violations;
+  }
+}
+
+/** Throws `ProtocolConformanceError` when any violation is present. */
+export function assertNoViolations(violations: readonly ProtocolViolation[], summary?: string): void {
+  if (violations.length > 0) throw new ProtocolConformanceError(violations, summary);
+}
+
+// ---------------------------------------------------------------------------
+// The contract's closed sets, as runtime lists pinned to their types.
+// ---------------------------------------------------------------------------
+
+/**
+ * Every member of a contract union, as a list.
+ *
+ * `Record<U, true>` is what makes it complete: a key the union lacks is an excess property and a
+ * union member the object lacks is a missing one, so either mistake is a compile error here
+ * rather than a validator that quietly accepts or rejects the wrong thing.
+ */
+const membersOf = <U extends string>(members: Record<U, true>): readonly U[] =>
+  Object.keys(members) as U[];
+
+const CHANNELS = membersOf<Channel>({ voice: true, chat: true, email: true });
+const TASK_PHASES = membersOf<TaskPhase>({
+  pending: true, confirmed: true, preparing: true, "in-progress": true, paused: true, completing: true,
+});
+const COMPLETION_MODES = membersOf<CompletionMode>({ "agent-command": true, "provider-automatic": true });
+const ACCEPTANCE_MODES = membersOf<AcceptanceMode>({
+  "no-preference": true, "require-agent-acceptance": true, "require-automatic-acceptance": true,
+});
+const CONNECTION_STATUSES = membersOf<ConnectionStatus>({ connecting: true, active: true, error: true });
+const AUTHENTICATION_METHODS = membersOf<AuthenticationMethod>({ "browser-sso": true, credentials: true });
+const AUTHENTICATION_STATUSES = membersOf<AuthenticationState["status"]>({
+  "signed-out": true, authenticating: true, authenticated: true, refreshing: true, expired: true,
+});
+const BREAK_APPROVALS = membersOf<BreakApproval>({
+  "not-requested": true, "awaiting-decision": true, granted: true, "starting-after-task": true, "in-effect": true,
+});
+const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
+  ready: true, "on-task": true, "on-break": true, "signed-out": true,
+});
+const HANDLING_STEPS = membersOf<HandlingStep>({
+  queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
+});
+const DESTINATION_KINDS = membersOf<Destination["kind"]>({ queue: true, agent: true, external: true });
+const CUSTOM_UI_KINDS = membersOf<CustomCapability["ui"]["kind"]>({ button: true, toggle: true, "menu-item": true });
+const CUSTOM_UI_PLACEMENTS = membersOf<CustomCapability["ui"]["placement"]>({ primary: true, secondary: true, overflow: true });
+const NOTES_POLICIES = membersOf<NonNullable<DispositionPolicy["notes"]>>({ required: true, optional: true, hidden: true });
+const ACCESS_MODES = membersOf<BrowserAccessPolicy["mode"]>({ "allow-all": true, "block-all": true });
+const ACCESS_POLICY_SCOPES = membersOf<NonNullable<PersonalBrowserCapability["accessPolicyScope"]>>({
+  "initial-url": true, "all-navigation": true,
+});
+const DIAL_DESTINATION_POLICIES = membersOf<DialDestinationPolicy>({ "contacts-only": true, "any-number": true });
+const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
+  reconnected: true, "provider-requested": true,
+});
+const SESSION_CAPABILITIES = membersOf<keyof SessionCapabilities>({ breaks: true, teamBreakControl: true });
+const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
+const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
+  pending: true, confirmed: true, preparing: true,
+});
+
+const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATION_SCHEMES);
+
+/** The capabilities each channel arm of `TaskCapabilities` declares, keyed off the type itself. */
+const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
+  voice: membersOf<keyof TaskCapabilities<"voice">>({
+    browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
+    agentDisconnect: true, blindTransfer: true, conference: true, recording: true,
+  }),
+  chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, reject: true, hold: true }),
+  email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, reject: true }),
+};
+
+// The published list and the type's keys are the same set, or one of them is wrong.
+type Assert<T extends true> = T;
+type _IdleCapabilitiesMatchTheType = Assert<
+  [keyof IdleCapabilities<"voice">] extends [IdleCapability]
+    ? ([IdleCapability] extends [keyof IdleCapabilities<"voice">] ? true : false)
+    : false
+>;
+
+/** Idle capabilities each channel may declare. Only voice may dial, and runtime has to say so too. */
+const IDLE_CAPABILITIES_BY_CHANNEL: Readonly<Record<Channel, readonly string[]>> = {
+  voice: IDLE_CAPABILITIES,
+  chat: IDLE_CAPABILITIES.filter(name => name !== "dial"),
+  email: IDLE_CAPABILITIES.filter(name => name !== "dial"),
+};
+
+const isChannel = (value: string): value is Channel => (CHANNELS as readonly string[]).includes(value);
+
+// ---------------------------------------------------------------------------
+// Semantic types. Each is a primitive on the wire with its own validation rule.
+// ---------------------------------------------------------------------------
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isFilled = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
+
+/**
+ * An RFC-3339 timestamp carrying a zone.
+ *
+ * `Date.parse` accepts a timezone-less string and resolves it against whatever zone the machine
+ * happens to be in, so two hosts would read the same wire value as two different instants. The
+ * contract calls those invalid, and this is where that is enforced rather than assumed.
+ */
+const isIsoTimestamp = (value: unknown): boolean =>
+  typeof value === "string"
+  && /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/.test(value)
+  && !Number.isNaN(Date.parse(value));
+
+/** A non-negative integer count of seconds. */
+const isDurationSeconds = (value: unknown): boolean =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0;
+
+/** Opaque, non-empty, provider-issued. Never parsed and never compared across providers. */
+const isUserId = isFilled;
+const isTaskId = isFilled;
+
+class Collector {
+  readonly violations: ProtocolViolation[] = [];
+
+  add(rule: string, path: string, message: string): void {
+    this.violations.push({ rule, path, message });
+  }
+
+  require(condition: unknown, rule: string, path: string, message: string): boolean {
+    if (!condition) this.add(rule, path, message);
+    return Boolean(condition);
+  }
+
+  filled(value: unknown, rule: string, path: string, message: string): boolean {
+    return this.require(isFilled(value), rule, path, message);
+  }
+
+  timestamp(value: unknown, rule: string, path: string): boolean {
+    return this.require(isIsoTimestamp(value), rule, path,
+      "must be an RFC-3339 timestamp carrying a zone, such as 2026-08-21T09:00:00Z");
+  }
+
+  oneOf(value: unknown, allowed: readonly string[], rule: string, path: string): boolean {
+    return this.require(typeof value === "string" && allowed.includes(value), rule, path,
+      `must be one of ${allowed.join(", ")}; received ${String(value)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared shapes.
+// ---------------------------------------------------------------------------
+
+function validateAttributes(value: unknown, path: string, into: Collector): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    into.add("attributes.shape", path, "attributes must be an array when present");
+    return;
+  }
+  value.forEach((attribute: unknown, index: number) => {
+    const at = `${path}[${index}]`;
+    if (!isPlainObject(attribute)) {
+      into.add("attribute.shape", at, "each attribute must be an object");
+      return;
+    }
+    into.filled(attribute.key, "attribute.key", `${at}.key`, "an attribute needs a non-empty key");
+    into.require(typeof attribute.value === "string", "attribute.value", `${at}.value`, "an attribute value must be a string");
+  });
+}
+
+/** Every field is optional, so this checks what is present rather than what is missing. */
+export function validateContact(contact: unknown, path = "contact"): ProtocolViolation[] {
+  const into = new Collector();
+  validateContactInto(contact, path, into);
+  return into.violations;
+}
+
+function validateContactInto(contact: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(contact)) {
+    into.add("contact.shape", path, "a contact must be an object");
+    return;
+  }
+  for (const field of ["name", "number", "email"] as const) {
+    if (contact[field] !== undefined) {
+      into.filled(contact[field], `contact.${field}`, `${path}.${field}`, `${field} must not be empty when present`);
+    }
+  }
+  validateAttributes(contact.attributes, `${path}.attributes`, into);
+}
+
+export function validateScheduledActivity(activity: unknown, path = "scheduledActivity"): ProtocolViolation[] {
+  const into = new Collector();
+  validateScheduledActivityInto(activity, path, into);
+  return into.violations;
+}
+
+function validateScheduledActivityInto(activity: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(activity)) {
+    into.add("activity.shape", path, "a scheduled activity must be an object");
+    return;
+  }
+  into.filled(activity.id, "activity.id", `${path}.id`, "a scheduled activity needs an id");
+  into.filled(activity.title, "activity.title", `${path}.title`, "a scheduled activity needs a title");
+  const startValid = into.timestamp(activity.startsAt, "activity.startsAt", `${path}.startsAt`);
+  if (activity.endsAt !== undefined) {
+    const endValid = into.timestamp(activity.endsAt, "activity.endsAt", `${path}.endsAt`);
+    if (startValid && endValid) {
+      into.require(
+        Date.parse(activity.endsAt as string) >= Date.parse(activity.startsAt as string),
+        "activity.endsAt.order", `${path}.endsAt`, "endsAt must not precede startsAt",
+      );
+    }
+  }
+  if (activity.contact !== undefined) validateContactInto(activity.contact, `${path}.contact`, into);
+  validateAttributes(activity.attributes, `${path}.attributes`, into);
+}
+
+// ---------------------------------------------------------------------------
+// Manifest.
+// ---------------------------------------------------------------------------
+
+function validateBrowserAccessPolicy(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("manifest.personalBrowser.access.shape", path, "an access policy must be an object");
+    return;
+  }
+  into.oneOf(value.mode, ACCESS_MODES, "manifest.personalBrowser.access.mode", `${path}.mode`);
+  for (const list of ["allowList", "blockList"] as const) {
+    if (value[list] === undefined) continue;
+    if (!Array.isArray(value[list])) {
+      into.add("manifest.personalBrowser.access.list", `${path}.${list}`, `${list} must be an array when present`);
+      continue;
+    }
+    (value[list] as unknown[]).forEach((entry, index) => {
+      into.filled(entry, "manifest.personalBrowser.access.host", `${path}.${list}[${index}]`, "a host pattern must not be empty");
+    });
+  }
+}
+
+function validateIdleCapabilities(value: unknown, channel: string, path: string, into: Collector): void {
+  if (value === undefined) return;
+  if (!isPlainObject(value)) {
+    into.add("manifest.idleCapabilities.shape", path, "idleCapabilities must be an object when present");
+    return;
+  }
+  const allowed = isChannel(channel) ? IDLE_CAPABILITIES_BY_CHANNEL[channel] : IDLE_CAPABILITIES_BY_CHANNEL.voice;
+  for (const [name, declared] of Object.entries(value)) {
+    if (declared === undefined) continue;
+    // Only voice may dial, and the channel arms are what make that a compile error. Runtime
+    // has to say the same thing, or an adapter compiled against a looser version slips through.
+    into.require(allowed.includes(name), "manifest.idleCapability.channel", `${path}.${name}`,
+      `${channel} providers may not declare ${name}`);
+  }
+  if (value.personalBrowser !== undefined) {
+    const browser = value.personalBrowser;
+    if (!isPlainObject(browser)) {
+      into.add("manifest.personalBrowser.shape", `${path}.personalBrowser`, "personalBrowser must be an object when present");
+    } else {
+      validateBrowserAccessPolicy(browser.access, `${path}.personalBrowser.access`, into);
+      if (browser.accessPolicyScope !== undefined) {
+        into.oneOf(browser.accessPolicyScope, ACCESS_POLICY_SCOPES,
+          "manifest.personalBrowser.accessPolicyScope", `${path}.personalBrowser.accessPolicyScope`);
+      }
+    }
+  }
+  if (value.dial !== undefined) {
+    if (!isPlainObject(value.dial)) {
+      into.add("manifest.dial.shape", `${path}.dial`, "dial must be an object when present");
+    } else {
+      into.oneOf(value.dial.destinationPolicy, DIAL_DESTINATION_POLICIES,
+        "manifest.dial.destinationPolicy", `${path}.dial.destinationPolicy`);
+    }
+  }
+  for (const flag of ["calendar", "contacts"] as const) {
+    if (value[flag] !== undefined) {
+      into.require(value[flag] === true, `manifest.idleCapability.value`, `${path}.${flag}`,
+        `${flag} is declared by presence: send true or omit it`);
+    }
+  }
+}
+
+export function validateManifest(manifest: unknown, path = "manifest"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(manifest)) {
+    into.add("manifest.shape", path, "a manifest must be an object");
+    return into.violations;
+  }
+  into.filled(manifest.id, "manifest.id", `${path}.id`, "a manifest needs a stable id");
+  into.filled(manifest.displayName, "manifest.displayName", `${path}.displayName`, "a manifest needs a display name");
+  const channelValid = into.oneOf(manifest.channel, CHANNELS, "manifest.channel", `${path}.channel`);
+
+  const versions = manifest.supportedProtocolVersions;
+  if (!Array.isArray(versions) || versions.length === 0) {
+    into.add("manifest.supportedProtocolVersions", `${path}.supportedProtocolVersions`,
+      "an adapter must declare every protocol version it can speak");
+  } else {
+    versions.forEach((version, index) => {
+      into.require(typeof version === "number" && Number.isInteger(version) && version > 0,
+        "manifest.supportedProtocolVersions.value", `${path}.supportedProtocolVersions[${index}]`,
+        "a protocol version must be a positive integer");
+    });
+  }
+
+  const methods = manifest.authenticationMethods;
+  if (!Array.isArray(methods) || methods.length === 0) {
+    into.add("manifest.authenticationMethods", `${path}.authenticationMethods`,
+      "an adapter must declare at least one authentication method");
+  } else {
+    methods.forEach((method, index) => {
+      into.oneOf(method, AUTHENTICATION_METHODS, "manifest.authenticationMethod",
+        `${path}.authenticationMethods[${index}]`);
+    });
+  }
+
+  if (channelValid) validateIdleCapabilities(manifest.idleCapabilities, manifest.channel as string, `${path}.idleCapabilities`, into);
+
+  if (manifest.phaseLabels !== undefined) {
+    if (!isPlainObject(manifest.phaseLabels)) {
+      into.add("manifest.phaseLabels.shape", `${path}.phaseLabels`, "phaseLabels must be an object when present");
+    } else {
+      for (const [phase, label] of Object.entries(manifest.phaseLabels)) {
+        into.oneOf(phase, TASK_PHASES, "manifest.phaseLabels.phase", `${path}.phaseLabels.${phase}`);
+        into.filled(label, "manifest.phaseLabels.label", `${path}.phaseLabels.${phase}`, "a phase label must not be empty");
+      }
+    }
+  }
+
+  if (manifest.taskTypePresentation !== undefined) {
+    if (!isPlainObject(manifest.taskTypePresentation)) {
+      into.add("manifest.taskTypePresentation.shape", `${path}.taskTypePresentation`,
+        "taskTypePresentation must be an object when present");
+    } else {
+      for (const [taskType, presentation] of Object.entries(manifest.taskTypePresentation)) {
+        const at = `${path}.taskTypePresentation.${taskType}`;
+        if (!isPlainObject(presentation)) {
+          into.add("manifest.taskTypePresentation.entry", at, "each presentation must be an object");
+          continue;
+        }
+        into.filled(presentation.singular, "manifest.taskTypePresentation.singular", `${at}.singular`, "a presentation needs a singular name");
+        into.filled(presentation.plural, "manifest.taskTypePresentation.plural", `${at}.plural`, "a presentation needs a plural name");
+        if (presentation.referenceLabel !== undefined) {
+          into.filled(presentation.referenceLabel, "manifest.taskTypePresentation.referenceLabel", `${at}.referenceLabel`,
+            "referenceLabel must not be empty when present");
+        }
+      }
+    }
+  }
+  return into.violations;
+}
+
+// ---------------------------------------------------------------------------
+// Task.
+// ---------------------------------------------------------------------------
+
+function validateDestinationDirectory(value: unknown, path: string, into: Collector): void {
+  if (value === true) return;
+  if (!isPlainObject(value)) {
+    into.add("task.destinations.shape", path, "must be true or a destination directory");
+    return;
+  }
+  into.require(typeof value.allowManualEntry === "boolean", "task.destinations.allowManualEntry",
+    `${path}.allowManualEntry`, "a directory must say whether manual entry is allowed");
+  if (value.destinations === undefined) return;
+  if (!Array.isArray(value.destinations)) {
+    into.add("task.destinations.list", `${path}.destinations`, "destinations must be an array when present");
+    return;
+  }
+  value.destinations.forEach((destination: unknown, index: number) => {
+    const at = `${path}.destinations[${index}]`;
+    if (!isPlainObject(destination)) {
+      into.add("task.destination.shape", at, "each destination must be an object");
+      return;
+    }
+    into.filled(destination.id, "task.destination.id", `${at}.id`, "a destination needs an id");
+    into.filled(destination.label, "task.destination.label", `${at}.label`, "a destination needs a label");
+    into.filled(destination.address, "task.destination.address", `${at}.address`, "a destination needs an address");
+    into.oneOf(destination.kind, DESTINATION_KINDS, "task.destination.kind", `${at}.kind`);
+  });
+}
+
+function validateDispositions(value: unknown, path: string, into: Collector): void {
+  if (value === true) return;
+  if (!isPlainObject(value)) {
+    into.add("task.dispositions.shape", path, "must be true or a disposition policy");
+    return;
+  }
+  if (value.required !== undefined) {
+    into.require(typeof value.required === "boolean", "task.dispositions.required", `${path}.required`,
+      "required must be a boolean when present");
+  }
+  if (value.notes !== undefined) into.oneOf(value.notes, NOTES_POLICIES, "task.dispositions.notes", `${path}.notes`);
+  if (value.codes === undefined) return;
+  if (!Array.isArray(value.codes)) {
+    into.add("task.dispositions.codes", `${path}.codes`, "codes must be an array when present");
+    return;
+  }
+  const seen = new Set<string>();
+  value.codes.forEach((code: unknown, index: number) => {
+    const at = `${path}.codes[${index}]`;
+    if (!isPlainObject(code)) {
+      into.add("task.disposition.shape", at, "each disposition code must be an object");
+      return;
+    }
+    if (into.filled(code.id, "task.disposition.id", `${at}.id`, "a disposition code needs an id")) {
+      if (seen.has(code.id as string)) into.add("task.disposition.unique", `${at}.id`, `duplicate disposition code: ${code.id}`);
+      seen.add(code.id as string);
+    }
+    into.filled(code.label, "task.disposition.label", `${at}.label`, "a disposition code needs a label");
+  });
+}
+
+function validateCustomCapabilities(value: unknown, path: string, into: Collector): void {
+  if (!Array.isArray(value)) {
+    into.add("task.custom.shape", path, "custom must be an array when present");
+    return;
+  }
+  const seen = new Set<string>();
+  value.forEach((custom: unknown, index: number) => {
+    const at = `${path}[${index}]`;
+    if (!isPlainObject(custom)) {
+      into.add("task.custom.entry", at, "each custom capability must be an object");
+      return;
+    }
+    if (into.filled(custom.id, "task.custom.id", `${at}.id`, "a custom capability needs an id")) {
+      if (seen.has(custom.id as string)) into.add("task.custom.unique", `${at}.id`, `duplicate custom capability: ${custom.id}`);
+      seen.add(custom.id as string);
+    }
+    if (!isPlainObject(custom.ui)) {
+      into.add("task.custom.ui", `${at}.ui`, "a custom capability needs a ui description");
+      return;
+    }
+    into.oneOf(custom.ui.kind, CUSTOM_UI_KINDS, "task.custom.ui.kind", `${at}.ui.kind`);
+    into.filled(custom.ui.label, "task.custom.ui.label", `${at}.ui.label`, "a custom control needs a label");
+    into.oneOf(custom.ui.placement, CUSTOM_UI_PLACEMENTS, "task.custom.ui.placement", `${at}.ui.placement`);
+  });
+}
+
+function validateBrowsers(value: unknown, path: string, into: Collector): void {
+  if (!Array.isArray(value)) {
+    into.add("task.browsers.shape", path, "browsers must be an array");
+    return;
+  }
+  const seen = new Set<string>();
+  value.forEach((browser: unknown, index: number) => {
+    const at = `${path}[${index}]`;
+    if (!isPlainObject(browser)) {
+      into.add("task.browser.shape", at, "each browser must be an object");
+      return;
+    }
+    if (into.filled(browser.id, "task.browser.id", `${at}.id`, "a browser needs an id")) {
+      if (seen.has(browser.id as string)) into.add("task.browser.unique", `${at}.id`, `duplicate browser id: ${browser.id}`);
+      seen.add(browser.id as string);
+    }
+    into.filled(browser.name, "task.browser.name", `${at}.name`, "a browser needs a name");
+    into.filled(browser.purpose, "task.browser.purpose", `${at}.purpose`, "a browser needs a purpose");
+
+    if (into.filled(browser.url, "task.browser.url", `${at}.url`, "a browser needs a url")) {
+      let scheme: string | undefined;
+      try { scheme = new URL(browser.url as string).protocol; } catch { scheme = undefined; }
+      into.require(scheme !== undefined && ALLOWED_BROWSER_URL_SCHEMES.includes(scheme as "http:" | "https:"),
+        "task.browser.url.scheme", `${at}.url`,
+        `a browser url must use ${ALLOWED_BROWSER_URL_SCHEMES.join(" or ")}`);
+    }
+
+    // Reuse and its scheme travel together. A reusing browser with no scheme would otherwise
+    // inherit whatever a host happened to default to, which is how two tasks end up sharing a
+    // session nobody intended.
+    if (browser.reuse === true) {
+      into.require(ISOLATION_SCHEME_VALUES.includes(browser.isolationScheme as string),
+        "task.browser.isolationScheme", `${at}.isolationScheme`,
+        `a reusing browser must declare one of: ${ISOLATION_SCHEME_VALUES.join(", ")}`);
+    } else if (browser.reuse === false) {
+      into.require(browser.isolationScheme === undefined, "task.browser.isolationScheme.unexpected",
+        `${at}.isolationScheme`, "a browser that does not reuse must not declare an isolation scheme");
+    } else {
+      into.add("task.browser.reuse", `${at}.reuse`, "a browser must say whether it reuses a session");
+    }
+  });
+}
+
+function validateTaskAttributes(value: unknown, path: string, into: Collector): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    into.add("task.attributes.shape", path, "attributes must be an array when present");
+    return;
+  }
+  value.forEach((attribute: unknown, index: number) => {
+    const at = `${path}[${index}]`;
+    if (!isPlainObject(attribute)) {
+      into.add("task.attribute.shape", at, "each task attribute must be an object");
+      return;
+    }
+    into.filled(attribute.key, "task.attribute.key", `${at}.key`, "a task attribute needs a key");
+    if (attribute.label !== undefined) {
+      into.filled(attribute.label, "task.attribute.label", `${at}.label`, "a label must not be empty when present");
+    }
+    switch (attribute.type) {
+      case "text":
+        into.require(typeof attribute.value === "string", "task.attribute.text", `${at}.value`, "a text attribute needs a string value");
+        break;
+      case "contact":
+        validateContactInto(attribute.contact, `${at}.contact`, into);
+        break;
+      case "timestamp":
+        into.timestamp(attribute.at, "task.attribute.timestamp", `${at}.at`);
+        break;
+      default:
+        into.add("task.attribute.type", `${at}.type`, `unsupported attribute type: ${String(attribute.type)}`);
+    }
+  });
+}
+
+function validateHandlingHistory(value: unknown, path: string, into: Collector): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    into.add("task.handlingHistory.shape", path, "handlingHistory must be an array when present");
+    return;
+  }
+  value.forEach((entry: unknown, index: number) => {
+    const at = `${path}[${index}]`;
+    if (!isPlainObject(entry)) {
+      into.add("task.handlingHistory.entry", at, "each handling step must be an object");
+      return;
+    }
+    into.oneOf(entry.step, HANDLING_STEPS, "task.handlingHistory.step", `${at}.step`);
+    into.timestamp(entry.at, "task.handlingHistory.at", `${at}.at`);
+    if (entry.seconds !== undefined) {
+      // Omitted while a leg is still running. Nought is a claim that it took no time.
+      into.require(isDurationSeconds(entry.seconds) && (entry.seconds as number) > 0,
+        "task.handlingHistory.seconds", `${at}.seconds`,
+        "seconds must be a positive whole number; omit it while the step is still running");
+    }
+    if (entry.by !== undefined) {
+      into.require(isUserId(entry.by), "task.handlingHistory.by", `${at}.by`,
+        "by must be a non-empty user id; omit it when the person cannot be identified");
+    }
+  });
+}
+
+export interface TaskValidationContext {
+  /** The provider's channel, from its manifest. A task must agree with it. */
+  channel: string;
+}
+
+export function validateTask(task: unknown, context: TaskValidationContext, path = "task"): ProtocolViolation[] {
+  const into = new Collector();
+  validateTaskInto(task, context, path, into);
+  return into.violations;
+}
+
+function validateTaskInto(task: unknown, context: TaskValidationContext, path: string, into: Collector): void {
+  if (!isPlainObject(task)) {
+    into.add("task.shape", path, "a task must be an object");
+    return;
+  }
+  into.require(isTaskId(task.id), "task.id", `${path}.id`, "a task needs a non-empty id");
+  into.filled(task.title, "task.title", `${path}.title`, "a task needs a title");
+  into.filled(task.taskType, "task.taskType", `${path}.taskType`, "a task needs a task type");
+  into.oneOf(task.phase, TASK_PHASES, "task.phase", `${path}.phase`);
+  into.oneOf(task.completionMode, COMPLETION_MODES, "task.completionMode", `${path}.completionMode`);
+  into.require(isDurationSeconds(task.completionAllowance), "task.completionAllowance", `${path}.completionAllowance`,
+    "completionAllowance must be a whole number of seconds, zero or more");
+
+  // The channel is fixed per provider by its manifest, so a task claiming another one is a
+  // task Omni would render with the wrong controls.
+  into.require(task.channel === context.channel, "task.channel", `${path}.channel`,
+    `a ${context.channel} provider may not publish a ${String(task.channel)} task`);
+
+  if (task.reference !== undefined) {
+    into.filled(task.reference, "task.reference", `${path}.reference`, "a reference must not be empty when present");
+  }
+  if (task.contact !== undefined) validateContactInto(task.contact, `${path}.contact`, into);
+
+  validateBrowsers(task.browsers, `${path}.browsers`, into);
+  validateTaskAttributes(task.attributes, `${path}.attributes`, into);
+  validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into);
+
+  const capabilities = task.capabilities;
+  if (!isPlainObject(capabilities)) {
+    into.add("task.capabilities.shape", `${path}.capabilities`, "a task needs a capabilities object");
+    return;
+  }
+  const allowed = isChannel(context.channel) ? TASK_CAPABILITIES[context.channel] : TASK_CAPABILITIES.voice;
+  for (const [name, declared] of Object.entries(capabilities)) {
+    if (declared === undefined) continue;
+    if (!into.require(allowed.includes(name), "task.capability.channel", `${path}.capabilities.${name}`,
+      `a ${context.channel} task may not declare ${name}`)) continue;
+    switch (name) {
+      case "dispositions": validateDispositions(declared, `${path}.capabilities.dispositions`, into); break;
+      case "custom": validateCustomCapabilities(declared, `${path}.capabilities.custom`, into); break;
+      case "blindTransfer":
+      case "conference": validateDestinationDirectory(declared, `${path}.capabilities.${name}`, into); break;
+      default:
+        // Presence is the permission: the flag capabilities carry no payload, so anything but
+        // true is a value a host would have to interpret.
+        into.require(declared === true, "task.capability.value", `${path}.capabilities.${name}`,
+          `${name} is declared by presence: send true or omit it`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Breaks, team, snapshot.
+// ---------------------------------------------------------------------------
+
+function validateImposedBreak(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("break.imposed.shape", path, "an imposed break must be an object");
+    return;
+  }
+  // `by` is required either way. Who put somebody off the floor survives whether or not the
+  // break ends on a clock -- an imposed break with no origin is a state the agent cannot
+  // reason about.
+  into.require(isUserId(value.by), "break.imposed.by", `${path}.by`, "an imposed break must say who placed it");
+
+  if (value.endsAutomatically === true) {
+    into.timestamp(value.endsAt, "break.imposed.endsAt", `${path}.endsAt`);
+  } else if (value.endsAutomatically === false) {
+    into.require(value.endsAt === undefined, "break.imposed.endsAt.unexpected", `${path}.endsAt`,
+      "a break that does not end automatically must not carry an end time");
+  } else {
+    into.add("break.imposed.endsAutomatically", `${path}.endsAutomatically`,
+      "an imposed break must say whether it ends automatically");
+  }
+}
+
+function validateBreakState(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("break.shape", path, "break state must be an object");
+    return;
+  }
+  into.oneOf(value.approval, BREAK_APPROVALS, "break.approval", `${path}.approval`);
+  into.require(typeof value.accepting === "boolean", "break.accepting", `${path}.accepting`, "accepting must be a boolean");
+
+  for (const field of ["requestId", "refusedReason", "decisionReason"] as const) {
+    if (value[field] !== undefined) {
+      into.filled(value[field], `break.${field}`, `${path}.${field}`, `${field} must not be empty when present`);
+    }
+  }
+  if (value.retryAfterMs !== undefined) {
+    into.require(typeof value.retryAfterMs === "number" && Number.isFinite(value.retryAfterMs) && value.retryAfterMs >= 0,
+      "break.retryAfterMs", `${path}.retryAfterMs`, "retryAfterMs must be a non-negative number when present");
+  }
+  if (value.activeReasonId !== undefined) {
+    into.filled(value.activeReasonId, "break.activeReasonId", `${path}.activeReasonId`,
+      "activeReasonId must not be empty when present");
+    // A break nobody is on has no reason. Reporting one beside `not-requested` describes a
+    // break that is not happening.
+    into.require(value.approval !== "not-requested", "break.activeReasonId.approval", `${path}.activeReasonId`,
+      "activeReasonId must be omitted when no break is requested or in effect");
+  }
+  if (value.imposed !== undefined) validateImposedBreak(value.imposed, `${path}.imposed`, into);
+
+  if (value.reasons === undefined) return;
+  if (!Array.isArray(value.reasons)) {
+    into.add("break.reasons.shape", `${path}.reasons`, "break reasons must be an array when present");
+    return;
+  }
+  const seen = new Set<string>();
+  value.reasons.forEach((reason: unknown, index: number) => {
+    const at = `${path}.reasons[${index}]`;
+    if (!isPlainObject(reason)) {
+      into.add("break.reason.shape", at, "each break reason must be an object");
+      return;
+    }
+    if (into.filled(reason.id, "break.reason.id", `${at}.id`, "a break reason needs an id")) {
+      if (seen.has(reason.id as string)) into.add("break.reason.unique", `${at}.id`, `duplicate break reason id: ${reason.id}`);
+      seen.add(reason.id as string);
+    }
+    into.filled(reason.label, "break.reason.label", `${at}.label`, "a break reason needs a label");
+    if (reason.kind !== undefined) into.oneOf(reason.kind, BREAK_KINDS, "break.reason.kind", `${at}.kind`);
+    if (reason.alwaysAvailable !== undefined) {
+      into.require(reason.alwaysAvailable === true, "break.reason.alwaysAvailable", `${at}.alwaysAvailable`,
+        "alwaysAvailable is declared by presence: send true or omit it");
+    }
+  });
+}
+
+export function validateTeamRoster(roster: unknown, path = "team"): ProtocolViolation[] {
+  const into = new Collector();
+  validateTeamRosterInto(roster, path, into);
+  return into.violations;
+}
+
+function validateTeamRosterInto(roster: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(roster)) {
+    into.add("team.shape", path, "a team roster must be an object");
+    return;
+  }
+  if (roster.breakControl !== undefined) {
+    into.require(roster.breakControl === true, "team.breakControl", `${path}.breakControl`,
+      "breakControl is declared by presence: send true or omit it");
+  }
+  if (!Array.isArray(roster.members)) {
+    into.add("team.members.shape", `${path}.members`, "a roster must carry a members array");
+    return;
+  }
+  const seen = new Set<string>();
+  roster.members.forEach((member: unknown, index: number) => {
+    const at = `${path}.members[${index}]`;
+    if (!isPlainObject(member)) {
+      into.add("team.member.shape", at, "each roster member must be an object");
+      return;
+    }
+    if (into.require(isUserId(member.id), "team.member.id", `${at}.id`, "a roster member needs a user id")) {
+      if (seen.has(member.id as string)) into.add("team.member.unique", `${at}.id`, `duplicate roster member: ${member.id}`);
+      seen.add(member.id as string);
+    }
+    into.oneOf(member.availability, TEAM_AVAILABILITIES, "team.member.availability", `${at}.availability`);
+    if (member.since !== undefined) into.timestamp(member.since, "team.member.since", `${at}.since`);
+    if (member.break !== undefined) into.oneOf(member.break, BREAK_APPROVALS, "team.member.break", `${at}.break`);
+  });
+}
+
+export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "snapshot"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(snapshot)) {
+    into.add("snapshot.shape", path, "a snapshot must be an object");
+    return into.violations;
+  }
+  const channel = isPlainObject(manifest) && typeof manifest.channel === "string" ? manifest.channel : "voice";
+
+  into.oneOf(snapshot.status, CONNECTION_STATUSES, "snapshot.status", `${path}.status`);
+  into.filled(snapshot.sessionId, "snapshot.sessionId", `${path}.sessionId`, "a snapshot needs the session id it belongs to");
+
+  const sessionCapabilities = snapshot.sessionCapabilities;
+  if (!isPlainObject(sessionCapabilities)) {
+    into.add("snapshot.sessionCapabilities.shape", `${path}.sessionCapabilities`,
+      "a snapshot needs a sessionCapabilities object");
+  } else {
+    for (const [name, declared] of Object.entries(sessionCapabilities)) {
+      if (declared === undefined) continue;
+      if (!into.require((SESSION_CAPABILITIES as readonly string[]).includes(name), "snapshot.sessionCapability.unknown",
+        `${path}.sessionCapabilities.${name}`, `unsupported session capability: ${name}`)) continue;
+      into.require(declared === true, "snapshot.sessionCapability.value", `${path}.sessionCapabilities.${name}`,
+        `${name} is declared by presence: send true or omit it`);
+    }
+  }
+
+  validateBreakState(snapshot.break, `${path}.break`, into);
+
+  if (!Array.isArray(snapshot.tasks)) {
+    into.add("snapshot.tasks.shape", `${path}.tasks`, "a snapshot must carry a tasks array");
+  } else {
+    const seen = new Set<string>();
+    snapshot.tasks.forEach((task: unknown, index: number) => {
+      validateTaskInto(task, { channel }, `${path}.tasks[${index}]`, into);
+      if (isPlainObject(task) && isTaskId(task.id)) {
+        if (seen.has(task.id as string)) into.add("task.id.unique", `${path}.tasks[${index}].id`, `duplicate task id: ${task.id}`);
+        seen.add(task.id as string);
+      }
+    });
+  }
+
+  // Presence is the permission, and it cuts both ways: data a provider never declared a
+  // capability for is data Omni would show against a control the agent does not have.
+  const idle = isPlainObject(manifest) && isPlainObject(manifest.idleCapabilities) ? manifest.idleCapabilities : {};
+  if (snapshot.contacts !== undefined) {
+    into.require(idle.contacts === true, "snapshot.contacts.capability", `${path}.contacts`,
+      "contacts require the contacts idle capability");
+    if (Array.isArray(snapshot.contacts)) {
+      snapshot.contacts.forEach((contact: unknown, index: number) =>
+        validateContactInto(contact, `${path}.contacts[${index}]`, into));
+    } else {
+      into.add("snapshot.contacts.shape", `${path}.contacts`, "contacts must be an array when present");
+    }
+  }
+  if (snapshot.scheduledActivities !== undefined) {
+    into.require(idle.calendar === true, "snapshot.calendar.capability", `${path}.scheduledActivities`,
+      "scheduled activities require the calendar idle capability");
+    if (Array.isArray(snapshot.scheduledActivities)) {
+      const seen = new Set<string>();
+      snapshot.scheduledActivities.forEach((activity: unknown, index: number) => {
+        validateScheduledActivityInto(activity, `${path}.scheduledActivities[${index}]`, into);
+        if (isPlainObject(activity) && isFilled(activity.id)) {
+          if (seen.has(activity.id as string)) {
+            into.add("activity.id.unique", `${path}.scheduledActivities[${index}].id`, `duplicate activity id: ${activity.id}`);
+          }
+          seen.add(activity.id as string);
+        }
+      });
+    } else {
+      into.add("snapshot.calendar.shape", `${path}.scheduledActivities`, "scheduledActivities must be an array when present");
+    }
+  }
+  if (snapshot.team !== undefined) validateTeamRosterInto(snapshot.team, `${path}.team`, into);
+
+  return into.violations;
+}
+
+// ---------------------------------------------------------------------------
+// Events.
+// ---------------------------------------------------------------------------
+
+function validateTaskOutcome(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("event.taskEnded.outcome.shape", path, "an outcome must be an object");
+    return;
+  }
+  switch (value.type) {
+    case "completed":
+      into.oneOf(value.by, COMPLETED_BY, "event.taskEnded.outcome.completed", `${path}.by`);
+      break;
+    case "transferred":
+      if (value.destination !== undefined) {
+        into.filled(value.destination, "event.taskEnded.outcome.transferred", `${path}.destination`,
+          "a destination must not be empty when present");
+      }
+      break;
+    case "cancelled":
+      if (value.reason !== undefined) {
+        into.filled(value.reason, "event.taskEnded.outcome.cancelled", `${path}.reason`,
+          "a reason must not be empty when present");
+      }
+      break;
+    case "expired":
+      // Only the phases in which a task is still waiting on somebody can expire.
+      into.oneOf(value.phase, EXPIRABLE_PHASES, "event.taskEnded.outcome.expired", `${path}.phase`);
+      break;
+    case "failed":
+      if (!isPlainObject(value.failure)) {
+        into.add("event.taskEnded.outcome.failed", `${path}.failure`, "a failed outcome must carry a failure");
+      } else {
+        into.filled(value.failure.code, "failure.code", `${path}.failure.code`, "a failure needs a code");
+        into.filled(value.failure.message, "failure.message", `${path}.failure.message`, "a failure needs a message");
+        into.require(typeof value.failure.retryable === "boolean", "failure.retryable", `${path}.failure.retryable`,
+          "a failure must say whether it is retryable");
+      }
+      break;
+    default:
+      into.add("event.taskEnded.outcome.type", `${path}.type`, `unsupported outcome: ${String(value.type)}`);
+  }
+}
+
+function validateProviderSummary(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("event.summary.shape", path, "a provider summary must be an object");
+    return;
+  }
+  into.filled(value.title, "event.summary.title", `${path}.title`, "a summary needs a title");
+  if (value.subtitle !== undefined) {
+    into.filled(value.subtitle, "event.summary.subtitle", `${path}.subtitle`, "a subtitle must not be empty when present");
+  }
+  into.require(typeof value.waitingCount === "number" && Number.isInteger(value.waitingCount) && value.waitingCount >= 0,
+    "event.summary.waitingCount", `${path}.waitingCount`, "waitingCount must be a whole number, zero or more");
+  into.timestamp(value.updatedAt, "event.summary.updatedAt", `${path}.updatedAt`);
+  if (value.metrics === undefined) return;
+  if (!Array.isArray(value.metrics)) {
+    into.add("event.summary.metrics.shape", `${path}.metrics`, "metrics must be an array when present");
+    return;
+  }
+  value.metrics.forEach((metric: unknown, index: number) => {
+    const at = `${path}.metrics[${index}]`;
+    if (!isPlainObject(metric)) {
+      into.add("event.summary.metric.shape", at, "each metric must be an object");
+      return;
+    }
+    into.filled(metric.id, "event.summary.metric.id", `${at}.id`, "a metric needs an id");
+    into.filled(metric.label, "event.summary.metric.label", `${at}.label`, "a metric needs a label");
+    into.require(typeof metric.value === "string", "event.summary.metric.value", `${at}.value`,
+      "a metric value must be a string; the provider decides how it reads");
+  });
+}
+
+export function validateEventEnvelope(envelope: unknown, manifest: unknown, path = "event"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(envelope)) {
+    into.add("event.shape", path, "an event envelope must be an object");
+    return into.violations;
+  }
+  const channel = isPlainObject(manifest) && typeof manifest.channel === "string" ? manifest.channel : "voice";
+
+  into.filled(envelope.id, "event.id", `${path}.id`, "an event needs an id");
+  into.filled(envelope.sessionId, "event.sessionId", `${path}.sessionId`, "an event needs the session id it belongs to");
+  into.timestamp(envelope.occurredAt, "event.occurredAt", `${path}.occurredAt`);
+
+  const event = envelope.event;
+  if (!isPlainObject(event)) {
+    into.add("event.payload.shape", `${path}.event`, "an envelope must carry an event");
+    return into.violations;
+  }
+  const at = `${path}.event`;
+
+  switch (event.type) {
+    case "snapshot":
+      into.oneOf(event.reason, SNAPSHOT_REASONS, "event.snapshot.reason", `${at}.reason`);
+      into.violations.push(...validateSnapshot(event.snapshot, manifest, `${at}.snapshot`));
+      break;
+    case "provider-status":
+      into.oneOf(event.status, CONNECTION_STATUSES, "event.providerStatus.status", `${at}.status`);
+      if (event.message !== undefined) {
+        into.filled(event.message, "event.providerStatus.message", `${at}.message`, "a message must not be empty when present");
+      }
+      break;
+    case "break-state":
+      validateBreakState(event.break, `${at}.break`, into);
+      break;
+    case "task-offered":
+      validateTaskInto(event.task, { channel }, `${at}.task`, into);
+      if (event.acceptanceMode !== undefined) {
+        into.oneOf(event.acceptanceMode, ACCEPTANCE_MODES, "event.taskOffered.acceptanceMode", `${at}.acceptanceMode`);
+      }
+      for (const field of ["allocationExpiresAt", "preparationEndsAt"] as const) {
+        if (event[field] !== undefined) into.timestamp(event[field], `event.taskOffered.${field}`, `${at}.${field}`);
+      }
+      break;
+    case "task-updated":
+      validateTaskInto(event.task, { channel }, `${at}.task`, into);
+      break;
+    case "task-media-ended":
+      into.require(isTaskId(event.taskId), "event.taskMediaEnded.taskId", `${at}.taskId`, "a task id is required");
+      break;
+    case "task-ended":
+      into.require(isTaskId(event.taskId), "event.taskEnded.taskId", `${at}.taskId`, "a task id is required");
+      validateTaskOutcome(event.outcome, `${at}.outcome`, into);
+      break;
+    case "announcement":
+      into.filled(event.text, "event.announcement.text", `${at}.text`, "an announcement needs text");
+      into.timestamp(event.announcedAt, "event.announcement.announcedAt", `${at}.announcedAt`);
+      if (event.expiresAt !== undefined) into.timestamp(event.expiresAt, "event.announcement.expiresAt", `${at}.expiresAt`);
+      if (event.html !== undefined) {
+        into.require(typeof event.html === "string", "event.announcement.html", `${at}.html`, "html must be a string when present");
+      }
+      break;
+    case "provider-summary":
+      validateProviderSummary(event.summary, `${at}.summary`, into);
+      break;
+    case "team-updated":
+      validateTeamRosterInto(event.team, `${at}.team`, into);
+      break;
+    case "contacts-updated":
+      if (!Array.isArray(event.contacts)) {
+        into.add("event.contacts.shape", `${at}.contacts`, "contacts must be an array");
+      } else {
+        event.contacts.forEach((contact: unknown, index: number) =>
+          validateContactInto(contact, `${at}.contacts[${index}]`, into));
+      }
+      break;
+    case "calendar-updated":
+      if (!Array.isArray(event.scheduledActivities)) {
+        into.add("event.calendar.shape", `${at}.scheduledActivities`, "scheduledActivities must be an array");
+      } else {
+        event.scheduledActivities.forEach((activity: unknown, index: number) =>
+          validateScheduledActivityInto(activity, `${at}.scheduledActivities[${index}]`, into));
+      }
+      break;
+    default:
+      into.add("event.type", `${at}.type`, `unsupported event type: ${String(event.type)}`);
+  }
+  return into.violations;
+}
+
+// ---------------------------------------------------------------------------
+// Authentication.
+// ---------------------------------------------------------------------------
+
+function validateUser(value: unknown, rule: string, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add(rule, path, "an identity must be an object");
+    return;
+  }
+  into.require(isUserId(value.id), `${rule}.id`, `${path}.id`, "an identity needs a provider-issued user id");
+  into.filled(value.displayName, `${rule}.displayName`, `${path}.displayName`, "an identity needs a display name");
+}
+
+export function validateAuthenticationState(state: unknown, path = "authentication"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(state)) {
+    into.add("authentication.shape", path, "an authentication state must be an object");
+    return into.violations;
+  }
+  if (!into.oneOf(state.status, AUTHENTICATION_STATUSES, "authentication.status", `${path}.status`)) {
+    return into.violations;
+  }
+
+  // Only `authenticated` may carry an expiry, and only the states that know who the agent is
+  // may carry an identity. Anything else is a state claiming knowledge it does not have.
+  if (state.status === "authenticated" || state.status === "refreshing") {
+    validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
+  } else if (state.status === "expired") {
+    if (state.identity !== undefined) validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
+    if (state.failure !== undefined) {
+      if (!isPlainObject(state.failure)) {
+        into.add("authentication.failure.shape", `${path}.failure`, "a failure must be an object when present");
+      } else {
+        into.filled(state.failure.code, "authentication.failure.code", `${path}.failure.code`, "a failure needs a code");
+        into.filled(state.failure.message, "authentication.failure.message", `${path}.failure.message`, "a failure needs a message");
+        into.require(typeof state.failure.retryable === "boolean", "authentication.failure.retryable",
+          `${path}.failure.retryable`, "a failure must say whether it is retryable");
+      }
+    }
+  } else {
+    into.require(state.identity === undefined, "authentication.identity.unexpected", `${path}.identity`,
+      `${state.status} must not carry an identity`);
+  }
+
+  if (state.expiresAt !== undefined) {
+    into.require(state.status === "authenticated", "authentication.expiresAt.unexpected", `${path}.expiresAt`,
+      "only an authenticated state may carry an expiry");
+    into.timestamp(state.expiresAt, "authentication.expiresAt", `${path}.expiresAt`);
+  }
+  return into.violations;
+}

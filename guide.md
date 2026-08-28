@@ -1,4 +1,4 @@
-# `@omni-agent/protocol` API contract
+# `@omni/protocol` API contract
 
 This document is the normative contract between Omni Agent and a provider adapter. It describes
 observable behavior in addition to TypeScript shapes. When an example and a type declaration
@@ -921,10 +921,10 @@ Request/response polling does not have those properties and is not a transport f
 
 | Import | Purpose |
 | --- | --- |
-| `@omni-agent/protocol` | Provider adapter contract and shared domain types |
-| `@omni-agent/protocol/testing` | Adapter conformance helpers |
-| `@omni-agent/protocol/validation` | Runtime validators Omni and adapters both use to reject malformed data |
-| `@omni-agent/protocol/design` | Host design-language integration. Specified separately; no part of it is a provider surface. |
+| `@omni/protocol` | Provider adapter contract and shared domain types |
+| `@omni/protocol/testing` | Adapter conformance helpers |
+| `@omni/protocol/validation` | Runtime validators Omni and adapters both use to reject malformed data |
+| `@omni/protocol/design` | Host design-language integration. Specified separately; no part of it is a provider surface. |
 
 ## Declaring an adapter
 
@@ -934,7 +934,7 @@ Compile-time helper that preserves the adapter's inferred concrete type while ch
 implements `Adapter`. It performs no connection and has no runtime side effects.
 
 ```ts
-import { defineAdapter, OMNI_PROTOCOL_VERSION } from "@omni-agent/protocol";
+import { defineAdapter, OMNI_PROTOCOL_VERSION } from "@omni/protocol";
 
 export default defineAdapter({
   manifest: {
@@ -2869,7 +2869,7 @@ reaching the workspace.
 
 ### `exerciseAdapter(adapter, context, options?)`
 
-Adapter conformance exercise from `@omni-agent/protocol/testing`.
+Adapter conformance exercise from `@omni/protocol/testing`.
 
 It validates the manifest, opens an authenticated session, connects, checks required capability
 methods, subscribes, validates the snapshot and every delivered event, states a capacity, then
