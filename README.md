@@ -19,9 +19,9 @@ system.
 ## Entry points
 
 ```ts
-import { defineAdapter } from "@omni/protocol";
-import { validateSnapshot, assertNoViolations } from "@omni/protocol/validation";
-import { exerciseAdapter } from "@omni/protocol/testing";
+import { defineAdapter } from "@xema/omni-protocol";
+import { validateSnapshot, assertNoViolations } from "@xema/omni-protocol/validation";
+import { exerciseAdapter } from "@xema/omni-protocol/testing";
 ```
 
 ## Validation is not only for tests
