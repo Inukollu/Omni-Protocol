@@ -479,3 +479,53 @@ describe("consult transfer", () => {
       .toContain("task.consultation.channel");
   });
 });
+
+describe("consulting a lead", () => {
+  const voice = { channel: "voice" };
+  it("is its own voice capability", () => {
+    expect(rules(validateTask(task({ capabilities: { consultLead: true } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { consultLead: false } }), voice))).toContain("task.capability.value");
+    for (const channel of ["chat", "email"]) {
+      expect(rules(validateTask(task({ channel, capabilities: { consultLead: true } }), { channel }))).toContain("task.capability.channel");
+    }
+  });
+
+  it("carries the request on the agent's task: requested names nobody, joined names the lead", () => {
+    const since = "2026-08-21T09:04:00Z";
+    expect(rules(validateTask(task({ lead: { status: "requested", note: "Refund dispute", since } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ lead: { status: "joined", leadId: "L-9", since } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ lead: { status: "joined", since } }), voice))).toContain("task.lead.leadId");
+    expect(rules(validateTask(task({ lead: { status: "requested", leadId: "L-9", since } }), voice))).toContain("task.lead.leadId.unexpected");
+    expect(rules(validateTask(task({ lead: { status: "declined", since } }), voice))).toContain("task.lead.status");
+    expect(rules(validateTask(task({ lead: { status: "requested" } }), voice))).toContain("task.lead.since");
+    expect(rules(validateTask(task({ channel: "chat", capabilities: {}, lead: { status: "requested", since } }), { channel: "chat" })))
+      .toContain("task.lead.channel");
+  });
+
+  it("carries the joined call on the lead's task", () => {
+    const since = "2026-08-21T09:05:00Z";
+    expect(rules(validateTask(task({ assisting: { memberId: "A-1", note: "Refund dispute", since } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ assisting: { note: "Refund dispute", since } }), voice))).toContain("task.assisting.memberId");
+    expect(rules(validateTask(task({ assisting: { memberId: "A-1" } }), voice))).toContain("task.assisting.since");
+    expect(rules(validateTask(task({ channel: "email", capabilities: {}, assisting: { memberId: "A-1", since } }), { channel: "email" })))
+      .toContain("task.assisting.channel");
+  });
+
+  it("puts requests on the roster only where the lead may act on them", () => {
+    const request = { id: "req-7", memberId: "A-1", taskId: "call-42", note: "Refund dispute", since: "2026-08-21T09:04:00Z" };
+    const members = [{ id: "A-1", availability: "on-task" }];
+    expect(rules(validateTeamRoster({ members, consultControl: true, requests: [request] }))).toEqual([]);
+    expect(rules(validateTeamRoster({ members, consultControl: true, requests: [] }))).toEqual([]);
+    expect(rules(validateTeamRoster({ members, requests: [request] }))).toContain("team.requests.capability");
+    expect(rules(validateTeamRoster({ members, consultControl: false }))).toContain("team.consultControl");
+    expect(rules(validateTeamRoster({ members, consultControl: true, requests: [request, request] }))).toContain("team.request.unique");
+    expect(rules(validateTeamRoster({ members, consultControl: true, requests: [{ ...request, taskId: "" }] }))).toContain("team.request.taskId");
+    expect(rules(validateTeamRoster({ members, consultControl: true, requests: [{ ...request, since: "now" }] }))).toContain("team.request.since");
+  });
+
+  it("accepts the left outcome, and still refuses one the contract lacks", () => {
+    const ended = (outcome: unknown) => envelope({ type: "task-ended", taskId: "call-42", outcome });
+    expect(rules(validateEventEnvelope(ended({ type: "left" }), manifest()))).toEqual([]);
+    expect(rules(validateEventEnvelope(ended({ type: "vanished" }), manifest()))).toContain("event.taskEnded.outcome.type");
+  });
+});

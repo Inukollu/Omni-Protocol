@@ -123,6 +123,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         cancelBreak: async requestId => ({ requestId, status: "cancelled" }),
         endBreak: async () => ({ status: "ended" }),
         executeTeamBreak: async request => ({ commandId: request.commandId, status: "applied" }),
+        executeTeamConsult: async request => ({ commandId: request.commandId, status: "applied" }),
         openMedia: async () => ({ status: "unavailable", failure: { code: "test", message: "No media in a test", retryable: false } }),
       };
       return { ...connection, ...overrides.connection } as Connection<"voice">;
@@ -248,6 +249,13 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ snapshot: member, connection: { executeTeamBreak: undefined } })).not.toContain("connection.executeTeamBreak.required");
   });
 
+  it("executeTeamConsult(), when the roster carries consultControl", async () => {
+    const consulting = { ...conformingSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }], consultControl: true, requests: [] } } satisfies Snapshot<"voice">;
+    const plain = { ...conformingSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
+    expect(await rules({ snapshot: consulting, connection: { executeTeamConsult: undefined } })).toContain("connection.executeTeamConsult.required");
+    expect(await rules({ snapshot: plain, connection: { executeTeamConsult: undefined } })).not.toContain("connection.executeTeamConsult.required");
+  });
+
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
     // The conforming snapshot names A-1 in a handling step; a roster and an imposed break count too.
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
@@ -265,7 +273,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       snapshot: minimalSnapshot,
       connection: {
         describeUsers: undefined, dial: undefined, requestBreak: undefined, commitBreak: undefined,
-        cancelBreak: undefined, endBreak: undefined, executeTeamBreak: undefined, openMedia: undefined,
+        cancelBreak: undefined, endBreak: undefined, executeTeamBreak: undefined, executeTeamConsult: undefined, openMedia: undefined,
       },
     });
     expect(found).toEqual([]);

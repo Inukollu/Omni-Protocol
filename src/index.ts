@@ -338,6 +338,8 @@ export type TaskCapabilities<C extends Channel = Channel> =
         blindTransfer?: true | DestinationDirectory;
         /** Park the customer and call a destination first; then `complete` or `cancel`. */
         consultTransfer?: true | DestinationDirectory;
+        /** Ask a lead to join this call, with a note. The lead's decision arrives on `Task.lead`. */
+        consultLead?: true;
         conference?: true | DestinationDirectory;
         recording?: true;
       }
@@ -473,6 +475,27 @@ export interface TaskConsultation {
   since?: IsoTimestamp;
 }
 
+/**
+ * The agent's request for a lead, from asking until the lead leaves or the request ends.
+ * `requested` while nobody has joined; `joined`, with `leadId`, once somebody has.
+ */
+export interface TaskLead {
+  status: "requested" | "joined";
+  leadId?: UserId;
+  note?: string;
+  since: IsoTimestamp;
+}
+
+/**
+ * On the lead's own task for a call they joined: which member asked, with their note. Its
+ * presence is what makes `lead` `take-over` and `leave` issuable.
+ */
+export interface TaskAssisting {
+  memberId: UserId;
+  note?: string;
+  since: IsoTimestamp;
+}
+
 export type Task<C extends Channel = Channel> = {
   id: TaskId;
   title: string;
@@ -488,8 +511,10 @@ export type Task<C extends Channel = Channel> = {
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingStep[];
 } & TaskCompletion
-  // Consulting is a voice affair, and the arm is what makes it a compile error elsewhere.
-  & (C extends "voice" ? { consultation?: TaskConsultation } : { consultation?: never });
+  // Consulting, and a lead on the call, are voice affairs; the arm makes them compile errors elsewhere.
+  & (C extends "voice"
+    ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting }
+    : { consultation?: never; lead?: never; assisting?: never });
 
 /** What the provider wants of Omni's acceptance policy for one offer. */
 export type AcceptanceMode =
@@ -503,6 +528,8 @@ export type TaskOutcome =
   | { type: "cancelled"; reason?: string }
   /** Only the phases in which somebody is still being waited on can expire. */
   | { type: "expired"; phase: "pending" | "confirmed" | "preparing" }
+  /** This agent left a call that continues without them: a lead who joined and dropped. */
+  | { type: "left" }
   | { type: "failed"; failure: ProtocolFailure };
 
 // ---------------------------------------------------------------------------
@@ -511,7 +538,7 @@ export type TaskOutcome =
 
 export const TASK_COMMAND_NAMES = {
   voice: ["answer", "decline", "start-call", "mute", "hold", "resume", "disconnect",
-          "callback", "transfer", "conference", "recording", "complete"],
+          "callback", "transfer", "lead", "conference", "recording", "complete"],
   chat: ["accept", "reject", "pause", "resume", "complete"],
   email: ["accept", "reject", "complete"],
 } as const;
@@ -542,6 +569,14 @@ export type VoiceTaskCommand =
   | { type: "transfer"; action: "complete" }
   /** Drop the consulted destination and return to the customer. Needs `Task.consultation`. */
   | { type: "transfer"; action: "cancel" }
+  /** Ask a lead to join, with a note. Gated by `consultLead`. */
+  | { type: "lead"; action: "request"; note?: string }
+  /** Withdraw a standing request. Needs `Task.lead` with status `requested`. */
+  | { type: "lead"; action: "cancel" }
+  /** The lead keeps the customer; the agent's task ends `transferred`. Needs `Task.assisting`. */
+  | { type: "lead"; action: "take-over" }
+  /** The lead drops; the agent continues. The lead's task ends `left`. Needs `Task.assisting`. */
+  | { type: "lead"; action: "leave" }
   | { type: "conference"; participant: string; action: "add" | "remove" }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);
@@ -705,9 +740,31 @@ export interface TeamMember {
  * Published only to an agent entitled to one. Its presence is the permission -- nothing else
  * makes somebody a lead, and there is no separate flag to fall out of step with the data.
  */
+/** A member asking this lead to join their call. */
+export interface LeadRequest {
+  id: string;
+  memberId: UserId;
+  taskId: TaskId;
+  note?: string;
+  since: IsoTimestamp;
+}
+
 export interface TeamRoster {
   members: TeamMember[];
   breakControl?: true;
+  /** Present when this lead may join a member's call on request. */
+  consultControl?: true;
+  /** Omitted when the lead may not be asked; `[]` when nobody is asking. */
+  requests?: LeadRequest[];
+}
+
+export type TeamConsultCommand =
+  | { type: "join"; requestId: string }
+  | { type: "decline"; requestId: string; reason?: string };
+
+export interface TeamConsultCommandRequest {
+  commandId: string;
+  command: TeamConsultCommand;
 }
 
 export type TeamBreakCommand =
@@ -866,6 +923,8 @@ export interface Connection<C extends Channel = Channel> {
 
   /** Required when the adapter publishes a `TeamRoster` carrying `breakControl`. */
   executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
+  /** Required when the adapter publishes a `TeamRoster` carrying `consultControl`. */
+  executeTeamConsult?(request: TeamConsultCommandRequest): Promise<TeamCommandResult>;
   /** Required of every voice adapter: all voice audio lands in Omni. */
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
 }
