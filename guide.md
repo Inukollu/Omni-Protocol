@@ -542,7 +542,6 @@ type TaskCommand<C extends Channel = Channel> =
   | CustomTaskCommand;
 
 type TaskCommandRequest<C extends Channel = Channel> = {
-  commandId: string;
   taskId: TaskId;
   command: TaskCommand<C>;
 };
@@ -567,7 +566,6 @@ type BreakReason = {
 };
 
 type BreakRequest = {
-  requestId: string;
   reason?: string;
   reasonId?: string;
 };
@@ -578,7 +576,6 @@ type ImposedBreak =
 
 type BreakState = {
   approval: BreakApproval;
-  requestId?: string;
   accepting: boolean;
   refusedReason?: string;
   decisionReason?: string;
@@ -915,18 +912,27 @@ Events report completed transactions after that baseline. Nothing is missed whil
 holds; when it drops, the reconnect snapshot re-establishes the baseline before any further event
 is applied.
 
-### 6. Commands are idempotent
+### 6. An unsettled result is unknown, and unknown is not retried
 
-Handle every command as though it may arrive twice — a retry, a reconnect, an agent pressing
-twice.
+A settled result is a fact. A promise that rejects with no result — the transport died — means
+*unknown*: the provider may have done it or not, and neither Omni nor an adapter on the agent's PC
+can find out in time to make a repeat safe. Omni does not retry. The next snapshot shows what the
+provider actually did, and if the agent acts again it is a new command.
 
-Every retryable call carries a stable key — `commandId` on `execute` and `dial`, `requestId` on the
-break methods. Processing the same key more than once must not repeat its side effects, and a
-retry is answered with that method's `already-` form: `already-applied`, `already-dialled`,
-`already-committed`, and so on. Each answers in its own words; see **Capacity and break actions**.
+A command therefore carries no key. The provider names its own records — a task, a lead request, a
+member — and Omni refers to them by those names; **Omni never asks a provider to remember a name
+Omni made up.**
 
-`setCapacity` is the one exception and needs no key. A capacity supersedes rather than
-accumulates, so re-sending the current one is not a repeat of anything.
+A command whose second execution changes nothing needs no protection: committing a break that is
+already committed stops an agent who is already stopped. A command whose second execution has a
+cost — a dial places a second call — is not made safe by anyone, which is why it is never repeated
+without a person deciding to.
+
+An agent dials. The provider places the call and the answer is lost. Omni shows the dial as
+unknown, not failed. Within a moment the provider offers the resulting call through `task-offered`
+and the agent is on it; had nothing been placed, nothing arrives and the agent dials again. What
+Omni must not do is dial again on the agent's behalf — the one outcome worse than a lost answer is
+two phones ringing at the customer.
 
 ### 7. Work is pulled, never pushed
 
@@ -1394,7 +1400,7 @@ authorization codes, tokens, or provider responses containing secrets.
 ### Sign-out
 
 `signOut(requestId)` revokes or invalidates the provider session where supported, deletes stored
-session secrets, and moves state to `signed-out`. It is safe to retry with the same request ID.
+session secrets, and moves state to `signed-out`.
 `close()` stops authentication-state observation but does not sign the agent out.
 
 ### Secure-storage boundary
@@ -1471,8 +1477,8 @@ surface in one place, and what obliges an adapter to implement each one.
 | `describeUsers(ids)` | The adapter publishes any `UserId`: on `ImposedBreak.by`, a roster, or `handlingHistory[].by`. |
 | `dial(request)` | The manifest declares `idleCapabilities.dial`. |
 | `requestBreak(request)` | `sessionCapabilities.breaks` is declared. |
-| `commitBreak(requestId)` | `sessionCapabilities.breaks` is declared. Commit and cancel are not optional halves of it. |
-| `cancelBreak(requestId)` | `sessionCapabilities.breaks` is declared. |
+| `commitBreak()` | `sessionCapabilities.breaks` is declared. Commit and cancel are not optional halves of it. |
+| `cancelBreak()` | `sessionCapabilities.breaks` is declared. |
 | `endBreak()` | `sessionCapabilities.breaks` is declared. |
 | `executeTeamBreak(command)` | The adapter publishes a `TeamRoster` carrying `breakControl`. |
 | `executeTeamConsult(command)` | The adapter publishes a `TeamRoster` carrying `consultControl`. |
@@ -2158,11 +2164,9 @@ Custom capabilities must not redefine the meaning of a standard channel capabili
 Starts one outbound call from the idle dialpad. It is present only when the voice provider
 declares `dial`.
 
-- `commandId` remains stable across retries; the provider must place at most one call for it.
 - `destination` is the original number selected or entered by the agent.
 - `source` is `contact` or `manual` and must comply with `destinationPolicy`.
 - `dialled` confirms that outbound call creation completed.
-- `already-dialled` confirms a retry that placed no second call.
 - `failed` contains a `ProtocolFailure` and confirms no call was placed.
 
 The resulting call is offered through the normal `task-offered` event. A successful dial result
@@ -2178,7 +2182,6 @@ nothing while none are being accepted — so they are not published separately.
 | Field | Contract |
 | --- | --- |
 | `approval` | Where the agent's current request stands. See the states below. |
-| `requestId` | Correlates an agent-requested break while approval is `awaiting-decision`, `granted`, `starting-after-task`, or `in-effect`. Omitted for imposed breaks and when no request is active. |
 | `accepting` | Whether the agent may ask at all. Distinct from `approval`. |
 | `refusedReason` | Display-ready reason shown when `accepting` is false — a standing gate that applies to everyone. |
 | `decisionReason` | The words whoever decided attached, from `decide.reason`. About one request and one decision, not a standing gate. |
@@ -2252,13 +2255,13 @@ branched on by code — in a log, a support ticket, a conformance failure — so
 rather than that something happened. `failed` is shared, because failing is the same act
 everywhere; success is not.
 
-| Method | Succeeded | Retried after uncertain delivery |
-| --- | --- | --- |
-| `setCapacity` | `accepted` | — |
-| `requestBreak` | `requested` | `already-requested` |
-| `commitBreak` | `committed` | `already-committed` |
-| `cancelBreak` | `cancelled` | `already-cancelled` |
-| `endBreak` | `ended` | `already-ended` |
+| Method | Succeeded |
+| --- | --- |
+| `setCapacity` | `accepted` |
+| `requestBreak` | `requested` |
+| `commitBreak` | `committed` |
+| `cancelBreak` | `cancelled` |
+| `endBreak` | `ended` |
 
 `failed` carries a typed `ProtocolFailure` and means the provider did not take the action, whether
 it would not or could not.
@@ -2269,15 +2272,7 @@ again.
 Every break method reports its real result through `break-state`; `setCapacity` reports none at
 all, because capacity is a statement rather than a request.
 
-`setCapacity` has no retry answer because it needs none: a capacity supersedes rather than
-accumulates, and re-sending the current one changes nothing. The four break methods carry a
-`requestId`
-precisely so a retry can be recognised, and `already-committed` is the one commit recovery lives
-on — retrying `commitBreak` into a partially delivered attempt, it is the difference between *I
-have committed now* and *I committed before you asked*, which is how Omni knows the attempt has
-converged rather than only that a message arrived.
-
-`execute` keeps `applied` and `already-applied` rather than a verb per command, because the command
+`execute` keeps `applied` rather than a verb per command, because the command
 is in the request: `execute({ command: { type: "hold" } })` returning `applied` already says the
 hold applied. A `held` result would repeat the discriminant that travelled with it.
 
@@ -2297,8 +2292,7 @@ go, and a provider that waits for it will stall.
 Your own tasks are the only ones you count. What the agent holds at other providers is not your
 concern — Omni set `count` knowing it.
 
-Capacity supersedes rather than accumulates, so it carries no key and has no `already-` answer:
-the latest value is the ceiling.
+Capacity supersedes rather than accumulates: the latest value is the ceiling.
 
 **Capacity gates what the provider allocates, not what the agent starts.** A call placed from the
 idle dialpad arrives through `task-offered` like any other task, and a full agent does not forbid
@@ -2306,9 +2300,8 @@ it: the ceiling binds allocation, not the agent's own hand.
 
 ### `requestBreak(request)`
 
-Requests permission to stop the agent later; it does not itself stop work. `requestId` is stable
-across retries for one agent break attempt. The provider continues offering work and reports
-`awaiting-decision` or `granted` through `break-state` events. If the request is denied, the
+Requests permission to stop the agent later; it does not itself stop work. The provider continues
+offering work and reports `awaiting-decision` or `granted` through `break-state` events. If the request is denied, the
 provider reports `not-requested` directly, with `decisionReason` when one was supplied.
 
 #### Break reasons
@@ -2427,26 +2420,25 @@ Omni coordinates one attempt as follows:
 1. Freeze the participant set to every connected provider from which the agent can currently
    receive work. A provider joining during the attempt is given no capacity until it finishes.
 2. Enter `requesting-break`. Keep the agent's normal capacity in place throughout this phase.
-3. Send one `requestBreak` to every participant, using a stable `requestId` per provider for this
-   logical attempt. Retry uncertain delivery with the same ID. A provider reports
-   `awaiting-decision` or `granted`; neither state stops work. A denial transitions directly to
-   `not-requested` and causes Omni to take the cancel path.
+3. Send one `requestBreak` to every participant. A provider reports `awaiting-decision` or
+   `granted`; neither state stops work. A denial transitions directly to `not-requested` and
+   causes Omni to take the cancel path.
 4. If every participant reports `granted`, durably choose commit, enter `committing-break`,
-   and send `commitBreak(requestId)` to every participant. A provider then stops offering new work
+   and send `commitBreak()` to every participant. A provider then stops offering new work
    and reports `starting-after-task` or `in-effect`. Omni enters `on-break` once every participant
    it can still reach reports `in-effect`, and no later than the **commit bound** — ten seconds
    from the decision, tunable per deployment. A participant that has not applied the commit by then
    is set aside as unreconciled; the break begins without it.
 5. If any participant fails or denies the request, cannot be reconciled within the bounded
    decision timeout, or the agent cancels before commit, durably choose cancel and enter
-   `cancelling-break`. Send `cancelBreak(requestId)` to every participant still reporting
+   `cancelling-break`. Send `cancelBreak()` to every participant still reporting
    `awaiting-decision` or `granted`. Work continues during cancellation because no stop was
    committed. Return to `working` only after no participant retains either state.
 
 Commit and cancel are mutually exclusive decisions for one attempt. Once Omni chooses commit it
-never rolls that attempt back: uncertain deliveries are retried with the same ID and reconciled by
-snapshot until every participant applies the commit. A provider that reports `granted` must
-therefore preserve the request across reconnects and must honour a later commit or cancel. This
+never rolls that attempt back: it is reconciled by snapshot until every participant is stopped.
+A provider that reports `granted` must therefore preserve the request across reconnects and must
+honour a later commit or cancel. This
 durable promise prevents a provider from failing the commit after another provider has already
 stopped the agent.
 
@@ -2463,18 +2455,19 @@ on one platform while another keeps routing work to them — and **a provider Om
 routing nothing.** Setting it aside therefore costs none of the property it was protecting. Waiting
 for it costs the agent their break.
 
-Setting a participant aside is not a rollback and not a cancel. The commit stands, the `requestId`
-stands, and the obligation stands: Omni re-sends `commitBreak(requestId)` when that provider
-returns, and until it applies the commit that provider has not stopped. Because the commit is idempotent
-the answer is `already-committed` if it applied the first one after all, and `committed` if it did
-not — which is how Omni tells a slow delivery from a lost one, and why that pair exists.
+Setting a participant aside is not a rollback and not a cancel. The commit stands and the
+obligation stands: until that provider is stopped it has not stopped. When it returns it emits a
+snapshot before anything else, and the snapshot decides:
 
-Reconnection reconciles the rest. A returning provider emits a snapshot before anything else, so
-Omni sees its break state and re-sends the commit if it is missing; it must not offer work in the
-meantime, and the commit is what stops it. **A new login is a different case**: the
-`requestId` belonged to the old `sessionId` and the grant did not survive it, so Omni does not
-recover that attempt against a fresh session. It makes a new request for that provider alone,
-against an agent who is already on break elsewhere.
+- `in-effect` or `starting-after-task` — the commit arrived after all. Nothing to send.
+- still `granted` — the commit was lost. Omni sends `commitBreak()` now. If the original turns up
+  late behind it, the provider stops an agent who is already stopped; nothing happens, because a
+  commit is a state to be in, not an act to be done.
+- `not-requested` — the grant did not survive. Omni makes a new request for that provider alone,
+  against an agent who is already on break elsewhere. **A new login is this case too**: the grant
+  belonged to the old session.
+
+The provider must not offer work in the meantime, and the commit is what stops it.
 
 Omni may tell the agent which platforms the break has not yet reached, as it already does when a
 break cannot be paired across every provider.
@@ -2494,7 +2487,7 @@ soon as it reaches `granted`; it does not wait for unanimity because the agent h
 stopped elsewhere.
 
 This is two-phase coordination across vendor systems: the approval phase keeps the agent working;
-the durable commit decision and idempotent retries provide convergence after partial delivery.
+the durable commit decision and snapshot reconciliation provide convergence after partial delivery.
 
 #### Reporting the break the agent is on
 
@@ -2505,19 +2498,19 @@ the agent on the break itself, the provider is the only one who knows.
 Omit it when you cannot say, and when there is no break: reporting a reason alongside
 `approval: "not-requested"` describes a break that is not happening, and is rejected.
 
-### `cancelBreak(requestId)`
+### `cancelBreak()`
 
-Cancels the active pre-commit request identified by `requestId` while its approval is
-`awaiting-decision` or `granted`. It is safe to retry. Cancellation releases the request but
-does not restore work because work never stopped. If commit already won, the provider returns
-`omni.break-already-committed`. The resulting state is reported through `break-state`.
+Cancels the active pre-commit request while its approval is `awaiting-decision` or `granted`.
+Cancellation releases the request but does not restore work because work never stopped. If
+commit already won, the provider returns `omni.break-already-committed`. The resulting state is
+reported through `break-state`.
 
-### `commitBreak(requestId)`
+### `commitBreak()`
 
-Commits the matching `granted` request. It is safe to retry and, once the provider has
-reported `granted`, cannot fail for a business reason. On commit the provider stops
-offering new work and reports `starting-after-task` while existing work finishes, or `in-effect` when
-the break is in effect.
+Commits the `granted` request. Once the provider has reported `granted`, it cannot fail for a
+business reason. On commit the provider stops offering new work and reports
+`starting-after-task` while existing work finishes, or `in-effect` when the break is in effect.
+Committing a break that is already in effect changes nothing and answers `committed`.
 
 ### `endBreak()`
 
@@ -2603,7 +2596,7 @@ asks for a manager, a moment the agent wants a second pair of ears. The capabili
 team, and a second lead method beside `executeTeamBreak`:
 
 ```ts
-executeTeamConsult({ commandId, command: TeamConsultCommand }): Promise<TeamCommandResult>
+executeTeamConsult({ command: TeamConsultCommand }): Promise<TeamCommandResult>
 ```
 
 Required when the roster carries `consultControl`, and gated by it exactly as `executeTeamBreak`
@@ -2611,15 +2604,15 @@ is by `breakControl`. The flow, in order:
 
 ```ts
 // 1. The agent asks, with a small note. Their task carries `lead` from here on.
-execute({ commandId, taskId: "call-42", command: { type: "lead", action: "request", note: "Refund dispute, needs approval" } })
+execute({ taskId: "call-42", command: { type: "lead", action: "request", note: "Refund dispute, needs approval" } })
 //    task.lead = { status: "requested", note: "Refund dispute, needs approval", since }
 
 // 2. Every lead entitled to it sees the request on their roster.
 //    team-updated: requests: [{ id: "req-7", memberId: "A-1", taskId: "call-42", note, since }]
 
 // 3. A lead joins, or declines.
-executeTeamConsult({ commandId, command: { type: "join", requestId: "req-7" } })
-executeTeamConsult({ commandId, command: { type: "decline", requestId: "req-7", reason: "In a call" } })
+executeTeamConsult({ command: { type: "join", requestId: "req-7" } })
+executeTeamConsult({ command: { type: "decline", requestId: "req-7", reason: "In a call" } })
 ```
 
 **On `join` the provider bridges three parties and the lead is on a task of their own**, on the
@@ -2779,12 +2772,11 @@ Command names follow the channel's operational vocabulary, and each channel's co
 discriminated by `type` — the same discriminant `executeTeamBreak` and `custom` already use. The
 unions are declared under **Shapes**.
 
-`taskId` is not repeated on the command. It travels on the `TaskCommandRequest` around it, with
-`commandId`.
+`taskId` is not repeated on the command. It travels on the `TaskCommandRequest` around it.
 
-**A toggle carries the state it wants, not a flip.** Inverting whatever is found cannot be
-idempotent, and **Commands are idempotent** admits no exception: a retried flip turns something on
-and then off again. `mute` therefore carries `muted`, and a custom `toggle` control carries its own
+**A toggle carries the state it wants, not a flip.** Inverting whatever is found cannot converge
+with a stale view: a flip against a state the provider has already changed turns something on and
+then off again. `mute` therefore carries `muted`, and a custom `toggle` control carries its own
 boolean. `hold` and `resume`, `pause` and `resume` need no flag, being pairs rather than toggles.
 
 **`complete` sends a disposition only where one was published.** `disposition` is a
@@ -2807,8 +2799,8 @@ is already done; a failure means only that the provider did not record it, leavi
 until the next snapshot. That is the safe direction to fail in, and it is the one place where
 `failed` does not mean *nothing happened* — everywhere else it does.
 
-`mute` carries `muted` rather than flipping, so a retry and a stale view converge on the same
-state instead of cancelling each other — see **Task commands**.
+`mute` carries `muted` rather than flipping, so a stale view converges on the stated state
+instead of flipping it back — see **Task commands**.
 
 ### Which commands need a capability
 
@@ -2836,22 +2828,15 @@ confirms the end with `task-ended` and a `cancelled` outcome.
 
 Applies a `TaskCommandRequest` to one provider-local task.
 
-- `commandId` is globally unique, generated by Omni, and remains stable across retries.
-- Omni serializes commands per task, never sends one command ID concurrently, records pending and
-  completed commands, retries only after an uncertain result, and stops retrying when `task-ended`
-  arrives.
-- On an uncertain retry while the task remains active, the provider must apply each
-  `(taskId, commandId)` at most once.
-- A repeated successfully applied command returns `already-applied` without repeating side
-  effects.
-- `applied` confirms the command side effect completed.
-- `failed` contains a typed `ProtocolFailure` and confirms the command was **not** applied. A
-  command either took effect or it did not; a provider that will not and a provider that cannot
-  report the same shape, and `code` says which.
+- Omni serializes commands per task and sends the next only after the previous settled or was
+  given up as unknown; it stops sending when `task-ended` arrives.
+- `applied` confirms the side effect completed. `failed` confirms it did **not**, with a typed
+  `ProtocolFailure`; a provider that will not and one that cannot report the same shape, and `code`
+  says which.
 - **A settled result is a fact; an unsettled promise is not.** Transport uncertainty may reject the
-  promise with no result at all, and that means *unknown*, not *failed*. Omni retries with the same
-  command ID, which is why idempotency is required — and why `failed` must never be returned for
-  something the provider is unsure of.
+  promise with no result at all, and that means *unknown*, not *failed*. `failed` must never be
+  returned for something the provider is unsure of, because Omni will show the agent it did not
+  happen.
 
 ### `ProtocolFailure`
 
@@ -3125,12 +3110,6 @@ Two properties of the harness matter to adapter authors:
   `close()` run in a `finally` block, and a throw from any of them is reported as
   `disconnectWasClean: false` rather than being hidden.
 
-### `assertCommandIdempotency(connection, request)`
-
-Issues the same command twice and verifies that the first call applies (or was already applied)
-and the retry returns `already-applied`. Use a deterministic test task because this helper invokes
-the adapter command method twice.
-
 ### Contract scenarios
 
 The testing entry point also exports deterministic, reusable checks for lifecycle behavior that
@@ -3141,8 +3120,6 @@ cannot be established from TypeScript structure alone.
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
-| `assertCommandIdempotency(connection, request)` | Retrying a task command does not repeat its side effect. |
-| `assertDialIdempotency(connection, request)` | Retrying a dial command does not place another call. |
 | `assertWrapTimeout(task, mediaEndedAt, deadline, toleranceMs?)` | The wrap deadline equals media end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |
 | `assertBrowserIsolationAndReuse(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |
 | `assertNoBrowserSessionKeyCollisions(scenarios)` | No two distinct scenarios derive the same session key. Feed it adversarial names. |

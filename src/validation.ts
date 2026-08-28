@@ -747,7 +747,7 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   into.oneOf(value.approval, BREAK_APPROVALS, "break.approval", `${path}.approval`);
   into.require(typeof value.accepting === "boolean", "break.accepting", `${path}.accepting`, "accepting must be a boolean");
 
-  for (const field of ["requestId", "refusedReason", "decisionReason"] as const) {
+  for (const field of ["refusedReason", "decisionReason"] as const) {
     if (value[field] !== undefined) {
       into.filled(value[field], `break.${field}`, `${path}.${field}`, `${field} must not be empty when present`);
     }

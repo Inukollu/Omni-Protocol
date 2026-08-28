@@ -10,8 +10,6 @@ import {
   type BrowserSessionKeyInput,
   type Channel,
   type ConnectContext,
-  type DialRequest,
-  type TaskCommandRequest,
 } from "./index.js";
 import {
   assertNoViolations,
@@ -172,24 +170,6 @@ function publishesUserIds(snapshot: Snapshot | undefined): boolean {
     Array.isArray(task?.handlingHistory) && task.handlingHistory.some(step => step?.by !== undefined));
 }
 
-/** Verifies the at-most-once contract by issuing the same command twice. */
-export async function assertCommandIdempotency(
-  connection: Pick<Connection, "execute">,
-  request: TaskCommandRequest,
-): Promise<void> {
-  const first = await connection.execute(request);
-  if (first.commandId !== request.commandId) throw new Error("Command result id mismatch");
-  if (first.status === "failed") {
-    throw new Error(`Command failed: ${first.failure.code}`);
-  }
-
-  const retry = await connection.execute(request);
-  if (retry.commandId !== request.commandId) throw new Error("Retried command result id mismatch");
-  if (retry.status !== "already-applied") {
-    throw new Error(`Retried command must return already-applied, received ${retry.status}`);
-  }
-}
-
 /** Validates restored authentication followed by a refresh failure or expiry. */
 export function assertAuthenticationRestoreAndExpiry(
   states: readonly AuthenticationState[],
@@ -267,24 +247,6 @@ export function assertDeniedAndRetriedBreak(approvals: readonly BreakApproval[])
   const last = approvals.at(-1);
   if (last !== "granted" && last !== "in-effect") {
     throw new Error(`Break retry scenario must end granted or in effect, ended ${String(last)}`);
-  }
-}
-
-/** Verifies that retrying one dial command cannot place a second call. */
-export async function assertDialIdempotency(
-  connection: Pick<Connection, "dial">,
-  request: DialRequest,
-): Promise<void> {
-  if (!connection.dial) throw new Error("Dial capability requires Connection.dial()");
-  const first = await connection.dial(request);
-  if (first.commandId !== request.commandId) throw new Error("Dial result id mismatch");
-  if (first.status === "failed") throw new Error(`Dial failed: ${first.failure.code}`);
-  const retry = await connection.dial(request);
-  if (retry.commandId !== request.commandId) throw new Error("Retried dial result id mismatch");
-  // Each method answers in its own words: a retried dial says already-dialled, not
-  // already-applied, because what it did was dial.
-  if (retry.status !== "already-dialled") {
-    throw new Error(`Retried dial must return already-dialled, received ${retry.status}`);
   }
 }
 

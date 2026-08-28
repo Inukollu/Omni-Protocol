@@ -26,7 +26,7 @@ import {
   type TaskCommandRequest,
   type TaskPhase,
 } from "./index.js";
-import { assertCommandIdempotency, exerciseAdapter } from "./testing.js";
+import { exerciseAdapter } from "./testing.js";
 
 describe("Omni protocol", () => {
   it("creates collision-safe composite task and user keys", () => {
@@ -144,26 +144,6 @@ describe("Omni protocol", () => {
     expect(event.snapshot.break.approval).toBe("starting-after-task");
   });
 
-  it("returns an idempotent result for a retried task command", () => {
-    const result = { commandId: "command-42", status: "already-applied" } as const;
-    expect(result.status).toBe("already-applied");
-  });
-
-  it("provides a command idempotency conformance check", async () => {
-    let applied = false;
-    const execute = vi.fn(async (request: TaskCommandRequest) => {
-      const status = applied ? "already-applied" as const : "applied" as const;
-      applied = true;
-      return { commandId: request.commandId, status };
-    });
-    await assertCommandIdempotency({ execute }, {
-      commandId: "command-42",
-      taskId: "task-42",
-      command: { type: "complete", disposition: "resolved" },
-    });
-    expect(execute).toHaveBeenCalledTimes(2);
-  });
-
   it("exercises the smallest conforming adapter", async () => {
     // Channels are a closed set, so the smallest adapter is on a real channel with nothing
     // optional declared: no idle capabilities, no breaks, no roster, no tasks -- and so no
@@ -196,7 +176,7 @@ describe("Omni protocol", () => {
             return () => undefined;
           },
           setCapacity: async capacity => (expect(capacity.count).toBeGreaterThanOrEqual(1), { status: "accepted" as const }),
-          execute: async request => ({ commandId: request.commandId, status: "applied" as const }),
+          execute: async () => ({ status: "applied" as const }),
           disconnect,
         };
       },

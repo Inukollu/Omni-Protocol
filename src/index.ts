@@ -604,29 +604,29 @@ export type TaskCommand<C extends Channel = Channel> =
   | CustomTaskCommand;
 
 export interface TaskCommandRequest<C extends Channel = Channel> {
-  /** Stable across retries. Processing one twice must not repeat its side effects. */
-  commandId: string;
   taskId: TaskId;
   command: TaskCommand<C>;
 }
 
 /**
- * `applied` and `already-applied` rather than a verb per command: the command travels in the
- * request, so `execute({ command: { type: "hold" } })` returning `applied` already says the hold
- * applied.
+ * `applied` rather than a verb per command: the command travels in the request, so
+ * `execute({ command: { type: "hold" } })` returning `applied` already says the hold applied.
+ *
+ * A promise that rejects with no result means *unknown*, not `failed`. Omni does not retry --
+ * no adapter on the agent's PC can make a repeat safe -- and the next snapshot shows what the
+ * provider did. A command therefore carries no key of Omni's making.
  */
 export type TaskCommandResult =
-  | { commandId: string; status: "applied" | "already-applied" }
-  | { commandId: string; status: "failed"; failure: ProtocolFailure };
+  | { status: "applied" }
+  | { status: "failed"; failure: ProtocolFailure };
 
 export interface DialRequest {
-  commandId: string;
   destination: string;
 }
 
 export type DialResult =
-  | { commandId: string; status: "dialled" | "already-dialled" }
-  | { commandId: string; status: "failed"; failure: ProtocolFailure };
+  | { status: "dialled" }
+  | { status: "failed"; failure: ProtocolFailure };
 
 // ---------------------------------------------------------------------------
 // Breaks.
@@ -667,8 +667,6 @@ export interface BreakReason {
 }
 
 export interface BreakRequest {
-  /** Stable across retries, and what makes `already-requested` recognisable. */
-  requestId: string;
   reason?: string;
   /** The chosen `BreakReason.id`, where the provider publishes codes. */
   reasonId?: string;
@@ -687,7 +685,6 @@ export type ImposedBreak =
 
 export interface BreakState {
   approval: BreakApproval;
-  requestId?: string;
   /** Whether the agent may ask at all. Distinct from the fate of a request already made. */
   accepting: boolean;
   /** Shown when `accepting` is false, such as "Busy hours". */
@@ -707,19 +704,20 @@ export type CapacityResult =
 
 /** Succeeding is not the outcome: `requested` says the provider holds it, not that it was granted. */
 export type BreakRequestResult =
-  | { requestId: string; status: "requested" | "already-requested" }
-  | { requestId: string; status: "failed"; failure: ProtocolFailure };
+  | { status: "requested" }
+  | { status: "failed"; failure: ProtocolFailure };
 
+/** Committing a break already in effect changes nothing and answers `committed`. */
 export type BreakCommitResult =
-  | { requestId: string; status: "committed" | "already-committed" }
-  | { requestId: string; status: "failed"; failure: ProtocolFailure };
+  | { status: "committed" }
+  | { status: "failed"; failure: ProtocolFailure };
 
 export type BreakCancelResult =
-  | { requestId: string; status: "cancelled" | "already-cancelled" }
-  | { requestId: string; status: "failed"; failure: ProtocolFailure };
+  | { status: "cancelled" }
+  | { status: "failed"; failure: ProtocolFailure };
 
 export type BreakEndResult =
-  | { status: "ended" | "already-ended" }
+  | { status: "ended" }
   | { status: "failed"; failure: ProtocolFailure };
 
 // ---------------------------------------------------------------------------
@@ -763,7 +761,6 @@ export type TeamConsultCommand =
   | { type: "decline"; requestId: string; reason?: string };
 
 export interface TeamConsultCommandRequest {
-  commandId: string;
   command: TeamConsultCommand;
 }
 
@@ -774,11 +771,10 @@ export type TeamBreakCommand =
   | { type: "release"; memberId: UserId };
 
 export type TeamCommandResult =
-  | { commandId: string; status: "applied" | "already-applied" }
-  | { commandId: string; status: "failed"; failure: ProtocolFailure };
+  | { status: "applied" }
+  | { status: "failed"; failure: ProtocolFailure };
 
 export interface TeamBreakCommandRequest {
-  commandId: string;
   command: TeamBreakCommand;
 }
 
@@ -917,8 +913,8 @@ export interface Connection<C extends Channel = Channel> {
    * never start, and the two-phase coordination has no way to report it.
    */
   requestBreak?(request: BreakRequest): Promise<BreakRequestResult>;
-  commitBreak?(requestId: string): Promise<BreakCommitResult>;
-  cancelBreak?(requestId: string): Promise<BreakCancelResult>;
+  commitBreak?(): Promise<BreakCommitResult>;
+  cancelBreak?(): Promise<BreakCancelResult>;
   endBreak?(): Promise<BreakEndResult>;
 
   /** Required when the adapter publishes a `TeamRoster` carrying `breakControl`. */
