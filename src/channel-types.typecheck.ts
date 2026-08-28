@@ -86,3 +86,10 @@ export const chatPause: TaskCommand<"chat"> = { type: "pause" };
 export const chatMute: TaskCommand<"chat"> = { type: "mute", muted: true };
 // @ts-expect-error DTMF is not a task command: the tones travel with the audio, which is Omni's.
 export const voiceDtmf: TaskCommand<"voice"> = { type: "dtmf", digits: "12" };
+
+// The allowance is coupled to the mode: a provider that completes the task itself must say when;
+// one waiting for `complete` may leave the deadline open.
+export const untimedAgentCommandTask = { ...emailTask, id: "email-3", completionMode: "agent-command", completionAllowance: undefined } satisfies Task<"email">;
+export const timedProviderAutomaticTask = { ...emailTask, id: "email-4", completionMode: "provider-automatic", completionAllowance: 0 } satisfies Task<"email">;
+// @ts-expect-error provider-automatic completion needs an allowance to act on.
+export const untimedProviderAutomaticTask: Task<"email"> = { ...emailTask, id: "email-5", completionMode: "provider-automatic", completionAllowance: undefined };

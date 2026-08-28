@@ -608,8 +608,16 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   into.filled(task.taskType, "task.taskType", `${path}.taskType`, "a task needs a task type");
   into.oneOf(task.phase, TASK_PHASES, "task.phase", `${path}.phase`);
   into.oneOf(task.completionMode, COMPLETION_MODES, "task.completionMode", `${path}.completionMode`);
-  into.require(isDurationSeconds(task.completionAllowance), "task.completionAllowance", `${path}.completionAllowance`,
-    "completionAllowance must be a whole number of seconds, zero or more");
+  // The allowance is coupled to the mode: a provider that will complete the task itself is going
+  // to act on the allowance, so it must state one; a provider waiting for `complete` may omit it
+  // to say it imposes no deadline. Present, it is a duration either way.
+  if (task.completionAllowance === undefined) {
+    into.require(task.completionMode !== "provider-automatic", "task.completionAllowance.required",
+      `${path}.completionAllowance`, "provider-automatic completion needs an allowance to act on");
+  } else {
+    into.require(isDurationSeconds(task.completionAllowance), "task.completionAllowance", `${path}.completionAllowance`,
+      "completionAllowance must be a whole number of seconds, zero or more, or omitted under agent-command");
+  }
 
   // The channel is fixed per provider by its manifest, so a task claiming another one is a
   // task Omni would render with the wrong controls.

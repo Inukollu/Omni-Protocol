@@ -416,6 +416,10 @@ type TaskHandlingStep = {
   by?: UserId;
 };
 
+type TaskCompletion =
+  | { completionMode: "agent-command"; completionAllowance?: DurationSeconds }
+  | { completionMode: "provider-automatic"; completionAllowance: DurationSeconds };
+
 type Task<C extends Channel = Channel> = {
   id: TaskId;
   title: string;
@@ -426,11 +430,9 @@ type Task<C extends Channel = Channel> = {
   contact?: Contact;
   phase: TaskPhase;
   reference?: string;
-  completionMode: CompletionMode;
-  completionAllowance: DurationSeconds;
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingStep[];
-};
+} & TaskCompletion;
 
 type AcceptanceMode =
   | "no-preference"
@@ -1616,7 +1618,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preparing`, `in-progress`, `paused`, or `completing`. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
-| `completionAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. |
+| `completionAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `handlingHistory` | Optional ordered handling history for this currently open task. It is live task data, not a permanent archive. |
 
@@ -1690,9 +1692,25 @@ In this example, the agent has two minutes after sending the email to add notes,
 disposition, and complete the task.
 
 `0` means completion may happen immediately. With `provider-automatic`, the provider may complete
-without waiting for a command; with `agent-command`, it still waits for `complete`. There is no
-value meaning "unlimited": a provider that does not want a deadline keeps the task `in-progress` or
-`paused` and moves it to `completing` only when the clock should start.
+without waiting for a command; with `agent-command`, it still waits for `complete`.
+
+There is no value meaning "unlimited", because a number that is not a duration would be read as
+one. A provider that imposes no deadline says so by **omitting** `completionAllowance`, which
+only `agent-command` permits: the provider will not complete the task itself, so there is nothing
+for a deadline to trigger, and Omni counts nothing down. **Omitted and empty are different
+claims** applies -- omitted says there is no deadline to see, where `0` says the deadline is now.
+Under `provider-automatic` the field is required, because the provider is going to act on it.
+
+```ts
+const untimedWrap = {
+  completionMode: "agent-command",
+} satisfies Pick<Task<"voice">, "completionMode" | "completionAllowance">;
+```
+
+Here the customer has hung up, `task-media-ended` has been sent on time, the task is `completing`,
+and the agent takes as long as the work needs. Moving the task to `completing` late to avoid a
+deadline is not an alternative on a media channel: the clock starts at a real event, and delaying
+that event would falsify the phase and everything timed from it.
 
 ```ts
 const immediateProviderCompletion = {
@@ -2666,7 +2684,8 @@ They are published as `OMNI_FAILURE_CODES`.
 #### Provider instants are read against a provider clock
 
 Every deadline in this contract is a provider instant that Omni counts down: `allocationExpiresAt`,
-`preparationEndsAt`, and the wrap deadline of `task-media-ended` plus `completionAllowance`.
+`preparationEndsAt`, and the wrap deadline of `task-media-ended` plus `completionAllowance` where
+one is stated.
 Comparing those against the host clock is wrong by whatever the two machines disagree by, and the
 damaging direction is early — **Accept** withdrawn from an offer still ringing, a wrap timer
 expiring before the agent has finished.
@@ -2913,7 +2932,7 @@ cannot be established from TypeScript structure alone.
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
 | `assertCommandIdempotency(connection, request)` | Retrying a task command does not repeat its side effect. |
 | `assertDialIdempotency(connection, request)` | Retrying a dial command does not place another call. |
-| `assertWrapTimeout(task, mediaEndedAt, deadline, toleranceMs?)` | The wrap deadline equals media end plus the task allowance, within a tolerance that defaults to 1000ms. |
+| `assertWrapTimeout(task, mediaEndedAt, deadline, toleranceMs?)` | The wrap deadline equals media end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |
 | `assertBrowserIsolationAndReuse(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |
 | `assertNoBrowserSessionKeyCollisions(scenarios)` | No two distinct scenarios derive the same session key. Feed it adversarial names. |
 

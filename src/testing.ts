@@ -5,7 +5,7 @@ import {
   type ProviderEventEnvelope,
   type Connection,
   type Snapshot,
-  type Task,
+  type TaskCompletion,
   type BreakApproval,
   type BrowserSessionKeyInput,
   type Channel,
@@ -285,15 +285,27 @@ export async function assertDialIdempotency(
 
 /**
  * Validates the deadline derived from media end and the task's fixed wrap allowance.
- * `toleranceMs` absorbs scheduler jitter in a real implementation; pass 0 to demand
- * an exact match.
+ *
+ * A task with no allowance has no deadline, so `observedDeadline` must then be `undefined`: a
+ * host counting down what the provider left open is the violation, and so is a host counting
+ * nothing down when the provider set a clock. `toleranceMs` absorbs scheduler jitter in a real
+ * implementation; pass 0 to demand an exact match.
  */
 export function assertWrapTimeout(
-  task: Pick<Task, "completionAllowance">,
+  task: Pick<TaskCompletion, "completionMode" | "completionAllowance">,
   mediaEndedAt: string,
-  observedDeadline: string,
+  observedDeadline: string | undefined,
   toleranceMs = 1_000,
 ): void {
+  if (task.completionAllowance === undefined) {
+    if (observedDeadline !== undefined) {
+      throw new Error(`Wrap deadline mismatch: the task states no allowance, so there is no deadline, received ${observedDeadline}`);
+    }
+    return;
+  }
+  if (observedDeadline === undefined) {
+    throw new Error(`Wrap deadline mismatch: the task allows ${task.completionAllowance}s, but no deadline was observed`);
+  }
   const ended = Date.parse(mediaEndedAt);
   const deadline = Date.parse(observedDeadline);
   if (Number.isNaN(ended) || Number.isNaN(deadline)) throw new Error("Wrap scenario requires valid ISO-8601 times");

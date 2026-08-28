@@ -425,3 +425,22 @@ describe("the validators accept exactly what the contract publishes", () => {
     expect(rules(validateManifest(manifest({ idleCapabilities: { media: true } })))).toContain("manifest.idleCapability.channel");
   });
 });
+
+describe("the completion allowance follows the completion mode", () => {
+  const voice = { channel: "voice" };
+  it("may be omitted only where the provider will not act on it", () => {
+    // A provider waiting for `complete` may leave the deadline open...
+    expect(rules(validateTask(task({ completionMode: "agent-command", completionAllowance: undefined }), voice))).toEqual([]);
+    // ...and one that completes the task itself must say when.
+    expect(rules(validateTask(task({ completionMode: "provider-automatic", completionAllowance: undefined }), voice)))
+      .toContain("task.completionAllowance.required");
+    // The controls: stated, either mode is fine, and zero is a deadline of now, not an absence.
+    expect(rules(validateTask(task({ completionMode: "provider-automatic", completionAllowance: 0 }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ completionMode: "agent-command", completionAllowance: 0 }), voice))).toEqual([]);
+  });
+
+  it("is still a duration when present, whatever the mode", () => {
+    expect(rules(validateTask(task({ completionMode: "agent-command", completionAllowance: 1.5 }), voice))).toContain("task.completionAllowance");
+    expect(rules(validateTask(task({ completionMode: "agent-command", completionAllowance: "60" }), voice))).toContain("task.completionAllowance");
+  });
+});
