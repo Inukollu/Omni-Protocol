@@ -14,6 +14,8 @@ import {
   assertBrowserIsolationAndReuse,
   assertCapabilityWithdrawal,
   assertCommandRefusedAfterWithdrawal,
+  assertBreakBeginsAfterTask,
+  assertBreakParticipants,
   assertDeniedAndRetriedBreak,
   assertDuplicateEventDelivery,
   assertNoBrowserSessionKeyCollisions,
@@ -187,6 +189,44 @@ describe("assertReconnectWithMissedAssignments", () => {
 
   it("rejects an event that is not a reconnect snapshot", () => {
     expect(() => assertReconnectWithMissedAssignments(before, statusEvent, [])).toThrow(/requires a reconnected snapshot/);
+  });
+});
+
+describe("assertBreakParticipants", () => {
+  const voice = { id: "voice", authentication: "authenticated", holdsCapacity: true } as const;
+  const chat = { id: "chat", authentication: "refreshing", holdsCapacity: true } as const;
+  const email = { id: "email", authentication: "expired", holdsCapacity: true } as const;
+  const idle = { id: "idle", authentication: "authenticated", holdsCapacity: false } as const;
+
+  it("keeps a usable provider holding capacity in, refreshing included, and leaves an expired one out", () => {
+    expect(() => assertBreakParticipants([voice, chat, email, idle], ["voice", "chat"])).not.toThrow();
+    // The stall: waiting on a provider whose login is dead.
+    expect(() => assertBreakParticipants([voice, chat, email, idle], ["voice", "chat", "email"])).toThrow(/email is expired and is not a participant/);
+    // And the other way: a provider that can give work cannot be skipped.
+    expect(() => assertBreakParticipants([voice, chat, email, idle], ["voice"])).toThrow(/chat can give the agent work/);
+    expect(() => assertBreakParticipants([voice, chat, email, idle], ["voice", "chat", "idle"])).toThrow(/idle holds no capacity/);
+    expect(() => assertBreakParticipants([voice], ["voice", "ghost"])).toThrow(/ghost is not a provider/);
+  });
+});
+
+describe("assertBreakBeginsAfterTask", () => {
+  const on = (approval: "not-requested" | "awaiting-decision" | "granted" | "starting-after-task" | "in-effect", outstanding: number) => ({ approval, outstanding });
+
+  it("accepts a break asked for on a task that begins when the task ends, decided or granted at once", () => {
+    expect(() => assertBreakBeginsAfterTask([on("not-requested", 1), on("awaiting-decision", 1), on("granted", 1), on("starting-after-task", 1), on("in-effect", 0)])).not.toThrow();
+    expect(() => assertBreakBeginsAfterTask([on("granted", 2), on("starting-after-task", 2), on("starting-after-task", 1), on("in-effect", 0)])).not.toThrow();
+  });
+
+  it("rejects a break that begins beside a task, or waits after the work is gone", () => {
+    expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("starting-after-task", 1), on("in-effect", 1)])).toThrow(/begins when the work ends/);
+    expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("starting-after-task", 0), on("in-effect", 0)])).toThrow(/should have begun/);
+  });
+
+  it("rejects a request that was not made on a task, or a commit not reported as starting-after-task", () => {
+    expect(() => assertBreakBeginsAfterTask([on("granted", 0), on("in-effect", 0)])).toThrow(/while a task is outstanding/);
+    expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("in-effect", 0)])).toThrow(/starting-after-task while the work remains/);
+    expect(() => assertBreakBeginsAfterTask([on("not-requested", 1)])).toThrow(/requires a request/);
+    expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("starting-after-task", 1)])).toThrow(/must end in effect/);
   });
 });
 

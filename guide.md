@@ -2259,7 +2259,7 @@ rendering one as the other tells an agent to wait for somebody who is never comi
 | `awaiting-decision` | A person has to decide. The agent is waiting on somebody. |
 | `granted` | A person decided yes. Omni may now tell this provider to stop the agent; until it does, work continues normally, and this says nothing about why Omni has not. |
 | `starting-after-task` | Omni has told the provider to stop; the break begins when the current task ends. No new work arrives meanwhile, and nobody needs to act. |
-| `in-effect` | The agent is on the break now. |
+| `in-effect` | The agent is on the break now. It holds no task: a break begins when the work ends, so a snapshot reporting `in-effect` beside a task is refused as `break.in-effect.tasks`. |
 
 A denial is a decision, not a standing approval state. The provider transitions the request directly
 to `not-requested`; Omni returns the agent to idle and never asks again on their behalf. They saw the
@@ -2363,6 +2363,11 @@ it: the ceiling binds allocation, not the agent's own hand.
 Requests permission to stop the agent later; it does not itself stop work. The provider continues
 offering work and reports `awaiting-decision` or `granted` through `break-state` events. If the request is denied, the
 provider reports `not-requested` directly, with `decisionReason` when one was supplied.
+
+**An agent asks from anywhere — idle or on a task** — and Omni offers the request in the task
+workspace as it does on the idle dashboard. Asked on a task, the break is decided and committed like
+any other and begins when the work ends: that is `starting-after-task`, and
+`assertBreakBeginsAfterTask` is the scenario that holds a provider to it.
 
 #### Break reasons
 
@@ -2479,6 +2484,11 @@ Omni coordinates one attempt as follows:
 
 1. Freeze the participant set to every connected provider from which the agent can currently
    receive work. A provider joining during the attempt is given no capacity until it finishes.
+   A provider whose authentication is `expired` is not one the agent can receive work from and is
+   not a participant: nothing is asked of it, the break proceeds without it, and when the login
+   is restored it is reconciled from its snapshot as a set-aside provider is, with no capacity
+   until then. `refreshing` keeps a provider in — its identity and capabilities remain available
+   and work continues. `assertBreakParticipants` holds a host to this set.
 2. Enter `requesting-break`. Keep the agent's normal capacity in place throughout this phase.
 3. Send one `requestBreak` to every participant. A provider reports `awaiting-decision` or
    `granted`; neither state stops work. A denial transitions directly to `not-requested` and
@@ -2703,6 +2713,12 @@ provider whose lead is already at the ceiling answers the join `failed`.
 **A lead assists one call at a time.** A `join` from a lead already on a call -- their own or one
 they joined -- is answered `failed`, whatever their ceiling; the request stands for another lead,
 or until it is withdrawn or declined.
+
+**A lead on a break does not join.** A break is a reported state in which the agent is not working,
+and a join is work. Omni offers Join to a lead only while their own `BreakState.approval` is neither
+`starting-after-task` nor `in-effect` -- a committed break waiting for the lead's current work to
+finish is not given more -- and a provider answers a `join` from a lead on such a break `failed`.
+The request stands for another lead, as it does when this one is already on a call.
 
 **On `decline`, or a request the agent withdraws with `{ type: "lead", action: "cancel" }`, the
 provider clears `lead` from the agent's task** and drops the request from every roster. Nothing
@@ -3245,6 +3261,8 @@ cannot be established from TypeScript structure alone.
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
+| `assertBreakParticipants(candidates, participants)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
+| `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `in-effect` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
 | `assertWrapTimeout(task, mediaEndedAt, deadline, toleranceMs?)` | The wrap deadline equals media end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |
 | `assertBrowserIsolationAndReuse(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |
