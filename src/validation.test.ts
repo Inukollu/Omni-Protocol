@@ -10,6 +10,7 @@ import {
   validateScheduledActivity,
   validateSnapshot,
   validateTask,
+  validateResult,
   validateTeamRoster,
   type ProtocolViolation,
 } from "./validation.js";
@@ -434,6 +435,50 @@ describe("validateEventEnvelope", () => {
     expect(summary({ title: "", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" })).toContain("event.summary.title");
     expect(summary({ title: "Q", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics: [{ id: "a", label: "A", value: 7 }] }))
       .toContain("event.summary.metric.value");
+  });
+});
+
+describe("validateResult", () => {
+  const failure = { code: "provider.busy", message: "Try later", retryable: true, retryAfterMs: 500 };
+
+  it("accepts each method's own answers and refuses a status it does not give", () => {
+    // Every method's success status beside the same status on a method that does not answer it.
+    const pairs = [
+      ["execute", "applied"], ["dial", "dialled"], ["setCapacity", "accepted"], ["requestBreak", "requested"],
+      ["commitBreak", "committed"], ["cancelBreak", "cancelled"], ["endBreak", "ended"],
+      ["executeTeamBreak", "applied"], ["executeTeamConsult", "applied"],
+    ] as const;
+    for (const [method, status] of pairs) {
+      expect(rules(validateResult({ status }, method))).toEqual([]);
+      expect(rules(validateResult({ status: "failed", failure }, method))).toEqual([]);
+    }
+    expect(rules(validateResult({ status: "applied" }, "dial"))).toEqual(["result.status"]);
+    expect(rules(validateResult({ status: "ok" }, "execute"))).toEqual(["result.status"]);
+    expect(rules(validateResult({ status: "opened", session: { close: () => undefined } }, "openMedia"))).toEqual([]);
+    expect(rules(validateResult({ status: "unavailable", failure }, "openMedia"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure }, "openMedia"))).toEqual(["result.status"]);
+    expect(rules(validateResult({ status: "opened" }, "openMedia"))).toEqual(["result.session"]);
+    expect(rules(validateResult("applied", "execute"))).toEqual(["result.shape"]);
+  });
+
+  it("holds a failure to its shape, and a success to carrying none", () => {
+    expect(rules(validateResult({ status: "failed" }, "execute"))).toEqual(["result.failure.required"]);
+    expect(rules(validateResult({ status: "failed", failure: "busy" }, "execute"))).toEqual(["failure.shape"]);
+    expect(rules(validateResult({ status: "failed", failure: { message: "x", retryable: false } }, "execute"))).toEqual(["failure.code"]);
+    expect(rules(validateResult({ status: "failed", failure: { code: "x", retryable: false } }, "execute"))).toEqual(["failure.message"]);
+    expect(rules(validateResult({ status: "failed", failure: { code: "x", message: "x" } }, "execute"))).toEqual(["failure.retryable"]);
+    expect(rules(validateResult({ status: "failed", failure: { ...failure, retryAfterMs: -1 } }, "execute"))).toEqual(["failure.retryAfterMs"]);
+    expect(rules(validateResult({ status: "applied", failure }, "execute"))).toEqual(["result.failure.unexpected"]);
+  });
+
+  it("lets a provider name its own codes and holds the omni namespace to the contract", () => {
+    expect(rules(validateResult({ status: "failed", failure: { ...failure, code: "omni.unavailable" } }, "execute"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure: { ...failure, code: "acme.circuit-open" } }, "execute"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure: { ...failure, code: "omni.retry-later" } }, "execute"))).toEqual(["failure.code.unknown"]);
+    // The same failure shape on a task's failed outcome.
+    const ended = (failure: unknown) => rules(validateEventEnvelope(envelope({ type: "task-ended", taskId: "call-42", outcome: { type: "failed", failure } }), manifest()));
+    expect(ended(failure)).toEqual([]);
+    expect(ended({ ...failure, code: "omni.retry-later" })).toEqual(["failure.code.unknown"]);
   });
 });
 

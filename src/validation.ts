@@ -15,6 +15,7 @@ import {
   BREAK_KINDS,
   BROWSER_ISOLATION_SCHEMES,
   IDLE_CAPABILITIES,
+  OMNI_FAILURE_CODES,
   OMNI_SUPPORTED_PROTOCOL_VERSIONS,
   negotiateProtocolVersion,
   type AcceptanceMode,
@@ -1024,10 +1025,7 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
       if (!isPlainObject(value.failure)) {
         into.add("event.taskEnded.outcome.failed", `${path}.failure`, "a failed outcome must carry a failure");
       } else {
-        into.filled(value.failure.code, "failure.code", `${path}.failure.code`, "a failure needs a code");
-        into.filled(value.failure.message, "failure.message", `${path}.failure.message`, "a failure needs a message");
-        into.require(typeof value.failure.retryable === "boolean", "failure.retryable", `${path}.failure.retryable`,
-          "a failure must say whether it is retryable");
+        validateFailureInto(value.failure, `${path}.failure`, into);
       }
       break;
     default:
@@ -1149,6 +1147,94 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       break;
     default:
       into.add("event.type", `${at}.type`, `unsupported event type: ${String(event.type)}`);
+  }
+  return into.violations;
+}
+
+// ---------------------------------------------------------------------------
+// Results. A result crosses the same boundary a snapshot does, from an adapter that may be
+// compiled against another version, and Omni shows the agent what it says.
+// ---------------------------------------------------------------------------
+
+/** A `ProtocolFailure`, wherever one appears: on a result, or on a task's failed outcome. */
+function validateFailureInto(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("failure.shape", path, "a failure must be an object");
+    return;
+  }
+  if (into.filled(value.code, "failure.code", `${path}.code`, "a failure needs a code")) {
+    // A provider names its own codes freely; the `omni.` namespace is the contract's, and a code
+    // in it that the contract lacks is one Omni would show without knowing what it means.
+    if ((value.code as string).startsWith("omni.")) {
+      into.require((OMNI_FAILURE_CODES as readonly string[]).includes(value.code as string), "failure.code.unknown",
+        `${path}.code`, `not a contract failure code: ${value.code}`);
+    }
+  }
+  into.filled(value.message, "failure.message", `${path}.message`, "a failure needs a message");
+  into.require(typeof value.retryable === "boolean", "failure.retryable", `${path}.retryable`,
+    "a failure must say whether it is retryable");
+  if (value.retryAfterMs !== undefined) {
+    into.require(typeof value.retryAfterMs === "number" && Number.isFinite(value.retryAfterMs) && value.retryAfterMs >= 0,
+      "failure.retryAfterMs", `${path}.retryAfterMs`, "retryAfterMs must be a non-negative number when present");
+  }
+}
+
+/** The connection methods whose results `validateResult` knows. */
+export type ResultMethod =
+  | "execute"
+  | "dial"
+  | "setCapacity"
+  | "requestBreak"
+  | "commitBreak"
+  | "cancelBreak"
+  | "endBreak"
+  | "executeTeamBreak"
+  | "executeTeamConsult"
+  | "openMedia";
+
+// Pinned to the result unions: each method's one success status, and the status that carries a
+// failure. A method added to `Connection` without a row here is a compile error at the call site.
+const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string }> = {
+  execute: { success: "applied", failure: "failed" },
+  dial: { success: "dialled", failure: "failed" },
+  setCapacity: { success: "accepted", failure: "failed" },
+  requestBreak: { success: "requested", failure: "failed" },
+  commitBreak: { success: "committed", failure: "failed" },
+  cancelBreak: { success: "cancelled", failure: "failed" },
+  endBreak: { success: "ended", failure: "failed" },
+  executeTeamBreak: { success: "applied", failure: "failed" },
+  executeTeamConsult: { success: "applied", failure: "failed" },
+  openMedia: { success: "opened", failure: "unavailable" },
+};
+
+/**
+ * Validates what a connection method answered. A result is untrusted for the same reason a
+ * snapshot is: it comes from an adapter that may be compiled against another version, and Omni
+ * shows the agent what it says. A status the method does not answer, a failure status without a
+ * failure, a success carrying one, or an `omni.` code the contract lacks are each refused.
+ */
+export function validateResult(result: unknown, method: ResultMethod, path = "result"): ProtocolViolation[] {
+  const into = new Collector();
+  const statuses = RESULT_STATUSES[method];
+  if (!isPlainObject(result)) {
+    into.add("result.shape", path, `${method} must answer an object`);
+    return into.violations;
+  }
+  if (result.status === statuses.success) {
+    into.require(result.failure === undefined, "result.failure.unexpected", `${path}.failure`,
+      `${statuses.success} carries no failure`);
+    if (method === "openMedia") {
+      into.require(isPlainObject(result.session), "result.session", `${path}.session`, "opened carries the media session");
+    }
+  } else if (result.status === statuses.failure) {
+    if (result.failure === undefined) {
+      into.add("result.failure.required", `${path}.failure`, `${statuses.failure} carries the failure that says why`);
+    } else {
+      validateFailureInto(result.failure, `${path}.failure`, into);
+    }
+  } else {
+    into.add("result.status", `${path}.status`,
+      `${method} answers ${statuses.success} or ${statuses.failure}, not ${String(result.status)}`);
   }
   return into.violations;
 }

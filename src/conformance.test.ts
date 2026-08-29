@@ -274,6 +274,13 @@ describe("exerciseAdapter", () => {
     expect(result.violations.map(violation => violation.rule)).toContain("connection.disconnect.clean");
   });
 
+  it("validates the capacity result as it does a snapshot", async () => {
+    // An adapter compiled against another version may answer a shape the host does not know.
+    expect(await rules({ connection: { setCapacity: async () => ({ status: "ok" }) } })).toContain("result.status");
+    expect(await rules({ connection: { setCapacity: async () => ({ status: "failed" }) } })).toContain("result.failure.required");
+    expect(await rules({})).not.toContain("result.status");
+  });
+
   it("flags a provider that will not accept a capacity", async () => {
     const failed = { status: "failed", failure: { code: "omni.unavailable", message: "down", retryable: true } };
     expect(await rules({ connection: { setCapacity: async () => failed } })).toContain("connection.setCapacity.failed");

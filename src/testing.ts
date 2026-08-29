@@ -20,6 +20,7 @@ import {
   validateAuthenticationState,
   validateEventEnvelope,
   validateManifest,
+  validateResult,
   validateSnapshot,
   type ProtocolViolation,
 } from "./validation.js";
@@ -277,7 +278,10 @@ export async function exerciseAdapter<C extends Channel>(
     // Capacity is stated, not requested: nothing may be allocated until it is, so a connection
     // that will not accept one is a connection nothing can be given to.
     const capacity = await connection.setCapacity({ count: 1 });
-    if (capacity.status === "failed") {
+    const malformed = validateResult(capacity, "setCapacity", "connection.setCapacity");
+    violations.push(...malformed);
+    // A refusal is read only from a result that has the shape of one.
+    if (malformed.length === 0 && capacity.status === "failed") {
       violations.push({
         rule: "connection.setCapacity.failed",
         path: "connection.setCapacity",
