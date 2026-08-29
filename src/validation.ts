@@ -928,6 +928,14 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     });
   }
 
+  // A break in effect begins when the work ends, so it holds no task. A snapshot reporting both
+  // describes a state the agent cannot be in, whichever half is stale.
+  if (isPlainObject(snapshot.break) && snapshot.break.approval === "in-effect"
+    && Array.isArray(snapshot.tasks) && snapshot.tasks.length > 0) {
+    into.add("break.in-effect.tasks", `${path}.tasks`,
+      "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task");
+  }
+
   // Presence is the permission, and it cuts both ways: data a provider never declared a
   // capability for is data Omni would show against a control the agent does not have.
   const idle = isPlainObject(manifest) && isPlainObject(manifest.idleCapabilities) ? manifest.idleCapabilities : {};

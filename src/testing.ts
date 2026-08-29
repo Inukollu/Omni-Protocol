@@ -520,6 +520,72 @@ export function assertDeniedAndRetriedBreak(approvals: readonly BreakApproval[])
   }
 }
 
+/** One provider as the host sees it when freezing a break attempt's participant set. */
+export interface BreakCandidate {
+  id: string;
+  authentication: AuthenticationState["status"];
+  /** Whether the agent can currently receive work from it: connected, with a capacity stated. */
+  holdsCapacity: boolean;
+}
+
+const usableLogin = (status: AuthenticationState["status"]): boolean =>
+  status === "authenticated" || status === "refreshing";
+
+/**
+ * The participant set of a break attempt is every connected provider from which the agent can
+ * currently receive work. A provider whose login is not usable -- `expired` above all -- is not
+ * one, whatever else is true of it: nothing can be asked of it, and a host that waits on it
+ * stalls the break for everyone. A usable provider holding capacity is one, and cannot be left
+ * out. `refreshing` is usable: identity and capabilities remain available and work continues.
+ */
+export function assertBreakParticipants(candidates: readonly BreakCandidate[], participants: readonly string[]): void {
+  const chosen = new Set(participants);
+  for (const id of participants) {
+    if (!candidates.some(candidate => candidate.id === id)) throw new Error(`${id} is not a provider the host knows`);
+  }
+  for (const candidate of candidates) {
+    const expected = usableLogin(candidate.authentication) && candidate.holdsCapacity;
+    if (expected && !chosen.has(candidate.id)) {
+      throw new Error(`${candidate.id} can give the agent work and must be a participant`);
+    }
+    if (!expected && chosen.has(candidate.id)) {
+      const why = usableLogin(candidate.authentication) ? "holds no capacity" : `is ${candidate.authentication}`;
+      throw new Error(`${candidate.id} ${why} and is not a participant: nothing can be asked of it`);
+    }
+  }
+}
+
+/** One published moment of a break asked for on a task: the approval, and how many tasks were outstanding. */
+export interface BreakOnTaskStep {
+  approval: BreakApproval;
+  outstanding: number;
+}
+
+/**
+ * A break asked for on a task begins when the work ends. `steps` is the sequence the provider
+ * published, first to last: the request is made while work is outstanding, the commit is reported
+ * as `starting-after-task` while it remains, and `in-effect` arrives only once nothing is
+ * outstanding -- never beside a task, and never later than the step that has none.
+ */
+export function assertBreakBeginsAfterTask(steps: readonly BreakOnTaskStep[]): void {
+  const asked = steps.findIndex(step => step.approval === "awaiting-decision" || step.approval === "granted");
+  if (asked < 0) throw new Error("Break-on-task scenario requires a request");
+  if ((steps[asked]?.outstanding ?? 0) < 1) throw new Error("Break-on-task scenario requires the request to be made while a task is outstanding");
+  const committed = steps.findIndex((step, index) => index > asked && step.approval === "starting-after-task");
+  if (committed < 0) throw new Error("A break committed on a task is reported as starting-after-task while the work remains");
+  steps.forEach((step, index) => {
+    if (step.approval === "in-effect" && step.outstanding > 0) {
+      throw new Error(`steps[${index}] reports in-effect with ${step.outstanding} task(s) outstanding: a break begins when the work ends`);
+    }
+    if (step.approval === "starting-after-task" && step.outstanding < 1) {
+      throw new Error(`steps[${index}] reports starting-after-task with nothing outstanding: the break should have begun`);
+    }
+  });
+  if (steps.at(-1)?.approval !== "in-effect") {
+    throw new Error(`Break-on-task scenario must end in effect, ended ${String(steps.at(-1)?.approval)}`);
+  }
+}
+
 /**
  * Validates the deadline derived from media end and the task's fixed wrap allowance.
  *

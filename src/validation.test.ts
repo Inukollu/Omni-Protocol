@@ -212,6 +212,17 @@ describe("break state", () => {
     expect(check({ approval: "denied" })).toContain("break.approval");
   });
 
+  it("refuses a break in effect beside a task, and accepts one that is waiting for it to end", () => {
+    // A break begins when the work ends. Until then the state is starting-after-task, which may
+    // stand beside any task; in-effect beside one is a report of a state the agent cannot be in.
+    const withTask = (approval: string) =>
+      rules(validateSnapshot(snapshot({ tasks: [task()], break: { approval, accepting: true } }), manifest()));
+    expect(withTask("starting-after-task")).toEqual([]);
+    expect(withTask("granted")).toEqual([]);
+    expect(withTask("in-effect")).toEqual(["break.in-effect.tasks"]);
+    expect(check({ approval: "in-effect" })).toEqual([]);
+  });
+
   it("reports an active reason only when a break is happening", () => {
     expect(check({ approval: "not-requested", activeReasonId: "lunch" })).toContain("break.activeReasonId.approval");
     expect(check({ approval: "in-effect", activeReasonId: "lunch" })).toEqual([]);
