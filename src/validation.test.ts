@@ -300,6 +300,14 @@ describe("validateSnapshot", () => {
     expect(rules(validateSnapshot(value, manifest()))).toContain(rule);
   });
 
+  it("requires each contribution the manifest declares, [] included, and refuses one it does not", () => {
+    const declaring = manifest({ idleCapabilities: { contacts: true, calendar: true } });
+    expect(rules(validateSnapshot(snapshot({ contacts: [], scheduledActivities: [] }), declaring))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot(), declaring)).sort()).toEqual(["snapshot.calendar.required", "snapshot.contacts.required"]);
+    expect(rules(validateSnapshot(snapshot(), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ contacts: [], scheduledActivities: [] }), manifest())).sort()).toEqual(["snapshot.calendar.capability", "snapshot.contacts.capability"]);
+  });
+
   it("carries the reader into the roster", () => {
     const team = { members: [{ id: "A-2", availability: "ready" }, { id: "1042", availability: "ready" }] };
     expect(rules(validateSnapshot(snapshot({ team }), manifest(), "snapshot", { self: "1042" }))).toEqual(["team.member.self"]);
@@ -331,10 +339,10 @@ describe("validateSnapshot", () => {
       .toContain("snapshot.contacts.capability");
     expect(rules(validateSnapshot(snapshot({ scheduledActivities: [] }), manifest())))
       .toContain("snapshot.calendar.capability");
-    // Controls: with the capability declared, the same data is fine.
-    const full = manifest({ idleCapabilities: { contacts: true, calendar: true } });
-    expect(validateSnapshot(snapshot({ contacts: [{ name: "Asha" }] }), full)).toEqual([]);
-    expect(validateSnapshot(snapshot({ scheduledActivities: [] }), full)).toEqual([]);
+    // Controls: with the capability declared, the same data is fine -- and only that capability,
+    // since a declared contribution the snapshot lacks is refused the other way round.
+    expect(validateSnapshot(snapshot({ contacts: [{ name: "Asha" }] }), manifest({ idleCapabilities: { contacts: true } }))).toEqual([]);
+    expect(validateSnapshot(snapshot({ scheduledActivities: [] }), manifest({ idleCapabilities: { calendar: true } }))).toEqual([]);
   });
 });
 

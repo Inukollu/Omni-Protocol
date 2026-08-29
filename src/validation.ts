@@ -931,6 +931,17 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   // Presence is the permission, and it cuts both ways: data a provider never declared a
   // capability for is data Omni would show against a control the agent does not have.
   const idle = isPlainObject(manifest) && isPlainObject(manifest.idleCapabilities) ? manifest.idleCapabilities : {};
+  // And it cuts the other way too: a declared contribution is required, `[]` included. A snapshot
+  // that omits one the manifest declares has not cleared it, it has said nothing, and Omni would
+  // go on showing whatever it held.
+  if (snapshot.contacts === undefined && idle.contacts === true) {
+    into.add("snapshot.contacts.required", `${path}.contacts`,
+      "the manifest declares contacts, so every snapshot carries the contribution: [] when there are none");
+  }
+  if (snapshot.scheduledActivities === undefined && idle.calendar === true) {
+    into.add("snapshot.calendar.required", `${path}.scheduledActivities`,
+      "the manifest declares calendar, so every snapshot carries the contribution: [] when there are none");
+  }
   if (snapshot.contacts !== undefined) {
     into.require(idle.contacts === true, "snapshot.contacts.capability", `${path}.contacts`,
       "contacts require the contacts idle capability");
