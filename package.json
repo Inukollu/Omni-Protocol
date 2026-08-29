@@ -18,10 +18,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./design": {
-      "types": "./dist/design.d.ts",
-      "import": "./dist/design.js"
-    },
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
