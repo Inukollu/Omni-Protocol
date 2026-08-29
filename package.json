@@ -1,6 +1,6 @@
 {
   "name": "@xema/omni-protocol",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "The Omni protocol: the contract every provider adapter implements",
   "type": "module",
   "license": "MIT",
