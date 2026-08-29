@@ -30,7 +30,8 @@ An adapter is loaded from a separate package and may be compiled against a diffe
 version, so its output is untrusted input. Every validator takes `unknown` and returns every
 violation it found rather than throwing on the first, so a caller reports all of them at once.
 Validating a snapshot before it replaces provider state is what stops a malformed task reaching
-the agent's workspace.
+the agent's workspace; validating a result with `validateResult(result, method)` before acting on
+it is what stops a status the host does not know being shown as an outcome.
 
 ```ts
 const violations = validateSnapshot(snapshot, manifest);

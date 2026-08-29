@@ -2934,6 +2934,11 @@ Applies a `TaskCommandRequest` to one provider-local task.
   deciding a member's break that another lead has already decided is `applied` when the decisions
   agree and `failed`, saying so in `message`, when they differ. `commitBreak()` on a break already
   in effect is `committed` for the same reason.
+- **A result is untrusted for the same reason a snapshot is.** It comes from an adapter that may be
+  compiled against another version, and Omni shows the agent what it says. Omni validates it at
+  the boundary with `validateResult(result, "execute")` — a status the method does not answer, a
+  `failed` without its failure, a success carrying one, or an `omni.` code this contract lacks is
+  refused, and the command is treated as unsettled.
 - **A settled result is a fact; an unsettled promise is not.** Transport uncertainty may reject the
   promise with no result at all, and that means *unknown*, not *failed*, and a snapshot follows —
   see **An unsettled result is unknown**. `failed` must never be returned for something the
@@ -3176,6 +3181,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
+| `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. |
 
 Each returns `ProtocolViolation[]` rather than throwing, so a caller can report every problem at
