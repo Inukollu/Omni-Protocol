@@ -177,6 +177,7 @@ export async function exerciseAdapter<C extends Channel>(
   const events: ProviderEventEnvelope<C>[] = [];
   const seen = new Set<ContractSubject>();
   const stream = new TaskStream();
+  const breaks = new BreakStream();
   let seeded = false;
 
   const storedSecrets = new Map<string, string>();
@@ -286,7 +287,7 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader()));
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
       // Cross-event rules apply once the stream has a beginning: the connect snapshot.
-      if (seeded) violations.push(...stream.apply(envelope));
+      if (seeded) violations.push(...stream.apply(envelope), ...breaks.apply(envelope));
       if (typeof envelope?.id === "string") {
         if (eventIds.has(envelope.id)) return;
         eventIds.add(envelope.id);
@@ -298,6 +299,7 @@ export async function exerciseAdapter<C extends Channel>(
     observeSnapshot(snapshot, seen);
     violations.push(...validateSnapshot(snapshot, adapter.manifest, "snapshot", reader()));
     stream.seed(snapshot);
+    breaks.seed(snapshot);
     seeded = true;
     requireCapabilityMethods(live, current().capabilities);
     if (publishesUserIds(snapshot)) requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
@@ -652,6 +654,70 @@ export class TaskStream {
     }
     return found;
   }
+}
+
+// A request goes not-requested -> awaiting-decision | granted; a commit goes granted ->
+// starting-after-task | in-effect; work ending goes starting-after-task -> in-effect; a denial,
+// a cancel, an end or a release goes back to not-requested; a placed break arrives in-effect
+// with `imposed`. Nothing else is a move the guide describes.
+const COMMITTED = new Set(["starting-after-task", "in-effect"]);
+const BACKWARDS: Record<string, readonly string[]> = {
+  "in-effect": ["awaiting-decision", "granted", "starting-after-task"],
+  "starting-after-task": ["awaiting-decision", "granted"],
+  granted: ["awaiting-decision"],
+};
+
+/** What a stream has said about the agent's break, and the moves it may not make. */
+export class BreakStream {
+  private approval: string | undefined;
+
+  /** Takes the break state a snapshot carries as the point the stream continues from. */
+  seed(snapshot: unknown): void {
+    const state = isRecord(snapshot) ? snapshot.break : undefined;
+    this.approval = isRecord(state) && typeof state.approval === "string" ? state.approval : undefined;
+  }
+
+  /** Applies one envelope and returns the moves it may not make given where the break stood. */
+  apply(envelope: unknown, path = "event"): ProtocolViolation[] {
+    const found: ProtocolViolation[] = [];
+    const event = isRecord(envelope) ? envelope.event : undefined;
+    if (!isRecord(event)) return found;
+    if (event.type === "snapshot") {
+      this.seed(event.snapshot);
+      return found;
+    }
+    if (event.type !== "break-state" || !isRecord(event.break) || typeof event.break.approval !== "string") return found;
+    const from = this.approval;
+    const to = event.break.approval;
+    const at = `${path}.event.break.approval`;
+    if (from !== undefined) {
+      // A commit's states need a grant behind them. A placed break is the one arrival in effect
+      // that nobody asked for, and it says so with `imposed`.
+      if (COMMITTED.has(to) && (from === "not-requested" || from === "awaiting-decision") && !(to === "in-effect" && event.break.imposed !== undefined)) {
+        found.push({ rule: "stream.breakState.commitBeforeGrant", path: at,
+          message: `${to} follows a commit, and a commit follows granted; the break stood at ${from}` });
+      }
+      if ((BACKWARDS[from] ?? []).includes(to)) {
+        found.push({ rule: "stream.breakState.backwards", path: at,
+          message: `a break does not go from ${from} back to ${to}; a new request passes through not-requested` });
+      }
+    }
+    this.approval = to;
+    return found;
+  }
+}
+
+/**
+ * A break follows its requests. Given a provider's stream -- optionally seeded with the snapshot
+ * it began from -- every `break-state` moves the way the guide describes: a commit's states only
+ * after a grant, never backwards, and a break placed on the agent arriving in effect with `imposed`.
+ */
+export function assertBreakFollowsItsRequests(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
+  const stream = new BreakStream();
+  if (snapshot !== undefined) stream.seed(snapshot);
+  const found: ProtocolViolation[] = [];
+  envelopes.forEach((envelope, index) => found.push(...stream.apply(envelope, `envelopes[${index}]`)));
+  assertNoViolations(found, "A break follows its requests");
 }
 
 /**

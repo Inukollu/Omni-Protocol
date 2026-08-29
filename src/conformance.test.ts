@@ -481,6 +481,18 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({})).toEqual([]);
   });
 
+  it("holds the break's moves to where it stood, from the connect snapshot on", async () => {
+    // The conforming snapshot stands at not-requested: a grant may follow, a commit's state may not.
+    const at = "2026-08-21T09:05:00Z";
+    const moved = (approval: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${approval}`, sessionId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, accepting: true } } }) as ProviderEventEnvelope<"voice">;
+    const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
+      let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
+      return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { deliver?.(envelope); return { status: "accepted" as const }; } } };
+    };
+    expect(await rules(after(moved("granted")))).toEqual([]);
+    expect(await rules(after(moved("in-effect")))).toEqual(["stream.breakState.commitBeforeGrant"]);
+  });
+
   it("holds the snapshot and every event to the login's session", async () => {
     const elsewhere = { ...minimalSnapshot, sessionId: "session-0" } satisfies Snapshot<"voice">;
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot })).not.toContain("snapshot.sessionId.mismatch");

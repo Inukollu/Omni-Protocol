@@ -2846,7 +2846,9 @@ the life of the connection the way authentication is:
 | `unavailable` | Omni does not: permission refused, no device, capture lost. `failure` says which, in words Omni has already shown the agent. |
 
 Omni republishes the state whenever it changes — a permission granted late, a device unplugged —
-and the adapter does what its platform needs. A platform that bridges audio without a host-side
+and it publishes a state, not a flicker: a change that resolves within moments is not reported, so
+an adapter may act on what it reads without debouncing it again. The adapter does what its
+platform needs. A platform that bridges audio without a host-side
 input carries on; one that needs it may put the agent not-ready with the platform, refuse calls,
 or answer `openMedia` `unavailable` with a failure Omni shows. The choice is the adapter's because
 only the adapter knows where its platform's audio lands.
@@ -3120,6 +3122,14 @@ Replaces this provider's complete `break` object. Its `approval` uses the canoni
 `in-effect` states defined under Breaks; the event also carries the corresponding accepting state,
 reasons, retry details, and any imposed break.
 
+Each state is also held to the one before it. A commit's states, `starting-after-task` and
+`in-effect`, follow a grant — the one arrival in effect nobody asked for is a placed break, which
+says so with `imposed` (`stream.breakState.commitBeforeGrant`); and a break never moves backwards —
+from `in-effect` or `starting-after-task` to a grant or a request, or from `granted` to
+`awaiting-decision` — a new request passes through `not-requested` (`stream.breakState.backwards`).
+`exerciseAdapter` holds the stream to that from the connect snapshot on;
+`assertBreakFollowsItsRequests` holds any sequence.
+
 For a multi-provider attempt, "every provider" is the participant set frozen when the attempt
 entered `requesting-break`. Omni commits only after every participant reports `granted` —
 that one is unconditional, because nothing has stopped yet and waiting costs only time. It enters
@@ -3324,7 +3334,8 @@ cannot be established from TypeScript structure alone.
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
-| `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-ended` names a task whose work has begun, and what follows it is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). |
+| `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a placed break arriving in effect with `imposed`. The harness applies the same rules after the connect snapshot. |
+| `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-ended` names a task whose work has begun, and what follows it is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no media satisfies it by never testing it — pair it with the assertion that the media end is present. |
 | `assertBreakParticipants(candidates, participants)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `in-effect` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
