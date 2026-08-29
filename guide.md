@@ -1682,6 +1682,7 @@ automatic or requires the agent. A provider that requires automatic acceptance s
 declare const task: Task;
 
 const allocation = {
+  type: "task-offered",
   task,
   acceptanceMode: "require-agent-acceptance",
   allocationExpiresAt: "2026-08-25T10:41:07.000Z",

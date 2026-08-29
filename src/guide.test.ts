@@ -46,7 +46,7 @@ const PROSE = new Set([
   // Names from outside this contract: web APIs, OIDC, a platform's own vocabulary.
   "URLPattern", "nonce", "not-ready",
   // Example values -- attribute keys, task types, categories -- chosen to read as data.
-  "Lead", "Prospect", "Dept", "Department", "Billing", "Returns",
+  "Lead", "Prospect", "Dept", "Department", "Billing", "Returns", "WhatsApp",
   // Placeholders in the isolation-scheme explanation.
   "TASK_TYPE_NAME", "PROVIDER_NAME",
   // Omni's own provisioning flag and break-attempt states, which the guide narrates but the
@@ -72,7 +72,32 @@ function pieces(span: string): string[] {
     .filter(piece => !vocabulary.has(piece));
 }
 
+/** Names an example uses without declaring them: stand-ins for the adapter's own code. */
+const PLACEHOLDERS = new Set(["createAcmeAuthentication", "createAuthenticationSession", "createConnection", "adapter", "context", "expect", "result"]);
+
+// The fenced blocks: a complete example is compiled by guide-examples.test.ts; a fragment -- a
+// lone property, a bare literal, a signature -- is not, so its property keys and type names are
+// held to the vocabulary here, the way the prose is.
+const fenced = [...guide.matchAll(/^```ts\n([\s\S]*?)^```/gm)].map(match => match[1] as string);
+
 describe("the guide names nothing the code lacks", () => {
+  it("every property key and type name in a fenced block exists somewhere in src/", () => {
+    const missing = new Map<string, string>();
+    for (const block of fenced) {
+      for (const key of block.matchAll(/^\s*([A-Za-z_$][A-Za-z0-9_$]*)\??:\s/gm)) {
+        const name = key[1] as string;
+        if (!vocabulary.has(name) && !PROSE.has(name) && !PLACEHOLDERS.has(name)) missing.set(name, key[0].trim());
+      }
+      // Type names are read from code, not from what the code says: strings and comments out.
+      const code = block.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*/g, "");
+      for (const type of code.matchAll(/\b([A-Z][A-Za-z0-9]+)\b/g)) {
+        const name = type[1] as string;
+        if (!vocabulary.has(name) && !PROSE.has(name) && !PLACEHOLDERS.has(name)) missing.set(name, type[0]);
+      }
+    }
+    expect([...missing.entries()].map(([name, where]) => `${name}  (in \`${where}\`)`)).toEqual([]);
+  });
+
   it("every inline-code identifier in guide.md exists somewhere in src/", () => {
     const missing = new Map<string, string>();
     for (const span of spans) {
