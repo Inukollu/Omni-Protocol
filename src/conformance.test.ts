@@ -442,6 +442,40 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ capabilities: leads, snapshot: withColleague, emit: listener => listener(later) })).toContain("team.member.self");
   });
 
+  it("holds the snapshot and every event to the login's session", async () => {
+    const elsewhere = { ...minimalSnapshot, sessionId: "session-0" } satisfies Snapshot<"voice">;
+    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot })).not.toContain("snapshot.sessionId.mismatch");
+    expect(await rules({ manifest: plainManifest, snapshot: elsewhere })).toContain("snapshot.sessionId.mismatch");
+    const stray: ProviderEventEnvelope<"voice"> = { id: "evt-1", sessionId: "session-0", occurredAt: "2026-08-21T09:00:00Z", event: { type: "provider-status", status: "active" } };
+    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, emit: listener => listener(stray) })).toContain("event.sessionId.mismatch");
+  });
+
+  it("passes autoAcceptTasks through, absent meaning true", async () => {
+    const offered = (acceptanceMode?: "require-agent-acceptance"): ProviderEventEnvelope<"voice"> => ({
+      id: "evt-offer", sessionId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
+      event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending" }, ...(acceptanceMode ? { acceptanceMode } : {}) },
+    });
+    const run = async (autoAcceptTasks: boolean | undefined, envelope: ProviderEventEnvelope<"voice">) =>
+      (await exerciseAdapter(makeAdapter({ emit: listener => listener(envelope) }).adapter, { ...context, ...(autoAcceptTasks === undefined ? {} : { autoAcceptTasks }) }, { collectOnly: true }))
+        .violations.map(violation => violation.rule);
+    expect(await run(undefined, offered("require-agent-acceptance"))).toEqual([]);
+    expect(await run(undefined, offered())).toContain("event.taskOffered.acceptanceMode.required");
+    expect(await run(false, offered())).toEqual([]);
+    expect(await run(false, offered("require-agent-acceptance"))).toContain("event.taskOffered.acceptanceMode.unexpected");
+  });
+
+  it("describeUsers(), when a UserId arrives on an event or on a task's lead or assisting", async () => {
+    const at = "2026-08-21T09:05:00Z";
+    const bare = { ...minimalSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, handlingHistory: [] }] } satisfies Snapshot<"voice">;
+    const joined = { ...bare, tasks: [{ ...bare.tasks[0]!, capabilities: { ...bare.tasks[0]!.capabilities, consultLead: true }, lead: { status: "joined", leadId: "L-9", since: at } }] } satisfies Snapshot<"voice">;
+    const assisting = { ...bare, tasks: [{ ...bare.tasks[0]!, assisting: { memberId: "A-1", since: at } }] } satisfies Snapshot<"voice">;
+    expect(await rules({ manifest: plainManifest, snapshot: bare, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
+    expect(await rules({ manifest: plainManifest, snapshot: joined, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
+    expect(await rules({ manifest: plainManifest, snapshot: assisting, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
+    const later: ProviderEventEnvelope<"voice"> = { id: "evt-team", sessionId: "session-1", occurredAt: at, event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } } };
+    expect(await rules({ manifest: plainManifest, capabilities: { team: {} }, snapshot: { ...bare, team: { members: [] } }, connection: { describeUsers: undefined }, emit: listener => listener(later) })).toContain("connection.describeUsers.required");
+  });
+
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
     // The conforming snapshot names A-1 in a handling step; a roster and an imposed break count too.
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");

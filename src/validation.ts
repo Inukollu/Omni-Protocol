@@ -113,6 +113,12 @@ const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>[
   reconnected: true, "provider-requested": true,
 });
 const SESSION_CAPABILITIES = membersOf<keyof SessionCapabilities>({ breaks: true, team: true });
+const MEMBER_BREAKS = membersOf<Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">>({
+  "awaiting-decision": true, granted: true, "starting-after-task": true,
+});
+const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending" | "confirmed" | "preparing">>({
+  pending: true, confirmed: true, preparing: true,
+});
 const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, consultControl: true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
 const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
@@ -370,8 +376,11 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
       "an adapter must declare at least one authentication method");
   } else {
     methods.forEach((method, index) => {
-      into.oneOf(method, AUTHENTICATION_METHODS, "manifest.authenticationMethod",
-        `${path}.authenticationMethods[${index}]`);
+      if (into.oneOf(method, AUTHENTICATION_METHODS, "manifest.authenticationMethod",
+        `${path}.authenticationMethods[${index}]`) && methods.indexOf(method) !== index) {
+        into.add("manifest.authenticationMethod.unique", `${path}.authenticationMethods[${index}]`,
+          `duplicate authentication method: ${String(method)}`);
+      }
     });
   }
 
@@ -423,18 +432,26 @@ function validateDestinationDirectory(value: unknown, path: string, into: Collec
   }
   into.require(typeof value.allowManualEntry === "boolean", "task.destinations.allowManualEntry",
     `${path}.allowManualEntry`, "a directory must say whether manual entry is allowed");
+  // A directory with nothing in it and no typing is a control with nothing to offer.
+  if (value.allowManualEntry === false && !(Array.isArray(value.destinations) && value.destinations.length > 0)) {
+    into.add("task.destinations.offer", path, "a directory with no destinations must allow manual entry, or the control has nothing to offer");
+  }
   if (value.destinations === undefined) return;
   if (!Array.isArray(value.destinations)) {
     into.add("task.destinations.list", `${path}.destinations`, "destinations must be an array when present");
     return;
   }
+  const seen = new Set<string>();
   value.destinations.forEach((destination: unknown, index: number) => {
     const at = `${path}.destinations[${index}]`;
     if (!isPlainObject(destination)) {
       into.add("task.destination.shape", at, "each destination must be an object");
       return;
     }
-    into.filled(destination.id, "task.destination.id", `${at}.id`, "a destination needs an id");
+    if (into.filled(destination.id, "task.destination.id", `${at}.id`, "a destination needs an id")) {
+      if (seen.has(destination.id as string)) into.add("task.destination.unique", `${at}.id`, `duplicate destination id: ${destination.id}`);
+      seen.add(destination.id as string);
+    }
     into.filled(destination.label, "task.destination.label", `${at}.label`, "a destination needs a label");
     into.filled(destination.address, "task.destination.address", `${at}.address`, "a destination needs an address");
     into.oneOf(destination.kind, DESTINATION_KINDS, "task.destination.kind", `${at}.kind`);
@@ -450,6 +467,10 @@ function validateDispositions(value: unknown, path: string, into: Collector): vo
   if (value.required !== undefined) {
     into.require(typeof value.required === "boolean", "task.dispositions.required", `${path}.required`,
       "required must be a boolean when present");
+  }
+  // A code must be collected before completion, so there must be one to collect.
+  if (value.required === true && !(Array.isArray(value.codes) && value.codes.length > 0)) {
+    into.add("task.dispositions.required.codes", `${path}.codes`, "a required disposition policy must publish at least one code");
   }
   if (value.notes !== undefined) into.oneOf(value.notes, NOTES_POLICIES, "task.dispositions.notes", `${path}.notes`);
   if (value.codes === undefined) return;
@@ -504,6 +525,7 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
     return;
   }
   const seen = new Set<string>();
+  const names = new Set<string>();
   value.forEach((browser: unknown, index: number) => {
     const at = `${path}[${index}]`;
     if (!isPlainObject(browser)) {
@@ -514,7 +536,12 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
       if (seen.has(browser.id as string)) into.add("task.browser.unique", `${at}.id`, `duplicate browser id: ${browser.id}`);
       seen.add(browser.id as string);
     }
-    into.filled(browser.name, "task.browser.name", `${at}.name`, "a browser needs a name");
+    // The name is an input to a `TAB_NAME` isolation scheme: two tabs with one name would
+    // silently share a session.
+    if (into.filled(browser.name, "task.browser.name", `${at}.name`, "a browser needs a name")) {
+      if (names.has(browser.name as string)) into.add("task.browser.name.unique", `${at}.name`, `duplicate browser name: ${browser.name}`);
+      names.add(browser.name as string);
+    }
     into.filled(browser.purpose, "task.browser.purpose", `${at}.purpose`, "a browser needs a purpose");
 
     if (into.filled(browser.url, "task.browser.url", `${at}.url`, "a browser needs a url")) {
@@ -552,13 +579,17 @@ function validateTaskAttributes(value: unknown, path: string, into: Collector): 
     into.add("task.attributes.shape", path, "attributes must be an array when present");
     return;
   }
+  const keys = new Set<string>();
   value.forEach((attribute: unknown, index: number) => {
     const at = `${path}[${index}]`;
     if (!isPlainObject(attribute)) {
       into.add("task.attribute.shape", at, "each task attribute must be an object");
       return;
     }
-    into.filled(attribute.key, "task.attribute.key", `${at}.key`, "a task attribute needs a key");
+    if (into.filled(attribute.key, "task.attribute.key", `${at}.key`, "a task attribute needs a key")) {
+      if (keys.has(attribute.key as string)) into.add("task.attribute.unique", `${at}.key`, `duplicate attribute key: ${attribute.key}`);
+      keys.add(attribute.key as string);
+    }
     if (attribute.label !== undefined) {
       into.filled(attribute.label, "task.attribute.label", `${at}.label`, "a label must not be empty when present");
     }
@@ -601,6 +632,9 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
     if (entry.by !== undefined) {
       into.require(isUserId(entry.by), "task.handlingHistory.by", `${at}.by`,
         "by must be a non-empty user id; omit it when the person cannot be identified");
+      // On `queued` nobody takes part, so there is nothing to name.
+      into.require(entry.step !== "queued", "task.handlingHistory.by.unexpected", `${at}.by`,
+        "a queued step names nobody");
     }
   });
 }
@@ -712,6 +746,15 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     return;
   }
   const allowed = isChannel(context.channel) ? TASK_CAPABILITIES[context.channel] : TASK_CAPABILITIES.voice;
+  // A task that supplies browser definitions declares the capability that shows them, and one
+  // that declares it supplies at least one: the capability puts a panel in the workspace, and a
+  // panel with nothing in it is a control with nothing to offer.
+  if (Array.isArray(task.browsers) && task.browsers.length > 0 && capabilities.browsers !== true) {
+    into.add("task.browsers.capability", `${path}.browsers`, "a task that supplies browsers declares capabilities.browsers");
+  }
+  if (capabilities.browsers === true && Array.isArray(task.browsers) && task.browsers.length === 0) {
+    into.add("task.browsers.required", `${path}.browsers`, "a task that declares capabilities.browsers supplies at least one; with none, omit the capability");
+  }
   for (const [name, declared] of Object.entries(capabilities)) {
     if (declared === undefined) continue;
     if (!into.require(allowed.includes(name), "task.capability.channel", `${path}.capabilities.${name}`,
@@ -769,6 +812,11 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
       into.filled(value[field], `break.${field}`, `${path}.${field}`, `${field} must not be empty when present`);
     }
   }
+  // The refusal is the reason the control is withdrawn; beside `accepting: true` it explains nothing.
+  if (value.refusedReason !== undefined) {
+    into.require(value.accepting !== true, "break.refusedReason.accepting", `${path}.refusedReason`,
+      "refusedReason is shown when accepting is false; omit it while the agent may ask");
+  }
   if (value.retryAfterMs !== undefined) {
     into.require(typeof value.retryAfterMs === "number" && Number.isFinite(value.retryAfterMs) && value.retryAfterMs >= 0,
       "break.retryAfterMs", `${path}.retryAfterMs`, "retryAfterMs must be a non-negative number when present");
@@ -781,12 +829,21 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     into.require(value.approval !== "not-requested", "break.activeReasonId.approval", `${path}.activeReasonId`,
       "activeReasonId must be omitted when no break is requested or in effect");
   }
-  if (value.imposed !== undefined) validateImposedBreak(value.imposed, `${path}.imposed`, into);
+  if (value.imposed !== undefined) {
+    validateImposedBreak(value.imposed, `${path}.imposed`, into);
+    // An imposed break is a break somebody placed; beside `not-requested` there is no break.
+    into.require(value.approval !== "not-requested", "break.imposed.approval", `${path}.imposed`,
+      "an imposed break is a break in progress; not-requested says there is none");
+  }
 
   if (value.reasons === undefined) return;
   if (!Array.isArray(value.reasons)) {
     into.add("break.reasons.shape", `${path}.reasons`, "break reasons must be an array when present");
     return;
+  }
+  // A provider that defines no codes omits the field: an empty list is a second spelling of that.
+  if (value.reasons.length === 0) {
+    into.add("break.reasons.empty", `${path}.reasons`, "a provider that defines no reasons omits the field rather than publishing an empty list");
   }
   const seen = new Set<string>();
   value.reasons.forEach((reason: unknown, index: number) => {
@@ -806,6 +863,11 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
         "alwaysAvailable is declared by presence: send true or omit it");
     }
   });
+  // The active reason is one of the published ones, or it is a reason Omni cannot name.
+  if (typeof value.activeReasonId === "string" && value.activeReasonId.length > 0) {
+    into.require(seen.has(value.activeReasonId), "break.activeReasonId.known", `${path}.activeReasonId`,
+      `activeReasonId names a reason the provider did not publish: ${value.activeReasonId}`);
+  }
 }
 
 /**
@@ -823,6 +885,10 @@ export interface ReaderContext {
    * snapshot carries a roster, nobody else's does, and `requests` need `team.consultControl`.
    */
   capabilities?: SessionCapabilities;
+  /** The login's `sessionId`. A snapshot or event naming another belongs to a login that is gone. */
+  sessionId?: string;
+  /** `ConnectContext.autoAcceptTasks` as sent, absent meaning `true`: whether `task-offered` carries an `acceptanceMode`. */
+  autoAcceptTasks?: boolean;
 }
 
 export function validateTeamRoster(roster: unknown, path = "team", context: ReaderContext = {}): ProtocolViolation[] {
@@ -899,7 +965,14 @@ function validateTeamRosterInto(roster: unknown, path: string, context: ReaderCo
     }
     into.oneOf(member.availability, TEAM_AVAILABILITIES, "team.member.availability", `${at}.availability`);
     if (member.since !== undefined) into.timestamp(member.since, "team.member.since", `${at}.since`);
-    if (member.break !== undefined) into.oneOf(member.break, BREAK_APPROVALS, "team.member.break", `${at}.break`);
+    if (member.break !== undefined) {
+      // Only an outstanding request appears here: `not-requested` is absence, `in-effect` is
+      // `availability: "on-break"`, and a denial never survives to be reported.
+      if (into.oneOf(member.break, MEMBER_BREAKS, "team.member.break", `${at}.break`)) {
+        into.require(member.availability !== "signed-out" && member.availability !== "on-break", "team.member.break.availability",
+          `${at}.break`, "a member on a break or signed out has no request outstanding");
+      }
+    }
   });
 }
 
@@ -912,7 +985,11 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   const channel = isPlainObject(manifest) && typeof manifest.channel === "string" ? manifest.channel : "voice";
 
   into.oneOf(snapshot.status, CONNECTION_STATUSES, "snapshot.status", `${path}.status`);
-  into.filled(snapshot.sessionId, "snapshot.sessionId", `${path}.sessionId`, "a snapshot needs the session id it belongs to");
+  if (into.filled(snapshot.sessionId, "snapshot.sessionId", `${path}.sessionId`, "a snapshot needs the session id it belongs to")
+    && context.sessionId !== undefined) {
+    into.require(snapshot.sessionId === context.sessionId, "snapshot.sessionId.mismatch", `${path}.sessionId`,
+      `a snapshot for session ${String(snapshot.sessionId)} on a login whose session is ${context.sessionId}`);
+  }
 
   validateBreakState(snapshot.break, `${path}.break`, into);
 
@@ -920,8 +997,14 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     into.add("snapshot.tasks.shape", `${path}.tasks`, "a snapshot must carry a tasks array");
   } else {
     const seen = new Set<string>();
+    let assisting: number | undefined;
     snapshot.tasks.forEach((task: unknown, index: number) => {
       validateTaskInto(task, { channel }, `${path}.tasks[${index}]`, into);
+      // A lead assists one call at a time.
+      if (isPlainObject(task) && task.assisting !== undefined) {
+        if (assisting !== undefined) into.add("snapshot.assisting.single", `${path}.tasks[${index}].assisting`, "a lead assists one call at a time");
+        assisting = index;
+      }
       if (isPlainObject(task) && isTaskId(task.id)) {
         if (seen.has(task.id as string)) into.add("task.id.unique", `${path}.tasks[${index}].id`, `duplicate task id: ${task.id}`);
         seen.add(task.id as string);
@@ -1050,7 +1133,12 @@ function validateProviderSummary(value: unknown, path: string, into: Collector):
     into.add("event.summary.metrics.shape", `${path}.metrics`, "metrics must be an array when present");
     return;
   }
+  const ids = new Set<string>();
   value.metrics.forEach((metric: unknown, index: number) => {
+    if (isPlainObject(metric) && isFilled(metric.id)) {
+      if (ids.has(metric.id as string)) into.add("event.summary.metric.unique", `${path}.metrics[${index}].id`, `duplicate metric id: ${metric.id}`);
+      ids.add(metric.id as string);
+    }
     const at = `${path}.metrics[${index}]`;
     if (!isPlainObject(metric)) {
       into.add("event.summary.metric.shape", at, "each metric must be an object");
@@ -1072,7 +1160,12 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
   const channel = isPlainObject(manifest) && typeof manifest.channel === "string" ? manifest.channel : "voice";
 
   into.filled(envelope.id, "event.id", `${path}.id`, "an event needs an id");
-  into.filled(envelope.sessionId, "event.sessionId", `${path}.sessionId`, "an event needs the session id it belongs to");
+  if (into.filled(envelope.sessionId, "event.sessionId", `${path}.sessionId`, "an event needs the session id it belongs to")
+    && context.sessionId !== undefined) {
+    into.require(envelope.sessionId === context.sessionId, "event.sessionId.mismatch", `${path}.sessionId`,
+      `an event for session ${String(envelope.sessionId)} on a login whose session is ${context.sessionId}`);
+  }
+  const idle = isPlainObject(manifest) && isPlainObject(manifest.idleCapabilities) ? manifest.idleCapabilities : {};
   into.timestamp(envelope.occurredAt, "event.occurredAt", `${path}.occurredAt`);
 
   const event = envelope.event;
@@ -1098,8 +1191,21 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       break;
     case "task-offered":
       validateTaskInto(event.task, { channel }, `${at}.task`, into);
+      // An offer introduces work that is not yet under way; work in progress arrives only on a snapshot.
+      if (isPlainObject(event.task) && typeof event.task.phase === "string") {
+        into.require((OFFERABLE_PHASES as readonly string[]).includes(event.task.phase), "event.taskOffered.phase", `${at}.task.phase`,
+          `task-offered introduces a task as ${OFFERABLE_PHASES.join(", ")}, never as ${event.task.phase}`);
+      }
       if (event.acceptanceMode !== undefined) {
         into.oneOf(event.acceptanceMode, ACCEPTANCE_MODES, "event.taskOffered.acceptanceMode", `${at}.acceptanceMode`);
+      }
+      // The mode travels exactly when Omni said tasks may be auto-accepted.
+      if (context.autoAcceptTasks === true) {
+        into.require(event.acceptanceMode !== undefined, "event.taskOffered.acceptanceMode.required", `${at}.acceptanceMode`,
+          "autoAcceptTasks is on, so task-offered carries an acceptanceMode");
+      } else if (context.autoAcceptTasks === false) {
+        into.require(event.acceptanceMode === undefined, "event.taskOffered.acceptanceMode.unexpected", `${at}.acceptanceMode`,
+          "autoAcceptTasks is off, so every task requires agent acceptance and task-offered carries no acceptanceMode");
       }
       for (const field of ["allocationExpiresAt", "preparationEndsAt"] as const) {
         if (event[field] !== undefined) into.timestamp(event[field], `event.taskOffered.${field}`, `${at}.${field}`);
@@ -1130,6 +1236,8 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       validateTeamRosterInto(event.team, `${at}.team`, context, into);
       break;
     case "contacts-updated":
+      into.require(idle.contacts === true, "event.contacts.capability", `${at}.contacts`,
+        "contacts-updated requires the contacts idle capability");
       if (!Array.isArray(event.contacts)) {
         into.add("event.contacts.shape", `${at}.contacts`, "contacts must be an array");
       } else {
@@ -1138,11 +1246,19 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       }
       break;
     case "calendar-updated":
+      into.require(idle.calendar === true, "event.calendar.capability", `${at}.scheduledActivities`,
+        "calendar-updated requires the calendar idle capability");
       if (!Array.isArray(event.scheduledActivities)) {
         into.add("event.calendar.shape", `${at}.scheduledActivities`, "scheduledActivities must be an array");
       } else {
-        event.scheduledActivities.forEach((activity: unknown, index: number) =>
-          validateScheduledActivityInto(activity, `${at}.scheduledActivities[${index}]`, into));
+        const ids = new Set<string>();
+        event.scheduledActivities.forEach((activity: unknown, index: number) => {
+          validateScheduledActivityInto(activity, `${at}.scheduledActivities[${index}]`, into);
+          if (isPlainObject(activity) && isFilled(activity.id)) {
+            if (ids.has(activity.id as string)) into.add("activity.id.unique", `${at}.scheduledActivities[${index}].id`, `duplicate activity id: ${activity.id}`);
+            ids.add(activity.id as string);
+          }
+        });
       }
       break;
     default:
@@ -1314,6 +1430,10 @@ export function validateAuthenticationState(state: unknown, path = "authenticati
       `${state.status} must not carry an identity`);
   }
 
+  if (state.failure !== undefined) {
+    into.require(state.status === "expired", "authentication.failure.unexpected", `${path}.failure`,
+      "only an expired state may carry a failure");
+  }
   if (state.expiresAt !== undefined) {
     into.require(state.status === "authenticated", "authentication.expiresAt.unexpected", `${path}.expiresAt`,
       "only an authenticated state may carry an expiry");

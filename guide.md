@@ -1731,7 +1731,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `channel` | Channel handling this task. It must equal the source provider's manifest channel. |
 | `taskType` | Required provider-defined source or category of work, such as a voice `Queue Name`, `Mailbox Folder`, `Chat Source`, `Support`, `Billing`, or `Returns`. |
 | `capabilities` | Controls and workspace features available for this specific task. |
-| `browsers` | Named browser definitions for the task workspace; empty when the task does not declare the `browsers` capability. |
+| `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
 | `contact` | Optional `Contact` for the person or entity on this task. Often a name and one address; a withheld caller ID may leave nothing to send at all. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preparing`, `in-progress`, `paused`, or `completing`. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
@@ -2042,14 +2042,13 @@ browser that used it.
 
 ### Task capabilities
 
-Task capabilities belong to each `Task`. If `hold` is false or omitted on one task, Omni
+Task capabilities belong to each `Task`. If `hold` is omitted on one task, Omni
 must not show or issue hold for that task even if another task from the same provider supports it.
 
 ```ts
 const taskCapabilities = {
   channel: "voice",
   capabilities: {
-    browsers: true,
     hold: true,
     dispositions: true,
   },
@@ -2247,7 +2246,7 @@ nothing while none are being accepted — so they are not published separately.
 | `refusedReason` | Display-ready reason shown when `accepting` is false — a standing gate that applies to everyone. |
 | `decisionReason` | The words whoever decided attached, from `decide.reason`. About one request and one decision, not a standing gate. |
 | `retryAfterMs` | How long until the agent may retry, when the provider can say. |
-| `reasons` | Not-ready codes this provider offers. Omitted when it defines none. |
+| `reasons` | Not-ready codes this provider offers. Omitted when it defines none; an empty list is refused, being a second spelling of the same fact. |
 | `activeReasonId` | The `BreakReason.id` the current break is on. Omitted when there is no break, or when the provider cannot say. |
 | `imposed` | Set when the break was placed on the agent rather than requested. |
 
