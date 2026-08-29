@@ -58,7 +58,10 @@ validateSnapshot(snapshot, manifest, "snapshot", { self: identity.id, capabiliti
 `exerciseAdapter` validates the manifest, opens an authenticated session, connects, checks
 required capability methods, subscribes, validates the snapshot, every delivered event, and every
 authentication state published during the run — against the latest login — states a capacity,
-then unsubscribes and disconnects.
+then unsubscribes and disconnects. `result.notExercised` names what the run never reached — each
+optional part of a task, of the break state and roster, each contribution, each event type — so a
+clean result is read for what it covers and not for the whole contract; `assertReached(result,
+subjects)` is the paired assertion.
 
 ```ts
 const result = await exerciseAdapter(adapter, context, { collectOnly: true });

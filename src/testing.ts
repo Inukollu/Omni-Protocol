@@ -11,6 +11,7 @@ import {
   type Channel,
   type ConnectContext,
   type Manifest,
+  type ProviderEvent,
   type SessionCapabilities,
 } from "./index.js";
 import {
@@ -27,6 +28,100 @@ export { ProtocolConformanceError, assertNoViolations, type ProtocolViolation } 
 /** A state that knows who the agent is and what they may do. */
 type Login = Extract<AuthenticationState, { status: "authenticated" }>;
 
+/**
+ * A part of the contract a run may never reach: state nothing obliges an adapter to publish, so
+ * a fixture without it exercises none of its rules and passes clean. One subject per family of
+ * rules -- each optional part of a task, each optional part of the break state and roster, each
+ * declared contribution, and each event type.
+ */
+const STATE_SUBJECTS = [
+  "tasks",
+  "task.browsers",
+  "task.attributes",
+  "task.handlingHistory",
+  "task.consultation",
+  "task.lead",
+  "task.assisting",
+  "task.dispositions",
+  "task.destinations",
+  "task.custom",
+  "break.reasons",
+  "break.imposed",
+  "team.members",
+  "team.requests",
+  "contacts",
+  "scheduledActivities",
+] as const;
+// Pinned to the event union the way validation pins its closed sets: a type added to
+// `ProviderEvent` without a row here, or a row it lacks, is a compile error.
+const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
+  snapshot: true, "provider-status": true, "break-state": true, "task-offered": true, "task-updated": true,
+  "task-media-ended": true, "task-ended": true, announcement: true, "provider-summary": true,
+  "team-updated": true, "contacts-updated": true, "calendar-updated": true,
+};
+export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
+const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
+  ...STATE_SUBJECTS,
+  ...(Object.keys(EVENT_TYPES) as ProviderEvent["type"][]).map(type => `event.${type}` as const),
+];
+
+// What the run observed. The input is untrusted and has already been reported on, so nothing
+// here assumes its shape; a subject is reached only by something the element rules would see.
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+const some = (value: unknown): boolean => Array.isArray(value) && value.length > 0;
+
+function observeTask(value: unknown, seen: Set<ContractSubject>): void {
+  if (!isRecord(value)) return;
+  seen.add("tasks");
+  if (some(value.browsers)) seen.add("task.browsers");
+  if (some(value.attributes)) seen.add("task.attributes");
+  if (some(value.handlingHistory)) seen.add("task.handlingHistory");
+  if (value.consultation !== undefined) seen.add("task.consultation");
+  if (value.lead !== undefined) seen.add("task.lead");
+  if (value.assisting !== undefined) seen.add("task.assisting");
+  const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
+  if (isRecord(capabilities.dispositions)) seen.add("task.dispositions");
+  if (isRecord(capabilities.blindTransfer) && some(capabilities.blindTransfer.destinations)) seen.add("task.destinations");
+  if (some(capabilities.custom)) seen.add("task.custom");
+}
+
+function observeBreak(value: unknown, seen: Set<ContractSubject>): void {
+  if (!isRecord(value)) return;
+  if (some(value.reasons)) seen.add("break.reasons");
+  if (value.imposed !== undefined) seen.add("break.imposed");
+}
+
+function observeTeam(value: unknown, seen: Set<ContractSubject>): void {
+  if (!isRecord(value)) return;
+  if (some(value.members)) seen.add("team.members");
+  if (some(value.requests)) seen.add("team.requests");
+}
+
+function observeSnapshot(value: unknown, seen: Set<ContractSubject>): void {
+  if (!isRecord(value)) return;
+  if (Array.isArray(value.tasks)) value.tasks.forEach(task => observeTask(task, seen));
+  observeBreak(value.break, seen);
+  observeTeam(value.team, seen);
+  if (some(value.contacts)) seen.add("contacts");
+  if (some(value.scheduledActivities)) seen.add("scheduledActivities");
+}
+
+function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
+  const event = isRecord(envelope) ? envelope.event : undefined;
+  if (!isRecord(event)) return;
+  if (typeof event.type === "string" && event.type in EVENT_TYPES) seen.add(`event.${event.type as ProviderEvent["type"]}`);
+  switch (event.type) {
+    case "snapshot": observeSnapshot(event.snapshot, seen); break;
+    case "break-state": observeBreak(event.break, seen); break;
+    case "task-offered":
+    case "task-updated": observeTask(event.task, seen); break;
+    case "team-updated": observeTeam(event.team, seen); break;
+    case "contacts-updated": if (some(event.contacts)) seen.add("contacts"); break;
+    case "calendar-updated": if (some(event.scheduledActivities)) seen.add("scheduledActivities"); break;
+    default: break;
+  }
+}
+
 export interface AdapterContractResult {
   events: ProviderEventEnvelope[];
   /** The state the session was restored with at sign-in. */
@@ -38,6 +133,13 @@ export interface AdapterContractResult {
   login: AuthenticationState;
   /** True only when every unsubscribe, `disconnect()`, and `close()` settled without throwing. */
   disconnectWasClean: boolean;
+  /**
+   * What the run never reached, and so what a clean `violations` says nothing about. Nothing here
+   * is a violation -- an adapter with no team has nothing to exercise -- but a fixture with no
+   * tasks exercises no task rule, and an adapter's own test asserts that the subjects it meant to
+   * reach are absent from this list.
+   */
+  notExercised: readonly ContractSubject[];
   /** Every violation observed. Non-empty only when `collectOnly` suppressed the throw. */
   violations: readonly ProtocolViolation[];
 }
@@ -66,6 +168,7 @@ export async function exerciseAdapter<C extends Channel>(
 ): Promise<AdapterContractResult> {
   const violations: ProtocolViolation[] = [...validateManifest(adapter.manifest)];
   const events: ProviderEventEnvelope<C>[] = [];
+  const seen = new Set<ContractSubject>();
 
   const storedSecrets = new Map<string, string>();
   const authentication = await adapter.createAuthenticationSession({
@@ -155,6 +258,7 @@ export async function exerciseAdapter<C extends Channel>(
 
     const eventIds = new Set<string>();
     unsubscribe = connection.subscribe(envelope => {
+      observeEvent(envelope, seen);
       violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader()));
       if (typeof envelope?.id === "string") {
         if (eventIds.has(envelope.id)) return;
@@ -164,6 +268,7 @@ export async function exerciseAdapter<C extends Channel>(
     });
 
     const snapshot = await connection.snapshot() as Snapshot;
+    observeSnapshot(snapshot, seen);
     violations.push(...validateSnapshot(snapshot, adapter.manifest, "snapshot", reader()));
     requireCapabilityMethods(live, current().capabilities);
     if (publishesUserIds(snapshot)) requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
@@ -200,6 +305,7 @@ export async function exerciseAdapter<C extends Channel>(
     events: events as ProviderEventEnvelope[],
     authenticationState: authenticationState as AuthenticationState,
     login: (login ?? authenticationState) as AuthenticationState,
+    notExercised: CONTRACT_SUBJECTS.filter(subject => !seen.has(subject)),
     disconnectWasClean,
     violations,
   };
@@ -342,6 +448,17 @@ export function assertCommandRefusedAfterWithdrawal(result: { status: string; fa
   }
   if (result.failure?.code !== "omni.capability-not-enabled") {
     throw new Error(`A command after its capability was withdrawn fails with omni.capability-not-enabled, not ${result.failure?.code}`);
+  }
+}
+
+/**
+ * Throws unless the run reached every subject named: the paired assertion beside a clean result,
+ * so a fixture that never produced a roster cannot pass a test that meant to check one.
+ */
+export function assertReached(result: AdapterContractResult, subjects: readonly ContractSubject[]): void {
+  const missed = subjects.filter(subject => result.notExercised.includes(subject));
+  if (missed.length > 0) {
+    throw new Error(`The exercise never reached ${missed.join(", ")}: its clean result says nothing about them`);
   }
 }
 

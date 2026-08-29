@@ -3148,7 +3148,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | --- | --- |
 | `validateManifest(manifest)` | Identity, protocol-version interoperability, authentication methods, and idle-capability shapes. |
 | `validateTask(task, { channel })` | Identity, channel agreement, phase, completion allowance, capability shapes, custom controls, and browsers. |
-| `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team roster, and every task, contact, and activity, including idle-capability gating. |
+| `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team roster, and every task, contact, and activity, including idle-capability gating both ways: a contribution the manifest never declared is refused, and one it declares is required, `[]` included. |
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
@@ -3204,6 +3204,15 @@ latest the session published during the run, which differs only when the adapter
 `authentication.refreshing.identity`, a changed capability set `authentication.refreshing.capabilities`.
 A capability granted by a later login requires its methods just as one declared at sign-in does.
 
+`result.notExercised` lists what the run never reached — one subject per family of rules: each
+optional part of a task (`task.browsers`, `task.handlingHistory`, `task.lead`, …), the break's
+`reasons` and `imposed`, the roster's `members` and `requests`, each declared contribution, and
+each event type (`event.task-ended`, …) — and so what a clean `violations` says nothing about.
+Nothing there is a violation: an adapter with no team has nothing to exercise. But a fixture with
+no tasks exercises no task rule, and a pass over it reads as coverage it is not.
+`assertReached(result, subjects)` is the paired assertion: it throws naming every subject the run
+never met, so a test that meant to check a roster cannot pass on a fixture that never produced one.
+
 Three properties of the harness matter to adapter authors:
 
 - **Violations are collected, never thrown from inside the subscribe listener.** Throwing there
@@ -3225,6 +3234,7 @@ cannot be established from TypeScript structure alone.
 | --- | --- |
 | `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no roster for a login that no longer leads, no requests for one that may no longer join. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
 | `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. |
+| `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
