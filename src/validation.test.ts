@@ -26,18 +26,22 @@ const manifest = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const task = (over: Record<string, unknown> = {}) => ({
-  id: "call-42",
-  title: "Customer call",
-  channel: "voice",
-  taskType: "Customer Support",
-  capabilities: { browsers: true, hold: true },
-  browsers: [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", reuse: false }],
-  phase: "in-progress",
-  completionMode: "agent-command",
-  completionAllowance: 15,
-  ...over,
-});
+const task = (over: Record<string, unknown> = {}) => {
+  const capabilities = (over.capabilities ?? { browsers: true, hold: true }) as Record<string, unknown>;
+  return {
+    id: "call-42",
+    title: "Customer call",
+    channel: "voice",
+    taskType: "Customer Support",
+    capabilities,
+    // A task supplies browsers only under the capability that shows them.
+    browsers: capabilities.browsers === true ? [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", reuse: false }] : [],
+    phase: "in-progress",
+    completionMode: "agent-command",
+    completionAllowance: 15,
+    ...over,
+  };
+};
 
 const snapshot = (over: Record<string, unknown> = {}) => ({
   status: "active",
@@ -241,7 +245,7 @@ describe("break state", () => {
   });
 
   it("keeps who placed an imposed break whether or not it ends on a clock", () => {
-    const imposed = (value: unknown) => check({ imposed: value });
+    const imposed = (value: unknown) => check({ approval: "in-effect", imposed: value });
     // Both arms are legal. The origin is required in both, because an imposed break with no
     // origin is a state the agent cannot reason about.
     expect(imposed({ by: "lead-3", endsAutomatically: true, endsAt: "2026-08-21T10:00:00Z" })).toEqual([]);
@@ -266,7 +270,7 @@ describe("validateTeamRoster", () => {
 
   it("accepts a conforming roster", () => {
     expect(validateTeamRoster(roster())).toEqual([]);
-    expect(validateTeamRoster({ members: [{ id: "A-2", availability: "on-break", since: "2026-08-21T09:00:00Z", break: "in-effect" }] })).toEqual([]);
+    expect(validateTeamRoster({ members: [{ id: "A-2", availability: "on-task", since: "2026-08-21T09:00:00Z", break: "starting-after-task" }] })).toEqual([]);
   });
 
   it.each([
@@ -409,7 +413,7 @@ describe("validateEventEnvelope", () => {
     expect(check({ type: "announcement", text: "Hello", announcedAt: "2026-08-21T09:00:00Z" })).toEqual([]);
     expect(check({ type: "announcement", text: "", announcedAt: "2026-08-21T09:00:00Z" })).toContain("event.announcement.text");
     expect(check({ type: "team-updated", team: { members: [] } })).toEqual([]);
-    expect(check({ type: "contacts-updated", contacts: [{ name: "Asha" }] })).toEqual([]);
+    expect(rules(validateEventEnvelope(envelope({ type: "contacts-updated", contacts: [{ name: "Asha" }] }), manifest({ idleCapabilities: { contacts: true } })))).toEqual([]);
     expect(check({ type: "contacts-updated", contacts: "Asha" })).toContain("event.contacts.shape");
     expect(check({ type: "smoke-signal" })).toContain("event.type");
   });
@@ -479,6 +483,220 @@ describe("validateResult", () => {
     const ended = (failure: unknown) => rules(validateEventEnvelope(envelope({ type: "task-ended", taskId: "call-42", outcome: { type: "failed", failure } }), manifest()));
     expect(ended(failure)).toEqual([]);
     expect(ended({ ...failure, code: "omni.retry-later" })).toEqual(["failure.code.unknown"]);
+  });
+});
+
+describe("the other direction, everywhere", () => {
+  const voice = { channel: "voice" };
+  const declaring = () => manifest({ idleCapabilities: { contacts: true, calendar: true } });
+
+  it("refuses a duplicate authentication method", () => {
+    expect(rules(validateManifest(manifest({ authenticationMethods: ["credentials", "browser-sso"] })))).toEqual([]);
+    expect(rules(validateManifest(manifest({ authenticationMethods: ["credentials", "credentials"] })))).toEqual(["manifest.authenticationMethod.unique"]);
+  });
+
+  it("gives a directory something to offer, and keeps its ids unique", () => {
+    const directory = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { blindTransfer: { allowManualEntry: false, ...over } } }), voice));
+    const tier2 = { id: "t2", label: "Tier 2", address: "+14155550111", kind: "queue" };
+    expect(directory({ destinations: [tier2] })).toEqual([]);
+    expect(directory({ allowManualEntry: true })).toEqual([]);
+    expect(directory({ allowManualEntry: true, destinations: [] })).toEqual([]);
+    expect(directory({})).toEqual(["task.destinations.offer"]);
+    expect(directory({ destinations: [] })).toEqual(["task.destinations.offer"]);
+    expect(directory({ destinations: [tier2, tier2] })).toEqual(["task.destination.unique"]);
+  });
+
+  it("gives a required disposition policy a code to collect", () => {
+    const policy = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { dispositions: over } }), voice));
+    expect(policy({ required: true, codes: [{ id: "resolved", label: "Resolved" }] })).toEqual([]);
+    expect(policy({ required: false })).toEqual([]);
+    expect(policy({ required: true })).toEqual(["task.dispositions.required.codes"]);
+    expect(policy({ required: true, codes: [] })).toEqual(["task.dispositions.required.codes"]);
+  });
+
+  it("keeps browser names and attribute keys unique within a task", () => {
+    const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", reuse: false };
+    expect(rules(validateTask(task({ browsers: [crm, { ...crm, id: "kb", name: "Knowledge" }] }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ browsers: [crm, { ...crm, id: "kb" }] }), voice))).toEqual(["task.browser.name.unique"]);
+    const order = { type: "text", key: "order", value: "42" };
+    expect(rules(validateTask(task({ attributes: [order, { ...order, key: "region" }] }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ attributes: [order, order] }), voice))).toEqual(["task.attribute.unique"]);
+  });
+
+  it("names nobody on a queued step", () => {
+    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ handlingHistory: [{ at: "2026-08-21T09:00:00Z", ...entry }] }), voice));
+    expect(step({ step: "answered", by: "A-1" })).toEqual([]);
+    expect(step({ step: "queued" })).toEqual([]);
+    expect(step({ step: "queued", by: "A-1" })).toEqual(["task.handlingHistory.by.unexpected"]);
+  });
+
+  it("declares the capability that shows a task's browsers", () => {
+    const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", reuse: false };
+    expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [crm] }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: {}, browsers: [] }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: {}, browsers: [crm] }), voice))).toEqual(["task.browsers.capability"]);
+    // And the other way: the capability puts a panel in the workspace, so there is something in it.
+    expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [] }), voice))).toEqual(["task.browsers.required"]);
+  });
+
+  it("holds the break state's parts to its approval", () => {
+    const check = (over: Record<string, unknown>) =>
+      rules(validateSnapshot(snapshot({ break: { approval: "not-requested", accepting: true, ...over } }), manifest()));
+    expect(check({ accepting: false, refusedReason: "Busy hours" })).toEqual([]);
+    expect(check({ accepting: true, refusedReason: "Busy hours" })).toEqual(["break.refusedReason.accepting"]);
+    const placed = { by: "M-1", endsAutomatically: false };
+    expect(check({ approval: "in-effect", imposed: placed })).toEqual([]);
+    expect(check({ approval: "not-requested", imposed: placed })).toEqual(["break.imposed.approval"]);
+    const reasons = [{ id: "lunch", label: "Lunch" }];
+    expect(check({ approval: "in-effect", reasons, activeReasonId: "lunch" })).toEqual([]);
+    expect(check({ approval: "in-effect", activeReasonId: "lunch" })).toEqual([]);
+    expect(check({ approval: "in-effect", reasons, activeReasonId: "tea" })).toEqual(["break.activeReasonId.known"]);
+    // A provider with no reasons omits the field; the empty list is a second spelling of that.
+    expect(check({ reasons })).toEqual([]);
+    expect(check({})).toEqual([]);
+    expect(check({ reasons: [] })).toEqual(["break.reasons.empty"]);
+  });
+
+  it("lets only an outstanding request appear on a roster member", () => {
+    const member = (over: Record<string, unknown>) => rules(validateTeamRoster({ members: [{ id: "A-2", availability: "on-task", ...over }] }));
+    for (const approval of ["awaiting-decision", "granted", "starting-after-task"]) expect(member({ break: approval })).toEqual([]);
+    expect(member({ availability: "on-break" })).toEqual([]);
+    expect(member({ break: "in-effect" })).toEqual(["team.member.break"]);
+    expect(member({ break: "not-requested" })).toEqual(["team.member.break"]);
+    expect(member({ availability: "signed-out", break: "granted" })).toEqual(["team.member.break.availability"]);
+    expect(member({ availability: "on-break", break: "granted" })).toEqual(["team.member.break.availability"]);
+  });
+
+  it("holds a snapshot and an event to the login's session, once told it", () => {
+    const login = { sessionId: "session-1" };
+    expect(rules(validateSnapshot(snapshot(), manifest(), "snapshot", login))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ sessionId: "session-0" }), manifest(), "snapshot", login))).toEqual(["snapshot.sessionId.mismatch"]);
+    expect(rules(validateSnapshot(snapshot({ sessionId: "session-0" }), manifest()))).toEqual([]);
+    const status = { type: "provider-status", status: "active" };
+    expect(rules(validateEventEnvelope(envelope(status), manifest(), "event", login))).toEqual([]);
+    expect(rules(validateEventEnvelope(envelope(status, { sessionId: "session-0" }), manifest(), "event", login))).toEqual(["event.sessionId.mismatch"]);
+  });
+
+  it("lets a lead assist one call at a time", () => {
+    const assisting = (id: string) => task({ id, capabilities: {}, assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } });
+    expect(rules(validateSnapshot(snapshot({ tasks: [assisting("call-1"), task({ id: "call-2" })] }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [assisting("call-1"), assisting("call-2")] }), manifest()))).toEqual(["snapshot.assisting.single"]);
+  });
+
+  it("emits a contribution only under its capability, on the event path as on the snapshot", () => {
+    const activity = { id: "cb-1", title: "Callback", startsAt: "2026-08-21T10:00:00Z" };
+    const on = (event: unknown, m: unknown) => rules(validateEventEnvelope(envelope(event), m));
+    expect(on({ type: "contacts-updated", contacts: [] }, declaring())).toEqual([]);
+    expect(on({ type: "contacts-updated", contacts: [] }, manifest())).toEqual(["event.contacts.capability"]);
+    expect(on({ type: "calendar-updated", scheduledActivities: [activity] }, declaring())).toEqual([]);
+    expect(on({ type: "calendar-updated", scheduledActivities: [activity] }, manifest())).toEqual(["event.calendar.capability"]);
+    expect(on({ type: "calendar-updated", scheduledActivities: [activity, activity] }, declaring())).toEqual(["activity.id.unique"]);
+  });
+
+  it("offers a task only before it is under way, with the mode the login asked for", () => {
+    const offer = (over: Record<string, unknown>, context: Record<string, unknown> = {}) =>
+      rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "require-agent-acceptance", ...over }), manifest(), "event", context));
+    for (const phase of ["pending", "confirmed", "preparing"]) expect(offer({ task: task({ phase }) })).toEqual([]);
+    for (const phase of ["in-progress", "paused", "completing"]) expect(offer({ task: task({ phase }) })).toEqual(["event.taskOffered.phase"]);
+    expect(offer({}, { autoAcceptTasks: true })).toEqual([]);
+    expect(offer({ acceptanceMode: undefined }, { autoAcceptTasks: true })).toEqual(["event.taskOffered.acceptanceMode.required"]);
+    expect(offer({ acceptanceMode: undefined }, { autoAcceptTasks: false })).toEqual([]);
+    expect(offer({}, { autoAcceptTasks: false })).toEqual(["event.taskOffered.acceptanceMode.unexpected"]);
+    expect(offer({ acceptanceMode: undefined })).toEqual([]);
+  });
+
+  it("keeps summary metric ids unique", () => {
+    const summary = (metrics: unknown[]) => rules(validateEventEnvelope(envelope({ type: "provider-summary", summary: { title: "Voice", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics } }), manifest()));
+    const waiting = { id: "waiting", label: "Waiting", value: "3" };
+    expect(summary([waiting, { ...waiting, id: "longest" }])).toEqual([]);
+    expect(summary([waiting, waiting])).toEqual(["event.summary.metric.unique"]);
+  });
+
+  it("carries a failure only on an expired state", () => {
+    const user = { id: "agent-1", displayName: "Ada" };
+    const failure = { code: "expired", message: "Sign in again", retryable: true };
+    expect(rules(validateAuthenticationState({ status: "expired", identity: user, failure }))).toEqual([]);
+    expect(rules(validateAuthenticationState({ status: "signed-out", failure }))).toEqual(["authentication.failure.unexpected"]);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {}, failure }))).toEqual(["authentication.failure.unexpected"]);
+  });
+});
+
+describe("rules that had no test", () => {
+  // Each refusal beside the shape it accepts; a rule nobody exercises is a rule nobody can trust.
+  const voice = { channel: "voice" };
+
+  it("manifest presentation, labels, dial, and personal browser", () => {
+    const m = (over: Record<string, unknown>) => rules(validateManifest(manifest(over)));
+    expect(m({ taskTypePresentation: { Support: { singular: "Support call", plural: "Support calls", referenceLabel: "Case" } } })).toEqual([]);
+    expect(m({ taskTypePresentation: "Support" })).toEqual(["manifest.taskTypePresentation.shape"]);
+    expect(m({ taskTypePresentation: { Support: "call" } })).toEqual(["manifest.taskTypePresentation.entry"]);
+    expect(m({ taskTypePresentation: { Support: { plural: "Support calls" } } })).toEqual(["manifest.taskTypePresentation.singular"]);
+    expect(m({ taskTypePresentation: { Support: { singular: "Support call" } } })).toEqual(["manifest.taskTypePresentation.plural"]);
+    expect(m({ taskTypePresentation: { Support: { singular: "Support call", plural: "Support calls", referenceLabel: "" } } })).toEqual(["manifest.taskTypePresentation.referenceLabel"]);
+    expect(m({ phaseLabels: { pending: "Ringing" } })).toEqual([]);
+    expect(m({ phaseLabels: { pending: "" } })).toEqual(["manifest.phaseLabels.label"]);
+    expect(m({ idleCapabilities: { dial: { destinationPolicy: "any-number" } } })).toEqual([]);
+    expect(m({ idleCapabilities: { dial: {} } })).toEqual(["manifest.dial.destinationPolicy"]);
+    expect(m({ idleCapabilities: { personalBrowser: { access: { mode: "block-all", allowList: [], blockList: [] } } } })).toEqual([]);
+    expect(m({ idleCapabilities: { personalBrowser: { access: "block-all" } } })).toEqual(["manifest.personalBrowser.access.shape"]);
+  });
+
+  it("disposition policies and codes", () => {
+    const policy = (over: unknown) => rules(validateTask(task({ capabilities: { dispositions: over } }), voice));
+    const resolved = { id: "resolved", label: "Resolved" };
+    expect(policy({ required: false, notes: "optional", codes: [resolved] })).toEqual([]);
+    expect(policy({ required: "yes" })).toEqual(["task.dispositions.required"]);
+    expect(policy({ notes: "sometimes" })).toEqual(["task.dispositions.notes"]);
+    expect(policy({ codes: "resolved" })).toEqual(["task.dispositions.codes"]);
+    expect(policy({ codes: [{ label: "Resolved" }] })).toEqual(["task.disposition.id"]);
+    expect(policy({ codes: [{ id: "resolved" }] })).toEqual(["task.disposition.label"]);
+    expect(policy({ codes: [resolved, resolved] })).toEqual(["task.disposition.unique"]);
+  });
+
+  it("custom controls", () => {
+    const custom = (over: unknown) => rules(validateTask(task({ capabilities: { custom: over } }), voice));
+    const control = { id: "supervisor", ui: { kind: "button", label: "Request supervisor", placement: "secondary" } };
+    expect(custom([control])).toEqual([]);
+    expect(custom("supervisor")).toEqual(["task.custom.shape"]);
+    expect(custom(["supervisor"])).toEqual(["task.custom.entry"]);
+    expect(custom([{ ui: control.ui }])).toEqual(["task.custom.id"]);
+    expect(custom([control, control])).toEqual(["task.custom.unique"]);
+    expect(custom([{ id: "supervisor" }])).toEqual(["task.custom.ui"]);
+    expect(custom([{ ...control, ui: { ...control.ui, kind: "dial" } }])).toEqual(["task.custom.ui.kind"]);
+    expect(custom([{ ...control, ui: { ...control.ui, label: "" } }])).toEqual(["task.custom.ui.label"]);
+    expect(custom([{ ...control, ui: { ...control.ui, placement: "footer" } }])).toEqual(["task.custom.ui.placement"]);
+  });
+
+  it("scheduled activities on the snapshot", () => {
+    const calendar = (activities: unknown[]) => rules(validateSnapshot(snapshot({ scheduledActivities: activities }), manifest({ idleCapabilities: { calendar: true } })));
+    const activity = { id: "cb-1", title: "Callback", startsAt: "2026-08-21T10:00:00Z", endsAt: "2026-08-21T10:15:00Z" };
+    expect(calendar([activity])).toEqual([]);
+    expect(calendar([{ ...activity, endsAt: "2026-08-21T09:00:00Z" }])).toEqual(["activity.endsAt.order"]);
+    expect(calendar([activity, activity])).toEqual(["activity.id.unique"]);
+  });
+
+  it("an expired state's failure", () => {
+    const expired = (failure: unknown) => rules(validateAuthenticationState({ status: "expired", failure }));
+    expect(expired({ code: "expired", message: "Sign in again", retryable: true })).toEqual([]);
+    expect(expired("expired")).toEqual(["authentication.failure.shape"]);
+    expect(expired({ message: "Sign in again", retryable: true })).toEqual(["authentication.failure.code"]);
+    expect(expired({ code: "expired", retryable: true })).toEqual(["authentication.failure.message"]);
+    expect(expired({ code: "expired", message: "Sign in again" })).toEqual(["authentication.failure.retryable"]);
+  });
+
+  it("event timestamps, outcomes, and status messages", () => {
+    const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
+    const offer = { type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "require-agent-acceptance" };
+    expect(check({ ...offer, allocationExpiresAt: "2026-08-21T09:01:00Z", preparationEndsAt: "2026-08-21T09:02:00Z" })).toEqual([]);
+    expect(check({ ...offer, allocationExpiresAt: "soon" })).toEqual(["event.taskOffered.allocationExpiresAt"]);
+    expect(check({ ...offer, preparationEndsAt: "soon" })).toEqual(["event.taskOffered.preparationEndsAt"]);
+    const ended = (outcome: unknown) => check({ type: "task-ended", taskId: "call-42", outcome });
+    expect(ended({ type: "transferred", destination: "+14155550111" })).toEqual([]);
+    expect(ended({ type: "transferred", destination: "" })).toEqual(["event.taskEnded.outcome.transferred"]);
+    expect(ended({ type: "cancelled", reason: "Caller hung up" })).toEqual([]);
+    expect(ended({ type: "cancelled", reason: "" })).toEqual(["event.taskEnded.outcome.cancelled"]);
+    expect(check({ type: "provider-status", status: "error", message: "Upstream down" })).toEqual([]);
+    expect(check({ type: "provider-status", status: "error", message: "" })).toEqual(["event.providerStatus.message"]);
   });
 });
 
@@ -624,7 +842,8 @@ describe("consult transfer", () => {
     expect(rules(validateTask(task({ capabilities: { consultTransfer: true } }), voice))).toEqual([]);
     expect(rules(validateTask(task({ capabilities: { consultTransfer: { allowManualEntry: false, destinations: [{ id: "t2", label: "Tier 2", address: "+14155550111", kind: "queue" }] } } }), voice))).toEqual([]);
     // The same directory rules as blindTransfer: a directory with nothing in it must allow typing.
-    expect(rules(validateTask(task({ capabilities: { consultTransfer: { allowManualEntry: false } } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { consultTransfer: { allowManualEntry: true } } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { consultTransfer: { allowManualEntry: false } } }), voice))).toEqual(["task.destinations.offer"]);
     expect(rules(validateTask(task({ capabilities: { consultTransfer: { destinations: [] } } }), voice))).toContain("task.destinations.allowManualEntry");
     for (const channel of ["chat", "email"]) {
       expect(rules(validateTask(task({ channel, capabilities: { consultTransfer: true } }), { channel }))).toContain("task.capability.channel");

@@ -28,7 +28,7 @@ const voiceTask = {
   title: "Customer call",
   channel: "voice",
   taskType: "Customer Support",
-  capabilities: { browsers: true, hold: true },
+  capabilities: { hold: true },
   phase: "in-progress",
   browsers: [],
   completionMode: "agent-command",

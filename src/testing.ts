@@ -23,6 +23,7 @@ import {
   validateResult,
   validateSnapshot,
   type ProtocolViolation,
+  type ReaderContext,
 } from "./validation.js";
 
 export { ProtocolConformanceError, assertNoViolations, type ProtocolViolation } from "./validation.js";
@@ -83,7 +84,10 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (value.assisting !== undefined) seen.add("task.assisting");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
   if (isRecord(capabilities.dispositions)) seen.add("task.dispositions");
-  if (isRecord(capabilities.blindTransfer) && some(capabilities.blindTransfer.destinations)) seen.add("task.destinations");
+  for (const directory of ["blindTransfer", "consultTransfer", "conference"]) {
+    const declared = capabilities[directory];
+    if (isRecord(declared) && some(declared.destinations)) seen.add("task.destinations");
+  }
   if (some(capabilities.custom)) seen.add("task.custom");
 }
 
@@ -210,7 +214,12 @@ export async function exerciseAdapter<C extends Channel>(
       if (login === undefined) throw new Error("unreachable: the exercise has an authenticated login");
       return login;
     };
-    const reader = () => ({ self: current().identity.id, capabilities: current().capabilities });
+    const reader = (): ReaderContext => ({
+      self: current().identity.id,
+      capabilities: current().capabilities,
+      sessionId: context.sessionId,
+      autoAcceptTasks: context.autoAcceptTasks ?? true,
+    });
 
     // The optional methods are optional only until something declares a need for them. Each
     // check pairs a method with the declaration that requires it, as the guide's Live-connection
@@ -262,6 +271,7 @@ export async function exerciseAdapter<C extends Channel>(
     unsubscribe = connection.subscribe(envelope => {
       observeEvent(envelope, seen);
       violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader()));
+      if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
       if (typeof envelope?.id === "string") {
         if (eventIds.has(envelope.id)) return;
         eventIds.add(envelope.id);
@@ -323,10 +333,32 @@ export async function exerciseAdapter<C extends Channel>(
  */
 function publishesUserIds(snapshot: Snapshot | undefined): boolean {
   if (snapshot?.break?.imposed?.by !== undefined) return true;
-  if (Array.isArray(snapshot?.team?.members) && snapshot.team.members.length > 0) return true;
+  if (teamNamesUsers(snapshot?.team)) return true;
   if (!Array.isArray(snapshot?.tasks)) return false;
-  return snapshot.tasks.some(task =>
-    Array.isArray(task?.handlingHistory) && task.handlingHistory.some(step => step?.by !== undefined));
+  return snapshot.tasks.some(taskNamesUsers);
+}
+
+const teamNamesUsers = (team: unknown): boolean =>
+  isRecord(team) && (some(team.members) || some(team.requests));
+
+const taskNamesUsers = (task: unknown): boolean =>
+  isRecord(task) && (
+    (Array.isArray(task.handlingHistory) && task.handlingHistory.some(step => isRecord(step) && step.by !== undefined)) ||
+    (isRecord(task.lead) && task.lead.leadId !== undefined) ||
+    isRecord(task.assisting));
+
+/** Whether an event publishes a `UserId`, on a roster, a task, or the snapshot a reconnect carries. */
+function eventNamesUsers(envelope: unknown): boolean {
+  const event = isRecord(envelope) ? envelope.event : undefined;
+  if (!isRecord(event)) return false;
+  switch (event.type) {
+    case "snapshot": return publishesUserIds(event.snapshot as Snapshot);
+    case "break-state": return isRecord(event.break) && isRecord(event.break.imposed) && event.break.imposed.by !== undefined;
+    case "task-offered":
+    case "task-updated": return taskNamesUsers(event.task);
+    case "team-updated": return teamNamesUsers(event.team);
+    default: return false;
+  }
 }
 
 /**
