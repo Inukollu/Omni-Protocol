@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import ts from "typescript";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,6 +15,9 @@ import { describe, expect, it } from "vitest";
 // example and must type-check with no error at all. Names an example uses without declaring
 // (`createConnection`, `expect`) are placeholders, declared as `any` here and policed by the
 // identifier test.
+
+/** Names an example uses without declaring them: stand-ins for the adapter's own code. Kept equal to the list in guide.test.ts. */
+const PLACEHOLDERS = new Set(["adapter", "context", "createAcmeAuthentication", "createConnection", "execute", "executeTeamConsult", "expect"]);
 
 const root = join(__dirname, "..");
 const guide = readFileSync(join(root, "guide.md"), "utf8");
@@ -61,12 +65,14 @@ function fileFor(block: Block, placeholders: readonly string[]): string {
     return pairs.flatMap((args, index) => [
       `type __${name}_${index}_a = Real.${name}${args} extends ${name}${args} ? true : never; const __${name}_${index}_a: __${name}_${index}_a = true;`,
       `type __${name}_${index}_b = ${name}${args} extends Real.${name}${args} ? true : never; const __${name}_${index}_b: __${name}_${index}_b = true;`,
-      `type __${name}_${index}_c = [Exclude<keyof Real.${name}${args}, keyof ${name}${args}>] extends [never] ? true : never; const __${name}_${index}_c: __${name}_${index}_c = true;`,
-      `type __${name}_${index}_d = [Exclude<keyof ${name}${args}, keyof Real.${name}${args}>] extends [never] ? true : never; const __${name}_${index}_d: __${name}_${index}_d = true;`,
+      `type __${name}_${index}_c = [Exclude<__Keys<Real.${name}${args}>, __Keys<${name}${args}>>] extends [never] ? true : never; const __${name}_${index}_c: __${name}_${index}_c = true;`,
+      `type __${name}_${index}_d = [Exclude<__Keys<${name}${args}>, __Keys<Real.${name}${args}>>] extends [never] ? true : never; const __${name}_${index}_d: __${name}_${index}_d = true;`,
     ]);
   });
   return [
     `import type * as Real from "${source(modules.index)}";`,
+    // Distributes over a union, so a field added to one variant on either side is a drift too.
+    "type __Keys<T> = T extends unknown ? keyof T : never;",
     ...preamble,
     ...placeholders.map(name => `declare const ${name}: any;`),
     "",
@@ -103,11 +109,14 @@ describe("the guide's examples compile", () => {
       for (const block of blocks) writeFileSync(join(work, `L${block.line}.ts`), fileFor(block, placeholders.get(`L${block.line}`) ?? []));
     };
 
-    // tsc reports no semantic error while any file in the program fails to parse: the fragments
-    // are found first and taken out, and the complete examples are checked on their own.
+    // A fragment is a block that does not parse, and that is decided by the parser alone -- not
+    // by tsc's error codes, which include import mistakes a complete example could make. tsc
+    // reports no semantic error while any file in the program fails to parse, so the fragments
+    // are taken out before the complete examples are checked.
+    const fragments = new Set(blocks
+      .filter(block => (ts.transpileModule(block.body, { reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.ES2022 } }).diagnostics ?? []).length > 0)
+      .map(block => `L${block.line}`));
     write(new Map());
-    const first = compile();
-    const fragments = new Set([...first.entries()].filter(([, found]) => found.some(error => /^TS1\d{3}$/.test(error.code))).map(([name]) => name));
     for (const name of fragments) rmSync(join(work, `${name}.ts`));
 
     // A name an example uses without declaring is a placeholder; it is declared and the block
@@ -118,6 +127,9 @@ describe("the guide's examples compile", () => {
       const missing = found.filter(error => error.code === "TS2304").map(error => /Cannot find name '([^']+)'/.exec(error.text)?.[1]).filter((n): n is string => n !== undefined);
       if (missing.length > 0) placeholders.set(name, [...new Set(missing)]);
     }
+    // A placeholder is a name the guide chose, not one the code dropped: every one is on the list.
+    const strangers = [...placeholders.entries()].flatMap(([name, names]) => names.filter(n => !PLACEHOLDERS.has(n)).map(n => `${n} (guide.md:${name.slice(1)})`));
+    expect(strangers).toEqual([]);
     for (const block of blocks) {
       const name = `L${block.line}`;
       if (!fragments.has(name) && placeholders.has(name)) writeFileSync(join(work, `${name}.ts`), fileFor(block, placeholders.get(name) ?? []));
@@ -128,7 +140,8 @@ describe("the guide's examples compile", () => {
 
     // The test is only as good as what it reaches: most blocks are complete examples and the
     // Shapes section declares dozens of mirrored types, and it says so.
-    expect(blocks.length - fragments.size).toBeGreaterThanOrEqual(35);
-    expect(blocks.flatMap(block => block.types).filter(type => exports.index.includes(type.name)).length).toBeGreaterThanOrEqual(60);
+    const complete = blocks.filter(block => !fragments.has(`L${block.line}`));
+    expect(complete.length).toBeGreaterThanOrEqual(35);
+    expect(complete.flatMap(block => block.types).filter(type => exports.index.includes(type.name)).length).toBeGreaterThanOrEqual(60);
   });
 });

@@ -209,8 +209,10 @@ describe("assertBreakFollowsItsRequests", () => {
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("in-effect"), state("not-requested")], idle))).toEqual([]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("not-requested")], idle))).toEqual([]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("not-requested")], idle))).toEqual([]);
-    // Placed on the agent: in effect with nobody asking, and it says so.
+    // Placed on the agent: in effect with nobody asking, and it says so -- or starting after the
+    // call the member is on, which is the same placing reported while the work finishes.
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect", { imposed: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task", { imposed: { by: "M-1", endsAutomatically: false } }), state("in-effect", { imposed: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
     // A reconnect snapshot resets where the break stands; the same state twice is nothing.
     const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", sessionId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { approval: "granted", accepting: true } } } };
     expect(rulesOf(() => assertBreakFollowsItsRequests([reconnect, state("starting-after-task"), state("starting-after-task", {}, "again")], idle))).toEqual([]);

@@ -23,6 +23,8 @@ import {
   type AuthenticationState,
   type BreakApproval,
   type BrowserAccessPolicy,
+  type HostAudioUnavailableReason,
+  type HostOutputUnavailableReason,
   type Channel,
   type CompletionMode,
   type ConnectionStatus,
@@ -1295,31 +1297,67 @@ function validateFailureInto(value: unknown, path: string, into: Collector): voi
   }
 }
 
+const HOST_AUDIO_REASONS = membersOf<HostAudioUnavailableReason>({ "no-device": true, denied: true, "not-asked": true, "in-use": true, lost: true });
+const HOST_OUTPUT_REASONS = membersOf<HostOutputUnavailableReason>({ "no-device": true, lost: true });
+
+function validateUnavailable(value: Record<string, unknown>, rule: string, path: string, into: Collector): void {
+  if (value.failure === undefined) {
+    into.add(`${rule}.failure.required`, `${path}.failure`, "unavailable carries the failure that says why");
+  } else {
+    validateFailureInto(value.failure, `${path}.failure`, into);
+  }
+}
+
 /**
- * Validates the host's media state as Omni publishes it to an adapter. This is Omni's output, so
- * the check belongs to the host's own tests and to the harness, which validates whatever media a
- * test hands the adapter.
+ * Validates the host's report as Omni publishes it to an adapter. This is Omni's output, so the
+ * check belongs to the host's own tests and to the harness, which validates whatever host a test
+ * hands the adapter.
  */
-export function validateHostMediaState(state: unknown, path = "media"): ProtocolViolation[] {
+export function validateHostReport(report: unknown, path = "host"): ProtocolViolation[] {
   const into = new Collector();
-  if (!isPlainObject(state)) {
-    into.add("media.shape", path, "a host media state must be an object");
+  if (!isPlainObject(report)) {
+    into.add("host.shape", path, "a host report must be an object");
     return into.violations;
   }
-  if (state.status === "ready") {
-    into.require(typeof state.localAudio === "object" && state.localAudio !== null, "media.localAudio", `${path}.localAudio`,
-      "ready carries the captured microphone");
-    into.require(state.failure === undefined, "media.failure.unexpected", `${path}.failure`, "ready carries no failure");
-  } else if (state.status === "unavailable") {
-    if (state.failure === undefined) {
-      into.add("media.failure.required", `${path}.failure`, "unavailable carries the failure that says why");
-    } else {
-      validateFailureInto(state.failure, `${path}.failure`, into);
-    }
-    into.require(state.localAudio === undefined, "media.localAudio.unexpected", `${path}.localAudio`,
-      "unavailable carries no microphone");
+  into.require(typeof report.online === "boolean", "host.online", `${path}.online`, "a host report says whether it has a network");
+  if (report.audio === undefined) return into.violations;
+  if (!isPlainObject(report.audio)) {
+    into.add("host.audio.shape", `${path}.audio`, "audio must be an object when present, with input and output");
+    return into.violations;
+  }
+  const input = report.audio.input;
+  const at = `${path}.audio.input`;
+  if (!isPlainObject(input)) {
+    into.add("host.audio.input.shape", at, "audio carries its input");
+  } else if (input.status === "ready") {
+    into.require(typeof input.localAudio === "object" && input.localAudio !== null, "host.audio.input.localAudio", `${at}.localAudio`,
+      "a ready input carries the captured microphone");
+    into.require(typeof input.flowing === "boolean", "host.audio.input.flowing", `${at}.flowing`,
+      "a ready input says whether audio is flowing through it");
+    into.require(input.failure === undefined, "host.audio.input.failure.unexpected", `${at}.failure`, "a ready input carries no failure");
+    into.require(input.reason === undefined, "host.audio.input.reason.unexpected", `${at}.reason`, "a ready input has no reason to be unavailable");
+  } else if (input.status === "unavailable") {
+    into.oneOf(input.reason, HOST_AUDIO_REASONS, "host.audio.input.reason", `${at}.reason`);
+    validateUnavailable(input, "host.audio.input", at, into);
+    into.require(input.localAudio === undefined, "host.audio.input.localAudio.unexpected", `${at}.localAudio`,
+      "an unavailable input carries no microphone");
+    into.require(input.flowing === undefined, "host.audio.input.flowing.unexpected", `${at}.flowing`,
+      "an unavailable input has nothing to flow");
   } else {
-    into.add("media.status", `${path}.status`, `a host media state is ready or unavailable, not ${String(state.status)}`);
+    into.add("host.audio.input.status", `${at}.status`, `an input is ready or unavailable, not ${String(input.status)}`);
+  }
+  const output = report.audio.output;
+  const out = `${path}.audio.output`;
+  if (!isPlainObject(output)) {
+    into.add("host.audio.output.shape", out, "audio carries its output");
+  } else if (output.status === "ready") {
+    into.require(output.failure === undefined, "host.audio.output.failure.unexpected", `${out}.failure`, "a ready output carries no failure");
+    into.require(output.reason === undefined, "host.audio.output.reason.unexpected", `${out}.reason`, "a ready output has no reason to be unavailable");
+  } else if (output.status === "unavailable") {
+    into.oneOf(output.reason, HOST_OUTPUT_REASONS, "host.audio.output.reason", `${out}.reason`);
+    validateUnavailable(output, "host.audio.output", out, into);
+  } else {
+    into.add("host.audio.output.status", `${out}.status`, `an output is ready or unavailable, not ${String(output.status)}`);
   }
   return into.violations;
 }

@@ -27,7 +27,7 @@ import {
   type TaskCommandRequest,
   type TaskPhase,
 } from "./index.js";
-import { exerciseAdapter } from "./testing.js";
+import { exerciseAdapter, stillHost } from "./testing.js";
 
 describe("Omni protocol", () => {
   it("creates collision-safe composite task and user keys", () => {
@@ -183,7 +183,7 @@ describe("Omni protocol", () => {
       },
     });
 
-    const result = await exerciseAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1" });
+    const result = await exerciseAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1", host: stillHost() });
     expect(result.violations).toEqual([]);
     expect(result.events.map(item => item.event)).toEqual([{ type: "provider-status", status: "active" }]);
     expect(disconnect).toHaveBeenCalledOnce();
