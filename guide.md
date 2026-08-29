@@ -1002,7 +1002,6 @@ Request/response polling does not have those properties and is not a transport f
 | `@xema/omni-protocol` | Provider adapter contract and shared domain types |
 | `@xema/omni-protocol/testing` | Adapter conformance helpers |
 | `@xema/omni-protocol/validation` | Runtime validators Omni and adapters both use to reject malformed data |
-| `@xema/omni-protocol/design` | Host design-language integration. Specified separately; no part of it is a provider surface. |
 
 ## Declaring an adapter
 
@@ -3259,11 +3258,8 @@ Adapters should run the relevant scenarios against deterministic test state befo
 
 ## A provider does not style the workspace
 
-The package ships a `design` entry point, and none of it is for adapters. It is host UI
-extensibility — how a deployment themes Omni — and it is specified with the host, not here, which
-is why no part of it is declared under **Shapes**.
-
-What belongs in this contract is the boundary. A provider says what a control **is** through its
+How a deployment themes Omni is the host's concern and is specified with the host, not here. What
+belongs in this contract is the boundary. A provider says what a control **is** through its
 capabilities and what its work is **called** through `phaseLabels` and `taskTypePresentation`; how
 any of it is drawn is Omni's. A task cannot select a design language, inject a component, or
 override the agent's theme and font preferences.
