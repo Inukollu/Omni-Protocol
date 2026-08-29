@@ -2225,7 +2225,8 @@ Starts one outbound call from the idle dialpad. It is present only when the voic
 declares `dial`.
 
 - `destination` is the original number selected or entered by the agent.
-- `source` is `contact` or `manual` and must comply with `destinationPolicy`.
+- The provider holds `destination` to its declared `destinationPolicy`: under `contacts-only`, a
+  number that is not one of its contacts answers `failed` with `omni.destination-not-permitted`.
 - `dialled` confirms that outbound call creation completed.
 - `failed` contains a `ProtocolFailure` and confirms no call was placed.
 
