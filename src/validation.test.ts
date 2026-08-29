@@ -6,6 +6,7 @@ import {
   validateAuthenticationState,
   validateContact,
   validateEventEnvelope,
+  validateHostMediaState,
   validateManifest,
   validateScheduledActivity,
   validateSnapshot,
@@ -439,6 +440,23 @@ describe("validateEventEnvelope", () => {
     expect(summary({ title: "", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" })).toContain("event.summary.title");
     expect(summary({ title: "Q", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics: [{ id: "a", label: "A", value: 7 }] }))
       .toContain("event.summary.metric.value");
+  });
+});
+
+describe("validateHostMediaState", () => {
+  const microphone = { id: "mic" };
+  const failure = { code: "host.permission-denied", message: "Microphone access was refused", retryable: true };
+
+  it("accepts each state with what it carries and refuses the rest", () => {
+    expect(rules(validateHostMediaState({ status: "ready", localAudio: microphone }))).toEqual([]);
+    expect(rules(validateHostMediaState({ status: "unavailable", failure }))).toEqual([]);
+    expect(rules(validateHostMediaState({ status: "ready" }))).toEqual(["media.localAudio"]);
+    expect(rules(validateHostMediaState({ status: "ready", localAudio: microphone, failure }))).toEqual(["media.failure.unexpected"]);
+    expect(rules(validateHostMediaState({ status: "unavailable" }))).toEqual(["media.failure.required"]);
+    expect(rules(validateHostMediaState({ status: "unavailable", failure: { code: "x" } }))).toEqual(["failure.message", "failure.retryable"]);
+    expect(rules(validateHostMediaState({ status: "unavailable", failure, localAudio: microphone }))).toEqual(["media.localAudio.unexpected"]);
+    expect(rules(validateHostMediaState({ status: "muted" }))).toEqual(["media.status"]);
+    expect(rules(validateHostMediaState("ready"))).toEqual(["media.shape"]);
   });
 });
 

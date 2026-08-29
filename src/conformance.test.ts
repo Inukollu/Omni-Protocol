@@ -5,7 +5,7 @@ import {
   type Connection,
   type Manifest,
   type ProviderEventEnvelope,
-  type AuthenticationState, type SessionCapabilities, type Snapshot,
+  type AuthenticationState, type HostMedia, type HostMediaState, type SessionCapabilities, type Snapshot,
 } from "./index.js";
 import { ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject } from "./testing.js";
 
@@ -459,6 +459,26 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules(after(ended("call-42")))).toEqual([]);
     expect(await rules(after(ended("call-99")))).toEqual(["stream.taskMediaEnded.unknown"]);
     expect(await rules({ emit: listener => listener(ended("call-99")) })).toEqual([]);
+  });
+
+  it("validates the host media a test hands the adapter, first and later, and lets go of it", async () => {
+    // A malformed host state is a host that cannot exist; the harness says so rather than let
+    // an adapter pass against it.
+    const microphone = { id: "mic" } as unknown as MediaStream;
+    const failure = { code: "host.permission-denied", message: "Microphone access was refused", retryable: true };
+    const unsubscribe = vi.fn(() => undefined);
+    const media = (first: unknown, later?: unknown): HostMedia => ({
+      state: () => first as HostMediaState,
+      subscribe: listener => { if (later !== undefined) listener(later as HostMediaState); return unsubscribe; },
+    });
+    const run = async (hostMedia: HostMedia) =>
+      (await exerciseAdapter(makeAdapter().adapter, { ...context, media: hostMedia }, { collectOnly: true })).violations.map(violation => violation.rule);
+    expect(await run(media({ status: "ready", localAudio: microphone }))).toEqual([]);
+    expect(await run(media({ status: "unavailable", failure }))).toEqual([]);
+    expect(await run(media({ status: "ready" }))).toEqual(["media.localAudio"]);
+    expect(await run(media({ status: "ready", localAudio: microphone }, { status: "unavailable" }))).toEqual(["media.failure.required"]);
+    expect(unsubscribe).toHaveBeenCalledTimes(4);
+    expect(await rules({})).toEqual([]);
   });
 
   it("holds the snapshot and every event to the login's session", async () => {

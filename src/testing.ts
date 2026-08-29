@@ -19,6 +19,7 @@ import {
   assertNoViolations,
   validateAuthenticationState,
   validateEventEnvelope,
+  validateHostMediaState,
   validateManifest,
   validateResult,
   validateSnapshot,
@@ -191,6 +192,7 @@ export async function exerciseAdapter<C extends Channel>(
   let connection: Connection<C> | undefined;
   let unsubscribe: (() => void) | undefined;
   let unsubscribeAuthentication: (() => void) | undefined;
+  let unsubscribeMedia: (() => void) | undefined;
   let authenticationState: AuthenticationState | undefined;
   let login: Login | undefined;
   let disconnectWasClean = false;
@@ -261,6 +263,15 @@ export async function exerciseAdapter<C extends Channel>(
       }
     });
 
+    // The host's media is Omni's output, and a test that hands the adapter a malformed one is
+    // testing a host that cannot exist. Its first state and every later one are validated.
+    if (context.media !== undefined) {
+      violations.push(...validateHostMediaState(context.media.state(), "context.media"));
+      unsubscribeMedia = context.media.subscribe(state => {
+        violations.push(...validateHostMediaState(state, "context.media"));
+      });
+    }
+
     connection = await adapter.connect(context);
     const live = connection;
     // Dial is declared by presence: the capability object carries a destination policy rather
@@ -308,6 +319,7 @@ export async function exerciseAdapter<C extends Channel>(
     let clean = true;
     try { unsubscribe?.(); } catch { clean = false; }
     try { unsubscribeAuthentication?.(); } catch { clean = false; }
+    try { unsubscribeMedia?.(); } catch { clean = false; }
     try { await connection?.disconnect(); } catch { clean = false; }
     try { await authentication.close(); } catch { clean = false; }
     disconnectWasClean = clean;
