@@ -41,6 +41,7 @@ import {
   type TaskOutcome,
   type TaskPhase,
   type TeamMemberAvailability,
+  type UserId,
 } from "./index.js";
 
 export type { ProtocolViolation } from "./index.js";
@@ -804,13 +805,25 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   });
 }
 
-export function validateTeamRoster(roster: unknown, path = "team"): ProtocolViolation[] {
+/**
+ * Who is reading what the adapter published. The validators check structure without it; given
+ * `self`, they also check that a roster never carries the agent it is published to.
+ */
+export interface ReaderContext {
+  /**
+   * The signed-in agent, `AuthenticationState.identity.id`. A lead does not report to themself:
+   * a roster that lists them in `members`, or their own ask in `requests`, is a violation.
+   */
+  self?: UserId;
+}
+
+export function validateTeamRoster(roster: unknown, path = "team", context: ReaderContext = {}): ProtocolViolation[] {
   const into = new Collector();
-  validateTeamRosterInto(roster, path, into);
+  validateTeamRosterInto(roster, path, context, into);
   return into.violations;
 }
 
-function validateTeamRosterInto(roster: unknown, path: string, into: Collector): void {
+function validateTeamRosterInto(roster: unknown, path: string, context: ReaderContext, into: Collector): void {
   if (!isPlainObject(roster)) {
     into.add("team.shape", path, "a team roster must be an object");
     return;
@@ -841,7 +854,10 @@ function validateTeamRosterInto(roster: unknown, path: string, into: Collector):
           if (seenRequests.has(request.id as string)) into.add("team.request.unique", `${at}.id`, `duplicate request id: ${request.id}`);
           seenRequests.add(request.id as string);
         }
-        into.require(isUserId(request.memberId), "team.request.memberId", `${at}.memberId`, "a request names the member asking");
+        if (into.require(isUserId(request.memberId), "team.request.memberId", `${at}.memberId`, "a request names the member asking")) {
+          into.require(request.memberId !== context.self, "team.request.self", `${at}.memberId`,
+            "the roster carries the reader's own ask: an agent's request for a lead goes to whoever leads them");
+        }
         into.require(isTaskId(request.taskId), "team.request.taskId", `${at}.taskId`, "a request names the task the lead would join");
         if (request.note !== undefined) into.filled(request.note, "team.request.note", `${at}.note`, "a note must not be empty when present");
         into.timestamp(request.since, "team.request.since", `${at}.since`);
@@ -862,6 +878,8 @@ function validateTeamRosterInto(roster: unknown, path: string, into: Collector):
     if (into.require(isUserId(member.id), "team.member.id", `${at}.id`, "a roster member needs a user id")) {
       if (seen.has(member.id as string)) into.add("team.member.unique", `${at}.id`, `duplicate roster member: ${member.id}`);
       seen.add(member.id as string);
+      into.require(member.id !== context.self, "team.member.self", `${at}.id`,
+        "the roster carries the agent it is published to: a lead does not report to themself");
     }
     into.oneOf(member.availability, TEAM_AVAILABILITIES, "team.member.availability", `${at}.availability`);
     if (member.since !== undefined) into.timestamp(member.since, "team.member.since", `${at}.since`);
@@ -869,7 +887,7 @@ function validateTeamRosterInto(roster: unknown, path: string, into: Collector):
   });
 }
 
-export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "snapshot"): ProtocolViolation[] {
+export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "snapshot", context: ReaderContext = {}): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(snapshot)) {
     into.add("snapshot.shape", path, "a snapshot must be an object");
@@ -940,7 +958,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       into.add("snapshot.calendar.shape", `${path}.scheduledActivities`, "scheduledActivities must be an array when present");
     }
   }
-  if (snapshot.team !== undefined) validateTeamRosterInto(snapshot.team, `${path}.team`, into);
+  if (snapshot.team !== undefined) validateTeamRosterInto(snapshot.team, `${path}.team`, context, into);
 
   return into.violations;
 }
@@ -1021,7 +1039,7 @@ function validateProviderSummary(value: unknown, path: string, into: Collector):
   });
 }
 
-export function validateEventEnvelope(envelope: unknown, manifest: unknown, path = "event"): ProtocolViolation[] {
+export function validateEventEnvelope(envelope: unknown, manifest: unknown, path = "event", context: ReaderContext = {}): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(envelope)) {
     into.add("event.shape", path, "an event envelope must be an object");
@@ -1043,7 +1061,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
   switch (event.type) {
     case "snapshot":
       into.oneOf(event.reason, SNAPSHOT_REASONS, "event.snapshot.reason", `${at}.reason`);
-      into.violations.push(...validateSnapshot(event.snapshot, manifest, `${at}.snapshot`));
+      into.violations.push(...validateSnapshot(event.snapshot, manifest, `${at}.snapshot`, context));
       break;
     case "provider-status":
       into.oneOf(event.status, CONNECTION_STATUSES, "event.providerStatus.status", `${at}.status`);
@@ -1085,7 +1103,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       validateProviderSummary(event.summary, `${at}.summary`, into);
       break;
     case "team-updated":
-      validateTeamRosterInto(event.team, `${at}.team`, into);
+      validateTeamRosterInto(event.team, `${at}.team`, context, into);
       break;
     case "contacts-updated":
       if (!Array.isArray(event.contacts)) {

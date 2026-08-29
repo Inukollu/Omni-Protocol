@@ -79,6 +79,10 @@ export async function exerciseAdapter<C extends Channel>(
       );
     }
 
+    // The harness knows who is signed in, so it can hold the adapter to a rule the structural
+    // validators cannot check alone: a roster never carries the agent it is published to.
+    const reader = { self: authenticationState.identity.id };
+
     connection = await adapter.connect(context);
     const live = connection;
     // The optional methods are optional only until something declares a need for them. Each
@@ -101,7 +105,7 @@ export async function exerciseAdapter<C extends Channel>(
 
     const eventIds = new Set<string>();
     unsubscribe = connection.subscribe(envelope => {
-      violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest));
+      violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader));
       if (typeof envelope?.id === "string") {
         if (eventIds.has(envelope.id)) return;
         eventIds.add(envelope.id);
@@ -110,7 +114,7 @@ export async function exerciseAdapter<C extends Channel>(
     });
 
     const snapshot = await connection.snapshot() as Snapshot;
-    violations.push(...validateSnapshot(snapshot, adapter.manifest));
+    violations.push(...validateSnapshot(snapshot, adapter.manifest, "snapshot", reader));
     if (snapshot?.sessionCapabilities?.breaks === true) {
       // The four stand or fall together: `granted` is a promise to honour a later commit, and
       // an adapter with requestBreak but no commitBreak leaves an agent a break that never starts.
