@@ -141,6 +141,11 @@ describe("the guide's examples compile", () => {
     // The test is only as good as what it reaches: most blocks are complete examples and the
     // Shapes section declares dozens of mirrored types, and it says so.
     const complete = blocks.filter(block => !fragments.has(`L${block.line}`));
+    // And the mirror is whole: every type the package exports is declared under Shapes, so a
+    // type added to the code without a place in the guide is a failing build, not a gap found later.
+    const declared = new Set(blocks.flatMap(block => block.types.map(type => type.name)));
+    const exportedTypes = [...readFileSync(join(__dirname, "index.ts"), "utf8").matchAll(/^export (?:type|interface) ([A-Za-z_$][A-Za-z0-9_$]*)/gm)].map(match => match[1] as string);
+    expect(exportedTypes.filter(name => !declared.has(name))).toEqual([]);
     expect(complete.length).toBeGreaterThanOrEqual(35);
     expect(complete.flatMap(block => block.types).filter(type => exports.index.includes(type.name)).length).toBeGreaterThanOrEqual(60);
   });

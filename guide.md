@@ -279,6 +279,50 @@ type ConnectContext = {
 };
 
 type ConnectionStatus = "connecting" | "active" | "error";
+
+type CredentialField = {
+  name: string;
+  label: string;
+  type: "text" | "password";
+  required?: boolean;
+  autocomplete?: string;
+};
+
+type AuthenticationChallenge =
+  | { flowId: string; method: "browser-sso"; authorizationUrl: string; browser: "system" | "omni" }
+  | { flowId: string; method: "credentials"; fields: CredentialField[] };
+
+type StartAuthenticationRequest =
+  | { requestId: string; method: "browser-sso"; callbackUrl: string }
+  | { requestId: string; method: "credentials" };
+
+type StartAuthenticationResult =
+  | { status: "interaction-required"; challenge: AuthenticationChallenge }
+  | { status: "rejected"; failure: AuthenticationFailure };
+
+type CompleteAuthenticationRequest =
+  | { flowId: string; method: "browser-sso"; callbackUrl: string }
+  | { flowId: string; method: "credentials"; values: Readonly<Record<string, string>> };
+
+type CompleteAuthenticationResult =
+  | { status: "authenticated"; identity: User; capabilities: SessionCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "rejected"; failure: AuthenticationFailure };
+
+type AuthenticationActionResult =
+  | { status: "accepted" }
+  | { status: "failed"; failure: AuthenticationFailure };
+
+type Unsubscribe = () => void;
+
+type AuthenticationSession = {
+  state(): AuthenticationState | Promise<AuthenticationState>;
+  subscribe(listener: (state: AuthenticationState) => void): Unsubscribe;
+  start(request: StartAuthenticationRequest): Promise<StartAuthenticationResult>;
+  complete(request: CompleteAuthenticationRequest): Promise<CompleteAuthenticationResult>;
+  cancelAuthentication(flowId: string): Promise<AuthenticationActionResult>;
+  signOut(): Promise<AuthenticationActionResult>;
+  close(): Promise<void>;
+};
 ```
 
 ### Provider state
@@ -297,6 +341,10 @@ type Snapshot = {
 type AgentCapacity = {
   count: number; // absolute ceiling, at least 1
 };
+
+type CapacityResult =
+  | { status: "accepted" }
+  | { status: "failed"; failure: ProtocolFailure };
 ```
 
 ### Idle contributions
@@ -317,6 +365,14 @@ type ScheduledActivity = {
   contact?: Contact;
   attributes?: Attribute[];
 };
+
+type DialRequest = {
+  destination: string;
+};
+
+type DialResult =
+  | { status: "dialled" }
+  | { status: "failed"; failure: ProtocolFailure };
 ```
 
 ### Task capabilities
@@ -393,15 +449,24 @@ const BROWSER_ISOLATION_SCHEMES = {
 type BrowserIsolationScheme =
   (typeof BROWSER_ISOLATION_SCHEMES)[keyof typeof BROWSER_ISOLATION_SCHEMES];
 
-type TaskBrowser = {
+type TaskBrowserBase = {
   id: string;
   name: string;
   purpose: string;
   url: string;
-} & (
+};
+
+type TaskBrowser = TaskBrowserBase & (
   | { reuse: false; isolationScheme?: never }
   | { reuse: true; isolationScheme: BrowserIsolationScheme }
 );
+
+type BrowserSessionKeyInput = {
+  providerId: string;
+  taskId: TaskId;
+  taskType: string;
+  browser: TaskBrowser;
+};
 ```
 
 That union is what makes a reusing browser with no scheme fail to compile rather than inherit a
@@ -574,6 +639,10 @@ type TaskCommandRequest<C extends Channel = Channel> = {
   taskId: TaskId;
   command: TaskCommand<C>;
 };
+
+type TaskCommandResult =
+  | { status: "applied" }
+  | { status: "failed"; failure: ProtocolFailure };
 ```
 
 ### Breaks
@@ -613,6 +682,22 @@ type BreakState = {
   activeReasonId?: string;
   imposed?: ImposedBreak;
 };
+
+type BreakRequestResult =
+  | { status: "requested" }
+  | { status: "failed"; failure: ProtocolFailure };
+
+type BreakCommitResult =
+  | { status: "committed" }
+  | { status: "failed"; failure: ProtocolFailure };
+
+type BreakCancelResult =
+  | { status: "cancelled" }
+  | { status: "failed"; failure: ProtocolFailure };
+
+type BreakEndResult =
+  | { status: "ended" }
+  | { status: "failed"; failure: ProtocolFailure };
 ```
 
 ### Team
@@ -649,6 +734,18 @@ type TeamBreakCommand =
   | { type: "policy"; policy: "ask" | "auto-approve" | "suspended" }
   | { type: "place"; memberId: UserId; reason?: string }
   | { type: "release"; memberId: UserId };
+
+type TeamBreakCommandRequest = {
+  command: TeamBreakCommand;
+};
+
+type TeamConsultCommandRequest = {
+  command: TeamConsultCommand;
+};
+
+type TeamCommandResult =
+  | { status: "applied" }
+  | { status: "failed"; failure: ProtocolFailure };
 ```
 
 ### Media
@@ -663,6 +760,11 @@ type VoiceMediaSession = {
 type OpenMediaResult =
   | { status: "opened"; session: VoiceMediaSession }
   | { status: "unavailable"; failure: ProtocolFailure };
+
+type OpenMediaRequest = {
+  taskId: TaskId;
+  localAudio?: MediaStream;
+};
 ```
 
 ### Events
@@ -710,12 +812,43 @@ type ProviderEventEnvelope = {
 reason rather than a naming one: `Event` is a DOM global, and a bare one would shadow it for every
 adapter compiled against the browser lib.
 
+### Adapter and connection
+
+```ts
+type Connection<C extends Channel = Channel> = {
+  snapshot(): Snapshot<C> | Promise<Snapshot<C>>;
+  subscribe(listener: (envelope: ProviderEventEnvelope<C>) => void): Unsubscribe;
+  setCapacity(capacity: AgentCapacity): Promise<CapacityResult>;
+  execute(request: TaskCommandRequest<C>): Promise<TaskCommandResult>;
+  disconnect(): Promise<void>;
+
+  describeUsers?(ids: UserId[]): Promise<User[]>;
+  dial?(request: DialRequest): Promise<DialResult>;
+
+  requestBreak?(request: BreakRequest): Promise<BreakRequestResult>;
+  commitBreak?(): Promise<BreakCommitResult>;
+  cancelBreak?(): Promise<BreakCancelResult>;
+  endBreak?(): Promise<BreakEndResult>;
+
+  executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
+  executeTeamConsult?(request: TeamConsultCommandRequest): Promise<TeamCommandResult>;
+  openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
+};
+
+type Adapter<C extends Channel = Channel> = {
+  manifest: Manifest<C>;
+  createAuthenticationSession(context: AuthenticationContext): Promise<AuthenticationSession> | AuthenticationSession;
+  connect(context: ConnectContext): Promise<Connection<C>>;
+};
+```
+
 ### Published constants
 
 ```ts
 const ALLOWED_BROWSER_URL_SCHEMES = ["http:", "https:"] as const;
 
 const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;
+type IdleCapability = (typeof IDLE_CAPABILITIES)[number];
 
 const IDLE_CAPABILITY_UI = {
   dial: "Dialpad",
@@ -758,6 +891,7 @@ const OMNI_FAILURE_CODES = [
   "omni.unavailable",
   "omni.break-already-committed",
 ] as const;
+type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
 ```
 
 `HANDLING_STEPS_WITH_A_PERSON` is every `HandlingStep` except `queued`, which is the one nobody
@@ -2863,7 +2997,7 @@ what failed, and reports. It never decides for the adapter what a missing microp
 | --- | --- |
 | `online` | Whether the host has a network interface up. Not a claim that anything is reachable — the adapter knows whether it can reach its own platform far better than the host does — so `false` is a reason not to go ready and `true` is not a reason to. |
 | `audio` | Present on a voice connection, absent where there is no audio. |
-| `audio.input` | `ready` with `localAudio` — the microphone as captured, the same stream `openMedia` receives — and `flowing`, false while the hardware or OS says no audio moves through it (a headset's own mute switch, which Omni's Mute control never touches). `unavailable` with `reason`, since each wants a different fix from the agent: `no-device`; `denied`; `not-asked`, which a host that asks at connect never publishes; `in-use`, a device present and permitted that another application holds — on an agent desktop the commonest of all; `lost`, a capture that ended. `failure` carries the words Omni showed them. |
+| `audio.input` | `ready` with `localAudio` — the microphone as captured, the same stream `openMedia` receives — and `flowing`, false while the hardware or OS says no audio moves through it (a headset's own mute switch, which Omni's Mute control never touches). `unavailable` with `reason`, since each wants a different fix from the agent: `no-device`; `denied`; `not-asked`, which a host that asks at connect never publishes; `in-use`, a device present and permitted that another application holds — on an agent desktop the commonest of all; `lost`, a capture that ended. A host decides the reason from the devices before the error name: a browser can report a permission error on a machine with no microphone at all, and "grant permission" is the wrong instruction for an agent who needs to plug one in. `failure` carries the words Omni showed them. |
 | `audio.output` | `ready`, or `unavailable` with `reason` — `no-device`, or `lost` for one removed — and `failure`: an agent who cannot hear is as unable to take a call as one who cannot speak. |
 
 Omni republishes the report whenever it changes — a permission granted late, a headset unplugged,
