@@ -1295,6 +1295,35 @@ function validateFailureInto(value: unknown, path: string, into: Collector): voi
   }
 }
 
+/**
+ * Validates the host's media state as Omni publishes it to an adapter. This is Omni's output, so
+ * the check belongs to the host's own tests and to the harness, which validates whatever media a
+ * test hands the adapter.
+ */
+export function validateHostMediaState(state: unknown, path = "media"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(state)) {
+    into.add("media.shape", path, "a host media state must be an object");
+    return into.violations;
+  }
+  if (state.status === "ready") {
+    into.require(typeof state.localAudio === "object" && state.localAudio !== null, "media.localAudio", `${path}.localAudio`,
+      "ready carries the captured microphone");
+    into.require(state.failure === undefined, "media.failure.unexpected", `${path}.failure`, "ready carries no failure");
+  } else if (state.status === "unavailable") {
+    if (state.failure === undefined) {
+      into.add("media.failure.required", `${path}.failure`, "unavailable carries the failure that says why");
+    } else {
+      validateFailureInto(state.failure, `${path}.failure`, into);
+    }
+    into.require(state.localAudio === undefined, "media.localAudio.unexpected", `${path}.localAudio`,
+      "unavailable carries no microphone");
+  } else {
+    into.add("media.status", `${path}.status`, `a host media state is ready or unavailable, not ${String(state.status)}`);
+  }
+  return into.violations;
+}
+
 /** The connection methods whose results `validateResult` knows. */
 export type ResultMethod =
   | "execute"

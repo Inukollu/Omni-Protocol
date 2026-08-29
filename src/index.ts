@@ -269,12 +269,30 @@ export interface AuthenticationSession {
   close(): Promise<void>;
 }
 
+/**
+ * How the host's own audio stands: the microphone Omni captures for the agent, and whether it has
+ * it. Omni facilitates the microphone -- captures it, prompts, retries, tells the agent -- and
+ * does not decide for the adapter what a missing one means. The adapter does what its platform
+ * needs: go not-ready, refuse calls, or carry on because audio lands elsewhere.
+ */
+export type HostMediaState =
+  | { status: "ready"; localAudio: MediaStream }
+  | { status: "unavailable"; failure: ProtocolFailure };
+
+/** The host's audio, observable for the life of the connection, as authentication is. */
+export interface HostMedia {
+  state(): HostMediaState;
+  subscribe(listener: (state: HostMediaState) => void): Unsubscribe;
+}
+
 export interface ConnectContext {
   protocolVersion: number;
   /** The session that authenticated this connection. */
   sessionId: string;
   /** Omni-side policy: whether the agent's tasks are accepted without asking them. */
   autoAcceptTasks?: boolean;
+  /** The host's audio. Present on a voice connection; absent on a channel with no media. */
+  media?: HostMedia;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
 }
@@ -812,7 +830,8 @@ export interface VoiceMediaSession {
 
 export interface OpenMediaRequest {
   taskId: TaskId;
-  localAudio: MediaStream;
+  /** The agent's microphone as Omni captured it; absent while `HostMediaState` is `unavailable`. */
+  localAudio?: MediaStream;
 }
 
 export type OpenMediaResult =

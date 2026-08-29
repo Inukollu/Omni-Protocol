@@ -16,6 +16,7 @@ import {
   assertCommandRefusedAfterWithdrawal,
   assertBreakBeginsAfterTask,
   assertBreakParticipants,
+  assertMediaFollowsTheTask,
   assertDeniedAndRetriedBreak,
   assertDuplicateEventDelivery,
   assertNoBrowserSessionKeyCollisions,
@@ -189,6 +190,35 @@ describe("assertReconnectWithMissedAssignments", () => {
 
   it("rejects an event that is not a reconnect snapshot", () => {
     expect(() => assertReconnectWithMissedAssignments(before, statusEvent, [])).toThrow(/requires a reconnected snapshot/);
+  });
+});
+
+describe("assertMediaFollowsTheTask", () => {
+  const at = "2026-08-21T09:00:00Z";
+  const call = (phase: Task<"voice">["phase"]): Task<"voice"> => ({ ...voiceTask, phase });
+  const offered = (): ProviderEventEnvelope<"voice"> => ({ id: "e1", sessionId: "session-1", occurredAt: at, event: { type: "task-offered", task: call("pending"), acceptanceMode: "require-agent-acceptance" } });
+  const updated = (phase: Task<"voice">["phase"], id = "e2"): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: call(phase) } });
+  const mediaEnded: ProviderEventEnvelope<"voice"> = { id: "e3", sessionId: "session-1", occurredAt: at, event: { type: "task-media-ended", taskId: voiceTask.id } };
+  const ended: ProviderEventEnvelope<"voice"> = { id: "e4", sessionId: "session-1", occurredAt: at, event: { type: "task-ended", taskId: voiceTask.id, outcome: { type: "completed", by: "agent" } } };
+  const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
+
+  it("accepts a call offered, started, whose media ends, completing, then ending", () => {
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaEnded, updated("completing", "e5"), ended]))).toEqual([]);
+    // A snapshot may carry the task in; a callback puts media back and it ends again.
+    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), updated("in-progress", "e5"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [call("in-progress")] }))).toEqual([]);
+  });
+
+  it("refuses media that ends before the work began, or decides what follows", () => {
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), mediaEnded]))).toEqual(["stream.taskMediaEnded.beforeWork"]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaEnded, updated("paused", "e5")]))).toEqual(["stream.taskMediaEnded.follow"]);
+  });
+
+  it("refuses a stream that speaks of a task it never introduced, or introduces one twice", () => {
+    expect(rulesOf(() => assertMediaFollowsTheTask([updated("in-progress")]))).toEqual(["stream.taskUpdated.unknown"]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded]))).toEqual(["stream.taskMediaEnded.unknown"]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([ended]))).toEqual(["stream.taskEnded.unknown"]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), { ...offered(), id: "e9" }]))).toEqual(["stream.taskOffered.duplicate"]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), ended, { ...offered(), id: "e9" }]))).toEqual([]);
   });
 });
 

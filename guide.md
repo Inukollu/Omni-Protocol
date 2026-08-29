@@ -245,10 +245,20 @@ type AuthenticationFailure = {
   field?: string;
 };
 
+type HostMediaState =
+  | { status: "ready"; localAudio: MediaStream }
+  | { status: "unavailable"; failure: ProtocolFailure };
+
+type HostMedia = {
+  state(): HostMediaState;
+  subscribe(listener: (state: HostMediaState) => void): Unsubscribe;
+};
+
 type ConnectContext = {
   protocolVersion: number;
   sessionId: string;
   autoAcceptTasks?: boolean;
+  media?: HostMedia;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
 };
@@ -1491,6 +1501,7 @@ Creates one live provider connection for the signed-in agent.
 | `protocolVersion` | Version negotiated before authentication. Fixed for this login. |
 | `sessionId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.sessionId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
 | `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login. Treated as `true` when omitted. When `true`, `task-offered` carries an `acceptanceMode`; when `false`, every task requires agent acceptance. |
+| `media` | The host's audio, present on a voice connection: `HostMedia`, observable for the life of the connection. See **Host media**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
 
@@ -1788,6 +1799,25 @@ Allocation, acceptance, and progress are distinct. Acceptance follows `autoAccep
 allocation's `acceptanceMode`, moving the task from `pending` to `confirmed`. The provider reports
 subsequent transitions to `preparing` or `in-progress`; Omni does not infer them from the acceptance
 command.
+
+**A task is never its audio.** A voice task is the allocation: the call is offered when it is
+routed to the agent and accepted as `acceptanceMode` dictates, and its presence and phase follow
+the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
+consult, a conference leg joining or leaving, a transfer, a callback — the media follows
+separately, attaching through `openMedia` and ending with `task-media-ended`. Omni does not ring,
+bridge, or hold a line. How the phone rings, whether it rings at all, and where legs join and leave
+are the adapter's and the platform's, transient, and decide neither when a task exists nor what
+phase it is in.
+
+The line runs between the provider's word and Omni's own senses. `task-media-ended` is the
+provider's report that primary handling ended — a fact about the work, which is why the completion
+allowance starts on it and the callback control appears on it — and Omni follows that report as it
+follows any other. What Omni never does is derive a task's state from its own media session: a
+stream that drops, a track that ends, a transport that disconnects, a microphone that fails, an
+endpoint re-registering change nothing about the task until the provider says so. Structurally:
+`task-media-ended` names a task whose work has begun, what follows it is `completing` or
+`task-ended`, and every task is introduced once — `exerciseAdapter` holds the stream to that from
+the connect snapshot on, and `assertMediaFollowsTheTask` holds any sequence.
 
 #### Completion timing
 
@@ -2796,26 +2826,50 @@ Omni, and Omni registers the endpoint for it.
 
 That removes a whole class of state the provider would otherwise own and Omni would have to track,
 and it removes the branch that came with it: no command has to ask where the audio went before
-deciding who performs it.
+deciding who performs it. Nor does the audio ever stand in for the task: a task's presence and
+phase follow the provider's reports about the work, and the media — attaching, moving through a
+hold, a consult, a conference or a transfer, and ending — is transient beside it. See **A task is
+never its audio** under **Task allocation lifecycle**.
+
+### Host media
+
+Omni facilitates the microphone and does not take responsibility for its failure. It captures the
+agent's microphone once as the voice connection opens, so the permission prompt lands while the
+agent is signing in rather than over a contact; it prompts, retries on the agent's request, and
+tells the agent what failed. What it does not do is decide for the adapter what a missing
+microphone means. `ConnectContext.media` carries the host's audio as a `HostMedia`, observable for
+the life of the connection the way authentication is:
+
+| State | Contract |
+| --- | --- |
+| `ready` | Omni has the microphone; `localAudio` is it, and the same stream `openMedia` receives. |
+| `unavailable` | Omni does not: permission refused, no device, capture lost. `failure` says which, in words Omni has already shown the agent. |
+
+Omni republishes the state whenever it changes — a permission granted late, a device unplugged —
+and the adapter does what its platform needs. A platform that bridges audio without a host-side
+input carries on; one that needs it may put the agent not-ready with the platform, refuse calls,
+or answer `openMedia` `unavailable` with a failure Omni shows. The choice is the adapter's because
+only the adapter knows where its platform's audio lands.
 
 ### Capacity around setup
 
 Connecting is not the same as being able to take a call. A provider that treats a live connection
-as reachability opens a window where it believes the agent is available and Omni cannot yet carry
-audio — its endpoint unregistered, the microphone permission not yet granted.
+as reachability opens a window where it believes the agent is available and the agent is not yet
+set up — the adapter's own registration incomplete, its credentials not yet renewed.
 
-Nothing closes that window, because nothing opens it: **Omni states no capacity until the agent is
-set up**, and **Work is pulled, never pushed** makes an allocation with none stated a violation. A
-voice connection therefore carries no capacity from the moment it opens until its media is ready,
-and the provider allocates nothing in between.
+Nothing closes that window, because nothing opens it: **Omni states no capacity until the
+connection is established**, and **Work is pulled, never pushed** makes an allocation with none
+stated a violation. Capacity does not wait on the microphone: whether an agent without host audio
+can take calls is the platform's question, answered by the adapter from **Host media**, not by
+Omni withholding capacity for every platform alike.
 
-Capacity follows **automatically** once setup completes; the agent does not press anything to
-become available.
+Capacity follows **automatically** once the connection is established; the agent does not press
+anything to become available.
 
 | Situation | What Omni sends |
 | --- | --- |
-| Connected, media not ready | Nothing. No capacity has been stated, so nothing may be allocated. |
-| Set up and idle | `setCapacity({ count: n })` |
+| Connecting | Nothing. No capacity has been stated, so nothing may be allocated. |
+| Connected and idle | `setCapacity({ count: n })`, and the host media state alongside it. |
 | A task starts or ends | Nothing. The provider counts its own against the ceiling. |
 | The agent's provisioned capacity changes | `setCapacity({ count: n })` |
 | Agent asks for a break | `requestBreak`. Capacity is unchanged and work continues. |
@@ -2841,7 +2895,8 @@ The adapter speaks whatever its platform speaks — SIP over WebSocket, a vendor
 WebRTC — and **none of that appears in this contract**. Registration, signalling, credential
 renewal and reconnect are the adapter's, exactly as its authentication and transport already
 are. Omni owns what belongs to the host: the microphone, the output element, mute, and when a
-session ends.
+session ends — owning the microphone meaning capturing it, prompting, retrying and saying how it
+stands, never deciding for the adapter what a missing one means (see **Host media**).
 
 | Member | Contract |
 | --- | --- |
@@ -2849,9 +2904,10 @@ session ends.
 | `setMuted(muted)` | Mutes the agent's microphone on this session. |
 | `close()` | Releases the session. Omni calls it when the task ends. |
 
-`localAudio` is the agent's microphone, captured once by Omni as the voice connection opens so the
-permission prompt lands while the agent is signing in rather than over a ringing contact. A
-provider that bridges audio without a host-side input may ignore it.
+`localAudio` is the agent's microphone as Omni captured it, the same stream **Host media** reports,
+and absent while that state is `unavailable`. A provider that bridges audio without a host-side
+input may ignore it; one that needs it and finds it absent answers `unavailable` with a failure
+Omni shows the agent.
 
 **A task-scoped session does not oblige one call per task.** A platform holding a nailed-up
 leg for a whole shift may return the same session for every task and release the underlying
@@ -3181,6 +3237,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
+| `validateHostMediaState(state)` | The host's own media state as published to an adapter: `ready` with the microphone, or `unavailable` with the failure that says why. The harness validates whatever media a test hands the adapter. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. |
 
@@ -3267,6 +3324,7 @@ cannot be established from TypeScript structure alone.
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
+| `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-ended` names a task whose work has begun, and what follows it is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). |
 | `assertBreakParticipants(candidates, participants)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `in-effect` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |

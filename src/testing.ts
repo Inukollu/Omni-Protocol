@@ -19,6 +19,7 @@ import {
   assertNoViolations,
   validateAuthenticationState,
   validateEventEnvelope,
+  validateHostMediaState,
   validateManifest,
   validateResult,
   validateSnapshot,
@@ -175,6 +176,8 @@ export async function exerciseAdapter<C extends Channel>(
   const violations: ProtocolViolation[] = [...validateManifest(adapter.manifest)];
   const events: ProviderEventEnvelope<C>[] = [];
   const seen = new Set<ContractSubject>();
+  const stream = new TaskStream();
+  let seeded = false;
 
   const storedSecrets = new Map<string, string>();
   const authentication = await adapter.createAuthenticationSession({
@@ -189,6 +192,7 @@ export async function exerciseAdapter<C extends Channel>(
   let connection: Connection<C> | undefined;
   let unsubscribe: (() => void) | undefined;
   let unsubscribeAuthentication: (() => void) | undefined;
+  let unsubscribeMedia: (() => void) | undefined;
   let authenticationState: AuthenticationState | undefined;
   let login: Login | undefined;
   let disconnectWasClean = false;
@@ -259,6 +263,15 @@ export async function exerciseAdapter<C extends Channel>(
       }
     });
 
+    // The host's media is Omni's output, and a test that hands the adapter a malformed one is
+    // testing a host that cannot exist. Its first state and every later one are validated.
+    if (context.media !== undefined) {
+      violations.push(...validateHostMediaState(context.media.state(), "context.media"));
+      unsubscribeMedia = context.media.subscribe(state => {
+        violations.push(...validateHostMediaState(state, "context.media"));
+      });
+    }
+
     connection = await adapter.connect(context);
     const live = connection;
     // Dial is declared by presence: the capability object carries a destination policy rather
@@ -272,6 +285,8 @@ export async function exerciseAdapter<C extends Channel>(
       observeEvent(envelope, seen);
       violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader()));
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
+      // Cross-event rules apply once the stream has a beginning: the connect snapshot.
+      if (seeded) violations.push(...stream.apply(envelope));
       if (typeof envelope?.id === "string") {
         if (eventIds.has(envelope.id)) return;
         eventIds.add(envelope.id);
@@ -282,6 +297,8 @@ export async function exerciseAdapter<C extends Channel>(
     const snapshot = await connection.snapshot() as Snapshot;
     observeSnapshot(snapshot, seen);
     violations.push(...validateSnapshot(snapshot, adapter.manifest, "snapshot", reader()));
+    stream.seed(snapshot);
+    seeded = true;
     requireCapabilityMethods(live, current().capabilities);
     if (publishesUserIds(snapshot)) requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
 
@@ -302,6 +319,7 @@ export async function exerciseAdapter<C extends Channel>(
     let clean = true;
     try { unsubscribe?.(); } catch { clean = false; }
     try { unsubscribeAuthentication?.(); } catch { clean = false; }
+    try { unsubscribeMedia?.(); } catch { clean = false; }
     try { await connection?.disconnect(); } catch { clean = false; }
     try { await authentication.close(); } catch { clean = false; }
     disconnectWasClean = clean;
@@ -554,6 +572,99 @@ export function assertDeniedAndRetriedBreak(approvals: readonly BreakApproval[])
   if (last !== "granted" && last !== "in-effect") {
     throw new Error(`Break retry scenario must end granted or in effect, ended ${String(last)}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// The task stream. Each event is validated on its own; what one event may say about a task
+// depends on what was said before, and only something that watched the whole stream can hold a
+// provider to it. A task is never its audio: media ends only on work that has begun, and what
+// follows the media ending is the work completing or ending, never a phase the audio decided.
+// ---------------------------------------------------------------------------
+
+const WORK_BEGUN = new Set(["in-progress", "paused", "completing"]);
+
+/** What a stream has said about the tasks it carries, and the rules across events. */
+export class TaskStream {
+  private readonly tasks = new Map<string, { phase: string; mediaEnded: boolean }>();
+
+  /** Replaces what is known with a snapshot's tasks, as a snapshot replaces Omni's state. */
+  seed(snapshot: unknown): void {
+    this.tasks.clear();
+    if (!isRecord(snapshot) || !Array.isArray(snapshot.tasks)) return;
+    for (const task of snapshot.tasks) {
+      if (isRecord(task) && typeof task.id === "string") this.tasks.set(task.id, { phase: String(task.phase), mediaEnded: false });
+    }
+  }
+
+  /** Applies one envelope and returns what it may not say given what came before. */
+  apply(envelope: unknown, path = "event"): ProtocolViolation[] {
+    const found: ProtocolViolation[] = [];
+    const event = isRecord(envelope) ? envelope.event : undefined;
+    if (!isRecord(event)) return found;
+    const at = `${path}.event`;
+    const refuse = (rule: string, where: string, message: string) => found.push({ rule, path: where, message });
+    const id = typeof event.taskId === "string" ? event.taskId : isRecord(event.task) && typeof event.task.id === "string" ? event.task.id : undefined;
+    const known = id === undefined ? undefined : this.tasks.get(id);
+    switch (event.type) {
+      case "snapshot":
+        this.seed(event.snapshot);
+        break;
+      case "task-offered":
+        if (id === undefined) break;
+        if (known !== undefined) refuse("stream.taskOffered.duplicate", `${at}.task.id`, `${id} is already on the stream; an offer introduces a task once`);
+        this.tasks.set(id, { phase: String(isRecord(event.task) ? event.task.phase : undefined), mediaEnded: false });
+        break;
+      case "task-updated":
+        if (id === undefined) break;
+        if (known === undefined) {
+          refuse("stream.taskUpdated.unknown", `${at}.task.id`, `${id} was never offered or carried on a snapshot`);
+          break;
+        }
+        if (known.mediaEnded) {
+          const phase = isRecord(event.task) ? String(event.task.phase) : "";
+          if (phase !== "completing") {
+            refuse("stream.taskMediaEnded.follow", `${at}.task.phase`,
+              `after its media ended, ${id} completes or ends; ${phase} is a phase the audio does not decide`);
+          }
+          known.mediaEnded = phase === "completing" ? false : known.mediaEnded;
+        }
+        known.phase = isRecord(event.task) ? String(event.task.phase) : known.phase;
+        break;
+      case "task-media-ended":
+        if (id === undefined) break;
+        if (known === undefined) {
+          refuse("stream.taskMediaEnded.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
+          break;
+        }
+        if (!WORK_BEGUN.has(known.phase)) {
+          refuse("stream.taskMediaEnded.beforeWork", `${at}.taskId`,
+            `media cannot end on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
+        }
+        known.mediaEnded = true;
+        break;
+      case "task-ended":
+        if (id === undefined) break;
+        if (known === undefined) refuse("stream.taskEnded.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
+        this.tasks.delete(id);
+        break;
+      default:
+        break;
+    }
+    return found;
+  }
+}
+
+/**
+ * The media follows the task and never decides it. Given a provider's stream -- optionally seeded
+ * with the snapshot it began from -- every task is introduced once, `task-media-ended` names a
+ * task whose work has begun, and what follows it is `completing` or `task-ended`.
+ */
+export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
+  const stream = new TaskStream();
+  if (snapshot !== undefined) stream.seed(snapshot);
+  const found: ProtocolViolation[] = [];
+  envelopes.forEach((envelope, index) => found.push(...stream.apply(envelope, `envelopes[${index}]`)));
+  assertNoViolations(found, "The media follows the task");
 }
 
 /** One provider as the host sees it when freezing a break attempt's participant set. */
