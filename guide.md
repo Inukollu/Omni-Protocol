@@ -21,7 +21,7 @@ are used precisely throughout and mean nothing looser here.
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
 | **Agent** | The person signed in and taking work. Not to be confused with a transfer destination whose `kind` is `agent`, which is a routing target. |
-| **Lead** | An agent the provider also publishes a `TeamRoster` to. Nothing else makes somebody a lead: **its presence is the permission**. |
+| **Lead** | An agent whose login declares `capabilities.team`. The provider publishes a `TeamRoster` to them and to nobody else: **the login is the permission**. |
 | **Provisioning** | Omni-side policy about this agent, configured outside the protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and provisioning disagree, the stricter wins. |
 | **Task** | One unit of assigned work — a call, a chat, a mail. |
 | **Channel** | The kind of work a provider carries: `voice`, `chat`, or `email`. Fixed per provider by its manifest. |
@@ -220,11 +220,21 @@ type AuthenticationContext = {
   log?: (entry: unknown) => void;
 };
 
+type TeamCapabilities = {
+  breakControl?: true;
+  consultControl?: true;
+};
+
+type SessionCapabilities = {
+  breaks?: true;
+  team?: TeamCapabilities;
+};
+
 type AuthenticationState =
   | { status: "signed-out" }
   | { status: "authenticating" }
-  | { status: "authenticated"; identity: User; expiresAt?: IsoTimestamp }
-  | { status: "refreshing"; identity: User }
+  | { status: "authenticated"; identity: User; capabilities: SessionCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "refreshing"; identity: User; capabilities: SessionCapabilities }
   | { status: "expired"; identity?: User; failure?: AuthenticationFailure };
 
 type AuthenticationFailure = {
@@ -249,15 +259,9 @@ type ConnectionStatus = "connecting" | "active" | "error";
 ### Provider state
 
 ```ts
-type SessionCapabilities = {
-  breaks?: true;
-  teamBreakControl?: true;
-};
-
 type Snapshot = {
   status: ConnectionStatus;
   sessionId: string;
-  sessionCapabilities: SessionCapabilities;
   break: BreakState;
   tasks: Task[];
   contacts?: Contact[];
@@ -608,8 +612,6 @@ type LeadRequest = {
 
 type TeamRoster = {
   members: TeamMember[];
-  breakControl?: true;
-  consultControl?: true;
   requests?: LeadRequest[];
 };
 
@@ -1306,8 +1308,8 @@ It carries no identity: who the agent is on this provider is the outcome of auth
 input to it.
 
 Closing this session releases observers and temporary flow state; it does not sign the agent out.
-Omni keeps the session open while the provider connection is active so refresh and expiry changes
-remain observable.
+Omni keeps the session open while the provider connection is active so refresh, expiry, and
+capability changes remain observable.
 
 ### Authentication state
 
@@ -1318,14 +1320,53 @@ reports later changes.
 | --- | --- |
 | `signed-out` | No usable provider session exists. |
 | `authenticating` | An interactive `browser-sso` or `credentials` flow is active. |
-| `authenticated` | A usable session exists. Includes the provider identity and optional token expiry time. |
-| `refreshing` | The adapter is refreshing its session. Existing provider identity remains available. |
+| `authenticated` | A usable session exists. Includes the provider identity, the login's `capabilities`, and optional token expiry time. |
+| `refreshing` | The adapter is refreshing its session. Existing provider identity and capabilities remain available, unchanged: a change to either is published as `authenticated`. |
 | `expired` | The session cannot currently be used. It may include an identity and typed failure. |
 
 Omni calls `connect()` only after authentication reaches `authenticated`. Token refresh remains
 adapter-owned; the adapter publishes `refreshing`, followed by `authenticated` or `expired`.
-If authentication expires during active work, Omni preserves the task workspace and shows
-reauthentication for that provider.
+`refreshing` asks nothing of the agent and Omni shows nothing for it. If authentication expires
+during active work, Omni preserves the task workspace and shows reauthentication for that
+provider: the transport is still up and the tasks still on it, so this is a login problem with a
+login fix, rendered apart from a provider Omni cannot reach. Commands meanwhile answer
+`omni.not-authenticated`.
+
+**Re-authentication restores the login; it does not replace it.** It runs on the session Omni
+kept, under the same `sessionId` — the old `flowId` died with the expiry, so the adapter issues a
+new challenge — and when the state returns to `authenticated` the connection and everything on it
+carry on: Omni does not call `connect()` again, since a second connection would be a second
+session for one agent. What "signing in again replaces the login" describes is a new
+`AuthenticationSession` under a new `sessionId`, after `signed-out`.
+
+### What the login may do
+
+`capabilities` declares provider actions available to this login rather than to one task: whether
+the agent may ask for a break, and whether they lead a team — and if so, whether they decide its
+breaks and whether they may join a member's call. It is declared by presence, like every capability
+in this contract, and it travels with the identity because it is part of who the agent is on this
+provider: the provider knows the roles, and says so at sign-in rather than leaving Omni to infer
+them from what arrives later.
+
+| Field | Contract |
+| --- | --- |
+| `breaks` | This login may request a break. Requires the four break methods on the connection. |
+| `team` | This login leads a team. The provider publishes a `TeamRoster` to it on every snapshot — `[]` when nobody is in it — and to nobody else. |
+| `team.breakControl` | This lead decides their team's breaks. Requires `executeTeamBreak`. |
+| `team.consultControl` | This lead may join a member's call on request. Requires `executeTeamConsult`. |
+
+A session action is available only when both the capability and Omni provisioning permit it.
+
+**Capabilities are current, not fixed.** They describe the login as of its latest `authenticated`
+state. A provider that reads roles live — a lead demoted mid-shift — republishes `authenticated`
+with the new set through `subscribe()` on the authentication session, which Omni keeps open for
+the life of the connection for exactly this reason, and the next snapshot agrees with it. Omni
+provisions what the capabilities call for at sign-in — a team panel for a lead, empty until the
+roster arrives, and nothing for anybody else — and withdraws it on the next render when the
+capability goes. A command that arrives after its capability was withdrawn is answered `failed`
+with `omni.capability-not-enabled`: the provider names it, so Omni never has to infer from a
+capability change it may not have rendered yet that "you are no longer a lead" is the message
+rather than "that did not work".
 
 ### Starting authentication
 
@@ -1391,14 +1432,16 @@ settles. The adapter must not persist raw credentials. Field-specific failures m
 
 `cancelAuthentication(flowId)` cancels an abandoned Browser SSO window or credentials form and
 releases its temporary state. It does not sign out an already authenticated session. It answers
-`cancelled`, and a repeat is safe and answers `already-cancelled`.
+`accepted`; a repeat, or a flow that already ended, is nothing to act on and answers `accepted`
+too, by the rule that a command asking for a state answers success when that state holds.
 
 ### Completion and failures
 
-`complete()` returns either an authenticated provider identity or a typed failure:
+`complete()` returns either the authenticated state — identity and capabilities — or a typed
+failure:
 
 ```ts
-{ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao" } }
+{ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao" }, capabilities: { breaks: true } }
 ```
 
 The `User` it carries is the **root of this provider's user namespace**. Every other person this
@@ -1416,7 +1459,7 @@ authorization codes, tokens, or provider responses containing secrets.
 
 ### Sign-out
 
-`signOut(requestId)` revokes or invalidates the provider session where supported, deletes stored
+`signOut()` revokes or invalidates the provider session where supported, deletes stored
 session secrets, and moves state to `signed-out`.
 `close()` stops authentication-state observation but does not sign the agent out.
 
@@ -1462,21 +1505,19 @@ because Omni renders that form itself. That is a local convenience and never rea
 
 ### `Snapshot`
 
-`sessionCapabilities` declares provider actions available for the current login rather than for one
-task. Protocol v1 includes agent break requests and team break control. A session action is
-available only when both the corresponding session capability and Omni provisioning permit it.
-The snapshot replaces the set completely, so a resync can grant or withdraw a capability safely.
+What the login may do is declared on its `AuthenticationState` — see **What the login may do** —
+not here. The snapshot carries what the provider holds for the agent now, and where that depends on
+a capability it agrees with the login: a lead's snapshot carries `team`, nobody else's does.
 
 | Field | Contract |
 | --- | --- |
 | `status` | Current `ConnectionStatus` — whether this provider's transport can serve the session. Defined under **`provider-status`**. |
 | `sessionId` | Identity of this login session. It must match the connection context. |
-| `sessionCapabilities` | Complete provider capability set for this login. Effective permission is its intersection with Omni provisioning. |
 | `break` | Complete break state, including approval, accepting state, reasons, retry details, and any imposed break. |
 | `tasks` | Complete set of tasks currently offered to or owned by this agent. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
 | `scheduledActivities` | Required complete calendar contribution when the manifest declares `calendar`; `[]` clears it. Omitted only when it does not. |
-| `team` | `TeamRoster` for an agent who leads a team. Omitted for everybody else — its presence is the permission. |
+| `team` | Required `TeamRoster` when the login declares `capabilities.team`, `[]` when nobody is in it. Forbidden otherwise — the login is the permission. |
 
 ## Live connection
 
@@ -1493,15 +1534,15 @@ surface in one place, and what obliges an adapter to implement each one.
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability**. |
 | `describeUsers(ids)` | The adapter publishes any `UserId`: on `ImposedBreak.by`, a roster, or `handlingHistory[].by`. |
 | `dial(request)` | The manifest declares `idleCapabilities.dial`. |
-| `requestBreak(request)` | `sessionCapabilities.breaks` is declared. |
-| `commitBreak()` | `sessionCapabilities.breaks` is declared. Commit and cancel are not optional halves of it. |
-| `cancelBreak()` | `sessionCapabilities.breaks` is declared. |
-| `endBreak()` | `sessionCapabilities.breaks` is declared. |
-| `executeTeamBreak(command)` | The adapter publishes a `TeamRoster` carrying `breakControl`. |
-| `executeTeamConsult(command)` | The adapter publishes a `TeamRoster` carrying `consultControl`. |
+| `requestBreak(request)` | The login declares `capabilities.breaks`. |
+| `commitBreak()` | The login declares `capabilities.breaks`. Commit and cancel are not optional halves of it. |
+| `cancelBreak()` | The login declares `capabilities.breaks`. |
+| `endBreak()` | The login declares `capabilities.breaks`. |
+| `executeTeamBreak(command)` | The login declares `capabilities.team.breakControl`. |
+| `executeTeamConsult(command)` | The login declares `capabilities.team.consultControl`. |
 | `openMedia(request)` | The manifest channel is `voice`. Every voice task's audio lands in Omni, so there is no voice adapter that does not implement it. |
 
-**The four break methods stand or fall together.** Declaring `sessionCapabilities.breaks` and then
+**The four break methods stand or fall together.** Declaring `capabilities.breaks` at login and then
 implementing `requestBreak` without `commitBreak` leaves an agent granted a break that can never
 start, and the two-phase coordination in **Coordinating a multi-provider break** has no way to
 report that: `granted` is a promise to honour a later commit.
@@ -2429,7 +2470,7 @@ outstanding and offers **Cancel break request**, but does not tell the agent tha
 begun.
 
 Omni offers the aggregate Break control only when every provider currently holding capacity
-declares `sessionCapabilities.breaks`. If one cannot be stopped, offering a global break would
+declares `capabilities.breaks` at login. If one cannot be stopped, offering a global break would
 knowingly permit partial availability.
 
 Omni coordinates one attempt as follows:
@@ -2553,10 +2594,8 @@ A lead who also takes calls sees their team on the idle dashboard. `Snapshot.tea
 
 | Field | Contract |
 | --- | --- |
-| `members` | Every member of this lead's team, whatever their state. `[]` says the lead has a team with nobody in it; omitting the roster says something else entirely — see **Its presence is the permission** below. |
-| `breakControl` | Present when this lead decides their team's breaks, absent when they do not. |
-| `consultControl` | Present when this lead may join a member's call on request, absent when they may not. |
-| `requests` | The members currently asking this lead to join a call, each with the task and the note. Omitted when the lead may not be asked; `[]` when nobody is asking. See **Consulting a lead**. |
+| `members` | Every member of this lead's team, whatever their state. `[]` says the lead has a team with nobody in it; omitting the roster says something else entirely — see **The login is the permission** below. |
+| `requests` | The members currently asking this lead to join a call, each with the task and the note. Required when the login declares `team.consultControl`, `[]` when nobody is asking; omitted when it does not. See **Consulting a lead**. |
 
 | `TeamMember` field | Contract |
 | --- | --- |
@@ -2585,19 +2624,20 @@ everybody — worse than showing nothing, because it looks like data. Send it on
 knows when the state actually began. It times the current `availability`, so it moves every time
 that value does.
 
-**Its presence is the permission.** Publish a roster only to an agent entitled to one. Omni never
-decides who leads a team: no roster means nothing is shown, which is the correct rendering for an
-agent who leads nobody. The same rule governs `TeamRoster.breakControl` — present when this lead
-decides their team's breaks, absent when they do not.
+**The login is the permission.** A roster goes to a login that declares `capabilities.team`, on
+every snapshot, and to nobody else. Omni never decides who leads a team: the provider said so at
+sign-in, and the roster agrees with it — present, `[]` included, for a lead; absent for everybody
+else, which is the correct rendering for an agent who leads nobody. What the lead may do with the
+roster is on the login too, `team.breakControl` and `team.consultControl`, never on the roster.
 
 **The roster never carries the agent it is published to — not in `members`, and not in
 `requests`.** A lead does not report to themself: their own break request and their own ask for a
 lead go up to whoever leads them and appear on *that* person's roster, while the requester sees
 only their own `BreakState` and their task's `lead` move. An adapter whose platform lists the lead
-among their own members filters the signed-in identity out before publishing. **Entitlement is a
-role the provider knows, never inferred from who is listed:** a lead with nobody in their team
-publishes `[]`, an agent with no such role publishes nothing, and no member count can tell those
-two apart.
+among their own members filters the signed-in identity out before publishing. **Being a lead is a
+role the provider knows, never inferred from who is listed:** it is declared at sign-in, a lead
+with nobody in their team publishes `[]`, an agent with no such role publishes nothing, and no
+member count can tell those two apart.
 
 ### Lead commands
 
@@ -2634,8 +2674,8 @@ team, and a second lead method beside `executeTeamBreak`:
 executeTeamConsult({ command: TeamConsultCommand }): Promise<TeamCommandResult>
 ```
 
-Required when the roster carries `consultControl`, and gated by it exactly as `executeTeamBreak`
-is by `breakControl`. The flow, in order:
+Required when the login declares `capabilities.team.consultControl`, and gated by it exactly as
+`executeTeamBreak` is by `team.breakControl`. The flow, in order:
 
 ```ts
 // 1. The agent asks, with a small note. Their task carries `lead` from here on.
@@ -2718,8 +2758,8 @@ whole and replaced whole, and a provider that cannot say omits it.
 
 **An agent is not waiting on one person.** Authority is held by several, everyone who holds it
 sees the request on their own console, and **any one of them settles it**. Omni offers the
-decision to whoever is reading a roster that carries `breakControl` — which is how the provider
-already says who may decide — and does not try to work out whose turn it is.
+decision to every login that declares `team.breakControl` — which is how the provider already
+says who may decide — and does not try to work out whose turn it is.
 
 A request needing *more than one* approval is not something this contract describes. There is
 no partial state to report and no progress to display: a request is either still owed a
@@ -2896,8 +2936,8 @@ react rather than only display the message:
 
 | Code | Meaning |
 | --- | --- |
-| `omni.not-authenticated` | The provider session is no longer usable. Omni surfaces reauthentication. |
-| `omni.capability-not-enabled` | The action targets a capability this task or manifest did not declare. |
+| `omni.not-authenticated` | The provider session is no longer usable. The adapter has published `expired` at or before this answer — the state is what Omni surfaces reauthentication from; the code says why this action failed, and is never the only signal. |
+| `omni.capability-not-enabled` | The action targets a capability this task, manifest, or login did not declare — including a lead command from a login whose `capabilities` no longer carry it. |
 | `omni.task-not-found` | The provider-local task id is unknown, typically after the task already ended. |
 | `omni.destination-not-permitted` | The dial or transfer destination violates the provider's policy. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
@@ -2967,9 +3007,10 @@ direction — the provider asking Omni to reconcile — and neither replaces the
 
 Carries a complete `Snapshot` after reconnect or when the provider explicitly requests
 reconciliation. `reason` is `reconnected` or `provider-requested`. Omni replaces the provider's
-current status, session capabilities, break state, tasks, contacts, scheduled activities and team
-roster with this snapshot. A roster absent from the snapshot withdraws one previously published,
-exactly as it would withdraw a capability.
+current status, break state, tasks, contacts, scheduled activities and team roster with this
+snapshot. It carries what the login's capabilities call for — a roster for a lead, on every
+snapshot — and nothing they do not; a capability is withdrawn by a republished `authenticated`,
+never by an omission from a snapshot.
 
 ### `provider-status`
 
@@ -3067,7 +3108,8 @@ each connected provider.
 
 Replaces this provider's complete `TeamRoster`. It is emitted only for an agent the provider
 publishes a roster to, and it carries the whole team every time — never a change to it, for the
-reason set out under **Team leads**. Omitting the roster on a later snapshot withdraws it.
+reason set out under **Team leads**. A lead's snapshot always carries the roster; it goes only when
+a republished `authenticated` no longer declares `capabilities.team`.
 
 ### `contacts-updated`
 
@@ -3106,15 +3148,25 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | --- | --- |
 | `validateManifest(manifest)` | Identity, protocol-version interoperability, authentication methods, and idle-capability shapes. |
 | `validateTask(task, { channel })` | Identity, channel agreement, phase, completion allowance, capability shapes, custom controls, and browsers. |
-| `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team roster, and every task, contact, and activity, including capability gating. |
+| `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team roster, and every task, contact, and activity, including idle-capability gating. |
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
-| `validateAuthenticationState(state)` | The identity each state must carry, and the expiry that only `authenticated` may. |
+| `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. |
 
 Each returns `ProtocolViolation[]` rather than throwing, so a caller can report every problem at
 once. A violation carries a stable `rule` id such as `task.browser.url.scheme`, the `path` it was
 found at such as `snapshot.tasks[0].browsers[1].url`, and a `message`.
+
+Some rules need to know who is reading. `validateTeamRoster`, `validateSnapshot`, and
+`validateEventEnvelope` take an optional final `{ self, capabilities }` — the signed-in agent's
+`AuthenticationState.identity.id` and their login's `capabilities`. Given `self`, a roster that
+carries that agent reports `team.member.self` or `team.request.self`. Given `capabilities`, a lead's
+snapshot without a roster reports `team.required`, a roster published to a login that does not lead
+reports `team.unentitled`, `requests` on a roster whose login lacks `team.consultControl` reports
+`team.requests.capability`, and a roster without them on a login that declares it reports
+`team.requests.required`. Without them those rules are not checked, because they cannot be.
+`exerciseAdapter` always passes both.
 
 `assertNoViolations(violations)` throws `ProtocolConformanceError` — which carries the full
 `violations` array — when the list is non-empty.
@@ -3131,9 +3183,10 @@ reaching the workspace.
 Adapter conformance exercise from `@xema/omni-protocol/testing`.
 
 It validates the manifest, opens an authenticated session, connects, checks required capability
-methods, subscribes, validates the snapshot and every delivered event, states a capacity, then
-unsubscribes and disconnects. Provider packages should run it with a deterministic
-test transport and authentication state.
+methods, subscribes, validates the snapshot, every delivered event, and every authentication state
+the session publishes during the run — each against the latest login, since capabilities are
+current, not fixed — states a capacity, then unsubscribes and disconnects. Provider packages should
+run it with a deterministic test transport and authentication state.
 
 By default it throws `ProtocolConformanceError` listing every violation. Pass
 `{ collectOnly: true }` to receive them on the result instead:
@@ -3144,15 +3197,24 @@ expect(result.violations).toEqual([]);
 expect(result.disconnectWasClean).toBe(true);
 ```
 
-Two properties of the harness matter to adapter authors:
+`result.authenticationState` is the state the session was restored with; `result.login` is the
+latest the session published during the run, which differs only when the adapter republished
+`authenticated`. A published state that fails validation is reported and not adopted, and a
+`refreshing` state must carry over the login it refreshes — a different identity is
+`authentication.refreshing.identity`, a changed capability set `authentication.refreshing.capabilities`.
+A capability granted by a later login requires its methods just as one declared at sign-in does.
+
+Three properties of the harness matter to adapter authors:
 
 - **Violations are collected, never thrown from inside the subscribe listener.** Throwing there
   would unwind through the provider's own dispatch for a synchronous emitter, and would be
   swallowed as an unhandled rejection for an asynchronous one — letting a non-conforming async
   adapter pass.
-- **Resources are released even when the adapter fails.** `unsubscribe()`, `disconnect()`, and
+- **Resources are released even when the adapter fails.** Every unsubscribe, `disconnect()`, and
   `close()` run in a `finally` block, and a throw from any of them is reported as
   `disconnectWasClean: false` rather than being hidden.
+- **The login is read, never captured.** Everything is validated against the latest
+  `authenticated` state, so a withdrawal published before a snapshot is held against that snapshot.
 
 ### Contract scenarios
 
@@ -3161,7 +3223,9 @@ cannot be established from TypeScript structure alone.
 
 | Helper | Contract checked |
 | --- | --- |
-| `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. |
+| `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no roster for a login that no longer leads, no requests for one that may no longer join. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
+| `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. |
+| `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
 | `assertWrapTimeout(task, mediaEndedAt, deadline, toleranceMs?)` | The wrap deadline equals media end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |

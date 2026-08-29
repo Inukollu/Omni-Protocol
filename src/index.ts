@@ -188,15 +188,36 @@ export interface AuthenticationFailure {
   field?: string;
 }
 
+/** What a lead may do with their team. Declared by presence. */
+export interface TeamCapabilities {
+  /** This lead decides their team's breaks. Requires `executeTeamBreak`. */
+  breakControl?: true;
+  /** This lead may join a member's call on request. Requires `executeTeamConsult`. */
+  consultControl?: true;
+}
+
 /**
- * Only `authenticated` and `refreshing` know who the agent is, and only `authenticated` has
- * something to expire. A state carrying more than it knows is a state Omni would render as fact.
+ * What this login may do, beyond any one task. It travels with the identity because it is part
+ * of who the agent is on this provider: the provider knows the roles and says so at sign-in.
+ * Current as of the latest `authenticated` state, never fixed for the login.
+ */
+export interface SessionCapabilities {
+  /** This login may request a break. Requires the four break methods. */
+  breaks?: true;
+  /** This login leads a team: a `TeamRoster` is published to it on every snapshot, `[]` included. */
+  team?: TeamCapabilities;
+}
+
+/**
+ * Only `authenticated` and `refreshing` know who the agent is and what they may do, and only
+ * `authenticated` has something to expire. A state carrying more than it knows is a state Omni
+ * would render as fact.
  */
 export type AuthenticationState =
   | { status: "signed-out" }
   | { status: "authenticating" }
-  | { status: "authenticated"; identity: User; expiresAt?: IsoTimestamp }
-  | { status: "refreshing"; identity: User }
+  | { status: "authenticated"; identity: User; capabilities: SessionCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "refreshing"; identity: User; capabilities: SessionCapabilities }
   | { status: "expired"; identity?: User; failure?: AuthenticationFailure };
 
 export interface CredentialField {
@@ -224,7 +245,7 @@ export type CompleteAuthenticationRequest =
   | { flowId: string; method: "credentials"; values: Readonly<Record<string, string>> };
 
 export type CompleteAuthenticationResult =
-  | { status: "authenticated"; identity: User; expiresAt?: IsoTimestamp }
+  | { status: "authenticated"; identity: User; capabilities: SessionCapabilities; expiresAt?: IsoTimestamp }
   | { status: "rejected"; failure: AuthenticationFailure };
 
 export type AuthenticationActionResult =
@@ -734,10 +755,6 @@ export interface TeamMember {
   break?: BreakApproval;
 }
 
-/**
- * Published only to an agent entitled to one. Its presence is the permission -- nothing else
- * makes somebody a lead, and there is no separate flag to fall out of step with the data.
- */
 /** A member asking this lead to join their call. */
 export interface LeadRequest {
   id: string;
@@ -747,12 +764,13 @@ export interface LeadRequest {
   since: IsoTimestamp;
 }
 
+/**
+ * The login is the permission: published to a login that declares `capabilities.team`, on every
+ * snapshot, and to nobody else. What the lead may do with it is on the login too, not here.
+ */
 export interface TeamRoster {
   members: TeamMember[];
-  breakControl?: true;
-  /** Present when this lead may join a member's call on request. */
-  consultControl?: true;
-  /** Omitted when the lead may not be asked; `[]` when nobody is asking. */
+  /** Omitted when the login lacks `team.consultControl`; `[]` when nobody is asking. */
   requests?: LeadRequest[];
 }
 
@@ -801,16 +819,10 @@ export type OpenMediaResult =
 // Provider state and events.
 // ---------------------------------------------------------------------------
 
-export interface SessionCapabilities {
-  breaks?: true;
-  teamBreakControl?: true;
-}
-
 /** The provider's complete state at one moment. It replaces what Omni holds; never a patch. */
 export interface Snapshot<C extends Channel = Channel> {
   status: ConnectionStatus;
   sessionId: string;
-  sessionCapabilities: SessionCapabilities;
   break: BreakState;
   /** Every task currently owned by this agent for this provider. */
   tasks: Task<C>[];
@@ -908,7 +920,7 @@ export interface Connection<C extends Channel = Channel> {
   dial?(request: DialRequest): Promise<DialResult>;
 
   /**
-   * The four break methods stand or fall together. Declaring `sessionCapabilities.breaks` and
+   * The four break methods stand or fall together. Declaring `capabilities.breaks` at login and
    * implementing `requestBreak` without `commitBreak` leaves an agent granted a break that can
    * never start, and the two-phase coordination has no way to report it.
    */
@@ -917,9 +929,9 @@ export interface Connection<C extends Channel = Channel> {
   cancelBreak?(): Promise<BreakCancelResult>;
   endBreak?(): Promise<BreakEndResult>;
 
-  /** Required when the adapter publishes a `TeamRoster` carrying `breakControl`. */
+  /** Required when the login declares `capabilities.team.breakControl`. */
   executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
-  /** Required when the adapter publishes a `TeamRoster` carrying `consultControl`. */
+  /** Required when the login declares `capabilities.team.consultControl`. */
   executeTeamConsult?(request: TeamConsultCommandRequest): Promise<TeamCommandResult>;
   /** Required of every voice adapter: all voice audio lands in Omni. */
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;

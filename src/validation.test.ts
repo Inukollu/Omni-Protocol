@@ -41,7 +41,6 @@ const task = (over: Record<string, unknown> = {}) => ({
 const snapshot = (over: Record<string, unknown> = {}) => ({
   status: "active",
   sessionId: "session-1",
-  sessionCapabilities: { breaks: true },
   break: { approval: "not-requested", accepting: true },
   tasks: [],
   ...over,
@@ -255,7 +254,6 @@ describe("validateTeamRoster", () => {
 
   it("accepts a conforming roster", () => {
     expect(validateTeamRoster(roster())).toEqual([]);
-    expect(validateTeamRoster(roster({ breakControl: true }))).toEqual([]);
     expect(validateTeamRoster({ members: [{ id: "A-2", availability: "on-break", since: "2026-08-21T09:00:00Z", break: "in-effect" }] })).toEqual([]);
   });
 
@@ -264,7 +262,6 @@ describe("validateTeamRoster", () => {
     ["an availability the contract dropped", { members: [{ id: "A-2", availability: "available" }] }, "team.member.availability"],
     ["a duplicate member", { members: [{ id: "A-2", availability: "ready" }, { id: "A-2", availability: "on-task" }] }, "team.member.unique"],
     ["a since without a zone", { members: [{ id: "A-2", availability: "ready", since: "2026-08-21T09:00:00" }] }, "team.member.since"],
-    ["breakControl declared false", { members: [], breakControl: false }, "team.breakControl"],
     ["no members array", {}, "team.members.shape"],
   ])("rejects %s", (_label, value, rule) => {
     expect(rules(validateTeamRoster(value))).toContain(rule);
@@ -275,7 +272,6 @@ describe("validateTeamRoster", () => {
     // both places, so the check has to pick the reader out rather than object to either list.
     const published = {
       members: [{ id: "A-2", availability: "ready" }, { id: "1042", availability: "on-task" }],
-      consultControl: true,
       requests: [
         { id: "req-1", memberId: "A-2", taskId: "call-7", since: "2026-08-21T09:00:00Z" },
         { id: "req-2", memberId: "1042", taskId: "call-9", since: "2026-08-21T09:01:00Z" },
@@ -299,9 +295,6 @@ describe("validateSnapshot", () => {
   it.each([
     ["a status the contract dropped", snapshot({ status: "inactive" }), "snapshot.status"],
     ["no session id", snapshot({ sessionId: "" }), "snapshot.sessionId"],
-    ["no session capabilities", snapshot({ sessionCapabilities: undefined }), "snapshot.sessionCapabilities.shape"],
-    ["an unknown session capability", snapshot({ sessionCapabilities: { telepathy: true } }), "snapshot.sessionCapability.unknown"],
-    ["a session capability declared false", snapshot({ sessionCapabilities: { breaks: false } }), "snapshot.sessionCapability.value"],
     ["two tasks with one id", snapshot({ tasks: [task(), task()] }), "task.id.unique"],
   ])("rejects %s", (_label, value, rule) => {
     expect(rules(validateSnapshot(value, manifest()))).toContain(rule);
@@ -311,6 +304,24 @@ describe("validateSnapshot", () => {
     const team = { members: [{ id: "A-2", availability: "ready" }, { id: "1042", availability: "ready" }] };
     expect(rules(validateSnapshot(snapshot({ team }), manifest(), "snapshot", { self: "1042" }))).toEqual(["team.member.self"]);
     expect(rules(validateSnapshot(snapshot({ team }), manifest(), "snapshot", { self: "A-9" }))).toEqual([]);
+  });
+
+  it("holds the roster to the login once told what it declares", () => {
+    // The login is the permission, and it cuts both ways: a lead's snapshot must carry a roster
+    // and nobody else's may. Both agreeing cases pass, so each refusal is about the disagreement.
+    const team = { members: [{ id: "A-2", availability: "ready" }] };
+    const lead = { capabilities: { team: {} } };
+    const agent = { capabilities: {} };
+    expect(rules(validateSnapshot(snapshot({ team }), manifest(), "snapshot", lead))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot(), manifest(), "snapshot", agent))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot(), manifest(), "snapshot", lead))).toEqual(["team.required"]);
+    expect(rules(validateSnapshot(snapshot({ team }), manifest(), "snapshot", agent))).toEqual(["team.unentitled"]);
+    // The roster validator carries the same refusal on its own, for a caller holding just the roster.
+    expect(rules(validateTeamRoster(team, "team", lead))).toEqual([]);
+    expect(rules(validateTeamRoster(team, "team", agent))).toEqual(["team.unentitled"]);
+    // Without the login in hand, neither direction can be checked.
+    expect(rules(validateSnapshot(snapshot(), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ team }), manifest()))).toEqual([]);
   });
 
   it("refuses data the manifest never declared a capability for", () => {
@@ -346,6 +357,25 @@ describe("validateEventEnvelope", () => {
     expect(withReader({ type: "team-updated", team }, "A-9")).toEqual([]);
     expect(withReader({ type: "snapshot", reason: "reconnected", snapshot: snapshot({ team }) }, "1042")).toEqual(["team.member.self"]);
     expect(withReader({ type: "snapshot", reason: "reconnected", snapshot: snapshot({ team }) }, "A-9")).toEqual([]);
+  });
+
+  it("holds a reconnect snapshot to the login as it holds the first one", () => {
+    // "On every snapshot" includes the one a reconnect carries.
+    const team = { members: [{ id: "A-2", availability: "ready" }] };
+    const reconnect = (snap: unknown, capabilities: unknown) =>
+      rules(validateEventEnvelope(envelope({ type: "snapshot", reason: "reconnected", snapshot: snap }), manifest(), "event", { capabilities } as never));
+    expect(reconnect(snapshot({ team }), { team: {} })).toEqual([]);
+    expect(reconnect(snapshot(), {})).toEqual([]);
+    expect(reconnect(snapshot(), { team: {} })).toEqual(["team.required"]);
+    expect(reconnect(snapshot({ team }), {})).toEqual(["team.unentitled"]);
+  });
+
+  it("refuses a team-updated to a login that does not lead", () => {
+    const team = { members: [{ id: "A-2", availability: "ready" }] };
+    const to = (capabilities: unknown) => rules(validateEventEnvelope(envelope({ type: "team-updated", team }), manifest(), "event", { capabilities } as never));
+    expect(to({ team: {} })).toEqual([]);
+    expect(to({})).toEqual(["team.unentitled"]);
+    expect(check({ type: "team-updated", team })).toEqual([]);
   });
 
   it("validates each event type", () => {
@@ -391,12 +421,32 @@ describe("validateEventEnvelope", () => {
 describe("validateAuthenticationState", () => {
   const user = { id: "agent-1", displayName: "Ada" };
 
+  it("declares what the login may do by presence, on the login and nowhere else", () => {
+    // Each refusal beside the shape it must accept, in one place.
+    const login = (capabilities: unknown, status = "authenticated") => rules(validateAuthenticationState({ status, identity: user, capabilities }));
+    expect(login({})).toEqual([]);
+    expect(login(undefined)).toEqual(["authentication.capabilities.shape"]);
+    expect(login({ breaks: true })).toEqual([]);
+    expect(login({ breaks: false })).toEqual(["authentication.capability.value"]);
+    expect(login({ team: {} })).toEqual([]);
+    expect(login({ team: true })).toEqual(["authentication.capability.team.shape"]);
+    expect(login({ team: { breakControl: true } })).toEqual([]);
+    expect(login({ team: { breakControl: false } })).toEqual(["authentication.capability.value"]);
+    expect(login({ team: { placeControl: true } })).toEqual(["authentication.capability.team.unknown"]);
+    expect(login({ telepathy: true })).toEqual(["authentication.capability.unknown"]);
+    expect(login({}, "refreshing")).toEqual([]);
+    expect(login({}, "expired")).toEqual(["authentication.capabilities.unexpected"]);
+    expect(rules(validateAuthenticationState({ status: "expired", identity: user }))).toEqual([]);
+  });
+
   it("accepts each state with what it must carry", () => {
     expect(validateAuthenticationState({ status: "signed-out" })).toEqual([]);
     expect(validateAuthenticationState({ status: "authenticating" })).toEqual([]);
-    expect(validateAuthenticationState({ status: "authenticated", identity: user })).toEqual([]);
-    expect(validateAuthenticationState({ status: "authenticated", identity: user, expiresAt: "2026-08-21T10:00:00Z" })).toEqual([]);
-    expect(validateAuthenticationState({ status: "refreshing", identity: user })).toEqual([]);
+    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {} })).toEqual([]);
+    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {}, expiresAt: "2026-08-21T10:00:00Z" })).toEqual([]);
+    expect(validateAuthenticationState({ status: "refreshing", identity: user, capabilities: {} })).toEqual([]);
+    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { breaks: true, team: {} } })).toEqual([]);
+    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { breaks: true, team: { breakControl: true, consultControl: true } } })).toEqual([]);
     expect(validateAuthenticationState({ status: "expired" })).toEqual([]);
     expect(validateAuthenticationState({ status: "expired", identity: user })).toEqual([]);
   });
@@ -407,6 +457,16 @@ describe("validateAuthenticationState", () => {
     ["refreshing with no identity", { status: "refreshing" }, "authentication.identity"],
     ["an identity with no id", { status: "authenticated", identity: { displayName: "Ada" } }, "authentication.identity.id"],
     ["an identity on a signed-out state", { status: "signed-out", identity: user }, "authentication.identity.unexpected"],
+    // A usable login says what it may do, {} included; a state that is not usable has nothing to say.
+    ["authenticated with no capabilities", { status: "authenticated", identity: user }, "authentication.capabilities.shape"],
+    ["refreshing with no capabilities", { status: "refreshing", identity: user }, "authentication.capabilities.shape"],
+    ["a capability the contract lacks", { status: "authenticated", identity: user, capabilities: { telepathy: true } }, "authentication.capability.unknown"],
+    ["a capability declared false", { status: "authenticated", identity: user, capabilities: { breaks: false } }, "authentication.capability.value"],
+    ["team declared as a flag", { status: "authenticated", identity: user, capabilities: { team: true } }, "authentication.capability.team.shape"],
+    ["a team control the contract lacks", { status: "authenticated", identity: user, capabilities: { team: { placeControl: true } } }, "authentication.capability.team.unknown"],
+    ["a team control declared false", { status: "authenticated", identity: user, capabilities: { team: { breakControl: false } } }, "authentication.capability.value"],
+    ["capabilities as a flag", { status: "authenticated", identity: user, capabilities: true }, "authentication.capabilities.shape"],
+    ["capabilities on an expired state", { status: "expired", identity: user, capabilities: {} }, "authentication.capabilities.unexpected"],
     // Only an authenticated session has something to expire.
     ["an expiry on a refreshing state", { status: "refreshing", identity: user, expiresAt: "2026-08-21T10:00:00Z" }, "authentication.expiresAt.unexpected"],
     ["an expiry with no zone", { status: "authenticated", identity: user, expiresAt: "2026-08-21T10:00:00" }, "authentication.expiresAt"],
@@ -549,16 +609,26 @@ describe("consulting a lead", () => {
       .toContain("task.assisting.channel");
   });
 
-  it("puts requests on the roster only where the lead may act on them", () => {
+  it("puts requests on the roster only where the login may act on them", () => {
     const request = { id: "req-7", memberId: "A-1", taskId: "call-42", note: "Refund dispute", since: "2026-08-21T09:04:00Z" };
     const members = [{ id: "A-1", availability: "on-task" }];
-    expect(rules(validateTeamRoster({ members, consultControl: true, requests: [request] }))).toEqual([]);
-    expect(rules(validateTeamRoster({ members, consultControl: true, requests: [] }))).toEqual([]);
-    expect(rules(validateTeamRoster({ members, requests: [request] }))).toContain("team.requests.capability");
-    expect(rules(validateTeamRoster({ members, consultControl: false }))).toContain("team.consultControl");
-    expect(rules(validateTeamRoster({ members, consultControl: true, requests: [request, request] }))).toContain("team.request.unique");
-    expect(rules(validateTeamRoster({ members, consultControl: true, requests: [{ ...request, taskId: "" }] }))).toContain("team.request.taskId");
-    expect(rules(validateTeamRoster({ members, consultControl: true, requests: [{ ...request, since: "now" }] }))).toContain("team.request.since");
+    const may = { capabilities: { team: { consultControl: true as const } } };
+    const mayNot = { capabilities: { team: {} } };
+    expect(rules(validateTeamRoster({ members, requests: [request] }, "team", may))).toEqual([]);
+    expect(rules(validateTeamRoster({ members, requests: [] }, "team", may))).toEqual([]);
+    expect(rules(validateTeamRoster({ members, requests: [request] }, "team", mayNot))).toContain("team.requests.capability");
+    // And the other way: a login that may be asked always carries the list, `[]` included.
+    expect(rules(validateTeamRoster({ members }, "team", may))).toEqual(["team.requests.required"]);
+    expect(rules(validateTeamRoster({ members }, "team", mayNot))).toEqual([]);
+    // The permission is on the login, so without the login in hand neither rule is checked.
+    expect(rules(validateTeamRoster({ members, requests: [request] }))).toEqual([]);
+    expect(rules(validateTeamRoster({ members }))).toEqual([]);
+    // Through the snapshot, the path adapters actually take.
+    expect(rules(validateSnapshot(snapshot({ team: { members, requests: [request] } }), manifest(), "snapshot", mayNot))).toEqual(["team.requests.capability"]);
+    expect(rules(validateSnapshot(snapshot({ team: { members, requests: [request] } }), manifest(), "snapshot", may))).toEqual([]);
+    expect(rules(validateTeamRoster({ members, requests: [request, request] }, "team", may))).toContain("team.request.unique");
+    expect(rules(validateTeamRoster({ members, requests: [{ ...request, taskId: "" }] }, "team", may))).toContain("team.request.taskId");
+    expect(rules(validateTeamRoster({ members, requests: [{ ...request, since: "now" }] }, "team", may))).toContain("team.request.since");
   });
 
   it("accepts the left outcome, and still refuses one the contract lacks", () => {

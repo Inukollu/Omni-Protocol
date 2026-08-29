@@ -3,8 +3,12 @@
 import {
   BROWSER_ISOLATION_SCHEMES,
   OMNI_PROTOCOL_VERSION,
+  type AuthenticationState,
+  type CompleteAuthenticationResult,
   type Manifest,
+  type Snapshot,
   type Task,
+  type TeamRoster,
   type TaskBrowser,
   type TaskCommand,
 } from "./index.js";
@@ -127,3 +131,21 @@ export const leadRequestedTask = { ...emailTask, id: "call-11", channel: "voice"
 export const leadsOwnTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: {}, assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } } satisfies Task<"voice">;
 // @ts-expect-error An email task cannot be a joined call.
 export const emailAssisting: Task<"email"> = { ...emailTask, id: "email-7", assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } };
+
+// What the login may do travels with the identity, and nowhere else.
+const asha = { id: "1042", displayName: "Asha Rao" };
+export const leadLogin: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, team: { breakControl: true, consultControl: true } } };
+export const plainLogin: AuthenticationState = { status: "refreshing", identity: asha, capabilities: {} };
+// @ts-expect-error A usable login says what it may do, {} included.
+export const silentLogin: AuthenticationState = { status: "authenticated", identity: asha };
+// @ts-expect-error A state that is not usable has nothing to declare.
+export const expiredWithCapabilities: AuthenticationState = { status: "expired", identity: asha, capabilities: {} };
+export const completed: CompleteAuthenticationResult = { status: "authenticated", identity: asha, capabilities: { breaks: true } };
+// @ts-expect-error Completion says what the login may do, like the state it becomes.
+export const completedSilently: CompleteAuthenticationResult = { status: "authenticated", identity: asha };
+export const bareSnapshot: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [] };
+// @ts-expect-error Capabilities live on the login, not the snapshot.
+export const staleSnapshot: Snapshot<"voice"> = { ...bareSnapshot, sessionCapabilities: {} };
+export const roster: TeamRoster = { members: [], requests: [] };
+// @ts-expect-error What the lead may do is on the login, not the roster.
+export const rosterWithControl: TeamRoster = { members: [], breakControl: true };

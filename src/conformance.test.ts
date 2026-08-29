@@ -5,7 +5,7 @@ import {
   type Connection,
   type Manifest,
   type ProviderEventEnvelope,
-  type Snapshot,
+  type AuthenticationState, type SessionCapabilities, type Snapshot,
 } from "./index.js";
 import { ProtocolConformanceError, exerciseAdapter } from "./testing.js";
 
@@ -30,7 +30,6 @@ const conformingManifest = {
 const conformingSnapshot = {
   status: "active",
   sessionId: "session-1",
-  sessionCapabilities: { breaks: true },
   break: { approval: "not-requested", accepting: true },
   tasks: [{
     id: "call-42",
@@ -66,7 +65,6 @@ const conformingSnapshot = {
 const minimalSnapshot = {
   status: "active",
   sessionId: "session-1",
-  sessionCapabilities: {},
   break: { approval: "not-requested", accepting: true },
   tasks: [],
 } satisfies Snapshot<"voice">;
@@ -75,9 +73,13 @@ interface AdapterOverrides {
   manifest?: unknown;
   snapshot?: unknown;
   emit?: (listener: (envelope: ProviderEventEnvelope<"voice">) => void) => void;
+  /** Publishes authentication states to the harness once it subscribes to the session. */
+  emitAuthentication?: (listener: (state: AuthenticationState) => void) => void;
   /** Methods to replace, or to remove by passing `undefined`. */
   connection?: Partial<Record<keyof Connection<"voice">, unknown>>;
   authenticated?: boolean;
+  /** What the login declares. Breaks by default, so the conforming connection needs the four methods. */
+  capabilities?: SessionCapabilities;
   disconnect?: () => Promise<void>;
   close?: () => Promise<void>;
 }
@@ -86,14 +88,18 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
   const disconnect = vi.fn(overrides.disconnect ?? (async () => undefined));
   const close = vi.fn(overrides.close ?? (async () => undefined));
   const unsubscribe = vi.fn(() => undefined);
+  const unsubscribeAuthentication = vi.fn(() => undefined);
   const adapter = {
     manifest: (overrides.manifest ?? conformingManifest) as Manifest<"voice">,
     async createAuthenticationSession() {
       return {
         state: () => overrides.authenticated === false
           ? { status: "signed-out" as const }
-          : { status: "authenticated" as const, identity: { id: "1042", displayName: "Asha Rao" }, expiresAt: "2026-08-21T12:00:00Z" },
-        subscribe: () => () => undefined,
+          : { status: "authenticated" as const, identity: { id: "1042", displayName: "Asha Rao" }, capabilities: overrides.capabilities ?? { breaks: true }, expiresAt: "2026-08-21T12:00:00Z" },
+        subscribe: (listener: (state: AuthenticationState) => void) => {
+          overrides.emitAuthentication?.(listener);
+          return unsubscribeAuthentication;
+        },
         start: async () => ({ status: "rejected" as const, failure: { code: "already-authenticated", message: "Already authenticated", retryable: false } }),
         complete: async () => ({ status: "rejected" as const, failure: { code: "no-flow", message: "No authentication flow", retryable: false } }),
         cancelAuthentication: async () => ({ status: "accepted" as const }),
@@ -129,7 +135,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
       return { ...connection, ...overrides.connection } as Connection<"voice">;
     },
   } satisfies Adapter<"voice">;
-  return { adapter, disconnect, close, unsubscribe };
+  return { adapter, disconnect, close, unsubscribe, unsubscribeAuthentication };
 }
 
 const rules = async (overrides: AdapterOverrides) =>
@@ -139,12 +145,13 @@ const badEnvelope = { id: "", sessionId: "session-1", occurredAt: "not-a-time", 
 
 describe("exerciseAdapter", () => {
   it("accepts a rich conforming adapter and releases its resources", async () => {
-    const { adapter, disconnect, close, unsubscribe } = makeAdapter();
+    const { adapter, disconnect, close, unsubscribe, unsubscribeAuthentication } = makeAdapter();
     const result = await exerciseAdapter(adapter, context);
     expect(result.violations).toEqual([]);
     expect(result.disconnectWasClean).toBe(true);
     expect(result.authenticationState.status).toBe("authenticated");
     expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(unsubscribeAuthentication).toHaveBeenCalledOnce();
     expect(disconnect).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
   });
@@ -219,7 +226,6 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   // because the check fires for everyone.
   const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
   const chatSnapshot = { ...minimalSnapshot, contacts: [] } satisfies Snapshot<"chat">;
-  const withoutBreaks = { ...conformingSnapshot, sessionCapabilities: {} } satisfies Snapshot<"voice">;
 
   it("dial(), when the manifest declares dial", async () => {
     expect(await rules({ connection: { dial: undefined } })).toContain("connection.dial.required");
@@ -233,27 +239,122 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       .not.toContain("connection.openMedia.required");
   });
 
-  it("all four break methods together, when the snapshot declares breaks", async () => {
+  it("all four break methods together, when the login declares breaks", async () => {
     // Requesting without committing is the failure the guide names: a break granted that can
     // never start. Each of the four is required on its own.
     for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak"] as const) {
       expect(await rules({ connection: { [method]: undefined } })).toContain(`connection.${method}.required`);
-      expect(await rules({ snapshot: withoutBreaks, connection: { [method]: undefined } })).not.toContain(`connection.${method}.required`);
+      expect(await rules({ capabilities: {}, connection: { [method]: undefined } })).not.toContain(`connection.${method}.required`);
     }
   });
 
-  it("executeTeamBreak(), when the roster carries breakControl", async () => {
-    const lead = { ...conformingSnapshot, team: { members: [{ id: "A-2", availability: "ready" }], breakControl: true } } satisfies Snapshot<"voice">;
-    const member = { ...conformingSnapshot, team: { members: [{ id: "A-2", availability: "ready" }] } } satisfies Snapshot<"voice">;
-    expect(await rules({ snapshot: lead, connection: { executeTeamBreak: undefined } })).toContain("connection.executeTeamBreak.required");
-    expect(await rules({ snapshot: member, connection: { executeTeamBreak: undefined } })).not.toContain("connection.executeTeamBreak.required");
+  const leadSnapshot = { ...conformingSnapshot, team: { members: [{ id: "A-2", availability: "ready" }] } } satisfies Snapshot<"voice">;
+
+  it("executeTeamBreak(), when the login declares team.breakControl", async () => {
+    const deciding = { team: { breakControl: true as const } };
+    const watching = { team: {} };
+    expect(await rules({ capabilities: deciding, snapshot: leadSnapshot, connection: { executeTeamBreak: undefined } })).toContain("connection.executeTeamBreak.required");
+    expect(await rules({ capabilities: watching, snapshot: leadSnapshot, connection: { executeTeamBreak: undefined } })).not.toContain("connection.executeTeamBreak.required");
   });
 
-  it("executeTeamConsult(), when the roster carries consultControl", async () => {
-    const consulting = { ...conformingSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }], consultControl: true, requests: [] } } satisfies Snapshot<"voice">;
-    const plain = { ...conformingSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
-    expect(await rules({ snapshot: consulting, connection: { executeTeamConsult: undefined } })).toContain("connection.executeTeamConsult.required");
-    expect(await rules({ snapshot: plain, connection: { executeTeamConsult: undefined } })).not.toContain("connection.executeTeamConsult.required");
+  it("executeTeamConsult(), when the login declares team.consultControl", async () => {
+    const consulting = { team: { consultControl: true as const } };
+    const watching = { team: {} };
+    expect(await rules({ capabilities: consulting, snapshot: leadSnapshot, connection: { executeTeamConsult: undefined } })).toContain("connection.executeTeamConsult.required");
+    expect(await rules({ capabilities: watching, snapshot: leadSnapshot, connection: { executeTeamConsult: undefined } })).not.toContain("connection.executeTeamConsult.required");
+  });
+
+  it("validates every authentication state the session publishes during the run", async () => {
+    const asha = { id: "1042", displayName: "Asha Rao" };
+    const forgetful = { status: "refreshing", identity: asha } as unknown as AuthenticationState;
+    const careful = { status: "refreshing", identity: asha, capabilities: { breaks: true } } satisfies AuthenticationState;
+    expect(await rules({ emitAuthentication: publish => publish(forgetful) })).toContain("authentication.capabilities.shape");
+    expect(await rules({ emitAuthentication: publish => publish(careful) })).not.toContain("authentication.capabilities.shape");
+  });
+
+  it("keeps the login it could trust when the session publishes a broken state", async () => {
+    // A state with no identity is reported and not adopted: the roster is still checked against
+    // the lead who signed in, and the run completes instead of throwing inside a listener.
+    const roster = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "ready" }] } } satisfies Snapshot<"voice">;
+    const broken = { status: "authenticated" } as unknown as AuthenticationState;
+    const found = await rules({ capabilities: { team: {} }, snapshot: roster, emitAuthentication: publish => publish(broken) });
+    expect(found).toContain("authentication.identity");
+    expect(found).not.toContain("team.unentitled");
+    expect(await rules({ capabilities: { team: {} }, snapshot: roster })).toEqual([]);
+  });
+
+  it("holds refreshing to the login it refreshes", async () => {
+    const asha = { id: "1042", displayName: "Asha Rao" };
+    const same = { status: "refreshing", identity: asha, capabilities: { team: {} } } satisfies AuthenticationState;
+    const fewer = { status: "refreshing", identity: asha, capabilities: {} } satisfies AuthenticationState;
+    const other = { status: "refreshing", identity: { id: "A-9", displayName: "Bo" }, capabilities: { team: {} } } satisfies AuthenticationState;
+    const roster = { ...minimalSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
+    const lead = { team: {} };
+    expect(await rules({ capabilities: lead, snapshot: roster, emitAuthentication: publish => publish(same) })).toEqual([]);
+    expect(await rules({ capabilities: lead, snapshot: roster, emitAuthentication: publish => publish(fewer) })).toEqual(["authentication.refreshing.capabilities"]);
+    expect(await rules({ capabilities: lead, snapshot: roster, emitAuthentication: publish => publish(other) })).toEqual(["authentication.refreshing.identity"]);
+  });
+
+  it("requires the methods a later login grants, and reports the latest login", async () => {
+    // Signed in without breaks, then granted them after the snapshot was checked -- the grant is
+    // published from setCapacity, the last thing the harness calls -- so the four methods are
+    // required by the listener, not by the check that ran at snapshot time. The paired republish
+    // grants nothing.
+    const asha = { id: "1042", displayName: "Asha Rao" };
+    const granted = { status: "authenticated", identity: asha, capabilities: { breaks: true } } satisfies AuthenticationState;
+    const unchanged = { status: "authenticated", identity: asha, capabilities: {} } satisfies AuthenticationState;
+    const later = (state: AuthenticationState): AdapterOverrides => {
+      let publish: ((state: AuthenticationState) => void) | undefined;
+      return {
+        capabilities: {},
+        connection: {
+          requestBreak: undefined,
+          setCapacity: async () => { publish?.(state); return { status: "accepted" as const }; },
+        },
+        emitAuthentication: listener => { publish = listener; },
+      };
+    };
+    expect(await rules(later(granted))).toContain("connection.requestBreak.required");
+    expect(await rules(later(unchanged))).not.toContain("connection.requestBreak.required");
+    const overrides = later(granted);
+    const { adapter } = makeAdapter({ ...overrides, connection: { setCapacity: overrides.connection?.setCapacity } });
+    const result = await exerciseAdapter(adapter, context, { collectOnly: true });
+    expect(result.authenticationState).toMatchObject({ capabilities: {} });
+    expect(result.login).toMatchObject({ capabilities: { breaks: true } });
+  });
+
+  it("requests follow the login's consultControl both ways", async () => {
+    const members = [{ id: "A-2", availability: "on-task" as const }];
+    const request = { id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" };
+    const asking = { ...minimalSnapshot, team: { members, requests: [request] } } satisfies Snapshot<"voice">;
+    const silent = { ...minimalSnapshot, team: { members } } satisfies Snapshot<"voice">;
+    const may = { team: { consultControl: true as const } };
+    const mayNot = { team: {} };
+    expect(await rules({ capabilities: may, snapshot: asking })).toEqual([]);
+    expect(await rules({ capabilities: mayNot, snapshot: silent })).toEqual([]);
+    expect(await rules({ capabilities: mayNot, snapshot: asking })).toEqual(["team.requests.capability"]);
+    expect(await rules({ capabilities: may, snapshot: silent })).toEqual(["team.requests.required"]);
+  });
+
+  it("holds what follows to the latest login, not the one captured at sign-in", async () => {
+    // Signed in as a lead, then demoted before the snapshot: the roster on that snapshot is now
+    // published to a login that does not lead. A harness that froze the login at sign-in would
+    // pass it. The paired run republishes the same capabilities and stays clean.
+    const asha = { id: "1042", displayName: "Asha Rao" };
+    const roster = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "ready" }] } } satisfies Snapshot<"voice">;
+    const demoted = { status: "authenticated", identity: asha, capabilities: {} } satisfies AuthenticationState;
+    const unchanged = { status: "authenticated", identity: asha, capabilities: { team: {} } } satisfies AuthenticationState;
+    expect(await rules({ capabilities: { team: {} }, snapshot: roster, emitAuthentication: publish => publish(demoted) })).toContain("team.unentitled");
+    expect(await rules({ capabilities: { team: {} }, snapshot: roster, emitAuthentication: publish => publish(unchanged) })).not.toContain("team.unentitled");
+  });
+
+  it("a login that leads must publish a roster, and one that does not must not", async () => {
+    // The case a fixture cannot hide: the login says lead, and the run never saw a roster.
+    const roster = { ...minimalSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
+    expect(await rules({ capabilities: { team: {} }, snapshot: minimalSnapshot })).toContain("team.required");
+    expect(await rules({ capabilities: { team: {} }, snapshot: roster })).not.toContain("team.required");
+    expect(await rules({ capabilities: {}, snapshot: roster })).toContain("team.unentitled");
+    expect(await rules({ capabilities: {}, snapshot: minimalSnapshot })).not.toContain("team.unentitled");
   });
 
   it("nothing published to the signed-in agent may list them, on the snapshot or on a team-updated", async () => {
@@ -263,13 +364,14 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const reader = { id: "1042", availability: "on-task" } as const;
     const withColleague = { ...minimalSnapshot, team: { members: [colleague] } } satisfies Snapshot<"voice">;
     const withReader = { ...minimalSnapshot, team: { members: [colleague, reader] } } satisfies Snapshot<"voice">;
-    expect(await rules({ snapshot: withColleague })).not.toContain("team.member.self");
-    expect(await rules({ snapshot: withReader })).toContain("team.member.self");
+    const leads = { team: {} };
+    expect(await rules({ capabilities: leads, snapshot: withColleague })).not.toContain("team.member.self");
+    expect(await rules({ capabilities: leads, snapshot: withReader })).toContain("team.member.self");
     const later: ProviderEventEnvelope<"voice"> = {
       id: "evt-team", sessionId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [colleague, reader] } },
     };
-    expect(await rules({ snapshot: withColleague, emit: listener => listener(later) })).toContain("team.member.self");
+    expect(await rules({ capabilities: leads, snapshot: withColleague, emit: listener => listener(later) })).toContain("team.member.self");
   });
 
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
@@ -286,6 +388,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const bare = { ...conformingManifest, id: "acme-chat", channel: "chat", idleCapabilities: undefined } satisfies Manifest<"chat">;
     const found = await rules({
       manifest: bare,
+      capabilities: {},
       snapshot: minimalSnapshot,
       connection: {
         describeUsers: undefined, dial: undefined, requestBreak: undefined, commitBreak: undefined,
