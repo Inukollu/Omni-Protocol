@@ -40,6 +40,17 @@ assertNoViolations(violations);
 A violation carries a stable `rule` id such as `task.browser.url.scheme`, the `path` it was found
 at such as `snapshot.tasks[0].browsers[1].url`, and a `message`.
 
+One rule needs more than the object in hand. A roster never carries the agent it is published to
+— a lead does not report to themself — and a validator cannot know who that is from the roster
+alone. `validateTeamRoster`, `validateSnapshot`, and `validateEventEnvelope` each take an optional
+final `{ self }`, the signed-in agent's `AuthenticationState.identity.id`; given it, they report
+`team.member.self` and `team.request.self`. Without it that rule is not checked. `exerciseAdapter`
+always passes it.
+
+```ts
+validateSnapshot(snapshot, manifest, "snapshot", { self: authentication.identity.id });
+```
+
 ## Conformance
 
 `exerciseAdapter` validates the manifest, opens an authenticated session, connects, checks

@@ -269,6 +269,25 @@ describe("validateTeamRoster", () => {
   ])("rejects %s", (_label, value, rule) => {
     expect(rules(validateTeamRoster(value))).toContain(rule);
   });
+
+  it("rejects the agent it is published to, in members and in requests, once told who that is", () => {
+    // A lead does not report to themself. The roster below carries a colleague and the reader in
+    // both places, so the check has to pick the reader out rather than object to either list.
+    const published = {
+      members: [{ id: "A-2", availability: "ready" }, { id: "1042", availability: "on-task" }],
+      consultControl: true,
+      requests: [
+        { id: "req-1", memberId: "A-2", taskId: "call-7", since: "2026-08-21T09:00:00Z" },
+        { id: "req-2", memberId: "1042", taskId: "call-9", since: "2026-08-21T09:01:00Z" },
+      ],
+    };
+    const found = (self: string) =>
+      validateTeamRoster(published, "team", { self }).map(violation => `${violation.rule} at ${violation.path}`).sort();
+    expect(found("1042")).toEqual(["team.member.self at team.members[1].id", "team.request.self at team.requests[1].memberId"]);
+    // A colleague is not the reader, and without a reader there is nothing to compare against.
+    expect(found("A-9")).toEqual([]);
+    expect(validateTeamRoster(published)).toEqual([]);
+  });
 });
 
 describe("validateSnapshot", () => {
@@ -286,6 +305,12 @@ describe("validateSnapshot", () => {
     ["two tasks with one id", snapshot({ tasks: [task(), task()] }), "task.id.unique"],
   ])("rejects %s", (_label, value, rule) => {
     expect(rules(validateSnapshot(value, manifest()))).toContain(rule);
+  });
+
+  it("carries the reader into the roster", () => {
+    const team = { members: [{ id: "A-2", availability: "ready" }, { id: "1042", availability: "ready" }] };
+    expect(rules(validateSnapshot(snapshot({ team }), manifest(), "snapshot", { self: "1042" }))).toEqual(["team.member.self"]);
+    expect(rules(validateSnapshot(snapshot({ team }), manifest(), "snapshot", { self: "A-9" }))).toEqual([]);
   });
 
   it("refuses data the manifest never declared a capability for", () => {
@@ -311,6 +336,16 @@ describe("validateEventEnvelope", () => {
     // attributed to the login it belongs to.
     expect(check({ type: "provider-status", status: "active" }, { sessionId: "" })).toContain("event.sessionId");
     expect(check({ type: "provider-status", status: "active" })).toEqual([]);
+  });
+
+  it("carries the reader into a team-updated and into a reconnect snapshot", () => {
+    const team = { members: [{ id: "A-2", availability: "ready" }, { id: "1042", availability: "ready" }] };
+    const withReader = (event: unknown, self: string) =>
+      rules(validateEventEnvelope(envelope(event), manifest(), "event", { self }));
+    expect(withReader({ type: "team-updated", team }, "1042")).toEqual(["team.member.self"]);
+    expect(withReader({ type: "team-updated", team }, "A-9")).toEqual([]);
+    expect(withReader({ type: "snapshot", reason: "reconnected", snapshot: snapshot({ team }) }, "1042")).toEqual(["team.member.self"]);
+    expect(withReader({ type: "snapshot", reason: "reconnected", snapshot: snapshot({ team }) }, "A-9")).toEqual([]);
   });
 
   it("validates each event type", () => {

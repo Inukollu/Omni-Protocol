@@ -256,6 +256,22 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ snapshot: plain, connection: { executeTeamConsult: undefined } })).not.toContain("connection.executeTeamConsult.required");
   });
 
+  it("nothing published to the signed-in agent may list them, on the snapshot or on a team-updated", async () => {
+    // The stub authenticates as 1042. A colleague alone passes; the reader beside them fails —
+    // and fails just the same when the roster arrives after a clean connect snapshot.
+    const colleague = { id: "A-2", availability: "ready" } as const;
+    const reader = { id: "1042", availability: "on-task" } as const;
+    const withColleague = { ...minimalSnapshot, team: { members: [colleague] } } satisfies Snapshot<"voice">;
+    const withReader = { ...minimalSnapshot, team: { members: [colleague, reader] } } satisfies Snapshot<"voice">;
+    expect(await rules({ snapshot: withColleague })).not.toContain("team.member.self");
+    expect(await rules({ snapshot: withReader })).toContain("team.member.self");
+    const later: ProviderEventEnvelope<"voice"> = {
+      id: "evt-team", sessionId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
+      event: { type: "team-updated", team: { members: [colleague, reader] } },
+    };
+    expect(await rules({ snapshot: withColleague, emit: listener => listener(later) })).toContain("team.member.self");
+  });
+
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
     // The conforming snapshot names A-1 in a handling step; a roster and an imposed break count too.
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
