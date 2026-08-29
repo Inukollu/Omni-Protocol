@@ -11,6 +11,7 @@ import {
   OMNI_PROTOCOL_VERSION,
   OMNI_SUPPORTED_PROTOCOL_VERSIONS,
   browserSessionKey,
+  sameCapabilities,
   defineAdapter,
   handlingStepExpectsAPerson,
   isAllowedBrowserUrl,
@@ -186,6 +187,19 @@ describe("Omni protocol", () => {
     expect(result.violations).toEqual([]);
     expect(result.events.map(item => item.event)).toEqual([{ type: "provider-status", status: "active" }]);
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+});
+
+describe("sameCapabilities", () => {
+  it("compares field by field, whatever the key order, and tells {} from absent", () => {
+    expect(sameCapabilities({ breaks: true, team: { breakControl: true } }, { team: { breakControl: true }, breaks: true })).toBe(true);
+    expect(sameCapabilities({}, {})).toBe(true);
+    expect(sameCapabilities({ team: {} }, { team: {} })).toBe(true);
+    // Each field on its own moves the answer: a lead with no controls is still a lead.
+    expect(sameCapabilities({ team: {} }, {})).toBe(false);
+    expect(sameCapabilities({ breaks: true }, {})).toBe(false);
+    expect(sameCapabilities({ team: { breakControl: true } }, { team: {} })).toBe(false);
+    expect(sameCapabilities({ team: { consultControl: true } }, { team: { breakControl: true } })).toBe(false);
   });
 });
 

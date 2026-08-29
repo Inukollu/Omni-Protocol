@@ -1,5 +1,6 @@
 import {
   browserSessionKey,
+  sameCapabilities,
   type Adapter,
   type AuthenticationState,
   type ProviderEventEnvelope,
@@ -323,12 +324,6 @@ function publishesUserIds(snapshot: Snapshot | undefined): boolean {
   return snapshot.tasks.some(task =>
     Array.isArray(task?.handlingHistory) && task.handlingHistory.some(step => step?.by !== undefined));
 }
-
-const sameCapabilities = (a: SessionCapabilities, b: SessionCapabilities): boolean =>
-  a.breaks === b.breaks &&
-  (a.team === undefined) === (b.team === undefined) &&
-  a.team?.breakControl === b.team?.breakControl &&
-  a.team?.consultControl === b.team?.consultControl;
 
 /**
  * `refreshing` carries the identity and capabilities of the login it refreshes. A change to

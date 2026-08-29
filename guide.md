@@ -1352,7 +1352,7 @@ them from what arrives later.
 | --- | --- |
 | `breaks` | This login may request a break. Requires the four break methods on the connection. |
 | `team` | This login leads a team. The provider publishes a `TeamRoster` to it on every snapshot — `[]` when nobody is in it — and to nobody else. |
-| `team.breakControl` | This lead decides their team's breaks. Requires `executeTeamBreak`. |
+| `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — place, release, decide, set policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-decision`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
 | `team.consultControl` | This lead may join a member's call on request. Requires `executeTeamConsult`. |
 
 A session action is available only when both the capability and Omni provisioning permit it.
@@ -1366,7 +1366,10 @@ roster arrives, and nothing for anybody else — and withdraws it on the next re
 capability goes. A command that arrives after its capability was withdrawn is answered `failed`
 with `omni.capability-not-enabled`: the provider names it, so Omni never has to infer from a
 capability change it may not have rendered yet that "you are no longer a lead" is the message
-rather than "that did not work".
+rather than "that did not work". One trap for adapter authors: the natural guard on a republish
+compares the identity, and a demotion does not touch it — compare the capabilities, field by
+field, which is what `sameCapabilities()` does. The thing that changed is not the thing you are
+comparing, and `assertCapabilityWithdrawal` is the test that catches a guard which never fires.
 
 ### Starting authentication
 
@@ -3138,6 +3141,12 @@ Use it for every `UserId` — `handlingHistory[].by`, roster members, `memberId`
 lead command, `ImposedBreak.by`. A bare one is only ever compared against another from the **same** provider; anything
 wider goes through this key.
 
+### `sameCapabilities(a, b)`
+
+Whether two logins declare the same capabilities, field by field — key order aside, and with
+`team: {}` distinct from `team` absent. It is the comparison an adapter makes before republishing
+`authenticated`, and the one `exerciseAdapter` holds `refreshing` to.
+
 ## Runtime validation
 
 Structural rules in this document are executable through the runtime validators Omni applies to
@@ -3233,7 +3242,7 @@ cannot be established from TypeScript structure alone.
 | Helper | Contract checked |
 | --- | --- |
 | `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no roster for a login that no longer leads, no requests for one that may no longer join. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
-| `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. |
+| `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. The same assertion serves a command the provider never supported under a capability it declares. |
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |

@@ -190,7 +190,11 @@ export interface AuthenticationFailure {
 
 /** What a lead may do with their team. Declared by presence. */
 export interface TeamCapabilities {
-  /** This lead decides their team's breaks. Requires `executeTeamBreak`. */
+  /**
+   * This lead may act on their team's breaks through `executeTeamBreak` -- place, release, decide,
+   * set policy -- as far as the provider supports; a command it lacks answers
+   * `omni.capability-not-enabled`. Requires `executeTeamBreak`.
+   */
   breakControl?: true;
   /** This lead may join a member's call on request. Requires `executeTeamConsult`. */
   consultControl?: true;
@@ -1024,6 +1028,19 @@ export interface BrowserSessionKeyInput {
   /** `Task.taskType`. */
   taskType: string;
   browser: TaskBrowser;
+}
+
+/**
+ * Whether two logins declare the same capabilities, field by field. The comparison an adapter
+ * makes before republishing `authenticated`: capabilities are current, not fixed, and the natural
+ * guard -- comparing the identity -- never fires on a demotion, because the thing that changed is
+ * not the thing being compared. Key order does not matter, and `team: {}` is not `team` absent.
+ */
+export function sameCapabilities(a: SessionCapabilities, b: SessionCapabilities): boolean {
+  return a.breaks === b.breaks &&
+    (a.team === undefined) === (b.team === undefined) &&
+    a.team?.breakControl === b.team?.breakControl &&
+    a.team?.consultControl === b.team?.consultControl;
 }
 
 /**
