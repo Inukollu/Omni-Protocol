@@ -6,7 +6,7 @@ import {
   validateAuthenticationState,
   validateContact,
   validateEventEnvelope,
-  validateHostMediaState,
+  validateHostReport,
   validateManifest,
   validateScheduledActivity,
   validateSnapshot,
@@ -443,20 +443,46 @@ describe("validateEventEnvelope", () => {
   });
 });
 
-describe("validateHostMediaState", () => {
+describe("validateHostReport", () => {
   const microphone = { id: "mic" };
   const failure = { code: "host.permission-denied", message: "Microphone access was refused", retryable: true };
+  const ready = { status: "ready", localAudio: microphone, flowing: true };
+  const denied = { status: "unavailable", reason: "denied", failure };
+  const audio = (input: unknown, output: unknown = { status: "ready" }) => rules(validateHostReport({ online: true, audio: { input, output } }));
 
-  it("accepts each state with what it carries and refuses the rest", () => {
-    expect(rules(validateHostMediaState({ status: "ready", localAudio: microphone }))).toEqual([]);
-    expect(rules(validateHostMediaState({ status: "unavailable", failure }))).toEqual([]);
-    expect(rules(validateHostMediaState({ status: "ready" }))).toEqual(["media.localAudio"]);
-    expect(rules(validateHostMediaState({ status: "ready", localAudio: microphone, failure }))).toEqual(["media.failure.unexpected"]);
-    expect(rules(validateHostMediaState({ status: "unavailable" }))).toEqual(["media.failure.required"]);
-    expect(rules(validateHostMediaState({ status: "unavailable", failure: { code: "x" } }))).toEqual(["failure.message", "failure.retryable"]);
-    expect(rules(validateHostMediaState({ status: "unavailable", failure, localAudio: microphone }))).toEqual(["media.localAudio.unexpected"]);
-    expect(rules(validateHostMediaState({ status: "muted" }))).toEqual(["media.status"]);
-    expect(rules(validateHostMediaState("ready"))).toEqual(["media.shape"]);
+  it("accepts a report with and without audio, and holds each part to its shape", () => {
+    expect(rules(validateHostReport({ online: true }))).toEqual([]);
+    expect(rules(validateHostReport({ online: false }))).toEqual([]);
+    expect(rules(validateHostReport({}))).toEqual(["host.online"]);
+    expect(rules(validateHostReport("online"))).toEqual(["host.shape"]);
+    expect(rules(validateHostReport({ online: true, audio: "ready" }))).toEqual(["host.audio.shape"]);
+    expect(audio(ready)).toEqual([]);
+    expect(audio({ ...ready, flowing: false })).toEqual([]);
+    expect(audio(denied)).toEqual([]);
+    expect(audio(ready, { status: "unavailable", reason: "no-device", failure })).toEqual([]);
+    for (const reason of ["no-device", "denied", "not-asked", "in-use", "lost"]) expect(audio({ ...denied, reason })).toEqual([]);
+  });
+
+  it("refuses an input or output that carries the wrong things", () => {
+    expect(audio({ status: "ready", flowing: true })).toEqual(["host.audio.input.localAudio"]);
+    expect(audio({ status: "ready", localAudio: microphone })).toEqual(["host.audio.input.flowing"]);
+    expect(audio({ ...ready, failure })).toEqual(["host.audio.input.failure.unexpected"]);
+    expect(audio({ ...ready, reason: "lost" })).toEqual(["host.audio.input.reason.unexpected"]);
+    expect(audio({ ...denied, flowing: true })).toEqual(["host.audio.input.flowing.unexpected"]);
+    expect(audio(ready, { status: "ready", reason: "no-device" })).toEqual(["host.audio.output.reason.unexpected"]);
+    expect(audio({ status: "unavailable", failure })).toEqual(["host.audio.input.reason"]);
+    expect(audio({ status: "unavailable", reason: "broken", failure })).toEqual(["host.audio.input.reason"]);
+    expect(audio({ status: "unavailable", reason: "lost" })).toEqual(["host.audio.input.failure.required"]);
+    expect(audio({ ...denied, failure: { code: "x" } })).toEqual(["failure.message", "failure.retryable"]);
+    expect(audio({ ...denied, localAudio: microphone })).toEqual(["host.audio.input.localAudio.unexpected"]);
+    expect(audio({ status: "muted" })).toEqual(["host.audio.input.status"]);
+    expect(audio(undefined)).toEqual(["host.audio.input.shape"]);
+    expect(audio(ready, { status: "ready", failure })).toEqual(["host.audio.output.failure.unexpected"]);
+    expect(audio(ready, { status: "unavailable", reason: "no-device" })).toEqual(["host.audio.output.failure.required"]);
+    expect(audio(ready, { status: "unavailable", failure })).toEqual(["host.audio.output.reason"]);
+    expect(audio(ready, { status: "unavailable", reason: "denied", failure })).toEqual(["host.audio.output.reason"]);
+    expect(audio(ready, { status: "silent" })).toEqual(["host.audio.output.status"]);
+    expect(rules(validateHostReport({ online: true, audio: { input: ready } }))).toEqual(["host.audio.output.shape"]);
   });
 });
 

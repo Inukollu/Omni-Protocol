@@ -5,11 +5,16 @@ import {
   type Connection,
   type Manifest,
   type ProviderEventEnvelope,
-  type AuthenticationState, type HostMedia, type HostMediaState, type SessionCapabilities, type Snapshot,
+  type AuthenticationState, type Host, type HostReport, type SessionCapabilities, type Snapshot,
 } from "./index.js";
-import { ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject } from "./testing.js";
+import { ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject , stillHost } from "./testing.js";
 
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1" };
+/** A voice host with everything working: the microphone captured and flowing, a speaker present. */
+const speaking: HostReport = { online: true, audio: { input: { status: "ready", localAudio: {} as MediaStream, flowing: true }, output: { status: "ready" } } };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1", host: stillHost(speaking) };
+/** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
+const hostFor = (manifest: unknown): Host =>
+  stillHost((manifest as { channel?: string } | undefined)?.channel === "voice" ? speaking : { online: true });
 
 const conformingManifest = {
   id: "acme-voice",
@@ -76,6 +81,10 @@ interface AdapterOverrides {
   manifest?: unknown;
   snapshot?: unknown;
   emit?: (listener: (envelope: ProviderEventEnvelope<"voice">) => void) => void;
+  /** Replaces connect() entirely, for an adapter that cannot connect. */
+  connect?: () => Promise<never>;
+  /** An adapter that never asks the host anything. */
+  ignoresHost?: boolean;
   /** Publishes authentication states to the harness once it subscribes to the session. */
   emitAuthentication?: (listener: (state: AuthenticationState) => void) => void;
   /** Methods to replace, or to remove by passing `undefined`. */
@@ -110,7 +119,10 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         close,
       };
     },
-    async connect() {
+    async connect(connectContext) {
+      if (overrides.connect !== undefined) return overrides.connect();
+      // A voice adapter consults the host before it declares the agent ready to its platform.
+      if (overrides.ignoresHost !== true) connectContext.host.report();
       const connection: Connection<"voice"> = {
         snapshot: async () => {
           // Give any queued asynchronous emission a chance to land before shutdown.
@@ -142,7 +154,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
 }
 
 const rules = async (overrides: AdapterOverrides) =>
-  (await exerciseAdapter(makeAdapter(overrides).adapter, context, { collectOnly: true })).violations.map(violation => violation.rule);
+  (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, host: hostFor(overrides.manifest ?? conformingManifest) }, { collectOnly: true })).violations.map(violation => violation.rule);
 
 const badEnvelope = { id: "", sessionId: "session-1", occurredAt: "not-a-time", event: { type: "provider-status", status: "active" } } as unknown as ProviderEventEnvelope<"voice">;
 
@@ -461,24 +473,65 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ emit: listener => listener(ended("call-99")) })).toEqual([]);
   });
 
-  it("validates the host media a test hands the adapter, first and later, and lets go of it", async () => {
-    // A malformed host state is a host that cannot exist; the harness says so rather than let
+  it("validates the host report a test hands the adapter, first and later, and lets go of it", async () => {
+    // A malformed host report is a host that cannot exist; the harness says so rather than let
     // an adapter pass against it.
     const microphone = { id: "mic" } as unknown as MediaStream;
     const failure = { code: "host.permission-denied", message: "Microphone access was refused", retryable: true };
     const unsubscribe = vi.fn(() => undefined);
-    const media = (first: unknown, later?: unknown): HostMedia => ({
-      state: () => first as HostMediaState,
-      subscribe: listener => { if (later !== undefined) listener(later as HostMediaState); return unsubscribe; },
+    const host = (first: unknown, later?: unknown): Host => ({
+      report: () => first as HostReport,
+      subscribe: listener => { if (later !== undefined) listener(later as HostReport); return unsubscribe; },
     });
-    const run = async (hostMedia: HostMedia) =>
-      (await exerciseAdapter(makeAdapter().adapter, { ...context, media: hostMedia }, { collectOnly: true })).violations.map(violation => violation.rule);
-    expect(await run(media({ status: "ready", localAudio: microphone }))).toEqual([]);
-    expect(await run(media({ status: "unavailable", failure }))).toEqual([]);
-    expect(await run(media({ status: "ready" }))).toEqual(["media.localAudio"]);
-    expect(await run(media({ status: "ready", localAudio: microphone }, { status: "unavailable" }))).toEqual(["media.failure.required"]);
+    const run = async (h: Host) =>
+      (await exerciseAdapter(makeAdapter().adapter, { ...context, host: h }, { collectOnly: true })).violations.map(violation => violation.rule);
+    const speaking = { online: true, audio: { input: { status: "ready", localAudio: microphone, flowing: true }, output: { status: "ready" } } };
+    expect(await run(host(speaking))).toEqual([]);
+    expect(await run(host({ online: true, audio: { input: { status: "unavailable", reason: "denied", failure }, output: { status: "ready" } } }))).toEqual([]);
+    expect(await run(host({ online: true, audio: { input: { status: "ready", flowing: true }, output: { status: "ready" } } }))).toEqual(["host.audio.input.localAudio"]);
+    expect(await run(host(speaking, { online: "yes" }))).toEqual(["host.online"]);
     expect(unsubscribe).toHaveBeenCalledTimes(4);
     expect(await rules({})).toEqual([]);
+  });
+
+  it("gives a voice connection a host with audio and no other, and refuses an adapter that never asked", async () => {
+    const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
+    const chatSnapshot = { ...minimalSnapshot, contacts: [] } satisfies Snapshot<"chat">;
+    const run = async (overrides: AdapterOverrides, host: Host) =>
+      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, host }, { collectOnly: true })).violations.map(violation => violation.rule);
+    expect(await run({}, stillHost(speaking))).toEqual([]);
+    expect(await run({}, stillHost({ online: true }))).toEqual(["context.host.audio.required"]);
+    const chat = { manifest: chatManifest, snapshot: chatSnapshot, connection: { openMedia: undefined, dial: undefined } };
+    expect(await run(chat, stillHost({ online: true }))).toEqual([]);
+    expect(await run(chat, stillHost(speaking))).toEqual(["context.host.audio.unexpected"]);
+    // The obligation: a voice adapter asks. A chat adapter has nothing to ask about and is not held to it.
+    expect(await rules({ ignoresHost: true })).toEqual(["connection.host.consulted"]);
+    expect(await rules({ ...chat, ignoresHost: true })).toEqual([]);
+  });
+
+  it("releases the host subscription when connect itself throws", async () => {
+    const unsubscribe = vi.fn(() => undefined);
+    const host: Host = { report: () => speaking, subscribe: () => unsubscribe };
+    await expect(exerciseAdapter(makeAdapter({ connect: async () => { throw new Error("no transport"); } }).adapter, { ...context, host }, { collectOnly: true })).rejects.toThrow(/no transport/);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("holds the break's moves to where it stood, from the connect snapshot on", async () => {
+    // The conforming snapshot stands at not-requested: a grant may follow, a commit's state may not.
+    const at = "2026-08-21T09:05:00Z";
+    const moved = (approval: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${approval}`, sessionId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, accepting: true } } }) as ProviderEventEnvelope<"voice">;
+    const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
+      let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
+      return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { deliver?.(envelope); return { status: "accepted" as const }; } } };
+    };
+    expect(await rules(after(moved("granted")))).toEqual([]);
+    expect(await rules(after(moved("in-effect")))).toEqual(["stream.breakState.commitBeforeGrant"]);
+    // And backwards, through the harness: granted, in effect, then granted again.
+    const both = (...envelopes: ProviderEventEnvelope<"voice">[]): AdapterOverrides => {
+      let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
+      return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { envelopes.forEach(envelope => deliver?.(envelope)); return { status: "accepted" as const }; } } };
+    };
+    expect(await rules(both(moved("granted"), moved("in-effect"), { ...moved("granted"), id: "evt-again" }))).toEqual(["stream.breakState.backwards"]);
   });
 
   it("holds the snapshot and every event to the login's session", async () => {

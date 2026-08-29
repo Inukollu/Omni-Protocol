@@ -5,7 +5,7 @@ import {
   OMNI_PROTOCOL_VERSION,
   type AuthenticationState,
   type CompleteAuthenticationResult,
-  type HostMediaState,
+  type HostReport,
   type OpenMediaRequest,
   type Manifest,
   type Snapshot,
@@ -152,8 +152,9 @@ export const roster: TeamRoster = { members: [], requests: [] };
 // @ts-expect-error What the lead may do is on the login, not the roster.
 export const rosterWithControl: TeamRoster = { members: [], breakControl: true };
 
-// The host facilitates the microphone; a request may lack it, and a ready state may not.
+// The host reports; a request may lack the microphone, and a ready input may not.
 export const openWithoutHostAudio: OpenMediaRequest = { taskId: "call-42" };
-export const hostAudioMissing: HostMediaState = { status: "unavailable", failure: { code: "host.no-device", message: "No microphone", retryable: true } };
-// @ts-expect-error A ready host carries the microphone it captured.
-export const readyWithoutAudio: HostMediaState = { status: "ready" };
+export const noMicrophone: HostReport = { online: true, audio: { input: { status: "unavailable", reason: "in-use", failure: { code: "host.in-use", message: "Another application holds the microphone", retryable: true } }, output: { status: "unavailable", reason: "no-device", failure: { code: "host.no-speaker", message: "No speaker", retryable: true } } } };
+export const noAudioHere: HostReport = { online: true };
+// @ts-expect-error A ready input carries the microphone it captured and says whether audio flows.
+export const readyWithoutAudio: HostReport = { online: true, audio: { input: { status: "ready" }, output: { status: "ready" } } };

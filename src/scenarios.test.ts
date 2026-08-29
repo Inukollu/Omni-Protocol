@@ -3,6 +3,7 @@ import {
   BROWSER_ISOLATION_SCHEMES,
   browserSessionKey,
   type AuthenticationState,
+  type BreakApproval,
   type Manifest,
   type ProviderEventEnvelope,
   type Snapshot,
@@ -15,6 +16,7 @@ import {
   assertCapabilityWithdrawal,
   assertCommandRefusedAfterWithdrawal,
   assertBreakBeginsAfterTask,
+  assertBreakFollowsItsRequests,
   assertBreakParticipants,
   assertMediaFollowsTheTask,
   assertDeniedAndRetriedBreak,
@@ -190,6 +192,44 @@ describe("assertReconnectWithMissedAssignments", () => {
 
   it("rejects an event that is not a reconnect snapshot", () => {
     expect(() => assertReconnectWithMissedAssignments(before, statusEvent, [])).toThrow(/requires a reconnected snapshot/);
+  });
+});
+
+describe("assertBreakFollowsItsRequests", () => {
+  const at = "2026-08-21T09:00:00Z";
+  const state = (approval: BreakApproval, over: Record<string, unknown> = {}, id: string = approval): ProviderEventEnvelope<"voice"> =>
+    ({ id, sessionId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, accepting: true, ...over } } }) as ProviderEventEnvelope<"voice">;
+  const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
+  const idle: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [] };
+
+  it("accepts every move the guide describes", () => {
+    // Asked, decided, committed while working, begun when the work ended, ended.
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("granted"), state("starting-after-task"), state("in-effect"), state("not-requested")], idle))).toEqual([]);
+    // Granted at once and committed with nothing outstanding; denied; cancelled after a grant.
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("in-effect"), state("not-requested")], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("not-requested")], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("not-requested")], idle))).toEqual([]);
+    // Placed on the agent: in effect with nobody asking, and it says so -- or starting after the
+    // call the member is on, which is the same placing reported while the work finishes.
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect", { imposed: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task", { imposed: { by: "M-1", endsAutomatically: false } }), state("in-effect", { imposed: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
+    // A reconnect snapshot resets where the break stands; the same state twice is nothing.
+    const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", sessionId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { approval: "granted", accepting: true } } } };
+    expect(rulesOf(() => assertBreakFollowsItsRequests([reconnect, state("starting-after-task"), state("starting-after-task", {}, "again")], idle))).toEqual([]);
+    // Without a beginning, the first state is taken as it comes.
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect")]))).toEqual([]);
+  });
+
+  it("refuses a commit's states with no grant behind them", () => {
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("in-effect")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
+  });
+
+  it("refuses a break that goes backwards", () => {
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("in-effect"), state("granted", {}, "g2")], idle))).toEqual(["stream.breakState.backwards"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("starting-after-task"), state("awaiting-decision")], idle))).toEqual(["stream.breakState.backwards"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("awaiting-decision")], idle))).toEqual(["stream.breakState.backwards"]);
   });
 });
 

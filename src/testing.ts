@@ -11,6 +11,8 @@ import {
   type BrowserSessionKeyInput,
   type Channel,
   type ConnectContext,
+  type Host,
+  type HostReport,
   type Manifest,
   type ProviderEvent,
   type SessionCapabilities,
@@ -19,7 +21,7 @@ import {
   assertNoViolations,
   validateAuthenticationState,
   validateEventEnvelope,
-  validateHostMediaState,
+  validateHostReport,
   validateManifest,
   validateResult,
   validateSnapshot,
@@ -177,6 +179,7 @@ export async function exerciseAdapter<C extends Channel>(
   const events: ProviderEventEnvelope<C>[] = [];
   const seen = new Set<ContractSubject>();
   const stream = new TaskStream();
+  const breaks = new BreakStream();
   let seeded = false;
 
   const storedSecrets = new Map<string, string>();
@@ -192,7 +195,7 @@ export async function exerciseAdapter<C extends Channel>(
   let connection: Connection<C> | undefined;
   let unsubscribe: (() => void) | undefined;
   let unsubscribeAuthentication: (() => void) | undefined;
-  let unsubscribeMedia: (() => void) | undefined;
+  let unsubscribeHost: (() => void) | undefined;
   let authenticationState: AuthenticationState | undefined;
   let login: Login | undefined;
   let disconnectWasClean = false;
@@ -263,16 +266,29 @@ export async function exerciseAdapter<C extends Channel>(
       }
     });
 
-    // The host's media is Omni's output, and a test that hands the adapter a malformed one is
-    // testing a host that cannot exist. Its first state and every later one are validated.
-    if (context.media !== undefined) {
-      violations.push(...validateHostMediaState(context.media.state(), "context.media"));
-      unsubscribeMedia = context.media.subscribe(state => {
-        violations.push(...validateHostMediaState(state, "context.media"));
-      });
+    // The host's report is Omni's output, and a test that hands the adapter a malformed one is
+    // testing a host that cannot exist. Its first report and every later one are validated, a
+    // voice connection's host reports its audio and no other does, and the host the adapter
+    // receives is wrapped so the harness can tell whether the adapter ever asked.
+    const first = context.host.report();
+    violations.push(...validateHostReport(first, "context.host"));
+    const hasAudio = isRecord(first) && first.audio !== undefined;
+    if (adapter.manifest.channel === "voice" && !hasAudio) {
+      violations.push({ rule: "context.host.audio.required", path: "context.host.audio", message: "a voice connection's host reports its audio" });
     }
+    if (adapter.manifest.channel !== "voice" && hasAudio) {
+      violations.push({ rule: "context.host.audio.unexpected", path: "context.host.audio", message: `a ${adapter.manifest.channel} connection has no audio for the host to report` });
+    }
+    unsubscribeHost = context.host.subscribe(report => {
+      violations.push(...validateHostReport(report, "context.host"));
+    });
+    let consulted = false;
+    const host: Host = {
+      report: () => { consulted = true; return context.host.report(); },
+      subscribe: listener => { consulted = true; return context.host.subscribe(listener); },
+    };
 
-    connection = await adapter.connect(context);
+    connection = await adapter.connect({ ...context, host });
     const live = connection;
     // Dial is declared by presence: the capability object carries a destination policy rather
     // than an `enabled` flag, so its presence is the declaration.
@@ -286,7 +302,7 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader()));
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
       // Cross-event rules apply once the stream has a beginning: the connect snapshot.
-      if (seeded) violations.push(...stream.apply(envelope));
+      if (seeded) violations.push(...stream.apply(envelope), ...breaks.apply(envelope));
       if (typeof envelope?.id === "string") {
         if (eventIds.has(envelope.id)) return;
         eventIds.add(envelope.id);
@@ -298,12 +314,22 @@ export async function exerciseAdapter<C extends Channel>(
     observeSnapshot(snapshot, seen);
     violations.push(...validateSnapshot(snapshot, adapter.manifest, "snapshot", reader()));
     stream.seed(snapshot);
+    breaks.seed(snapshot);
     seeded = true;
     requireCapabilityMethods(live, current().capabilities);
     if (publishesUserIds(snapshot)) requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
 
     // Capacity is stated, not requested: nothing may be allocated until it is, so a connection
     // that will not accept one is a connection nothing can be given to.
+    // The guide's obligation on a voice adapter: consult the host before declaring the agent
+    // ready, and on every change. An adapter that never asked cannot have.
+    if (adapter.manifest.channel === "voice" && !consulted) {
+      violations.push({
+        rule: "connection.host.consulted",
+        path: "connection.host",
+        message: "a voice adapter consults the host's report before declaring the agent ready, and this one never asked",
+      });
+    }
     const capacity = await connection.setCapacity({ count: 1 });
     const malformed = validateResult(capacity, "setCapacity", "connection.setCapacity");
     violations.push(...malformed);
@@ -319,7 +345,7 @@ export async function exerciseAdapter<C extends Channel>(
     let clean = true;
     try { unsubscribe?.(); } catch { clean = false; }
     try { unsubscribeAuthentication?.(); } catch { clean = false; }
-    try { unsubscribeMedia?.(); } catch { clean = false; }
+    try { unsubscribeHost?.(); } catch { clean = false; }
     try { await connection?.disconnect(); } catch { clean = false; }
     try { await authentication.close(); } catch { clean = false; }
     disconnectWasClean = clean;
@@ -654,6 +680,71 @@ export class TaskStream {
   }
 }
 
+// A request goes not-requested -> awaiting-decision | granted; a commit goes granted ->
+// starting-after-task | in-effect; work ending goes starting-after-task -> in-effect; a denial,
+// a cancel, an end or a release goes back to not-requested; a placed break arrives in-effect
+// with `imposed`. Nothing else is a move the guide describes.
+const COMMITTED = new Set(["starting-after-task", "in-effect"]);
+const BACKWARDS: Record<string, readonly string[]> = {
+  "in-effect": ["awaiting-decision", "granted", "starting-after-task"],
+  "starting-after-task": ["awaiting-decision", "granted"],
+  granted: ["awaiting-decision"],
+};
+
+/** What a stream has said about the agent's break, and the moves it may not make. */
+export class BreakStream {
+  private approval: string | undefined;
+
+  /** Takes the break state a snapshot carries as the point the stream continues from. */
+  seed(snapshot: unknown): void {
+    const state = isRecord(snapshot) ? snapshot.break : undefined;
+    this.approval = isRecord(state) && typeof state.approval === "string" ? state.approval : undefined;
+  }
+
+  /** Applies one envelope and returns the moves it may not make given where the break stood. */
+  apply(envelope: unknown, path = "event"): ProtocolViolation[] {
+    const found: ProtocolViolation[] = [];
+    const event = isRecord(envelope) ? envelope.event : undefined;
+    if (!isRecord(event)) return found;
+    if (event.type === "snapshot") {
+      this.seed(event.snapshot);
+      return found;
+    }
+    if (event.type !== "break-state" || !isRecord(event.break) || typeof event.break.approval !== "string") return found;
+    const from = this.approval;
+    const to = event.break.approval;
+    const at = `${path}.event.break.approval`;
+    if (from !== undefined) {
+      // A commit's states need a grant behind them. A placed break is the one arrival in a
+      // committed state that nobody asked for -- in effect at once, or starting-after-task while
+      // the member finishes a call -- and it says so with `imposed`.
+      if (COMMITTED.has(to) && (from === "not-requested" || from === "awaiting-decision") && event.break.imposed === undefined) {
+        found.push({ rule: "stream.breakState.commitBeforeGrant", path: at,
+          message: `${to} follows a commit, and a commit follows granted; the break stood at ${from}` });
+      }
+      if ((BACKWARDS[from] ?? []).includes(to)) {
+        found.push({ rule: "stream.breakState.backwards", path: at,
+          message: `a break does not go from ${from} back to ${to}; a new request passes through not-requested` });
+      }
+    }
+    this.approval = to;
+    return found;
+  }
+}
+
+/**
+ * A break follows its requests. Given a provider's stream -- optionally seeded with the snapshot
+ * it began from -- every `break-state` moves the way the guide describes: a commit's states only
+ * after a grant, never backwards, and a break placed on the agent arriving in effect with `imposed`.
+ */
+export function assertBreakFollowsItsRequests(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
+  const stream = new BreakStream();
+  if (snapshot !== undefined) stream.seed(snapshot);
+  const found: ProtocolViolation[] = [];
+  envelopes.forEach((envelope, index) => found.push(...stream.apply(envelope, `envelopes[${index}]`)));
+  assertNoViolations(found, "A break follows its requests");
+}
+
 /**
  * The media follows the task and never decides it. Given a provider's stream -- optionally seeded
  * with the snapshot it began from -- every task is introduced once, `task-media-ended` names a
@@ -665,6 +756,11 @@ export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvel
   const found: ProtocolViolation[] = [];
   envelopes.forEach((envelope, index) => found.push(...stream.apply(envelope, `envelopes[${index}]`)));
   assertNoViolations(found, "The media follows the task");
+}
+
+/** A host that reports one thing and never changes: what most adapter tests hand `exerciseAdapter`. */
+export function stillHost(report: HostReport = { online: true }): Host {
+  return { report: () => report, subscribe: () => () => undefined };
 }
 
 /** One provider as the host sees it when freezing a break attempt's participant set. */

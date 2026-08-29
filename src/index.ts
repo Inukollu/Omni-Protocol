@@ -275,14 +275,44 @@ export interface AuthenticationSession {
  * does not decide for the adapter what a missing one means. The adapter does what its platform
  * needs: go not-ready, refuse calls, or carry on because audio lands elsewhere.
  */
-export type HostMediaState =
-  | { status: "ready"; localAudio: MediaStream }
-  | { status: "unavailable"; failure: ProtocolFailure };
+export type HostAudioInput =
+  /** Omni has the microphone. `flowing` is false while the hardware or OS says no audio moves through it. */
+  | { status: "ready"; localAudio: MediaStream; flowing: boolean }
+  /** Omni does not, and `reason` says which fix the agent needs; `failure` is the words Omni showed them. */
+  | { status: "unavailable"; reason: HostAudioUnavailableReason; failure: ProtocolFailure };
 
-/** The host's audio, observable for the life of the connection, as authentication is. */
-export interface HostMedia {
-  state(): HostMediaState;
-  subscribe(listener: (state: HostMediaState) => void): Unsubscribe;
+/**
+ * Why the host has no microphone, each wanting a different fix from the agent: no device;
+ * permission refused; permission never asked for (a host that asks at connect never says this);
+ * a device present and permitted that another application holds; a capture that ended.
+ */
+export type HostAudioUnavailableReason = "no-device" | "denied" | "not-asked" | "in-use" | "lost";
+
+/** Why the host has no speaker: no device, or one that was removed. */
+export type HostOutputUnavailableReason = "no-device" | "lost";
+
+export type HostAudioOutput =
+  | { status: "ready" }
+  | { status: "unavailable"; reason: HostOutputUnavailableReason; failure: ProtocolFailure };
+
+/**
+ * What only the host can see about the agent's station: the devices, the permissions, the
+ * network. Omni reports it; the adapter decides what any of it means for its platform and what
+ * to relay. `audio` is present on a voice connection.
+ */
+export interface HostReport {
+  /** Whether the host has a network interface up. Not a claim that anything is reachable: the adapter knows its own platform's reachability better than the host does. */
+  online: boolean;
+  audio?: {
+    input: HostAudioInput;
+    output: HostAudioOutput;
+  };
+}
+
+/** The host, as an adapter may ask it: a report now, and every change for the life of the connection. */
+export interface Host {
+  report(): HostReport;
+  subscribe(listener: (report: HostReport) => void): Unsubscribe;
 }
 
 export interface ConnectContext {
@@ -291,8 +321,11 @@ export interface ConnectContext {
   sessionId: string;
   /** Omni-side policy: whether the agent's tasks are accepted without asking them. */
   autoAcceptTasks?: boolean;
-  /** The host's audio. Present on a voice connection; absent on a channel with no media. */
-  media?: HostMedia;
+  /**
+   * The host's report of the agent's station, to consult before declaring the agent ready to the
+   * platform and whenever it changes. Omni reports; the adapter decides.
+   */
+  host: Host;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
 }
@@ -830,7 +863,7 @@ export interface VoiceMediaSession {
 
 export interface OpenMediaRequest {
   taskId: TaskId;
-  /** The agent's microphone as Omni captured it; absent while `HostMediaState` is `unavailable`. */
+  /** The agent's microphone as Omni captured it, `HostReport.audio.input.localAudio`; absent while that input is `unavailable`. */
   localAudio?: MediaStream;
 }
 
