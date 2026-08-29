@@ -442,6 +442,25 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ capabilities: leads, snapshot: withColleague, emit: listener => listener(later) })).toContain("team.member.self");
   });
 
+  it("holds the event stream to what came before it, from the connect snapshot on", async () => {
+    // The conforming snapshot carries call-42 in progress; its media may end. A task the stream
+    // never introduced may not; the same events before any snapshot are judged alone.
+    const at = "2026-08-21T09:05:00Z";
+    const ended = (taskId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${taskId}`, sessionId: "session-1", occurredAt: at, event: { type: "task-media-ended", taskId } });
+    // Delivered from setCapacity, which the harness calls after the snapshot; before it, the
+    // stream has no beginning and the same events are judged alone.
+    const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
+      let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
+      return {
+        emit: listener => { deliver = listener; },
+        connection: { setCapacity: async () => { deliver?.(envelope); return { status: "accepted" as const }; } },
+      };
+    };
+    expect(await rules(after(ended("call-42")))).toEqual([]);
+    expect(await rules(after(ended("call-99")))).toEqual(["stream.taskMediaEnded.unknown"]);
+    expect(await rules({ emit: listener => listener(ended("call-99")) })).toEqual([]);
+  });
+
   it("holds the snapshot and every event to the login's session", async () => {
     const elsewhere = { ...minimalSnapshot, sessionId: "session-0" } satisfies Snapshot<"voice">;
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot })).not.toContain("snapshot.sessionId.mismatch");

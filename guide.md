@@ -1789,6 +1789,25 @@ allocation's `acceptanceMode`, moving the task from `pending` to `confirmed`. Th
 subsequent transitions to `preparing` or `in-progress`; Omni does not infer them from the acceptance
 command.
 
+**A task is never its audio.** A voice task is the allocation: the call is offered when it is
+routed to the agent and accepted as `acceptanceMode` dictates, and its presence and phase follow
+the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
+consult, a conference leg joining or leaving, a transfer, a callback — the media follows
+separately, attaching through `openMedia` and ending with `task-media-ended`. Omni does not ring,
+bridge, or hold a line. How the phone rings, whether it rings at all, and where legs join and leave
+are the adapter's and the platform's, transient, and decide neither when a task exists nor what
+phase it is in.
+
+The line runs between the provider's word and Omni's own senses. `task-media-ended` is the
+provider's report that primary handling ended — a fact about the work, which is why the completion
+allowance starts on it and the callback control appears on it — and Omni follows that report as it
+follows any other. What Omni never does is derive a task's state from its own media session: a
+stream that drops, a track that ends, a transport that disconnects, a microphone that fails, an
+endpoint re-registering change nothing about the task until the provider says so. Structurally:
+`task-media-ended` names a task whose work has begun, what follows it is `completing` or
+`task-ended`, and every task is introduced once — `exerciseAdapter` holds the stream to that from
+the connect snapshot on, and `assertMediaFollowsTheTask` holds any sequence.
+
 #### Completion timing
 
 `completionMode` determines how completion is triggered. With `agent-command`, the provider keeps
@@ -2796,7 +2815,10 @@ Omni, and Omni registers the endpoint for it.
 
 That removes a whole class of state the provider would otherwise own and Omni would have to track,
 and it removes the branch that came with it: no command has to ask where the audio went before
-deciding who performs it.
+deciding who performs it. Nor does the audio ever stand in for the task: a task's presence and
+phase follow the provider's reports about the work, and the media — attaching, moving through a
+hold, a consult, a conference or a transfer, and ending — is transient beside it. See **A task is
+never its audio** under **Task allocation lifecycle**.
 
 ### Capacity around setup
 
@@ -3267,6 +3289,7 @@ cannot be established from TypeScript structure alone.
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
+| `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-ended` names a task whose work has begun, and what follows it is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). |
 | `assertBreakParticipants(candidates, participants)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `in-effect` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
