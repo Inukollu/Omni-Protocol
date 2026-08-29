@@ -40,22 +40,25 @@ assertNoViolations(violations);
 A violation carries a stable `rule` id such as `task.browser.url.scheme`, the `path` it was found
 at such as `snapshot.tasks[0].browsers[1].url`, and a `message`.
 
-One rule needs more than the object in hand. A roster never carries the agent it is published to
-— a lead does not report to themself — and a validator cannot know who that is from the roster
-alone. `validateTeamRoster`, `validateSnapshot`, and `validateEventEnvelope` each take an optional
-final `{ self }`, the signed-in agent's `AuthenticationState.identity.id`; given it, they report
-`team.member.self` and `team.request.self`. Without it that rule is not checked. `exerciseAdapter`
-always passes it.
+Some rules need more than the object in hand. A roster never carries the agent it is published to,
+a lead's snapshot always carries one and nobody else's ever does — and a validator cannot know who
+is reading, or what their login declares, from the snapshot alone. `validateTeamRoster`,
+`validateSnapshot`, and `validateEventEnvelope` each take an optional final `{ self, capabilities }`
+from the `authenticated` state; given them, they report `team.member.self`, `team.request.self`,
+`team.required`, `team.unentitled`, `team.requests.capability`, and `team.requests.required`.
+Without them those rules are not checked. `exerciseAdapter` always passes both.
 
 ```ts
-validateSnapshot(snapshot, manifest, "snapshot", { self: authentication.identity.id });
+const { identity, capabilities } = authenticated;
+validateSnapshot(snapshot, manifest, "snapshot", { self: identity.id, capabilities });
 ```
 
 ## Conformance
 
 `exerciseAdapter` validates the manifest, opens an authenticated session, connects, checks
-required capability methods, subscribes, validates the snapshot and every delivered event, states
-a capacity, then unsubscribes and disconnects.
+required capability methods, subscribes, validates the snapshot, every delivered event, and every
+authentication state published during the run — against the latest login — states a capacity,
+then unsubscribes and disconnects.
 
 ```ts
 const result = await exerciseAdapter(adapter, context, { collectOnly: true });
@@ -63,8 +66,8 @@ expect(result.violations).toEqual([]);
 expect(result.disconnectWasClean).toBe(true);
 ```
 
-Run the contract scenarios beside it — authentication restore and expiry, reconnect with missed
-assignments, break denial and retry, wrap timeout, browser isolation.
+Run the contract scenarios beside it — authentication restore and expiry, capability withdrawal,
+reconnect with missed assignments, break denial and retry, wrap timeout, browser isolation.
 
 > **Assert both directions.** Every helper rejects a violating input as well as accepting a
 > conforming one. A suite that only asserts "this conforming case does not throw" passes unchanged

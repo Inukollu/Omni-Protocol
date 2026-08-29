@@ -139,7 +139,7 @@ describe("Omni protocol", () => {
     const event: ProviderEvent = {
       type: "snapshot",
       reason: "reconnected",
-      snapshot: { status: "active", sessionId: "session-1", sessionCapabilities: {}, break: { approval: "starting-after-task", accepting: true }, tasks: [] },
+      snapshot: { status: "active", sessionId: "session-1", break: { approval: "starting-after-task", accepting: true }, tasks: [] },
     };
     expect(event.snapshot.break.approval).toBe("starting-after-task");
   });
@@ -159,7 +159,7 @@ describe("Omni protocol", () => {
       },
       async createAuthenticationSession() {
         return {
-          state: () => ({ status: "authenticated" as const, identity: { id: "agent-1", displayName: "Agent One" } }),
+          state: () => ({ status: "authenticated" as const, identity: { id: "agent-1", displayName: "Agent One" }, capabilities: {} }),
           subscribe: () => () => undefined,
           start: async () => ({ status: "rejected" as const, failure: { code: "already-authenticated", message: "Already authenticated", retryable: false } }),
           complete: async () => ({ status: "rejected" as const, failure: { code: "no-flow", message: "No authentication flow", retryable: false } }),
@@ -170,7 +170,7 @@ describe("Omni protocol", () => {
       },
       async connect() {
         return {
-          snapshot: () => ({ status: "active" as const, sessionId: "session-1", sessionCapabilities: {}, break: { approval: "not-requested" as const, accepting: true }, tasks: [] }),
+          snapshot: () => ({ status: "active" as const, sessionId: "session-1", break: { approval: "not-requested" as const, accepting: true }, tasks: [] }),
           subscribe: listener => {
             listener({ id: "event-1", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "provider-status", status: "active" } });
             return () => undefined;

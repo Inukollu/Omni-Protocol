@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BROWSER_ISOLATION_SCHEMES,
   browserSessionKey,
+  type AuthenticationState,
+  type Manifest,
   type ProviderEventEnvelope,
   type Snapshot,
   type Task,
@@ -10,6 +12,8 @@ import {
 import {
   assertAuthenticationRestoreAndExpiry,
   assertBrowserIsolationAndReuse,
+  assertCapabilityWithdrawal,
+  assertCommandRefusedAfterWithdrawal,
   assertDeniedAndRetriedBreak,
   assertDuplicateEventDelivery,
   assertNoBrowserSessionKeyCollisions,
@@ -38,16 +42,16 @@ const statusEvent = {
 describe("assertAuthenticationRestoreAndExpiry", () => {
   it("accepts a restored session that refreshes and then expires", () => {
     expect(() => assertAuthenticationRestoreAndExpiry([
-      { status: "authenticated", identity: { id: "A-1", displayName: "Ada" } },
-      { status: "refreshing", identity: { id: "A-1", displayName: "Ada" } },
+      { status: "authenticated", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
+      { status: "refreshing", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
       { status: "expired", identity: { id: "A-1", displayName: "Ada" }, failure: { code: "expired", message: "Sign in again", retryable: true } },
     ])).not.toThrow();
   });
 
   it("rejects a sequence that never expires", () => {
     expect(() => assertAuthenticationRestoreAndExpiry([
-      { status: "authenticated", identity: { id: "A-1", displayName: "Ada" } },
-      { status: "refreshing", identity: { id: "A-1", displayName: "Ada" } },
+      { status: "authenticated", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
+      { status: "refreshing", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
     ])).toThrow(/must end in an expired state/);
   });
 
@@ -58,13 +62,89 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
     ])).toThrow(/restored authenticated state/);
   });
 
+  it("validates every state, not only their order", () => {
+    // The same sequence three ways: as published, with a state that forgot what the login may
+    // do, and with a refresh that quietly changed it.
+    const ada = { id: "A-1", displayName: "Ada" };
+    const sequence = (refreshing: AuthenticationState) => () => assertAuthenticationRestoreAndExpiry([
+      { status: "authenticated", identity: ada, capabilities: { breaks: true } },
+      refreshing,
+      { status: "expired", identity: ada },
+    ]);
+    expect(sequence({ status: "refreshing", identity: ada, capabilities: { breaks: true } })).not.toThrow();
+    expect(sequence({ status: "refreshing", identity: ada } as unknown as AuthenticationState)).toThrow(/capabilities/);
+    expect(sequence({ status: "refreshing", identity: ada, capabilities: {} })).toThrow(/refreshing/);
+  });
+
   it("rejects a refresh reported after expiry", () => {
     expect(() => assertAuthenticationRestoreAndExpiry([
-      { status: "authenticated", identity: { id: "A-1", displayName: "Ada" } },
+      { status: "authenticated", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
       { status: "expired" },
-      { status: "refreshing", identity: { id: "A-1", displayName: "Ada" } },
+      { status: "refreshing", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
       { status: "expired" },
     ])).toThrow(/must occur before expiry/);
+  });
+});
+
+describe("assertCapabilityWithdrawal", () => {
+  const manifest = {
+    id: "acme-voice", displayName: "Acme Voice", channel: "voice",
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials"],
+  } satisfies Manifest<"voice">;
+  const ada = { id: "A-1", displayName: "Ada" };
+  const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, team: { breakControl: true } } } satisfies AuthenticationState;
+  const demoted = { status: "authenticated", identity: ada, capabilities: { breaks: true } } satisfies AuthenticationState;
+  const bare: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [] };
+  const withRoster: Snapshot<"voice"> = { ...bare, team: { members: [{ id: "A-2", availability: "ready" }] } };
+
+  it("accepts a roster gone with the capability that entitled it, and rejects one that stayed", () => {
+    expect(() => assertCapabilityWithdrawal([lead, demoted], bare, manifest)).not.toThrow();
+    expect(() => assertCapabilityWithdrawal([lead, demoted], withRoster, manifest)).toThrow(/team\.unentitled/);
+  });
+
+  it("holds requests to a withdrawn consultControl, and a snapshot to withdrawn breaks", () => {
+    const consulting = { ...lead, capabilities: { team: { consultControl: true as const } } } satisfies AuthenticationState;
+    const watching = { ...lead, capabilities: { team: {} } } satisfies AuthenticationState;
+    const members = [{ id: "A-2", availability: "on-task" as const }];
+    const asking: Snapshot<"voice"> = { ...bare, team: { members, requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] } };
+    const silent: Snapshot<"voice"> = { ...bare, team: { members } };
+    expect(() => assertCapabilityWithdrawal([consulting, watching], silent, manifest)).not.toThrow();
+    expect(() => assertCapabilityWithdrawal([consulting, watching], asking, manifest)).toThrow(/team\.requests\.capability/);
+    // Breaks withdrawn: nothing on the snapshot depends on it, so the bare snapshot agrees.
+    const noBreaks = { ...lead, capabilities: { team: { breakControl: true as const } } } satisfies AuthenticationState;
+    expect(() => assertCapabilityWithdrawal([lead, noBreaks], withRoster, manifest)).not.toThrow();
+  });
+
+  it("passes only through usable states, and refreshing must carry the login over", () => {
+    const refreshed = { status: "refreshing", identity: ada, capabilities: lead.capabilities } satisfies AuthenticationState;
+    const drifted = { status: "refreshing", identity: ada, capabilities: {} } satisfies AuthenticationState;
+    expect(() => assertCapabilityWithdrawal([lead, refreshed, demoted], bare, manifest)).not.toThrow();
+    expect(() => assertCapabilityWithdrawal([lead, drifted, demoted], bare, manifest)).toThrow(/refreshing/);
+    expect(() => assertCapabilityWithdrawal([lead, { status: "expired", identity: ada }, demoted], bare, manifest)).toThrow(/usable states/);
+  });
+
+  it("rejects a sequence that withdraws nothing", () => {
+    expect(() => assertCapabilityWithdrawal([lead, lead], bare, manifest)).toThrow(/withdrawn/);
+  });
+
+  it("rejects a sequence that changes identity", () => {
+    const other = { ...demoted, identity: { id: "A-9", displayName: "Bo" } } satisfies AuthenticationState;
+    expect(() => assertCapabilityWithdrawal([lead, other], bare, manifest)).toThrow(/new login/);
+  });
+
+  it("validates every state on the way", () => {
+    const silent = { status: "authenticated", identity: ada } as unknown as AuthenticationState;
+    expect(() => assertCapabilityWithdrawal([lead, silent], bare, manifest)).toThrow(/capabilities/);
+    expect(() => assertCapabilityWithdrawal([lead, demoted], bare, manifest)).not.toThrow();
+  });
+});
+
+describe("assertCommandRefusedAfterWithdrawal", () => {
+  it("accepts the named refusal and rejects anything else", () => {
+    const refused = { status: "failed", failure: { code: "omni.capability-not-enabled", message: "No longer a lead", retryable: false } };
+    expect(() => assertCommandRefusedAfterWithdrawal(refused)).not.toThrow();
+    expect(() => assertCommandRefusedAfterWithdrawal({ status: "applied" })).toThrow(/must fail/);
+    expect(() => assertCommandRefusedAfterWithdrawal({ status: "failed", failure: { code: "omni.unavailable" } })).toThrow(/omni\.capability-not-enabled/);
   });
 });
 
@@ -84,11 +164,11 @@ describe("assertDuplicateEventDelivery", () => {
 });
 
 describe("assertReconnectWithMissedAssignments", () => {
-  const before: Snapshot<"voice"> = { status: "active", sessionId: "session-1", sessionCapabilities: {}, break: { approval: "not-requested", accepting: true }, tasks: [] };
+  const before: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [] };
   const reconnect = {
     id: "event-2", sessionId: "session-1",
     occurredAt: "2026-08-21T01:01:00Z",
-    event: { type: "snapshot", reason: "reconnected", snapshot: { status: "active", sessionId: "session-1", sessionCapabilities: {}, break: { approval: "not-requested", accepting: true }, tasks: [voiceTask] } },
+    event: { type: "snapshot", reason: "reconnected", snapshot: { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [voiceTask] } },
   } as const satisfies ProviderEventEnvelope<"voice">;
 
   it("accepts a reconnect snapshot carrying the missed assignment", () => {

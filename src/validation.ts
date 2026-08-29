@@ -36,6 +36,7 @@ import {
   type ProtocolViolation,
   type ProviderEvent,
   type SessionCapabilities,
+  type TeamCapabilities,
   type TaskCapabilities,
   type TaskLead,
   type TaskOutcome,
@@ -110,7 +111,8 @@ const DIAL_DESTINATION_POLICIES = membersOf<DialDestinationPolicy>({ "contacts-o
 const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
   reconnected: true, "provider-requested": true,
 });
-const SESSION_CAPABILITIES = membersOf<keyof SessionCapabilities>({ breaks: true, teamBreakControl: true });
+const SESSION_CAPABILITIES = membersOf<keyof SessionCapabilities>({ breaks: true, team: true });
+const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, consultControl: true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
 const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
   pending: true, confirmed: true, preparing: true,
@@ -806,8 +808,8 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
 }
 
 /**
- * Who is reading what the adapter published. The validators check structure without it; given
- * `self`, they also check that a roster never carries the agent it is published to.
+ * Who is reading what the adapter published, and what their login declares. The validators check
+ * structure without it; given it, they also hold what the adapter publishes to the login.
  */
 export interface ReaderContext {
   /**
@@ -815,6 +817,11 @@ export interface ReaderContext {
    * a roster that lists them in `members`, or their own ask in `requests`, is a violation.
    */
   self?: UserId;
+  /**
+   * The login's `AuthenticationState.capabilities`. The login is the permission: a lead's
+   * snapshot carries a roster, nobody else's does, and `requests` need `team.consultControl`.
+   */
+  capabilities?: SessionCapabilities;
 }
 
 export function validateTeamRoster(roster: unknown, path = "team", context: ReaderContext = {}): ProtocolViolation[] {
@@ -828,18 +835,26 @@ function validateTeamRosterInto(roster: unknown, path: string, context: ReaderCo
     into.add("team.shape", path, "a team roster must be an object");
     return;
   }
-  if (roster.breakControl !== undefined) {
-    into.require(roster.breakControl === true, "team.breakControl", `${path}.breakControl`,
-      "breakControl is declared by presence: send true or omit it");
+  // The login is the permission: a roster reaches a login that declares `capabilities.team` and
+  // nobody else. Only a caller holding the login can check it.
+  if (context.capabilities !== undefined && context.capabilities.team === undefined) {
+    into.add("team.unentitled", path,
+      "a roster published to a login that does not declare capabilities.team: the login is the permission");
   }
-  if (roster.consultControl !== undefined) {
-    into.require(roster.consultControl === true, "team.consultControl", `${path}.consultControl`,
-      "consultControl is declared by presence: send true or omit it");
-  }
-  if (roster.requests !== undefined) {
+  if (roster.requests === undefined) {
+    // `[]` says nobody is asking; omission says the lead may not be asked. A login that may be
+    // asked therefore always carries the list.
+    if (context.capabilities?.team?.consultControl === true) {
+      into.add("team.requests.required", `${path}.requests`,
+        "the login declares team.consultControl, so the roster carries requests: [] when nobody is asking");
+    }
+  } else {
     // Requests are what a lead acts on, so a lead who may not act has no business receiving them.
-    into.require(roster.consultControl === true, "team.requests.capability", `${path}.requests`,
-      "requests require consultControl: a lead who may not join has nothing to decide");
+    // Whether they may is on the login, so the check needs the login in hand.
+    if (context.capabilities !== undefined) {
+      into.require(context.capabilities.team?.consultControl === true, "team.requests.capability", `${path}.requests`,
+        "requests require team.consultControl on the login: a lead who may not join has nothing to decide");
+    }
     if (!Array.isArray(roster.requests)) {
       into.add("team.requests.shape", `${path}.requests`, "requests must be an array when present");
     } else {
@@ -898,20 +913,6 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   into.oneOf(snapshot.status, CONNECTION_STATUSES, "snapshot.status", `${path}.status`);
   into.filled(snapshot.sessionId, "snapshot.sessionId", `${path}.sessionId`, "a snapshot needs the session id it belongs to");
 
-  const sessionCapabilities = snapshot.sessionCapabilities;
-  if (!isPlainObject(sessionCapabilities)) {
-    into.add("snapshot.sessionCapabilities.shape", `${path}.sessionCapabilities`,
-      "a snapshot needs a sessionCapabilities object");
-  } else {
-    for (const [name, declared] of Object.entries(sessionCapabilities)) {
-      if (declared === undefined) continue;
-      if (!into.require((SESSION_CAPABILITIES as readonly string[]).includes(name), "snapshot.sessionCapability.unknown",
-        `${path}.sessionCapabilities.${name}`, `unsupported session capability: ${name}`)) continue;
-      into.require(declared === true, "snapshot.sessionCapability.value", `${path}.sessionCapabilities.${name}`,
-        `${name} is declared by presence: send true or omit it`);
-    }
-  }
-
   validateBreakState(snapshot.break, `${path}.break`, into);
 
   if (!Array.isArray(snapshot.tasks)) {
@@ -957,6 +958,12 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     } else {
       into.add("snapshot.calendar.shape", `${path}.scheduledActivities`, "scheduledActivities must be an array when present");
     }
+  }
+  // The login is the permission: a lead's snapshot carries a roster, `[]` included. The other
+  // direction -- a roster to a login that does not lead -- is the roster's own rule.
+  if (context.capabilities?.team !== undefined && snapshot.team === undefined) {
+    into.add("team.required", `${path}.team`,
+      "the login declares capabilities.team, so every snapshot carries a roster: [] when nobody is in it");
   }
   if (snapshot.team !== undefined) validateTeamRosterInto(snapshot.team, `${path}.team`, context, into);
 
@@ -1140,6 +1147,36 @@ function validateUser(value: unknown, rule: string, path: string, into: Collecto
   into.filled(value.displayName, `${rule}.displayName`, `${path}.displayName`, "an identity needs a display name");
 }
 
+function validateSessionCapabilitiesInto(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("authentication.capabilities.shape", path,
+      "a usable login declares its capabilities: an object, {} when it has none");
+    return;
+  }
+  for (const [name, declared] of Object.entries(value)) {
+    if (declared === undefined) continue;
+    if (!into.require((SESSION_CAPABILITIES as readonly string[]).includes(name), "authentication.capability.unknown",
+      `${path}.${name}`, `unsupported session capability: ${name}`)) continue;
+    if (name === "team") {
+      if (!isPlainObject(declared)) {
+        into.add("authentication.capability.team.shape", `${path}.team`,
+          "team names what the lead may do: an object, {} for a lead with no controls");
+        continue;
+      }
+      for (const [control, on] of Object.entries(declared)) {
+        if (on === undefined) continue;
+        if (!into.require((TEAM_CAPABILITIES as readonly string[]).includes(control), "authentication.capability.team.unknown",
+          `${path}.team.${control}`, `unsupported team capability: ${control}`)) continue;
+        into.require(on === true, "authentication.capability.value", `${path}.team.${control}`,
+          `${control} is declared by presence: send true or omit it`);
+      }
+      continue;
+    }
+    into.require(declared === true, "authentication.capability.value", `${path}.${name}`,
+      `${name} is declared by presence: send true or omit it`);
+  }
+}
+
 export function validateAuthenticationState(state: unknown, path = "authentication"): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(state)) {
@@ -1154,6 +1191,7 @@ export function validateAuthenticationState(state: unknown, path = "authenticati
   // may carry an identity. Anything else is a state claiming knowledge it does not have.
   if (state.status === "authenticated" || state.status === "refreshing") {
     validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
+    validateSessionCapabilitiesInto(state.capabilities, `${path}.capabilities`, into);
   } else if (state.status === "expired") {
     if (state.identity !== undefined) validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
     if (state.failure !== undefined) {
@@ -1175,6 +1213,10 @@ export function validateAuthenticationState(state: unknown, path = "authenticati
     into.require(state.status === "authenticated", "authentication.expiresAt.unexpected", `${path}.expiresAt`,
       "only an authenticated state may carry an expiry");
     into.timestamp(state.expiresAt, "authentication.expiresAt", `${path}.expiresAt`);
+  }
+  if (state.status !== "authenticated" && state.status !== "refreshing") {
+    into.require(state.capabilities === undefined, "authentication.capabilities.unexpected", `${path}.capabilities`,
+      `${state.status} must not carry capabilities`);
   }
   return into.violations;
 }

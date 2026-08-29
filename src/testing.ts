@@ -10,6 +10,8 @@ import {
   type BrowserSessionKeyInput,
   type Channel,
   type ConnectContext,
+  type Manifest,
+  type SessionCapabilities,
 } from "./index.js";
 import {
   assertNoViolations,
@@ -22,10 +24,19 @@ import {
 
 export { ProtocolConformanceError, assertNoViolations, type ProtocolViolation } from "./validation.js";
 
+/** A state that knows who the agent is and what they may do. */
+type Login = Extract<AuthenticationState, { status: "authenticated" }>;
+
 export interface AdapterContractResult {
   events: ProviderEventEnvelope[];
+  /** The state the session was restored with at sign-in. */
   authenticationState: AuthenticationState;
-  /** True only when `disconnect()` and `close()` both settled without throwing. */
+  /**
+   * The latest login the session published during the run. Equal to `authenticationState` unless
+   * the adapter republished `authenticated` -- capabilities are current, not fixed.
+   */
+  login: AuthenticationState;
+  /** True only when every unsubscribe, `disconnect()`, and `close()` settled without throwing. */
   disconnectWasClean: boolean;
   /** Every violation observed. Non-empty only when `collectOnly` suppressed the throw. */
   violations: readonly ProtocolViolation[];
@@ -39,8 +50,9 @@ export interface ExerciseAdapterOptions {
 /**
  * Adapter conformance exercise: validates the manifest, opens an authenticated session,
  * connects, checks that every method the declarations require is implemented, subscribes,
- * validates the snapshot and every delivered event, states a capacity, then unsubscribes and
- * disconnects.
+ * validates the snapshot, every delivered event, and every authentication state the session
+ * publishes during the run -- against the latest login, since capabilities are current, not
+ * fixed -- states a capacity, then unsubscribes and disconnects.
  *
  * Violations are collected rather than thrown from inside the adapter's own
  * dispatch path. Throwing from a subscribe listener unwinds through the provider
@@ -67,7 +79,9 @@ export async function exerciseAdapter<C extends Channel>(
 
   let connection: Connection<C> | undefined;
   let unsubscribe: (() => void) | undefined;
+  let unsubscribeAuthentication: (() => void) | undefined;
   let authenticationState: AuthenticationState | undefined;
+  let login: Login | undefined;
   let disconnectWasClean = false;
 
   try {
@@ -79,33 +93,69 @@ export async function exerciseAdapter<C extends Channel>(
       );
     }
 
-    // The harness knows who is signed in, so it can hold the adapter to a rule the structural
-    // validators cannot check alone: a roster never carries the agent it is published to.
-    const reader = { self: authenticationState.identity.id };
+    // The harness knows who is signed in and what their login declares, so it can hold the
+    // adapter to rules the structural validators cannot check alone: a roster never carries the
+    // agent it is published to, a lead's snapshot always carries one, nobody else's ever does.
+    // Capabilities are current, not fixed, so the login is read when something is validated,
+    // never captured at sign-in: a provider that withdraws one republishes `authenticated`, and
+    // everything published after that is held to the new set. A published state that fails
+    // validation is reported and not adopted -- the harness keeps the last login it could trust.
+    login = authenticationState;
+    const current = (): Login => {
+      if (login === undefined) throw new Error("unreachable: the exercise has an authenticated login");
+      return login;
+    };
+    const reader = () => ({ self: current().identity.id, capabilities: current().capabilities });
 
-    connection = await adapter.connect(context);
-    const live = connection;
     // The optional methods are optional only until something declares a need for them. Each
     // check pairs a method with the declaration that requires it, as the guide's Live-connection
     // table does; a missing one is a control the agent would be shown and could never use.
-    const requireMethod = (name: keyof Connection<C>, because: string) => {
-      if (typeof live[name] !== "function") {
-        violations.push({
-          rule: `connection.${name}.required`,
-          path: `connection.${name}`,
-          message: `${because}, but the connection does not implement ${name}()`,
-        });
-      }
+    const reported = new Set<string>();
+    const requireMethod = (on: Connection<C>, name: keyof Connection<C>, because: string) => {
+      if (typeof on[name] === "function" || reported.has(name)) return;
+      reported.add(name);
+      violations.push({
+        rule: `connection.${name}.required`,
+        path: `connection.${name}`,
+        message: `${because}, but the connection does not implement ${name}()`,
+      });
     };
+    const requireCapabilityMethods = (on: Connection<C>, capabilities: SessionCapabilities) => {
+      if (capabilities.breaks === true) {
+        // The four stand or fall together: `granted` is a promise to honour a later commit, and
+        // an adapter with requestBreak but no commitBreak leaves an agent a break that never starts.
+        for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak"] as const) {
+          requireMethod(on, method, "the login declares capabilities.breaks");
+        }
+      }
+      if (capabilities.team?.breakControl === true) requireMethod(on, "executeTeamBreak", "the login declares capabilities.team.breakControl");
+      if (capabilities.team?.consultControl === true) requireMethod(on, "executeTeamConsult", "the login declares capabilities.team.consultControl");
+    };
+
+    unsubscribeAuthentication = authentication.subscribe(state => {
+      const own = validateAuthenticationState(state);
+      violations.push(...own);
+      if (own.length > 0) return;
+      if (state.status === "refreshing") {
+        violations.push(...refreshingCarriesOver(current(), state, "authentication"));
+      } else if (state.status === "authenticated") {
+        login = state;
+        // A capability granted later requires its methods just as one declared at sign-in does.
+        if (connection !== undefined) requireCapabilityMethods(connection, state.capabilities);
+      }
+    });
+
+    connection = await adapter.connect(context);
+    const live = connection;
     // Dial is declared by presence: the capability object carries a destination policy rather
     // than an `enabled` flag, so its presence is the declaration.
-    if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod("dial", "the manifest declares dial");
+    if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod(live, "dial", "the manifest declares dial");
     // Every voice task's audio lands in Omni, so there is no voice adapter that does not open it.
-    if (adapter.manifest.channel === "voice") requireMethod("openMedia", "the manifest channel is voice");
+    if (adapter.manifest.channel === "voice") requireMethod(live, "openMedia", "the manifest channel is voice");
 
     const eventIds = new Set<string>();
     unsubscribe = connection.subscribe(envelope => {
-      violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader));
+      violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader()));
       if (typeof envelope?.id === "string") {
         if (eventIds.has(envelope.id)) return;
         eventIds.add(envelope.id);
@@ -114,17 +164,9 @@ export async function exerciseAdapter<C extends Channel>(
     });
 
     const snapshot = await connection.snapshot() as Snapshot;
-    violations.push(...validateSnapshot(snapshot, adapter.manifest, "snapshot", reader));
-    if (snapshot?.sessionCapabilities?.breaks === true) {
-      // The four stand or fall together: `granted` is a promise to honour a later commit, and
-      // an adapter with requestBreak but no commitBreak leaves an agent a break that never starts.
-      for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak"] as const) {
-        requireMethod(method, "the snapshot declares sessionCapabilities.breaks");
-      }
-    }
-    if (snapshot?.team?.breakControl === true) requireMethod("executeTeamBreak", "the roster carries breakControl");
-    if (snapshot?.team?.consultControl === true) requireMethod("executeTeamConsult", "the roster carries consultControl");
-    if (publishesUserIds(snapshot)) requireMethod("describeUsers", "the snapshot publishes a UserId");
+    violations.push(...validateSnapshot(snapshot, adapter.manifest, "snapshot", reader()));
+    requireCapabilityMethods(live, current().capabilities);
+    if (publishesUserIds(snapshot)) requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
 
     // Capacity is stated, not requested: nothing may be allocated until it is, so a connection
     // that will not accept one is a connection nothing can be given to.
@@ -139,6 +181,7 @@ export async function exerciseAdapter<C extends Channel>(
   } finally {
     let clean = true;
     try { unsubscribe?.(); } catch { clean = false; }
+    try { unsubscribeAuthentication?.(); } catch { clean = false; }
     try { await connection?.disconnect(); } catch { clean = false; }
     try { await authentication.close(); } catch { clean = false; }
     disconnectWasClean = clean;
@@ -148,7 +191,7 @@ export async function exerciseAdapter<C extends Channel>(
     violations.push({
       rule: "connection.disconnect.clean",
       path: "connection.disconnect",
-      message: "unsubscribe(), disconnect(), or close() threw during shutdown",
+      message: "an unsubscribe, disconnect(), or close() threw during shutdown",
     });
   }
   if (!options.collectOnly) assertNoViolations(violations);
@@ -156,6 +199,7 @@ export async function exerciseAdapter<C extends Channel>(
   return {
     events: events as ProviderEventEnvelope[],
     authenticationState: authenticationState as AuthenticationState,
+    login: (login ?? authenticationState) as AuthenticationState,
     disconnectWasClean,
     violations,
   };
@@ -174,10 +218,62 @@ function publishesUserIds(snapshot: Snapshot | undefined): boolean {
     Array.isArray(task?.handlingHistory) && task.handlingHistory.some(step => step?.by !== undefined));
 }
 
-/** Validates restored authentication followed by a refresh failure or expiry. */
+const sameCapabilities = (a: SessionCapabilities, b: SessionCapabilities): boolean =>
+  a.breaks === b.breaks &&
+  (a.team === undefined) === (b.team === undefined) &&
+  a.team?.breakControl === b.team?.breakControl &&
+  a.team?.consultControl === b.team?.consultControl;
+
+/**
+ * `refreshing` carries the identity and capabilities of the login it refreshes. A change to
+ * either is published as `authenticated`; a different identity is a new login.
+ */
+function refreshingCarriesOver(
+  login: Login,
+  state: Extract<AuthenticationState, { status: "refreshing" }>,
+  path: string,
+): ProtocolViolation[] {
+  const found: ProtocolViolation[] = [];
+  if (state.identity.id !== login.identity.id) {
+    found.push({
+      rule: "authentication.refreshing.identity",
+      path: `${path}.identity.id`,
+      message: "refreshing carries the identity of the login it refreshes; a different identity is a new login",
+    });
+  }
+  if (!sameCapabilities(state.capabilities, login.capabilities)) {
+    found.push({
+      rule: "authentication.refreshing.capabilities",
+      path: `${path}.capabilities`,
+      message: "refreshing carries the capabilities of the login it refreshes; a change is published as authenticated",
+    });
+  }
+  return found;
+}
+
+/** Validates each state of a published sequence, and that every `refreshing` carries over the login before it. */
+function assertLoginSequence(states: readonly AuthenticationState[], summary: string): void {
+  const found: ProtocolViolation[] = [];
+  let login: Login | undefined;
+  states.forEach((state, index) => {
+    const path = `states[${index}]`;
+    const own = validateAuthenticationState(state, path);
+    found.push(...own);
+    if (own.length > 0) return;
+    if (state.status === "authenticated") login = state;
+    else if (state.status === "refreshing" && login !== undefined) found.push(...refreshingCarriesOver(login, state, path));
+  });
+  assertNoViolations(found, summary);
+}
+
+/**
+ * Validates restored authentication followed by a refresh failure or expiry. Every state is
+ * validated, and a `refreshing` state must carry over the login it refreshes.
+ */
 export function assertAuthenticationRestoreAndExpiry(
   states: readonly AuthenticationState[],
 ): void {
+  assertLoginSequence(states, "Authentication scenario");
   if (states.length < 2 || states[0]?.status !== "authenticated") {
     throw new Error("Authentication scenario must start with a restored authenticated state");
   }
@@ -188,6 +284,64 @@ export function assertAuthenticationRestoreAndExpiry(
   const refreshingIndex = states.findIndex(state => state.status === "refreshing");
   if (refreshingIndex >= 0 && refreshingIndex > expiredIndex) {
     throw new Error("Refreshing state must occur before expiry");
+  }
+}
+
+/**
+ * Capabilities are current, not fixed. A provider that withdraws one republishes `authenticated`
+ * with the new set, and the next snapshot agrees with it. `states` is what the authentication
+ * session published, first to last: beginning and ending `authenticated` for the same identity,
+ * passing only through usable states (`expired` or `signed-out` ends the login instead), with at
+ * least one capability gone by the end. `snapshot` is the first snapshot published after the last
+ * state, validated against that login -- so a roster still published to a login that no longer
+ * leads, or requests to one that may no longer join, is the failure.
+ */
+export function assertCapabilityWithdrawal(
+  states: readonly AuthenticationState[],
+  snapshot: Snapshot,
+  manifest: Manifest,
+): void {
+  assertLoginSequence(states, "Capability withdrawal");
+  const stray = states.findIndex(state => state.status !== "authenticated" && state.status !== "refreshing");
+  if (stray >= 0) {
+    throw new Error(`Capability withdrawal passes only through usable states; states[${stray}] is ${states[stray]?.status}, which ends the login`);
+  }
+  const first = states[0];
+  const last = states.at(-1);
+  if (first?.status !== "authenticated" || last?.status !== "authenticated") {
+    throw new Error("Capability withdrawal must begin and end with an authenticated login");
+  }
+  if (first.identity.id !== last.identity.id) {
+    throw new Error("Capability withdrawal must keep the identity: a different identity is a new login");
+  }
+  const before = first.capabilities;
+  const after = last.capabilities;
+  const withdrawn =
+    (before.breaks === true && after.breaks !== true) ||
+    (before.team !== undefined && after.team === undefined) ||
+    (before.team?.breakControl === true && after.team?.breakControl !== true) ||
+    (before.team?.consultControl === true && after.team?.consultControl !== true);
+  if (!withdrawn) {
+    throw new Error("Capability withdrawal must end with at least one capability the first login declared withdrawn");
+  }
+  assertNoViolations(
+    validateSnapshot(snapshot, manifest, "snapshot", { self: last.identity.id, capabilities: after }),
+    "Capability withdrawal: the snapshot after the last login must agree with it",
+  );
+}
+
+/**
+ * A command that arrives after its capability was withdrawn is answered `failed` with
+ * `omni.capability-not-enabled`: the provider names it, so Omni never has to infer from a
+ * capability change it may not have rendered yet that "no longer a lead" is the message.
+ * Takes any command result -- a team command, a break method -- after such a withdrawal.
+ */
+export function assertCommandRefusedAfterWithdrawal(result: { status: string; failure?: { code: string } }): void {
+  if (result.status !== "failed") {
+    throw new Error(`A command after its capability was withdrawn must fail; received ${result.status}`);
+  }
+  if (result.failure?.code !== "omni.capability-not-enabled") {
+    throw new Error(`A command after its capability was withdrawn fails with omni.capability-not-enabled, not ${result.failure?.code}`);
   }
 }
 
