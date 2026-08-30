@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BREAK_KINDS, BROWSER_ISOLATION_SCHEMES, IDLE_CAPABILITIES } from "./index.js";
+import { BREAK_KINDS, BROWSER_ISOLATION_SCHEMES, IDLE_CAPABILITIES, effectiveTiers } from "./index.js";
 import {
   assertNoViolations,
   ProtocolConformanceError,
@@ -443,19 +443,137 @@ describe("validateEventEnvelope", () => {
   });
 });
 
+describe("who decides what an agent may do", () => {
+  const voice = { channel: "voice" };
+
+  it("takes the typical four tiers by default, relabelled or extended by the manifest", () => {
+    expect(effectiveTiers(undefined).map(tier => tier.id)).toEqual(["org", "site", "team", "person"]);
+    const tiers = effectiveTiers([{ id: "site", label: "Your branch" }, { id: "region", label: "Your region" }]);
+    expect(tiers.map(tier => `${tier.id}=${tier.label}`)).toEqual(["org=Your organisation", "site=Your branch", "team=Your team", "person=You", "region=Your region"]);
+    const m = (tiers: unknown) => rules(validateManifest(manifest({ tiers })));
+    expect(m([{ id: "region", label: "Your region" }])).toEqual([]);
+    expect(m("region")).toEqual(["manifest.tiers.shape"]);
+    expect(m(["region"])).toEqual(["manifest.tier.shape"]);
+    expect(m([{ label: "Your region" }])).toEqual(["manifest.tier.id"]);
+    expect(m([{ id: "region" }])).toEqual(["manifest.tier.label"]);
+    expect(m([{ id: "region", label: "A" }, { id: "region", label: "B" }])).toEqual(["manifest.tier.unique"]);
+  });
+
+  it("lets a control stand locked in its place, naming the tier, and never a queue's own content", () => {
+    const caps = (capabilities: unknown) => rules(validateTask(task({ capabilities }), voice));
+    expect(caps({ hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" }, recording: { lockedBy: "site" } })).toEqual([]);
+    expect(caps({ blindTransfer: { lockedBy: "org" } })).toEqual([]);
+    expect(caps({ mute: { lockedBy: "person" } })).toEqual(["task.capability.locked.lockedBy.person"]);
+    // A tier is one the manifest declares, or one of the four defaults.
+    expect(caps({ mute: { lockedBy: "org" } })).toEqual([]);
+    expect(caps({ mute: { lockedBy: "region" } })).toEqual(["task.capability.locked.lockedBy.unknown"]);
+    const regional = manifest({ tiers: [{ id: "region", label: "Your region" }, { id: "site", label: "Your branch" }] });
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "region" } } })] }), regional))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "site" } } })] }), regional))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "district" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
+    expect(caps({ mute: { lockedBy: "team", reason: "" } })).toEqual(["task.capability.locked.reason"]);
+    expect(caps({ browsers: { lockedBy: "team" } })).toEqual(["task.capability.locked.unexpected"]);
+    // lockedBy is the discriminant: a directory carrying it would read as a lock, so it may not.
+    expect(caps({ blindTransfer: { allowManualEntry: true, destinations: [] } })).toEqual([]);
+    expect(caps({ blindTransfer: { lockedBy: "org" } })).toEqual([]);
+    // A chat task has no mute to lock; the channel rule speaks first.
+    expect(rules(validateTask(task({ channel: "chat", capabilities: { mute: { lockedBy: "team" } } }), { channel: "chat" }))).toEqual(["task.capability.channel"]);
+  });
+
+  it("withholds a number by locking it in place, never by a flag", () => {
+    const contact = (value: unknown) => rules(validateTask(task({ contact: value }), voice));
+    expect(contact({ name: "Asha", number: "+14155550111" })).toEqual([]);
+    expect(contact({ name: "Asha", number: { lockedBy: "org" } })).toEqual([]);
+    expect(contact({ name: "Asha", number: { lockedBy: "person" } })).toEqual(["contact.number.locked.lockedBy.person"]);
+    // Email identifies a person as a number does, and is locked the same way; a name is not.
+    expect(contact({ name: "Asha", email: { lockedBy: "site" } })).toEqual([]);
+    expect(contact({ name: "Asha", email: { lockedBy: "person" } })).toEqual(["contact.email.locked.lockedBy.person"]);
+    expect(contact({ name: { lockedBy: "org" } })).toEqual(["contact.name"]);
+    expect(contact({ name: "Asha", number: "" })).toEqual(["contact.number"]);
+  });
+
+  it("declares what the team left to the person on the login, with who set it", () => {
+    const user = { id: "agent-1", displayName: "Ada" };
+    const prefs = (value: unknown) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: value } }));
+    const mute = { id: "mute", label: "Mute", enabled: true, setBy: "team" };
+    expect(prefs([mute, { id: "hold", label: "Hold", enabled: false, setBy: "person" }, { id: "skill:billing", label: "Billing", enabled: true, setBy: "provisioning" }])).toEqual([]);
+    // Nothing is hidden: a preference a tier above has since locked is listed, locked.
+    expect(prefs([{ ...mute, lockedBy: "site", reason: "No mute at this site" }])).toEqual([]);
+    expect(prefs(undefined)).toEqual([]);
+    expect(prefs([])).toEqual(["authentication.capability.preferences.empty"]);
+    expect(prefs([{ ...mute, id: "callback" }])).toEqual(["preference.id"]);
+    expect(prefs([{ ...mute, id: "skill:" }])).toEqual(["preference.id"]);
+    expect(prefs([mute, mute])).toEqual(["preference.unique"]);
+    expect(prefs([{ id: "mute", enabled: true, setBy: "team" }])).toEqual(["preference.label"]);
+    expect(prefs([{ id: "mute", label: "Mute", setBy: "team" }])).toEqual(["preference.enabled"]);
+    expect(prefs([{ id: "mute", label: "Mute", enabled: true }])).toEqual(["preference.setBy"]);
+    expect(prefs([{ ...mute, setBy: "queue" }])).toEqual(["preference.setBy.unknown"]);
+    expect(prefs([{ ...mute, lockedBy: "person" }])).toEqual(["preference.lockedBy.person"]);
+    // Given the manifest's tiers, a declared one is accepted and an undeclared one is not.
+    const declared = { tiers: ["org", "region", "team", "person"] };
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...mute, setBy: "region" }] } }, "authentication", declared))).toEqual([]);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...mute, setBy: "site" }] } }, "authentication", declared))).toEqual(["preference.setBy.unknown"]);
+    expect(prefs([{ ...mute, reason: "Because" }])).toEqual(["preference.reason.unexpected"]);
+    expect(prefs(["mute"])).toEqual(["preference.shape"]);
+    expect(prefs("mute")).toEqual(["preferences.shape"]);
+  });
+
+  it("carries the team's policies on the roster, as the lead sees them", () => {
+    const may = { capabilities: { team: { policyControl: true as const } } };
+    const policies = (value: unknown) => rules(validateTeamRoster({ members: [], policies: value }, "team", may));
+    expect(policies({ mute: { setting: "off", setBy: "team" }, hold: { setting: "agent", setBy: "team" }, recording: { setting: "on", setBy: "site", lockedBy: "site", reason: "Compliance" }, dial: { setting: "on", setBy: "provisioning" }, "skill:billing": { setting: "agent", setBy: "org" } })).toEqual([]);
+    expect(policies({ telepathy: { setting: "on", setBy: "team" } })).toEqual(["team.policy.key"]);
+    expect(policies({ mute: "off" })).toEqual(["team.policy.shape"]);
+    expect(policies({ mute: { setting: "maybe", setBy: "team" } })).toEqual(["team.policy.setting"]);
+    expect(policies({ callback: { setting: "agent", setBy: "team" } })).toEqual(["team.policy.agent"]);
+    expect(policies({ dial: { setting: "agent", setBy: "team" } })).toEqual(["team.policy.agent"]);
+    expect(policies({ mute: { setting: "off" } })).toEqual(["team.policy.setBy"]);
+    expect(policies({ mute: { setting: "off", setBy: "person" } })).toEqual(["team.policy.setBy"]);
+    expect(policies("off")).toEqual(["team.policies.shape"]);
+    // Present exactly when the login may set them.
+    expect(rules(validateTeamRoster({ members: [] }, "team", may))).toEqual(["team.policies.required"]);
+    expect(rules(validateTeamRoster({ members: [], policies: {} }, "team", { capabilities: { team: {} } }))).toEqual(["team.policies.capability"]);
+    expect(rules(validateTeamRoster({ members: [], policies: {} }))).toEqual([]);
+  });
+
+  it("lets a custom action ask for what it needs and say where it renders", () => {
+    const custom = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { custom: [{ id: "transfer-out", ui: { kind: "button", label: "Transfer out", placement: "secondary" }, ...over }] } }), voice));
+    const destination = { name: "destination", label: "Number", type: "text" };
+    expect(custom({})).toEqual([]);
+    expect(custom({ prompt: { fields: [destination] } })).toEqual([]);
+    expect(custom({ ui: { kind: "button", label: "Transfer out", placement: "secondary", render: "page" } })).toEqual([]);
+    expect(custom({ ui: { kind: "button", label: "Transfer out", placement: "secondary", render: "popup" } })).toEqual(["task.custom.ui.render"]);
+    expect(custom({ prompt: { fields: [] } })).toEqual(["task.custom.prompt.fields"]);
+    expect(custom({ prompt: "destination" })).toEqual(["task.custom.prompt.shape"]);
+    expect(custom({ prompt: { fields: ["destination"] } })).toEqual(["task.custom.prompt.field.shape"]);
+    expect(custom({ prompt: { fields: [{ label: "Number", type: "text" }] } })).toEqual(["task.custom.prompt.field.name"]);
+    expect(custom({ prompt: { fields: [{ name: "destination", type: "text" }] } })).toEqual(["task.custom.prompt.field.label"]);
+    expect(custom({ prompt: { fields: [{ ...destination, type: "number" }] } })).toEqual(["task.custom.prompt.field.type"]);
+  });
+
+  it("validates a preference or policy result like any other", () => {
+    expect(rules(validateResult({ status: "applied" }, "setPreference"))).toEqual([]);
+    expect(rules(validateResult({ status: "applied" }, "executeTeamPolicy"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure: { code: "omni.capability-not-enabled", message: "Not yours to set", retryable: false } }, "setPreference"))).toEqual([]);
+    expect(rules(validateResult({ status: "set" }, "executeTeamPolicy"))).toEqual(["result.status"]);
+  });
+});
+
 describe("validateHostReport", () => {
   const microphone = { id: "mic" };
   const failure = { code: "host.permission-denied", message: "Microphone access was refused", retryable: true };
   const ready = { status: "ready", localAudio: microphone, flowing: true };
   const denied = { status: "unavailable", reason: "denied", failure };
-  const audio = (input: unknown, output: unknown = { status: "ready" }) => rules(validateHostReport({ online: true, audio: { input, output } }));
+  const audio = (input: unknown, output: unknown = { status: "ready" }) => rules(validateHostReport({ online: true, browsers: { urlVisibility: "hidden" }, audio: { input, output } }));
 
   it("accepts a report with and without audio, and holds each part to its shape", () => {
-    expect(rules(validateHostReport({ online: true }))).toEqual([]);
-    expect(rules(validateHostReport({ online: false }))).toEqual([]);
-    expect(rules(validateHostReport({}))).toEqual(["host.online"]);
+    expect(rules(validateHostReport({ online: true, browsers: { urlVisibility: "hidden" } }))).toEqual([]);
+    expect(rules(validateHostReport({ online: false, browsers: { urlVisibility: "full" } }))).toEqual([]);
+    expect(rules(validateHostReport({ browsers: { urlVisibility: "domain" } }))).toEqual(["host.online"]);
+    expect(rules(validateHostReport({ online: true }))).toEqual(["host.browsers.shape"]);
+    expect(rules(validateHostReport({ online: true, browsers: { urlVisibility: "partial" } }))).toEqual(["host.browsers.urlVisibility"]);
     expect(rules(validateHostReport("online"))).toEqual(["host.shape"]);
-    expect(rules(validateHostReport({ online: true, audio: "ready" }))).toEqual(["host.audio.shape"]);
+    expect(rules(validateHostReport({ online: true, browsers: { urlVisibility: "hidden" }, audio: "ready" }))).toEqual(["host.audio.shape"]);
     expect(audio(ready)).toEqual([]);
     expect(audio({ ...ready, flowing: false })).toEqual([]);
     expect(audio(denied)).toEqual([]);
@@ -482,7 +600,7 @@ describe("validateHostReport", () => {
     expect(audio(ready, { status: "unavailable", failure })).toEqual(["host.audio.output.reason"]);
     expect(audio(ready, { status: "unavailable", reason: "denied", failure })).toEqual(["host.audio.output.reason"]);
     expect(audio(ready, { status: "silent" })).toEqual(["host.audio.output.status"]);
-    expect(rules(validateHostReport({ online: true, audio: { input: ready } }))).toEqual(["host.audio.output.shape"]);
+    expect(rules(validateHostReport({ online: true, browsers: { urlVisibility: "hidden" }, audio: { input: ready } }))).toEqual(["host.audio.output.shape"]);
   });
 });
 

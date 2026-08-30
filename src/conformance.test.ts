@@ -10,11 +10,11 @@ import {
 import { ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject , stillHost } from "./testing.js";
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
-const speaking: HostReport = { online: true, audio: { input: { status: "ready", localAudio: {} as MediaStream, flowing: true }, output: { status: "ready" } } };
+const speaking: HostReport = { online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "ready", localAudio: {} as MediaStream, flowing: true }, output: { status: "ready" } } };
 const context = { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1", host: stillHost(speaking) };
 /** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
 const hostFor = (manifest: unknown): Host =>
-  stillHost((manifest as { channel?: string } | undefined)?.channel === "voice" ? speaking : { online: true });
+  stillHost((manifest as { channel?: string } | undefined)?.channel === "voice" ? speaking : { online: true, browsers: { urlVisibility: "hidden" } });
 
 const conformingManifest = {
   id: "acme-voice",
@@ -145,6 +145,8 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         endBreak: async () => ({ status: "ended" }),
         executeTeamBreak: async () => ({ status: "applied" }),
         executeTeamConsult: async () => ({ status: "applied" }),
+        setPreference: async () => ({ status: "applied" }),
+        executeTeamPolicy: async () => ({ status: "applied" }),
         openMedia: async () => ({ status: "unavailable", failure: { code: "test", message: "No media in a test", retryable: false } }),
       };
       return { ...connection, ...overrides.connection } as Connection<"voice">;
@@ -186,13 +188,13 @@ describe("exerciseAdapter", () => {
     // The rich task carries browsers, history, a disposition policy, transfer destinations and a
     // custom control, but no attributes and is neither consulting, asking for a lead, nor assisting.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "break.reasons", "break.imposed", "team.members", "team.requests"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.consultation", "task.lead", "task.assisting",
-      "task.dispositions", "task.destinations", "task.custom", "break.reasons", "break.imposed", "team.members", "team.requests",
-      "contacts", "scheduledActivities",
+      "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
+      "contacts", "scheduledActivities", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.
     const reached = {
@@ -201,14 +203,14 @@ describe("exerciseAdapter", () => {
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { consultControl: true } }, snapshot: reached })))
-      .toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting"]);
+      .toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.locked", "team.policies"]);
     const later: ProviderEventEnvelope<"voice"> = {
       id: "evt-team", sessionId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } },
     };
     const rosterOnly = { ...conformingSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
     const withEvent = await run({ capabilities: { team: {} }, snapshot: rosterOnly, emit: listener => listener(later) });
-    expect(state(withEvent)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "break.reasons", "break.imposed", "team.requests"]);
+    expect(state(withEvent)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
     expect(events(withEvent)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
   });
 
@@ -485,11 +487,11 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     });
     const run = async (h: Host) =>
       (await exerciseAdapter(makeAdapter().adapter, { ...context, host: h }, { collectOnly: true })).violations.map(violation => violation.rule);
-    const speaking = { online: true, audio: { input: { status: "ready", localAudio: microphone, flowing: true }, output: { status: "ready" } } };
+    const speaking = { online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "ready", localAudio: microphone, flowing: true }, output: { status: "ready" } } };
     expect(await run(host(speaking))).toEqual([]);
-    expect(await run(host({ online: true, audio: { input: { status: "unavailable", reason: "denied", failure }, output: { status: "ready" } } }))).toEqual([]);
-    expect(await run(host({ online: true, audio: { input: { status: "ready", flowing: true }, output: { status: "ready" } } }))).toEqual(["host.audio.input.localAudio"]);
-    expect(await run(host(speaking, { online: "yes" }))).toEqual(["host.online"]);
+    expect(await run(host({ online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "unavailable", reason: "denied", failure }, output: { status: "ready" } } }))).toEqual([]);
+    expect(await run(host({ online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "ready", flowing: true }, output: { status: "ready" } } }))).toEqual(["host.audio.input.localAudio"]);
+    expect(await run(host(speaking, { online: "yes", browsers: { urlVisibility: "hidden" } }))).toEqual(["host.online"]);
     expect(unsubscribe).toHaveBeenCalledTimes(4);
     expect(await rules({})).toEqual([]);
   });
@@ -500,9 +502,9 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const run = async (overrides: AdapterOverrides, host: Host) =>
       (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, host }, { collectOnly: true })).violations.map(violation => violation.rule);
     expect(await run({}, stillHost(speaking))).toEqual([]);
-    expect(await run({}, stillHost({ online: true }))).toEqual(["context.host.audio.required"]);
+    expect(await run({}, stillHost({ online: true, browsers: { urlVisibility: "hidden" } }))).toEqual(["context.host.audio.required"]);
     const chat = { manifest: chatManifest, snapshot: chatSnapshot, connection: { openMedia: undefined, dial: undefined } };
-    expect(await run(chat, stillHost({ online: true }))).toEqual([]);
+    expect(await run(chat, stillHost({ online: true, browsers: { urlVisibility: "hidden" } }))).toEqual([]);
     expect(await run(chat, stillHost(speaking))).toEqual(["context.host.audio.unexpected"]);
     // The obligation: a voice adapter asks. A chat adapter has nothing to ask about and is not held to it.
     expect(await rules({ ignoresHost: true })).toEqual(["connection.host.consulted"]);
@@ -566,6 +568,19 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ manifest: plainManifest, snapshot: assisting, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     const later: ProviderEventEnvelope<"voice"> = { id: "evt-team", sessionId: "session-1", occurredAt: at, event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } } };
     expect(await rules({ manifest: plainManifest, capabilities: { team: {} }, snapshot: { ...bare, team: { members: [] } }, connection: { describeUsers: undefined }, emit: listener => listener(later) })).toContain("connection.describeUsers.required");
+  });
+
+  it("setPreference() and executeTeamPolicy(), when the login declares preferences or policyControl", async () => {
+    const choosing = { preferences: [{ id: "mute" as const, label: "Mute", enabled: true, setBy: "team" as const }] };
+    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: choosing, connection: { setPreference: undefined } })).toContain("connection.setPreference.required");
+    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: {}, connection: { setPreference: undefined } })).not.toContain("connection.setPreference.required");
+    const setting = { team: { policyControl: true as const } };
+    const withPolicies = { ...minimalSnapshot, team: { members: [], policies: { mute: { setting: "off", setBy: "team" } } } } satisfies Snapshot<"voice">;
+    expect(await rules({ manifest: plainManifest, snapshot: withPolicies, capabilities: setting, connection: { executeTeamPolicy: undefined } })).toContain("connection.executeTeamPolicy.required");
+    expect(await rules({ manifest: plainManifest, snapshot: withPolicies, capabilities: setting })).toEqual([]);
+    // The roster carries policies exactly when the login may set them.
+    expect(await rules({ manifest: plainManifest, snapshot: { ...minimalSnapshot, team: { members: [] } }, capabilities: setting })).toEqual(["team.policies.required"]);
+    expect(await rules({ manifest: plainManifest, snapshot: withPolicies, capabilities: { team: {} } })).toEqual(["team.policies.capability"]);
   });
 
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {

@@ -176,6 +176,7 @@ type Manifest<C extends Channel = Channel> = {
   idleCapabilities?: IdleCapabilities<C>;
   phaseLabels?: TaskPhaseLabels;
   taskTypePresentation?: Record<string, TaskTypePresentation>;
+  tiers?: TierDeclaration[];
 };
 ```
 
@@ -223,10 +224,12 @@ type AuthenticationContext = {
 type TeamCapabilities = {
   breakControl?: true;
   consultControl?: true;
+  policyControl?: true;
 };
 
 type SessionCapabilities = {
   breaks?: true;
+  preferences?: AgentPreference[];
   team?: TeamCapabilities;
 };
 
@@ -256,7 +259,10 @@ type HostAudioOutput =
   | { status: "ready" }
   | { status: "unavailable"; reason: HostOutputUnavailableReason; failure: ProtocolFailure };
 
+type UrlVisibility = "full" | "domain" | "hidden";
+
 type HostReport = {
+  browsers: { urlVisibility: UrlVisibility };
   online: boolean;
   audio?: {
     input: HostAudioInput;
@@ -328,6 +334,30 @@ type AuthenticationSession = {
 ### Provider state
 
 ```ts
+type PreferenceId = "hold" | "mute" | `skill:${string}`;
+
+type SetBy = Tier | "provisioning";
+
+type Resolved = {
+  setBy: SetBy;
+  lockedBy?: Tier;
+  reason?: string;
+};
+
+type AgentPreference = Resolved & {
+  id: PreferenceId;
+  label: string;
+  enabled: boolean;
+};
+
+type SetPreferenceRequest =
+  | { id: PreferenceId; enabled: boolean }
+  | { id: PreferenceId; inherit: true };
+
+type PreferenceResult =
+  | { status: "applied" }
+  | { status: "failed"; failure: ProtocolFailure };
+
 type Snapshot = {
   status: ConnectionStatus;
   sessionId: string;
@@ -352,8 +382,8 @@ type CapacityResult =
 ```ts
 type Contact = {
   name?: string;
-  number?: string;
-  email?: string;
+  number?: Lockable<string>;
+  email?: Lockable<string>;
   attributes?: Attribute[];
 };
 
@@ -404,7 +434,9 @@ type CustomCapability = {
     kind: "button" | "toggle" | "menu-item";
     label: string;
     placement: "primary" | "secondary" | "overflow";
+    render?: "inline" | "page";
   };
+  prompt?: { fields: CredentialField[] };
 };
 
 type SharedTaskCapabilities = {
@@ -416,20 +448,20 @@ type SharedTaskCapabilities = {
 type TaskCapabilities<C extends Channel = Channel> =
   C extends "voice"
     ? SharedTaskCapabilities & {
-        decline?: true;
-        mute?: true;
-        hold?: true;
-        agentDisconnect?: true;
-        callback?: true;
-        blindTransfer?: true | DestinationDirectory;
-        consultTransfer?: true | DestinationDirectory;
-        consultLead?: true;
-        conference?: true | DestinationDirectory;
-        recording?: true;
+        decline?: Lockable<true>;
+        mute?: Lockable<true>;
+        hold?: Lockable<true>;
+        agentDisconnect?: Lockable<true>;
+        callback?: Lockable<true>;
+        blindTransfer?: Lockable<true | DestinationDirectory>;
+        consultTransfer?: Lockable<true | DestinationDirectory>;
+        consultLead?: Lockable<true>;
+        conference?: Lockable<true | DestinationDirectory>;
+        recording?: Lockable<true>;
       }
     : C extends "chat"
-      ? SharedTaskCapabilities & { reject?: true; hold?: true }
-      : SharedTaskCapabilities & { reject?: true };
+      ? SharedTaskCapabilities & { reject?: Lockable<true>; hold?: Lockable<true> }
+      : SharedTaskCapabilities & { reject?: Lockable<true> };
 ```
 
 The channel arms are why `Task<"email">` rejects `hold` at compile time rather than at runtime.
@@ -535,6 +567,20 @@ type TaskAssisting = {
   note?: string;
   since: IsoTimestamp;
 };
+
+type Tier = string;
+
+type TierDeclaration = {
+  id: Tier;
+  label: string;
+};
+
+type Locked = {
+  lockedBy: Tier;
+  reason?: string;
+};
+
+type Lockable<T> = T | Locked;
 
 type Task<C extends Channel = Channel> = {
   id: TaskId;
@@ -645,7 +691,74 @@ type TaskCommandResult =
   | { status: "failed"; failure: ProtocolFailure };
 ```
 
-### Breaks
+### Who decides what an agent may do
+
+An agent desk has two managers, not one. **The queue** — a process, a work type — is owned by a
+process manager and **allows** a set of capabilities: hold, mute, callback, new call, conference,
+whether the number is visible, the actions it offers, the skills it needs. **The people** are
+managed through the organisation's structure — a team, a location, the organisation itself, in
+whatever combination the structure defines for a person — and **decide** per capability within
+what the queue allows: on for everyone, off for everyone, or left to the person. What you do to
+your team is a **policy**; what you do to yourself is a **preference**. A person belongs to one
+team and many queues, so a policy applies across every queue the person works.
+
+**The provider resolves; the protocol carries the result and who decided.** The structure's tiers
+are the provider's ladder: each tier states only what it sets, an enforcing policy at a tier above
+the person settles the value for everyone below it, and where nothing enforces the most specific
+tier that says anything wins. The protocol names a tier by the id the manifest declares for it and
+never describes the chain between them: which tiers a person passes through is the structure's to
+know. A typical organisation has four, and they are the defaults — `DEFAULT_TIERS`: `org`, `site`,
+`team`, `person`, each with the label a desk shows — which `Manifest.tiers` relabels by id (a
+provider whose "site" means something else says what it means) or extends with tiers of its own;
+a manifest that declares none has exactly the four. `lockedBy` is any tier in force except
+`person`, who never locks their own value; `setBy` is any tier in force, or `provisioning`, the
+protocol's own word for "no tier has said anything and the provider's default applies". A host
+renders "who decided" from the declared labels and needs no others. What the wire carries is the
+resolution:
+
+- **`lockedBy`** — a tier above the person made this value theirs to keep. A person never locks
+  their own value, and the queue is not a tier: what the queue does not allow at all is absent.
+- **`setBy`** — who stated the value as it stands: a tier, the `person` themself, or
+  `provisioning` where no tier has said anything. Provenance, not a lock: a value that came from a
+  broad tier as a default is still the person's to change.
+
+**On a task, a control the queue could allow may stand locked in its place.** `Task.capabilities`
+is the effective set. What the queue does not allow is absent and nothing is shown. What the queue
+allows and a tier above the person locked is present as `{ lockedBy, reason? }` where the control's
+value would be — `mute: { lockedBy: "team", reason: "Nobody on this team mutes" }` — and Omni
+renders that control disabled, saying who decided, so an agent who cannot press Mute knows whether
+to ask their lead or their site. `lockedBy` is the discriminant: a value that carries it is the
+lock, so nothing that can be locked — a directory, a number — may carry that key itself. A
+contact's number and email are the same, since each identifies a person: where the queue says
+the agent may not see it, the provider sends `{ lockedBy }` in its place — the last digits or
+nothing — and a CRM link carries a token, never the value with a flag the desk is asked to honour.
+A name is not locked. What the queue provides rather than permits — browsers, dispositions, custom
+controls — is content, and is never locked.
+
+**A lead sets the team's policy from their roster.** A login that declares
+`capabilities.team.policyControl` may `executeTeamPolicy({ type: "set", capability, setting })`
+with `on`, `off`, or `agent`, for any task control, `dial`, or a skill — and only `hold`, `mute`
+and skills may be `agent`; callback and new call are the team's, on or off, within what the queue
+allows. The roster carries `policies` for such a login: every policy as it stands, who set it, and
+`lockedBy` where a tier above the team made it theirs to keep, which the lead sees and cannot
+change — `executeTeamPolicy` on it answers `failed` with `omni.capability-not-enabled`.
+
+**What the team left to the person is the person's, and the provider keeps it.** The login's
+`capabilities.preferences` lists every preference the person may hold — `hold`, `mute`, a skill —
+with where it stands and who set it: `setBy: "team"` while they inherit the team's default,
+`"person"` once they have set their own, `"provisioning"` where no tier has said anything. Nothing
+is hidden for want of a row, and a preference a tier above has since locked is listed with
+`lockedBy`. `setPreference` is the person's act — `{ id, enabled }` to set their own, `{ id,
+inherit: true }` to give it up and inherit again — answered `applied` and republished as a new
+`authenticated` state when something changed, a state and not a flicker, as every republish of
+`authenticated` is; and it is durable: the person's across sessions. A lead may also set a
+person's preference from their own screen, which arrives the same way. A preference is keyed by
+the capability's own name because it is the same capability at another tier: effective in
+`Task.capabilities`, set for the team in `policies`, left to the person in `preferences`. The
+command `mute` acts on one call; the preference `mute` says whether the person wants the control
+at all, and a host renders it in its settings, never as the button on a call.
+
+## Breaks
 
 ```ts
 type BreakApproval =
@@ -723,6 +836,28 @@ type LeadRequest = {
 type TeamRoster = {
   members: TeamMember[];
   requests?: LeadRequest[];
+  policies?: TeamPolicies;
+};
+
+type PolicyKey =
+  | Exclude<keyof TaskCapabilities<"voice">, keyof SharedTaskCapabilities>
+  | Exclude<keyof TaskCapabilities<"chat">, keyof SharedTaskCapabilities>
+  | Exclude<keyof TaskCapabilities<"email">, keyof SharedTaskCapabilities>
+  | "dial"
+  | `skill:${string}`;
+
+type TeamPolicySetting = "on" | "off" | "agent";
+
+type TeamPolicy = Resolved & {
+  setting: TeamPolicySetting;
+};
+
+type TeamPolicies = Partial<Record<PolicyKey, TeamPolicy>>;
+
+type TeamPolicyCommand = { type: "set"; capability: PolicyKey; setting: TeamPolicySetting };
+
+type TeamPolicyCommandRequest = {
+  command: TeamPolicyCommand;
 };
 
 type TeamConsultCommand =
@@ -833,6 +968,8 @@ type Connection<C extends Channel = Channel> = {
   executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
   executeTeamConsult?(request: TeamConsultCommandRequest): Promise<TeamCommandResult>;
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
+  setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
+  executeTeamPolicy?(request: TeamPolicyCommandRequest): Promise<TeamCommandResult>;
 };
 
 type Adapter<C extends Channel = Channel> = {
@@ -849,6 +986,13 @@ const ALLOWED_BROWSER_URL_SCHEMES = ["http:", "https:"] as const;
 
 const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;
 type IdleCapability = (typeof IDLE_CAPABILITIES)[number];
+
+const DEFAULT_TIERS = [
+  { id: "org", label: "Your organisation" },
+  { id: "site", label: "Your site" },
+  { id: "team", label: "Your team" },
+  { id: "person", label: "You" },
+] as const satisfies readonly TierDeclaration[];
 
 const IDLE_CAPABILITY_UI = {
   dial: "Dialpad",
@@ -1205,6 +1349,7 @@ compile time.
 | `idleCapabilities` | Declares actions Omni may offer while the agent has no active task, such as voice dialing. Task controls do not belong here. |
 | `phaseLabels` | Optional static adapter-defined display names for canonical `TaskPhase` values. They cannot vary at runtime. |
 | `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
+| `tiers` | The structure's tiers as the provider calls them, each with the label a desk shows for "who decided". Relabels any of `DEFAULT_TIERS` by id and may add others; omitted for the typical four. See **Who decides what an agent may do**. |
 
 ### Authentication methods
 
@@ -1512,6 +1657,8 @@ them from what arrives later.
 | `team` | This login leads a team. The provider publishes a `TeamRoster` to it on every snapshot — `[]` when nobody is in it — and to nobody else. |
 | `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — place, release, decide, set policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-decision`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
 | `team.consultControl` | This lead may join a member's call on request. Requires `executeTeamConsult`. |
+| `team.policyControl` | This lead sets the team's policy per capability — on, off, or the agent's — within what the queue allows. Requires `executeTeamPolicy`; the roster carries `policies`. |
+| `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
 A session action is available only when both the capability and Omni provisioning permit it.
 
@@ -1702,6 +1849,8 @@ surface in one place, and what obliges an adapter to implement each one.
 | `endBreak()` | The login declares `capabilities.breaks`. |
 | `executeTeamBreak(command)` | The login declares `capabilities.team.breakControl`. |
 | `executeTeamConsult(command)` | The login declares `capabilities.team.consultControl`. |
+| `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
+| `executeTeamPolicy(command)` | The login declares `capabilities.team.policyControl`. |
 | `openMedia(request)` | The manifest channel is `voice`. Every voice task's audio lands in Omni, so there is no voice adapter that does not implement it. |
 
 **The four break methods stand or fall together.** Declaring `capabilities.breaks` at login and then
@@ -2379,8 +2528,15 @@ capabilities: {
 ```
 
 Custom capability IDs must be non-empty and unique within the task. `ui.kind` is `button`, `toggle`,
-or `menu-item`; `ui.placement` is `primary`, `secondary`, or `overflow`. Omni renders the control
-and invokes it with the shared custom task command:
+or `menu-item`; `ui.placement` is `primary`, `secondary`, or `overflow`. `ui.render` says where the
+control's work appears: `inline`, in the workspace beside the task, or `page`, as a page of its own
+— a tab in the same work area as the task's browsers, beside them, and alone on a task that has
+none; inline when absent. `prompt.fields` are what the agent supplies before the action runs — a
+destination number, a reference — as `CredentialField`s Omni renders as a form; the values travel
+on the custom command under the fields' names, as strings, and Omni sends the command only once
+every `required` field has a value. The provider validates what arrives as it validates any
+command; a form is a declaration, not a contract for what the agent typed. Omni renders the
+control and invokes it with the shared custom task command:
 
 ```ts
 {
@@ -2788,6 +2944,7 @@ A lead who also takes calls sees their team on the idle dashboard. `Snapshot.tea
 | --- | --- |
 | `members` | Every member of this lead's team, whatever their state. `[]` says the lead has a team with nobody in it; omitting the roster says something else entirely — see **The login is the permission** below. |
 | `requests` | The members currently asking this lead to join a call, each with the task and the note. Required when the login declares `team.consultControl`, `[]` when nobody is asking; omitted when it does not. See **Consulting a lead**. |
+| `policies` | The team's policy per capability as it stands — the setting, who set it, and `lockedBy` where a tier above the team made it theirs to keep. Required when the login declares `team.policyControl`; omitted when it does not. See **Who decides what an agent may do**. |
 
 | `TeamMember` field | Contract |
 | --- | --- |
@@ -2998,6 +3155,7 @@ what failed, and reports. It never decides for the adapter what a missing microp
 | `online` | Whether the host has a network interface up. Not a claim that anything is reachable — the adapter knows whether it can reach its own platform far better than the host does — so `false` is a reason not to go ready and `true` is not a reason to. |
 | `audio` | Present on a voice connection, absent where there is no audio. |
 | `audio.input` | `ready` with `localAudio` — the microphone as captured, the same stream `openMedia` receives — and `flowing`, false while the hardware or OS says no audio moves through it (a headset's own mute switch, which Omni's Mute control never touches). `unavailable` with `reason`, since each wants a different fix from the agent: `no-device`; `denied`; `not-asked`, which a host that asks at connect never publishes; `in-use`, a device present and permitted that another application holds — on an agent desktop the commonest of all; `lost`, a capture that ended. A host decides the reason from the devices before the error name: a browser can report a permission error on a machine with no microphone at all, and "grant permission" is the wrong instruction for an agent who needs to plug one in. `failure` carries the words Omni showed them. |
+| `browsers.urlVisibility` | What Omni's own chrome shows of a task browser's URL: `hidden`, `domain`, or `full`. A statement about the chrome, not about what the page renders or a screenshot captures; task browsers only — the personal browser is the agent's own and nothing a provider sends appears in it. A provider reads it before deciding what URL it is willing to send: one that carries confidential data goes out under `hidden` and not under `full`. |
 | `audio.output` | `ready`, or `unavailable` with `reason` — `no-device`, or `lost` for one removed — and `failure`: an agent who cannot hear is as unable to take a call as one who cannot speak. |
 
 Omni republishes the report whenever it changes — a permission granted late, a headset unplugged,
