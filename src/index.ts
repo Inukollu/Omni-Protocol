@@ -156,6 +156,8 @@ export interface Manifest<C extends Channel = Channel> {
   phaseLabels?: TaskPhaseLabels;
   /** Keyed by `taskType`. An entry replaces the channel default outright rather than merging. */
   taskTypePresentation?: Record<string, TaskTypePresentation>;
+  /** The structure's tiers, relabelling or extending `DEFAULT_TIERS` by id. Omitted for the typical four. */
+  tiers?: TierDeclaration[];
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +200,8 @@ export interface TeamCapabilities {
   breakControl?: true;
   /** This lead may join a member's call on request. Requires `executeTeamConsult`. */
   consultControl?: true;
+  /** This lead sets the team's policy per capability -- on, off, or the agent's -- within what the queue allows. Requires `executeTeamPolicy`. */
+  policyControl?: true;
 }
 
 /**
@@ -208,6 +212,8 @@ export interface TeamCapabilities {
 export interface SessionCapabilities {
   /** This login may request a break. Requires the four break methods. */
   breaks?: true;
+  /** The choices the team left to this person, with where each stands. Omitted when there are none. Requires `setPreference`. */
+  preferences?: AgentPreference[];
   /** This login leads a team: a `TeamRoster` is published to it on every snapshot, `[]` included. */
   team?: TeamCapabilities;
 }
@@ -300,7 +306,12 @@ export type HostAudioOutput =
  * network. Omni reports it; the adapter decides what any of it means for its platform and what
  * to relay. `audio` is present on a voice connection.
  */
+/** What Omni's own chrome shows of a task browser's URL: nothing, the domain, or all of it. */
+export type UrlVisibility = "full" | "domain" | "hidden";
+
 export interface HostReport {
+  /** What the agent can see of a task browser's URL in Omni's chrome. Task browsers only; the personal browser is the agent's. */
+  browsers: { urlVisibility: UrlVisibility };
   /** Whether the host has a network interface up. Not a claim that anything is reachable: the adapter knows its own platform's reachability better than the host does. */
   online: boolean;
   audio?: {
@@ -339,8 +350,10 @@ export type ConnectionStatus = "connecting" | "active" | "error";
 /** Every field is optional: a provider sends what it knows and omits what it does not. */
 export interface Contact {
   name?: string;
-  number?: string;
-  email?: string;
+  /** The number, or `{ lockedBy }` where the queue says the agent may not see it: the last digits or nothing are sent, never a flag to honour. */
+  number?: Lockable<string>;
+  /** The email, or `{ lockedBy }` where the agent may not see it; it identifies a person as a number does. */
+  email?: Lockable<string>;
   attributes?: Attribute[];
 }
 
@@ -388,7 +401,11 @@ export interface CustomCapability {
     kind: "button" | "toggle" | "menu-item";
     label: string;
     placement: "primary" | "secondary" | "overflow";
+    /** Where the control's work renders: inline in the workspace, or as a page of its own. Inline when absent. */
+    render?: "inline" | "page";
   };
+  /** What the agent supplies before the action runs; the values travel on the custom command. */
+  prompt?: { fields: CredentialField[] };
 }
 
 export interface SharedTaskCapabilities {
@@ -405,23 +422,23 @@ export interface SharedTaskCapabilities {
 export type TaskCapabilities<C extends Channel = Channel> =
   C extends "voice"
     ? SharedTaskCapabilities & {
-        decline?: true;
-        mute?: true;
-        hold?: true;
-        agentDisconnect?: true;
+        decline?: Lockable<true>;
+        mute?: Lockable<true>;
+        hold?: Lockable<true>;
+        agentDisconnect?: Lockable<true>;
         /** Reach the party again while `completing`; the task returns to `in-progress`. */
-        callback?: true;
-        blindTransfer?: true | DestinationDirectory;
+        callback?: Lockable<true>;
+        blindTransfer?: Lockable<true | DestinationDirectory>;
         /** Park the customer and call a destination first; then `complete` or `cancel`. */
-        consultTransfer?: true | DestinationDirectory;
+        consultTransfer?: Lockable<true | DestinationDirectory>;
         /** Ask a lead to join this call, with a note. The lead's decision arrives on `Task.lead`. */
-        consultLead?: true;
-        conference?: true | DestinationDirectory;
-        recording?: true;
+        consultLead?: Lockable<true>;
+        conference?: Lockable<true | DestinationDirectory>;
+        recording?: Lockable<true>;
       }
     : C extends "chat"
-      ? SharedTaskCapabilities & { reject?: true; hold?: true }
-      : SharedTaskCapabilities & { reject?: true };
+      ? SharedTaskCapabilities & { reject?: Lockable<true>; hold?: Lockable<true> }
+      : SharedTaskCapabilities & { reject?: Lockable<true> };
 
 // ---------------------------------------------------------------------------
 // Task workspace.
@@ -571,6 +588,53 @@ export interface TaskAssisting {
   note?: string;
   since: IsoTimestamp;
 }
+
+/**
+ * A tier of the organisation's structure, by the id its manifest declares -- or one of the four
+ * every organisation has, `DEFAULT_TIERS`, which a manifest relabels or adds to. The protocol
+ * never describes the chain: which tiers a person passes through is the structure's to know.
+ */
+export type Tier = string;
+
+/** A tier the structure has, with the label a desk shows for "who decided". */
+export interface TierDeclaration {
+  id: Tier;
+  label: string;
+}
+
+/**
+ * The tiers a typical organisation has. A manifest that declares `tiers` relabels any of these
+ * by id and may add its own; one that declares none has exactly these.
+ */
+export const DEFAULT_TIERS = [
+  { id: "org", label: "Your organisation" },
+  { id: "site", label: "Your site" },
+  { id: "team", label: "Your team" },
+  { id: "person", label: "You" },
+] as const satisfies readonly TierDeclaration[];
+
+/** The tiers in force for a manifest: the defaults, relabelled or extended by what it declares. */
+export function effectiveTiers(declared: readonly TierDeclaration[] | undefined): TierDeclaration[] {
+  const byId = new Map<string, TierDeclaration>(DEFAULT_TIERS.map(tier => [tier.id, tier]));
+  for (const tier of declared ?? []) byId.set(tier.id, tier);
+  return [...byId.values()];
+}
+
+/**
+ * Something the queue could allow, locked above the person: the tier that made it unchangeable,
+ * and why if they said. `person` never locks their own value, and the queue is not a tier --
+ * what the queue does not allow at all is simply absent.
+ */
+export interface Locked {
+  lockedBy: Tier;
+  reason?: string;
+}
+
+/**
+ * A value, or `{ lockedBy }` in its place: present without permission, saying whose. `lockedBy`
+ * is the discriminant: a value that carries it is the lock, so no `T` may carry that key.
+ */
+export type Lockable<T> = T | Locked;
 
 export type Task<C extends Channel = Channel> = {
   id: TaskId;
@@ -827,6 +891,32 @@ export interface TeamRoster {
   members: TeamMember[];
   /** Omitted when the login lacks `team.consultControl`; `[]` when nobody is asking. */
   requests?: LeadRequest[];
+  /** The team's policy per capability, as it stands. Present exactly when the login declares `team.policyControl`. */
+  policies?: TeamPolicies;
+}
+
+/** A capability a team policy can name: any task control, new call, or a skill by its provider id. */
+export type PolicyKey =
+  | Exclude<keyof TaskCapabilities<"voice">, keyof SharedTaskCapabilities>
+  | Exclude<keyof TaskCapabilities<"chat">, keyof SharedTaskCapabilities>
+  | Exclude<keyof TaskCapabilities<"email">, keyof SharedTaskCapabilities>
+  | "dial"
+  | `skill:${string}`;
+
+/** On for everyone, off for everyone, or the agent's own choice. Only `hold`, `mute` and skills may be `agent`. */
+export type TeamPolicySetting = "on" | "off" | "agent";
+
+/** One policy as the lead sees it: the setting, who set it, and `lockedBy` when a tier above the team made it theirs to keep. */
+export interface TeamPolicy extends Resolved {
+  setting: TeamPolicySetting;
+}
+
+export type TeamPolicies = Partial<Record<PolicyKey, TeamPolicy>>;
+
+export type TeamPolicyCommand = { type: "set"; capability: PolicyKey; setting: TeamPolicySetting };
+
+export interface TeamPolicyCommandRequest {
+  command: TeamPolicyCommand;
 }
 
 export type TeamConsultCommand =
@@ -876,6 +966,49 @@ export type OpenMediaResult =
 // ---------------------------------------------------------------------------
 
 /** The provider's complete state at one moment. It replaces what Omni holds; never a patch. */
+/**
+ * What the team may leave to the person: a capability by its own name -- `hold`, `mute` -- or a
+ * skill by its provider id. The same key as in `Task.capabilities`, because it is the same
+ * capability seen at another tier. Callback and new call are never the person's; they are the
+ * team's, on or off, within what the queue allows.
+ */
+export type PreferenceId = "hold" | "mute" | `skill:${string}`;
+
+/**
+ * Who stated a value as it stands: a tier -- `person` among them -- or `provisioning`, the
+ * protocol's own word for "no tier has said anything and the provider's default applies".
+ * Nothing is hidden for want of a row.
+ */
+export type SetBy = Tier | "provisioning";
+
+/** What every resolved value carries: who set it, and who locked it if anyone did. */
+export interface Resolved {
+  setBy: SetBy;
+  lockedBy?: Tier;
+  /** Given with `lockedBy`, where whoever locked it said why. */
+  reason?: string;
+}
+
+/**
+ * One choice the team may leave to the person, with where it stands and who set it. The provider
+ * keeps it: it is the person's across sessions, written through `setPreference`. Listed whether
+ * or not anyone has stated it, and even when a tier above has since locked it.
+ */
+export interface AgentPreference extends Resolved {
+  id: PreferenceId;
+  label: string;
+  enabled: boolean;
+}
+
+/** The person's act: set their own value, or give it up and inherit again. */
+export type SetPreferenceRequest =
+  | { id: PreferenceId; enabled: boolean }
+  | { id: PreferenceId; inherit: true };
+
+export type PreferenceResult =
+  | { status: "applied" }
+  | { status: "failed"; failure: ProtocolFailure };
+
 export interface Snapshot<C extends Channel = Channel> {
   status: ConnectionStatus;
   sessionId: string;
@@ -989,8 +1122,12 @@ export interface Connection<C extends Channel = Channel> {
   executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
   /** Required when the login declares `capabilities.team.consultControl`. */
   executeTeamConsult?(request: TeamConsultCommandRequest): Promise<TeamCommandResult>;
+  /** Required when the login declares `capabilities.team.policyControl`. */
+  executeTeamPolicy?(request: TeamPolicyCommandRequest): Promise<TeamCommandResult>;
   /** Required of every voice adapter: all voice audio lands in Omni. */
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
+  /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
+  setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
 }
 
 export interface Adapter<C extends Channel = Channel> {

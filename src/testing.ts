@@ -1,5 +1,6 @@
 import {
   browserSessionKey,
+  effectiveTiers,
   sameCapabilities,
   type Adapter,
   type AuthenticationState,
@@ -51,12 +52,14 @@ const STATE_SUBJECTS = [
   "task.dispositions",
   "task.destinations",
   "task.custom",
+  "task.locked",
   "break.reasons",
   "break.imposed",
   "team.members",
   "team.requests",
   "contacts",
   "scheduledActivities",
+  "team.policies",
 ] as const;
 // Pinned to the event union the way validation pins its closed sets: a type added to
 // `ProviderEvent` without a row here, or a row it lacks, is a compile error.
@@ -92,6 +95,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
     if (isRecord(declared) && some(declared.destinations)) seen.add("task.destinations");
   }
   if (some(capabilities.custom)) seen.add("task.custom");
+  if (Object.values(capabilities).some(declared => isRecord(declared) && declared.lockedBy !== undefined)) seen.add("task.locked");
 }
 
 function observeBreak(value: unknown, seen: Set<ContractSubject>): void {
@@ -104,6 +108,7 @@ function observeTeam(value: unknown, seen: Set<ContractSubject>): void {
   if (!isRecord(value)) return;
   if (some(value.members)) seen.add("team.members");
   if (some(value.requests)) seen.add("team.requests");
+  if (isRecord(value.policies) && Object.keys(value.policies).length > 0) seen.add("team.policies");
 }
 
 function observeSnapshot(value: unknown, seen: Set<ContractSubject>): void {
@@ -202,7 +207,8 @@ export async function exerciseAdapter<C extends Channel>(
 
   try {
     authenticationState = await authentication.state();
-    violations.push(...validateAuthenticationState(authenticationState));
+    const tiers = effectiveTiers(adapter.manifest.tiers).map(tier => tier.id);
+    violations.push(...validateAuthenticationState(authenticationState, "authentication", { tiers }));
     if (authenticationState.status !== "authenticated") {
       throw new Error(
         `Adapter contract exercise requires authenticated test state, received ${authenticationState.status}`,
@@ -251,10 +257,12 @@ export async function exerciseAdapter<C extends Channel>(
       }
       if (capabilities.team?.breakControl === true) requireMethod(on, "executeTeamBreak", "the login declares capabilities.team.breakControl");
       if (capabilities.team?.consultControl === true) requireMethod(on, "executeTeamConsult", "the login declares capabilities.team.consultControl");
+      if (capabilities.team?.policyControl === true) requireMethod(on, "executeTeamPolicy", "the login declares capabilities.team.policyControl");
+      if (some(capabilities.preferences)) requireMethod(on, "setPreference", "the login declares capabilities.preferences");
     };
 
     unsubscribeAuthentication = authentication.subscribe(state => {
-      const own = validateAuthenticationState(state);
+      const own = validateAuthenticationState(state, "authentication", { tiers });
       violations.push(...own);
       if (own.length > 0) return;
       if (state.status === "refreshing") {
@@ -759,7 +767,7 @@ export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvel
 }
 
 /** A host that reports one thing and never changes: what most adapter tests hand `exerciseAdapter`. */
-export function stillHost(report: HostReport = { online: true }): Host {
+export function stillHost(report: HostReport = { online: true, browsers: { urlVisibility: "hidden" } }): Host {
   return { report: () => report, subscribe: () => () => undefined };
 }
 

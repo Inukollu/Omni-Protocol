@@ -8,6 +8,9 @@ import {
   type HostReport,
   type OpenMediaRequest,
   type Manifest,
+  type AgentPreference,
+  type SetPreferenceRequest,
+  type TeamPolicy,
   type Snapshot,
   type Task,
   type TeamRoster,
@@ -154,7 +157,23 @@ export const rosterWithControl: TeamRoster = { members: [], breakControl: true }
 
 // The host reports; a request may lack the microphone, and a ready input may not.
 export const openWithoutHostAudio: OpenMediaRequest = { taskId: "call-42" };
-export const noMicrophone: HostReport = { online: true, audio: { input: { status: "unavailable", reason: "in-use", failure: { code: "host.in-use", message: "Another application holds the microphone", retryable: true } }, output: { status: "unavailable", reason: "no-device", failure: { code: "host.no-speaker", message: "No speaker", retryable: true } } } };
-export const noAudioHere: HostReport = { online: true };
+export const noMicrophone: HostReport = { online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "unavailable", reason: "in-use", failure: { code: "host.in-use", message: "Another application holds the microphone", retryable: true } }, output: { status: "unavailable", reason: "no-device", failure: { code: "host.no-speaker", message: "No speaker", retryable: true } } } };
+export const noAudioHere: HostReport = { online: true, browsers: { urlVisibility: "domain" } };
+// @ts-expect-error A host says what its chrome shows of a task browser's URL.
+export const silentAboutUrls: HostReport = { online: true };
 // @ts-expect-error A ready input carries the microphone it captured and says whether audio flows.
-export const readyWithoutAudio: HostReport = { online: true, audio: { input: { status: "ready" }, output: { status: "ready" } } };
+export const readyWithoutAudio: HostReport = { online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "ready" }, output: { status: "ready" } } };
+
+// Who decides: a control the queue could allow may stand locked in its place, naming the tier;
+// a preference carries who set it; only hold, mute and skills are ever the person's.
+export const lockedMute: Task<"voice"> = { ...emailTask, id: "call-12", channel: "voice", capabilities: { hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" } }, contact: { name: "Asha", number: { lockedBy: "org" }, email: { lockedBy: "site" } } };
+// @ts-expect-error An email task has no mute to lock.
+export const emailLockedMute: Task<"email"> = { ...emailTask, capabilities: { mute: { lockedBy: "team" } } };
+export const skillChoice: AgentPreference = { id: "skill:billing", label: "Billing", enabled: true, setBy: "person" };
+// @ts-expect-error Callback is the team's, never the person's.
+export const callbackChoice: AgentPreference = { id: "callback", label: "Callback", enabled: false, setBy: "team" };
+export const inheritAgain: SetPreferenceRequest = { id: "mute", inherit: true };
+export const teamMute: TeamPolicy = { setting: "off", setBy: "team" };
+export const siteRecording: TeamPolicy = { setting: "on", setBy: "site", lockedBy: "site" };
+
+// team may leave to the person.
