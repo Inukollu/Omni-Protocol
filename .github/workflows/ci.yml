@@ -1,8 +1,5 @@
 name: CI
 
-# Validates pull requests on a disposable GitHub-hosted runner. `pull_request` gives fork code a
-# read-only token and the event's merge ref without opting into the trusted `pull_request_target`
-# context. Publishing lives separately in publish.yml and runs only over code already on main.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -22,8 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # pull_request checks out the merge ref by default: what CI reports on is what main would
-      # become, while workflow_dispatch checks out the selected ref.
       - name: Check out the pull request merge
         uses: actions/checkout@v6
         with:
@@ -50,6 +45,5 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # What would be published, so a file missing from `files` is caught here and not on npm.
       - name: Show the package contents
         run: pnpm pack --dry-run
