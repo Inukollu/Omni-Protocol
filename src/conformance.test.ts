@@ -583,6 +583,17 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ manifest: plainManifest, snapshot: withPolicies, capabilities: { team: {} } })).toEqual(["team.policies.capability"]);
   });
 
+  it("holds who-decided to the manifest's declared ladder, on the login and on the snapshot", async () => {
+    const laddered = { ...conformingManifest, orgTiers: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] } satisfies Manifest<"voice">;
+    const of = (setBy: string) => ({ preferences: [{ id: "mute" as const, label: "Mute", enabled: true, setBy }] });
+    expect(await rules({ manifest: laddered, capabilities: of("region") })).toEqual([]);
+    // The ladder is the whole ladder: the default the manifest left out is refused.
+    expect(await rules({ manifest: laddered, capabilities: of("site") })).toEqual(["preference.setBy.unknown"]);
+    const lockedTask = (lockedBy: string) => ({ ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, capabilities: { ...conformingSnapshot.tasks[0]!.capabilities, mute: { lockedBy } } }] });
+    expect(await rules({ manifest: laddered, snapshot: lockedTask("region") })).toEqual([]);
+    expect(await rules({ manifest: laddered, snapshot: lockedTask("site") })).toEqual(["task.capability.locked.lockedBy.unknown"]);
+  });
+
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
     // The conforming snapshot names A-1 in a handling step; a roster and an imposed break count too.
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
