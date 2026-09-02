@@ -1871,7 +1871,7 @@ Returns the provider's complete authoritative state at one point in time.
   order.
 - `tasks` must contain every task currently owned by this agent for this provider.
 - A snapshot replaces Omni's state for this provider; it is not a partial patch.
-- The adapter may return synchronously when it already holds current live values, as Jema does, or
+- The adapter may return synchronously when it already holds current live values, or
   asynchronously when it must obtain state.
 
 ### `Connection.subscribe(listener)`
