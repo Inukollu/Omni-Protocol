@@ -176,7 +176,7 @@ type Manifest<C extends Channel = Channel> = {
   idleCapabilities?: IdleCapabilities<C>;
   phaseLabels?: TaskPhaseLabels;
   taskTypePresentation?: Record<string, TaskTypePresentation>;
-  tiers?: TierDeclaration[];
+  orgTiers?: TierDeclaration[];
 };
 ```
 
@@ -708,13 +708,17 @@ the person settles the value for everyone below it, and where nothing enforces t
 tier that says anything wins. The protocol names a tier by the id the manifest declares for it and
 never describes the chain between them: which tiers a person passes through is the structure's to
 know. A typical organisation has four, and they are the defaults — `DEFAULT_TIERS`: `org`, `site`,
-`team`, `person`, each with the label a desk shows — which `Manifest.tiers` relabels by id (a
-provider whose "site" means something else says what it means) or extends with tiers of its own;
-a manifest that declares none has exactly the four. `lockedBy` is any tier in force except
-`person`, who never locks their own value; `setBy` is any tier in force, or `provisioning`, the
-protocol's own word for "no tier has said anything and the provider's default applies". A host
-renders "who decided" from the declared labels and needs no others. What the wire carries is the
-resolution:
+`team`, `person`, each with the label a desk shows. A structure that differs states its whole
+ladder in `Manifest.orgTiers`, `person` included: what the list carries is in force, and what it
+leaves out does not exist — a structure with no site tier declares `org`, `team`, `person`, and
+`site` is refused on its wire. A declared tier is one the provider's own store actually resolves
+at: a label with no policy behind it decides nothing. A manifest that declares none has exactly
+the four. `lockedBy` is any tier in force except `person`, who never locks their own value;
+`setBy` is any tier in force, or `provisioning`, the protocol's word for "no tier has said
+anything and the provider's own configuration supplied the value" — the provider speaking, never
+Omni's provisioning file, which does not reach the wire. A host renders "who decided" from the
+declared labels and needs no others, and validates every republished `authenticated` state
+against them, not only the sign-in. What the wire carries is the resolution:
 
 - **`lockedBy`** — a tier above the person made this value theirs to keep. A person never locks
   their own value, and the queue is not a tier: what the queue does not allow at all is absent.
@@ -1349,7 +1353,7 @@ compile time.
 | `idleCapabilities` | Declares actions Omni may offer while the agent has no active task, such as voice dialing. Task controls do not belong here. |
 | `phaseLabels` | Optional static adapter-defined display names for canonical `TaskPhase` values. They cannot vary at runtime. |
 | `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
-| `tiers` | The structure's tiers as the provider calls them, each with the label a desk shows for "who decided". Relabels any of `DEFAULT_TIERS` by id and may add others; omitted for the typical four. See **Who decides what an agent may do**. |
+| `orgTiers` | The organisation's whole ladder as the provider calls it, each tier with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_TIERS`. See **Who decides what an agent may do**. |
 
 ### Authentication methods
 
@@ -3568,7 +3572,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `ready` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `ready` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
-| `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. |
+| `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
 
 Each returns `ProtocolViolation[]` rather than throwing, so a caller can report every problem at
 once. A violation carries a stable `rule` id such as `task.browser.url.scheme`, the `path` it was

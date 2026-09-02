@@ -446,17 +446,20 @@ describe("validateEventEnvelope", () => {
 describe("who decides what an agent may do", () => {
   const voice = { channel: "voice" };
 
-  it("takes the typical four tiers by default, relabelled or extended by the manifest", () => {
+  it("takes the typical four tiers by default, or exactly the ladder the manifest states", () => {
     expect(effectiveTiers(undefined).map(tier => tier.id)).toEqual(["org", "site", "team", "person"]);
-    const tiers = effectiveTiers([{ id: "site", label: "Your branch" }, { id: "region", label: "Your region" }]);
-    expect(tiers.map(tier => `${tier.id}=${tier.label}`)).toEqual(["org=Your organisation", "site=Your branch", "team=Your team", "person=You", "region=Your region"]);
-    const m = (tiers: unknown) => rules(validateManifest(manifest({ tiers })));
-    expect(m([{ id: "region", label: "Your region" }])).toEqual([]);
-    expect(m("region")).toEqual(["manifest.tiers.shape"]);
-    expect(m(["region"])).toEqual(["manifest.tier.shape"]);
-    expect(m([{ label: "Your region" }])).toEqual(["manifest.tier.id"]);
-    expect(m([{ id: "region" }])).toEqual(["manifest.tier.label"]);
-    expect(m([{ id: "region", label: "A" }, { id: "region", label: "B" }])).toEqual(["manifest.tier.unique"]);
+    // A declared ladder is the whole ladder: what it leaves out does not exist.
+    const tiers = effectiveTiers([{ id: "org", label: "Your organisation" }, { id: "team", label: "Your queue group" }, { id: "person", label: "You" }]);
+    expect(tiers.map(tier => `${tier.id}=${tier.label}`)).toEqual(["org=Your organisation", "team=Your queue group", "person=You"]);
+    const m = (orgTiers: unknown) => rules(validateManifest(manifest({ orgTiers })));
+    expect(m([{ id: "region", label: "Your region" }, { id: "person", label: "You" }])).toEqual([]);
+    expect(m("region")).toEqual(["manifest.orgTiers.shape"]);
+    expect(m(["region"])).toEqual(["manifest.orgTier.shape"]);
+    expect(m([{ label: "Your region" }])).toEqual(["manifest.orgTier.id"]);
+    expect(m([{ id: "region" }])).toEqual(["manifest.orgTier.label"]);
+    expect(m([{ id: "region", label: "A" }, { id: "region", label: "B" }])).toEqual(["manifest.orgTier.unique"]);
+    // The subject of every resolution cannot be declared away.
+    expect(m([{ id: "org", label: "Your organisation" }, { id: "team", label: "Your team" }])).toEqual(["manifest.orgTiers.person"]);
   });
 
   it("lets a control stand locked in its place, naming the tier, and never a queue's own content", () => {
@@ -464,12 +467,15 @@ describe("who decides what an agent may do", () => {
     expect(caps({ hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" }, recording: { lockedBy: "site" } })).toEqual([]);
     expect(caps({ blindTransfer: { lockedBy: "org" } })).toEqual([]);
     expect(caps({ mute: { lockedBy: "person" } })).toEqual(["task.capability.locked.lockedBy.person"]);
-    // A tier is one the manifest declares, or one of the four defaults.
+    // A tier is one of the four defaults when the manifest declares no ladder.
     expect(caps({ mute: { lockedBy: "org" } })).toEqual([]);
     expect(caps({ mute: { lockedBy: "region" } })).toEqual(["task.capability.locked.lockedBy.unknown"]);
-    const regional = manifest({ tiers: [{ id: "region", label: "Your region" }, { id: "site", label: "Your branch" }] });
+    // The control: a manifest that declares no ladder has all four defaults in force.
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "site" } } })] }), manifest()))).toEqual([]);
+    const regional = manifest({ orgTiers: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] });
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "region" } } })] }), regional))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "site" } } })] }), regional))).toEqual([]);
+    // The ladder is the whole ladder: a default the manifest left out is not in force.
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "site" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "district" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
     expect(caps({ mute: { lockedBy: "team", reason: "" } })).toEqual(["task.capability.locked.reason"]);
     expect(caps({ browsers: { lockedBy: "team" } })).toEqual(["task.capability.locked.unexpected"]);

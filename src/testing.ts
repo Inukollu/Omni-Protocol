@@ -207,7 +207,7 @@ export async function exerciseAdapter<C extends Channel>(
 
   try {
     authenticationState = await authentication.state();
-    const tiers = effectiveTiers(adapter.manifest.tiers).map(tier => tier.id);
+    const tiers = effectiveTiers(adapter.manifest.orgTiers).map(tier => tier.id);
     violations.push(...validateAuthenticationState(authenticationState, "authentication", { tiers }));
     if (authenticationState.status !== "authenticated") {
       throw new Error(

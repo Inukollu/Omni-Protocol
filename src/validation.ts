@@ -407,23 +407,32 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
     }
   }
 
-  if (manifest.tiers !== undefined) {
-    if (!Array.isArray(manifest.tiers)) {
-      into.add("manifest.tiers.shape", `${path}.tiers`, "tiers must be an array when present");
+  if (manifest.orgTiers !== undefined) {
+    if (!Array.isArray(manifest.orgTiers)) {
+      into.add("manifest.orgTiers.shape", `${path}.orgTiers`, "orgTiers must be an array when present");
     } else {
       const ids = new Set<string>();
-      manifest.tiers.forEach((tier: unknown, index: number) => {
-        const at = `${path}.tiers[${index}]`;
+      let wellFormed = true;
+      manifest.orgTiers.forEach((tier: unknown, index: number) => {
+        const at = `${path}.orgTiers[${index}]`;
         if (!isPlainObject(tier)) {
-          into.add("manifest.tier.shape", at, "each tier must be an object with an id and a label");
+          into.add("manifest.orgTier.shape", at, "each tier must be an object with an id and a label");
+          wellFormed = false;
           return;
         }
-        if (into.filled(tier.id, "manifest.tier.id", `${at}.id`, "a tier needs an id")) {
-          if (ids.has(tier.id as string)) into.add("manifest.tier.unique", `${at}.id`, `duplicate tier: ${tier.id}`);
+        if (into.filled(tier.id, "manifest.orgTier.id", `${at}.id`, "a tier needs an id")) {
+          if (ids.has(tier.id as string)) {
+            into.add("manifest.orgTier.unique", `${at}.id`, `duplicate tier: ${tier.id}`);
+            wellFormed = false;
+          }
           ids.add(tier.id as string);
-        }
-        into.filled(tier.label, "manifest.tier.label", `${at}.label`, "a tier needs the label a desk shows for it");
+        } else wellFormed = false;
+        if (!into.filled(tier.label, "manifest.orgTier.label", `${at}.label`, "a tier needs the label a desk shows for it")) wellFormed = false;
       });
+      if (wellFormed && !ids.has("person")) {
+        into.add("manifest.orgTiers.person", `${path}.orgTiers`,
+          "a declared ladder states the whole ladder and must include person, the subject of every resolution");
+      }
     }
   }
 
@@ -583,7 +592,7 @@ function validateLockedByInto(value: unknown, rule: string, path: string, tiers:
   if (!into.filled(value, rule, path, "lockedBy names the tier that locked it")) return;
   into.require(value !== "person", `${rule}.person`, path, "a person never locks their own value");
   into.require(tierIds(tiers).includes(value as string), `${rule}.unknown`, path,
-    `${String(value)} is not a tier this manifest declares: the defaults are ${DEFAULT_TIER_IDS.join(", ")}`);
+    `${String(value)} is not a tier this manifest declares: in force are ${tierIds(tiers).join(", ")}`);
 }
 
 /** `{ lockedBy, reason? }` standing in for a value: who locked it, and a reason if given. */
@@ -608,9 +617,9 @@ function validateResolvedInto(value: Record<string, unknown>, rule: string, path
 /** The tier ids a manifest puts in force, for validators that receive one. */
 function manifestTiers(manifest: unknown): readonly string[] | undefined {
   if (!isPlainObject(manifest)) return undefined;
-  const declared = Array.isArray(manifest.tiers)
-    ? manifest.tiers.filter((tier: unknown): tier is { id: string; label: string } => isPlainObject(tier) && typeof tier.id === "string")
-    : [];
+  const declared = Array.isArray(manifest.orgTiers)
+    ? manifest.orgTiers.filter((tier: unknown): tier is { id: string; label: string } => isPlainObject(tier) && typeof tier.id === "string")
+    : undefined;
   return effectiveTiers(declared).map(tier => tier.id);
 }
 const CUSTOM_RENDERS = membersOf<NonNullable<CustomCapability["ui"]["render"]>>({ inline: true, page: true });

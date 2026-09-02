@@ -156,8 +156,8 @@ export interface Manifest<C extends Channel = Channel> {
   phaseLabels?: TaskPhaseLabels;
   /** Keyed by `taskType`. An entry replaces the channel default outright rather than merging. */
   taskTypePresentation?: Record<string, TaskTypePresentation>;
-  /** The structure's tiers, relabelling or extending `DEFAULT_TIERS` by id. Omitted for the typical four. */
-  tiers?: TierDeclaration[];
+  /** The organisation's whole ladder, stated outright, `person` included. Omitted for the typical four, `DEFAULT_TIERS`. */
+  orgTiers?: TierDeclaration[];
 }
 
 // ---------------------------------------------------------------------------
@@ -591,7 +591,7 @@ export interface TaskAssisting {
 
 /**
  * A tier of the organisation's structure, by the id its manifest declares -- or one of the four
- * every organisation has, `DEFAULT_TIERS`, which a manifest relabels or adds to. The protocol
+ * a typical organisation has, `DEFAULT_TIERS`, when the manifest declares no ladder. The protocol
  * never describes the chain: which tiers a person passes through is the structure's to know.
  */
 export type Tier = string;
@@ -603,8 +603,8 @@ export interface TierDeclaration {
 }
 
 /**
- * The tiers a typical organisation has. A manifest that declares `tiers` relabels any of these
- * by id and may add its own; one that declares none has exactly these.
+ * The tiers a typical organisation has: the ladder in force when a manifest declares no
+ * `orgTiers`. A manifest that declares any states its whole ladder outright.
  */
 export const DEFAULT_TIERS = [
   { id: "org", label: "Your organisation" },
@@ -613,11 +613,9 @@ export const DEFAULT_TIERS = [
   { id: "person", label: "You" },
 ] as const satisfies readonly TierDeclaration[];
 
-/** The tiers in force for a manifest: the defaults, relabelled or extended by what it declares. */
+/** The ladder in force for a manifest: exactly what it declares, or the defaults when it declares none. */
 export function effectiveTiers(declared: readonly TierDeclaration[] | undefined): TierDeclaration[] {
-  const byId = new Map<string, TierDeclaration>(DEFAULT_TIERS.map(tier => [tier.id, tier]));
-  for (const tier of declared ?? []) byId.set(tier.id, tier);
-  return [...byId.values()];
+  return [...(declared ?? DEFAULT_TIERS)];
 }
 
 /**

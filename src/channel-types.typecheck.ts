@@ -42,6 +42,21 @@ export const chatManifest = {
   },
 } satisfies Manifest<"chat">;
 
+export const ladderedManifest = {
+  ...voiceManifest,
+  orgTiers: [
+    { id: "org", label: "Your organisation" },
+    { id: "team", label: "Your queue group" },
+    { id: "person", label: "You" },
+  ],
+} satisfies Manifest<"voice">;
+
+export const mergedTiersManifest = {
+  ...voiceManifest,
+  // @ts-expect-error The field is orgTiers: a fixture keeping the old `tiers` key must fail the build.
+  tiers: [{ id: "org", label: "Your organisation" }],
+} satisfies Manifest<"voice">;
+
 export const emailTask = {
   id: "email-1",
   title: "Reply to customer",
