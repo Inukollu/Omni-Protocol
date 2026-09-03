@@ -374,6 +374,16 @@ describe("validateEventEnvelope", () => {
     expect(check({ type: "provider-status", status: "active" })).toEqual([]);
   });
 
+  it("requires an error to name its recovery, and nothing else to carry one", () => {
+    expect(check({ type: "provider-status", status: "error", recovery: "reconnect", message: "session gone" })).toEqual([]);
+    expect(check({ type: "provider-status", status: "error", recovery: "reauthenticate" })).toEqual([]);
+    expect(check({ type: "provider-status", status: "error" })).toEqual(["event.providerStatus.recovery.required"]);
+    expect(check({ type: "provider-status", status: "error", recovery: "retry" })).toEqual(["event.providerStatus.recovery"]);
+    // Both directions: a status with nothing to revive carries no recovery.
+    expect(check({ type: "provider-status", status: "connecting", recovery: "reconnect" })).toEqual(["event.providerStatus.recovery.unexpected"]);
+    expect(check({ type: "provider-status", status: "active" })).toEqual([]);
+  });
+
   it("carries the reader into a team-updated and into a reconnect snapshot", () => {
     const team = { members: [{ id: "A-2", availability: "ready" }, { id: "1042", availability: "ready" }] };
     const withReader = (event: unknown, self: string) =>
@@ -411,6 +421,8 @@ describe("validateEventEnvelope", () => {
     expect(check({ type: "task-offered", task: task(), acceptanceMode: "whenever" })).toContain("event.taskOffered.acceptanceMode");
     expect(check({ type: "task-media-ended", taskId: "call-42" })).toEqual([]);
     expect(check({ type: "task-media-ended", taskId: "" })).toContain("event.taskMediaEnded.taskId");
+    expect(check({ type: "task-media-ready", taskId: "call-42" })).toEqual([]);
+    expect(check({ type: "task-media-ready", taskId: "" })).toContain("event.taskMediaReady.taskId");
     expect(check({ type: "announcement", text: "Hello", announcedAt: "2026-08-21T09:00:00Z" })).toEqual([]);
     expect(check({ type: "announcement", text: "", announcedAt: "2026-08-21T09:00:00Z" })).toContain("event.announcement.text");
     expect(check({ type: "team-updated", team: { members: [] } })).toEqual([]);
@@ -440,6 +452,18 @@ describe("validateEventEnvelope", () => {
     expect(summary({ title: "", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" })).toContain("event.summary.title");
     expect(summary({ title: "Q", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics: [{ id: "a", label: "A", value: 7 }] }))
       .toContain("event.summary.metric.value");
+  });
+});
+
+describe("audio arrives on the provider's word", () => {
+  it("carries the task's media state on voice alone, in one of two words", () => {
+    const media = (value: unknown, channel = "voice") => rules(validateTask(task({ channel, media: value }), { channel }));
+    expect(media("ready")).toEqual([]);
+    expect(media("ended")).toEqual([]);
+    expect(media(undefined)).toEqual([]);
+    expect(media("live")).toEqual(["task.media"]);
+    // Real-time media is a voice affair; another channel carries no state for it.
+    expect(media("ready", "chat")).toEqual(["task.media.channel"]);
   });
 });
 
@@ -863,8 +887,8 @@ describe("rules that had no test", () => {
     expect(ended({ type: "transferred", destination: "" })).toEqual(["event.taskEnded.outcome.transferred"]);
     expect(ended({ type: "cancelled", reason: "Caller hung up" })).toEqual([]);
     expect(ended({ type: "cancelled", reason: "" })).toEqual(["event.taskEnded.outcome.cancelled"]);
-    expect(check({ type: "provider-status", status: "error", message: "Upstream down" })).toEqual([]);
-    expect(check({ type: "provider-status", status: "error", message: "" })).toEqual(["event.providerStatus.message"]);
+    expect(check({ type: "provider-status", status: "error", recovery: "reconnect", message: "Upstream down" })).toEqual([]);
+    expect(check({ type: "provider-status", status: "error", recovery: "reconnect", message: "" })).toEqual(["event.providerStatus.message"]);
   });
 });
 

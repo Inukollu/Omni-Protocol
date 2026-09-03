@@ -50,6 +50,7 @@ const conformingSnapshot = {
       custom: [{ id: "request-supervisor", ui: { kind: "button", label: "Request supervisor", placement: "secondary" } }],
     },
     phase: "in-progress",
+    media: "ready",
     completionMode: "agent-command",
     completionAllowance: 60,
     contact: { name: "Maya Rao", number: "+919876543210" },
@@ -182,7 +183,7 @@ describe("exerciseAdapter", () => {
     const events = (subjects: readonly ContractSubject[]) => subjects.filter(subject => subject.startsWith("event."));
     const everyEvent: ContractSubject[] = [
       "event.snapshot", "event.provider-status", "event.break-state", "event.task-offered", "event.task-updated",
-      "event.task-media-ended", "event.task-ended", "event.announcement", "event.provider-summary",
+      "event.task-media-ready", "event.task-media-ended", "event.task-ended", "event.announcement", "event.provider-summary",
       "event.team-updated", "event.contacts-updated", "event.calendar-updated",
     ];
     // The rich task carries browsers, history, a disposition policy, transfer destinations and a
@@ -193,7 +194,7 @@ describe("exerciseAdapter", () => {
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.consultation", "task.lead", "task.assisting",
-      "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
+      "task.media", "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
       "contacts", "scheduledActivities", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.

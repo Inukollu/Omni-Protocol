@@ -582,6 +582,8 @@ type Locked = {
 
 type Lockable<T> = T | Locked;
 
+type TaskMediaState = "ready" | "ended";
+
 type Task<C extends Channel = Channel> = {
   id: TaskId;
   title: string;
@@ -596,8 +598,8 @@ type Task<C extends Channel = Channel> = {
   handlingHistory?: TaskHandlingStep[];
 } & TaskCompletion & (
   C extends "voice"
-    ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting }
-    : { consultation?: never; lead?: never; assisting?: never }
+    ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting; media?: TaskMediaState }
+    : { consultation?: never; lead?: never; assisting?: never; media?: never }
 );
 
 type AcceptanceMode =
@@ -919,9 +921,12 @@ type ProviderSummary = {
   metrics?: SummaryMetric[];
 };
 
+type ConnectionRecovery = "reconnect" | "reauthenticate";
+
 type ProviderEvent =
   | { type: "snapshot"; reason: "reconnected" | "provider-requested"; snapshot: Snapshot }
-  | { type: "provider-status"; status: ConnectionStatus; message?: string }
+  | { type: "provider-status"; status: "connecting" | "active"; message?: string }
+  | { type: "provider-status"; status: "error"; recovery: ConnectionRecovery; message?: string }
   | { type: "break-state"; break: BreakState }
   | {
       type: "task-offered";
@@ -931,6 +936,7 @@ type ProviderEvent =
       preparationEndsAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task }
+  | { type: "task-media-ready"; taskId: TaskId }
   | { type: "task-media-ended"; taskId: TaskId }
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
@@ -1793,6 +1799,9 @@ Creates one live provider connection for the signed-in agent.
 - May reject for authentication, configuration, or startup failure.
 - Must not create a second agent session merely because the underlying transport reconnects.
 - The returned connection owns reconnect until Omni calls `disconnect()` or aborts `context.signal`.
+- May be called again on the same login after that: once per `Connection`, not once per login.
+  Omni disposes a connection whose `error` named `recovery: "reconnect"` with `disconnect()` and
+  calls `connect()` afresh — see **`provider-status`**.
 
 ### `ConnectContext`
 
@@ -2048,6 +2057,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
 | `contact` | Optional `Contact` for the person or entity on this task. Often a name and one address; a withheld caller ID may leave nothing to send at all. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preparing`, `in-progress`, `paused`, or `completing`. |
+| `media` | Voice only. The task's real-time audio as the provider holds it: `ready` while audio should be attached, `ended` once it ended, omitted while none should be. The provider's word — see **`task-media-ready`**. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
 | `completionAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
@@ -2107,7 +2117,8 @@ command.
 routed to the agent and accepted as `acceptanceMode` dictates, and its presence and phase follow
 the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
 consult, a conference leg joining or leaving, a transfer, a callback — the media follows
-separately, attaching through `openMedia` and ending with `task-media-ended`. Omni does not ring,
+separately, arriving on `task-media-ready`, attaching through `openMedia` and ending with
+`task-media-ended`. Omni does not ring,
 bridge, or hold a line. How the phone rings, whether it rings at all, and where legs join and leave
 are the adapter's and the platform's, transient, and decide neither when a task exists nor what
 phase it is in.
@@ -2118,9 +2129,10 @@ allowance starts on it and the callback control appears on it — and Omni follo
 follows any other. What Omni never does is derive a task's state from its own media session: a
 stream that drops, a track that ends, a transport that disconnects, a microphone that fails, an
 endpoint re-registering change nothing about the task until the provider says so. Structurally:
-`task-media-ended` names a task whose work has begun, what follows it is `completing` or
-`task-ended`, and every task is introduced once — `exerciseAdapter` holds the stream to that from
-the connect snapshot on, and `assertMediaFollowsTheTask` holds any sequence.
+`task-media-ready` and `task-media-ended` alternate on a task whose work has begun, media ends
+only where it arrived, what follows the media ending is `completing` or `task-ended`, and every
+task is introduced once — `exerciseAdapter` holds the stream to that from the connect snapshot on,
+and `assertMediaFollowsTheTask` holds any sequence.
 
 #### Completion timing
 
@@ -3233,6 +3245,11 @@ carries as `audio.input.localAudio`, and absent while that input is `unavailable
 bridges audio without a host-side input may ignore it; one that needs it and finds it absent
 answers `unavailable` with a failure Omni shows the agent.
 
+**When to ask is the provider's word, not Omni's guess.** Omni opens media on `task-media-ready`,
+and on a task arriving with `media: "ready"` on a snapshot; it closes on `task-media-ended` and
+when the task ends. Between those words, nothing Omni's own senses report — a stream that drops, a
+track that ends — moves the task or its audio.
+
 **A task-scoped session does not oblige one call per task.** A platform holding a nailed-up
 leg for a whole shift may return the same session for every task and release the underlying
 path only when the connection closes. A platform placing a call per contact returns a new one
@@ -3424,7 +3441,24 @@ safe for the agent to see.
 | --- | --- |
 | `connecting` | No usable transport right now, and the adapter expects to recover on its own. Nobody needs to act. Startup and every reconnect pass through this value. |
 | `active` | The transport is up and the provider is serving this session. It is the only value under which work arrives. |
-| `error` | The adapter cannot serve the session and is not simply mid-reconnect. Say why in `message`. It is not terminal — an adapter that recovers reports `connecting` and then `active`. |
+| `error` | The adapter cannot serve the session and is not simply mid-reconnect. Say why in `message`, and say what revives it in `recovery` — required here, forbidden on any other status. It is not terminal: an adapter that recovers on its own still reports `connecting` and then `active`, and one that cannot is revived as `recovery` says. |
+
+**An error names its recovery, and the host acts on that word.** The adapter knows why its session
+died; the host knows how to run a login. `recovery` joins the two:
+
+- **`reconnect`** — the login is good and this connection is not: a backend restart, a session the
+  platform no longer recognises. Omni calls `disconnect()` on the dead connection and then
+  `connect()` again on the same login — same `sessionId` — and the fresh connect snapshot
+  re-establishes state exactly as a reconnect snapshot does. `connect()` is once per
+  `Connection`, not once per login.
+- **`reauthenticate`** — the session under the login died: a token rejected, a remote logout. Omni
+  runs the authentication flow first; the authentication session decides whether stored material
+  refreshes it silently or the agent must act, exactly as at sign-in.
+
+**Patience is the host's.** An adapter in `connecting` retries for as long as it takes and never
+has to decide when to stop. Omni owns giving up: after however long it chooses to wait, it may
+call `disconnect()` and either `connect()` afresh or surface the failure — so neither side waits
+for the other to blink.
 
 **Status is about the transport, nothing else.** It does not say whether the agent is available,
 whether they are on a break, or how much work they can take: capacity travels on `setCapacity`,
@@ -3474,10 +3508,20 @@ snapshots until it ends.
 Replaces the current representation of one provider-local task. It is a full task value, not a
 partial patch.
 
+### `task-media-ready`
+
+The provider's word that the task's audio should now attach. Omni calls `openMedia` on it — and on
+a task carried with `media: "ready"`, which is how a reconnect snapshot reattaches audio an
+earlier event brought — and renders the call as live from that word, never from its own senses. It
+names a task whose work has begun, and it alternates with `task-media-ended`: media that was never
+made ready cannot end, so a live call whose provider says nothing about its audio is a provider in
+breach, not a state a desk fills in from its own devices.
+
 ### `task-media-ended`
 
 Signals that a task's real-time media ended. For voice and similar channels, this starts the fixed
-completion timer. It does not remove the task.
+completion timer. It does not remove the task, and it ends only audio that `task-media-ready` — or
+a task carried with `media: "ready"` — attached.
 
 ### `task-ended`
 
@@ -3660,7 +3704,7 @@ cannot be established from TypeScript structure alone.
 | `stillHost(report?)` | A host that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a voice adapter. |
 | `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for a host that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |
 | `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a placed break arriving in effect with `imposed`. The harness applies the same rules after the connect snapshot. |
-| `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-ended` names a task whose work has begun, and what follows it is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no media satisfies it by never testing it — pair it with the assertion that the media end is present. |
+| `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-ready` and `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what follows the media ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no media satisfies it by never testing it — pair it with the assertion that the media end is present. |
 | `assertBreakParticipants(candidates, participants)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `in-effect` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |

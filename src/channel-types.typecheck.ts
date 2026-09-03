@@ -8,6 +8,7 @@ import {
   type HostReport,
   type OpenMediaRequest,
   type Manifest,
+  type ProviderEvent,
   type AgentPreference,
   type SetPreferenceRequest,
   type TeamPolicy,
@@ -149,6 +150,16 @@ export const leadLeaves: TaskCommand<"voice"> = { type: "lead", action: "leave" 
 export const chatAskLead: TaskCommand<"chat"> = { type: "lead", action: "request" };
 export const leadRequestedTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: { consultLead: true }, lead: { status: "requested", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
 export const leadsOwnTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: {}, assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } } satisfies Task<"voice">;
+export const liveAudioTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, media: "ready" } satisfies Task<"voice">;
+export const audiolessEmailTask = { ...emailTask, id: "email-9",
+  // @ts-expect-error Real-time media is a voice affair; an email task carries no state for it.
+  media: "ready" } satisfies Task<"email">;
+export const revivableError = { type: "provider-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
+// @ts-expect-error An error names its recovery; the type does not let it stay silent.
+export const silentError = { type: "provider-status", status: "error" } satisfies ProviderEvent<"voice">;
+export const plainActive = { type: "provider-status", status: "active",
+  // @ts-expect-error Recovery goes with an error; an active status has nothing to revive.
+  recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An email task cannot be a joined call.
 export const emailAssisting: Task<"email"> = { ...emailTask, id: "email-7", assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } };
 

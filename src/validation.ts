@@ -28,6 +28,8 @@ import {
   DEFAULT_TIERS,
   effectiveTiers,
   type TeamPolicySetting,
+  type TaskMediaState,
+  type ConnectionRecovery,
   type CredentialField,
   type HostOutputUnavailableReason,
   type Channel,
@@ -86,6 +88,7 @@ const membersOf = <U extends string>(members: Record<U, true>): readonly U[] =>
   Object.keys(members) as U[];
 
 const CHANNELS = membersOf<Channel>({ voice: true, chat: true, email: true });
+const CONNECTION_RECOVERIES = membersOf<ConnectionRecovery>({ reconnect: true, reauthenticate: true });
 const TASK_PHASES = membersOf<TaskPhase>({
   pending: true, confirmed: true, preparing: true, "in-progress": true, paused: true, completing: true,
 });
@@ -746,6 +749,16 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
 }
 
 /** Present only while consulting, and only on voice: elsewhere there is nobody to consult. */
+const TASK_MEDIA_STATES = membersOf<TaskMediaState>({ ready: true, ended: true });
+
+/** Real-time media is a voice affair, and its state is one of two words. */
+function validateTaskMedia(value: unknown, channel: string, path: string, into: Collector): void {
+  if (value === undefined) return;
+  if (!into.require(channel === "voice", "task.media.channel", path,
+    `a ${channel} task carries no real-time media state`)) return;
+  into.oneOf(value, TASK_MEDIA_STATES, "task.media", path);
+}
+
 function validateConsultation(value: unknown, channel: string, path: string, into: Collector): void {
   if (value === undefined) return;
   if (!into.require(channel === "voice", "task.consultation.channel", path,
@@ -845,6 +858,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateTaskAttributes(task.attributes, `${path}.attributes`, into);
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into);
   validateConsultation(task.consultation, context.channel, `${path}.consultation`, into);
+  validateTaskMedia(task.media, context.channel, `${path}.media`, into);
   validateLead(task.lead, context.channel, `${path}.lead`, into);
   validateAssisting(task.assisting, context.channel, `${path}.assisting`, into);
 
@@ -1314,6 +1328,16 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       break;
     case "provider-status":
       into.oneOf(event.status, CONNECTION_STATUSES, "event.providerStatus.status", `${at}.status`);
+      // An error says how to revive it; any other status has nothing to revive.
+      if (event.status === "error") {
+        if (into.require(event.recovery !== undefined, "event.providerStatus.recovery.required", `${at}.recovery`,
+          "an error names its recovery: reconnect, or reauthenticate")) {
+          into.oneOf(event.recovery, CONNECTION_RECOVERIES, "event.providerStatus.recovery", `${at}.recovery`);
+        }
+      } else {
+        into.require(event.recovery === undefined, "event.providerStatus.recovery.unexpected", `${at}.recovery`,
+          "recovery goes with an error; nothing needs reviving here");
+      }
       if (event.message !== undefined) {
         into.filled(event.message, "event.providerStatus.message", `${at}.message`, "a message must not be empty when present");
       }
@@ -1345,6 +1369,9 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       break;
     case "task-updated":
       validateTaskInto(event.task, { channel, tiers }, `${at}.task`, into);
+      break;
+    case "task-media-ready":
+      into.require(isTaskId(event.taskId), "event.taskMediaReady.taskId", `${at}.taskId`, "a task id is required");
       break;
     case "task-media-ended":
       into.require(isTaskId(event.taskId), "event.taskMediaEnded.taskId", `${at}.taskId`, "a task id is required");
