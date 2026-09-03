@@ -140,7 +140,7 @@ describe("Omni protocol", () => {
     const event: ProviderEvent = {
       type: "snapshot",
       reason: "reconnected",
-      snapshot: { status: "active", sessionId: "session-1", break: { approval: "starting-after-task", accepting: true }, tasks: [] },
+      snapshot: { status: "active", sessionId: "session-1", break: { approval: "starting-after-task", accepting: true }, tasks: [], taskCount: 0 },
     };
     expect(event.snapshot.break.approval).toBe("starting-after-task");
   });
@@ -171,7 +171,7 @@ describe("Omni protocol", () => {
       },
       async connect() {
         return {
-          snapshot: () => ({ status: "active" as const, sessionId: "session-1", break: { approval: "not-requested" as const, accepting: true }, tasks: [] }),
+          snapshot: () => ({ status: "active" as const, sessionId: "session-1", break: { approval: "not-requested" as const, accepting: true }, tasks: [], taskCount: 0 }),
           subscribe: listener => {
             listener({ id: "event-1", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "provider-status", status: "active" } });
             return () => undefined;

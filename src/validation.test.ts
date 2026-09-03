@@ -49,6 +49,7 @@ const snapshot = (over: Record<string, unknown> = {}) => ({
   sessionId: "session-1",
   break: { approval: "not-requested", accepting: true },
   tasks: [],
+  taskCount: Array.isArray(over.tasks) ? over.tasks.length : 0,
   ...over,
 });
 
@@ -452,6 +453,22 @@ describe("validateEventEnvelope", () => {
     expect(summary({ title: "", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" })).toContain("event.summary.title");
     expect(summary({ title: "Q", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics: [{ id: "a", label: "A", value: 7 }] }))
       .toContain("event.summary.metric.value");
+  });
+});
+
+describe("absence of knowledge is never evidence of absence", () => {
+  it("requires a snapshot to state its task count, reconciled with the tasks it carries", () => {
+    const count = (over: Record<string, unknown> = {}) => rules(validateSnapshot(snapshot(over), manifest()));
+    // The helper computes a matching count; both directions on the explicit field.
+    expect(count()).toEqual([]);
+    expect(count({ tasks: [task()], taskCount: 1 })).toEqual([]);
+    expect(count({ taskCount: undefined })).toEqual(["snapshot.taskCount"]);
+    // A count that does not reconcile is an answer nobody gave.
+    expect(count({ taskCount: 3 })).toEqual(["snapshot.taskCount.mismatch"]);
+    expect(count({ tasks: [task()], taskCount: 0 })).toEqual(["snapshot.taskCount.mismatch"]);
+    expect(count({ taskCount: -1 })).toEqual(["snapshot.taskCount"]);
+    expect(count({ taskCount: 0.5 })).toEqual(["snapshot.taskCount"]);
+    expect(count({ taskCount: "0" })).toEqual(["snapshot.taskCount"]);
   });
 });
 

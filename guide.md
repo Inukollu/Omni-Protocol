@@ -363,6 +363,7 @@ type Snapshot = {
   sessionId: string;
   break: BreakState;
   tasks: Task[];
+  taskCount: number;
   contacts?: Contact[];
   scheduledActivities?: ScheduledActivity[];
   team?: TeamRoster;
@@ -1223,6 +1224,17 @@ which field says so varies. See **Which commands need a capability**.
 
 Snapshots establish and replace provider state when an agent signs in, reconnects, or resynchronises.
 
+**A snapshot is the provider's answer, and an adapter that got no answer publishes nothing.** A
+state read that answers unknown — a session not yet associated, a backend mid-failover — is not an
+empty state: the adapter keeps what it holds, stays `connecting`, and publishes a snapshot only
+once the provider has actually answered for this login, exactly as `connect()` may not resolve
+before it can provide a meaningful one. And emptiness is stated, never inferred: every snapshot
+carries `taskCount`, the provider's own count reconciled against `tasks.length`, so a snapshot
+with no work says `taskCount: 0` in so many words and a blank or half-built state — which lacks
+the count — can never pass as a confirmed empty. Absence of knowledge is never evidence of
+absence, and every place "empty" is allowed to carry both meanings will eventually clear
+somebody's live call.
+
 Events report completed transactions after that baseline. Nothing is missed while the connection
 holds; when it drops, the reconnect snapshot re-establishes the baseline before any further event
 is applied.
@@ -1837,6 +1849,7 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | `sessionId` | Identity of this login session. It must match the connection context. |
 | `break` | Complete break state, including approval, accepting state, reasons, retry details, and any imposed break. |
 | `tasks` | Complete set of tasks currently offered to or owned by this agent. |
+| `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
 | `scheduledActivities` | Required complete calendar contribution when the manifest declares `calendar`; `[]` clears it. Omitted only when it does not. |
 | `team` | Required `TeamRoster` when the login declares `capabilities.team`, `[]` when nobody is in it. Forbidden otherwise — the login is the permission. |
@@ -3402,7 +3415,10 @@ silently lose a message, so while the connection is up Omni has seen everything 
 Loss has exactly one shape: the connection went away. The adapter reports `connecting` or `error`,
 reconnects, and emits a `snapshot` event carrying complete state. That snapshot is the repair —
 whatever was missed while the connection was down is in it, and Omni replaces its provider view
-rather than reasoning about what it did not receive.
+rather than reasoning about what it did not receive. A repair is an answer like any other: a
+platform that has not yet answered for this login after a reconnect — a state read served empty by
+a backend that does not know the session yet — yields no snapshot, and the adapter stays
+`connecting` holding what it holds. See **Snapshots establish state; events report transactions**.
 
 A snapshot must account for **everything the adapter has emitted before it resolves**, not merely
 everything emitted when it was requested. Omni discards events buffered during the read on that
@@ -3517,6 +3533,13 @@ names a task whose work has begun, and it alternates with `task-media-ended`: me
 made ready cannot end, so a live call whose provider says nothing about its audio is a provider in
 breach, not a state a desk fills in from its own devices.
 
+The event is the transition and the task's `media` field is the state. A `task-updated` re-states
+the media its task already holds — republishing `ready` on a hold is a statement, not a second
+arrival — but it does not move it: an update that itself flips the field is refused
+(`stream.taskUpdated.media`), and the pairing at the moment audio arrives is the phase change
+without the field, then the event. Releasing `ended` is the one move an update may make, since
+wrapped audio has nothing left to end.
+
 ### `task-media-ended`
 
 Signals that a task's real-time media ended. For voice and similar channels, this starts the fixed
@@ -3610,7 +3633,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | --- | --- |
 | `validateManifest(manifest)` | Identity, protocol-version interoperability, authentication methods, and idle-capability shapes. |
 | `validateTask(task, { channel })` | Identity, channel agreement, phase, completion allowance, capability shapes, custom controls, and browsers. |
-| `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team roster, and every task, contact, and activity, including idle-capability gating both ways: a contribution the manifest never declared is refused, and one it declares is required, `[]` included. |
+| `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team roster, the stated `taskCount` reconciled against the tasks carried, and every task, contact, and activity, including idle-capability gating both ways: a contribution the manifest never declared is refused, and one it declares is required, `[]` included. |
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |

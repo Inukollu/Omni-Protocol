@@ -99,7 +99,7 @@ describe("assertCapabilityWithdrawal", () => {
   const ada = { id: "A-1", displayName: "Ada" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, team: { breakControl: true } } } satisfies AuthenticationState;
   const demoted = { status: "authenticated", identity: ada, capabilities: { breaks: true } } satisfies AuthenticationState;
-  const bare: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [] };
+  const bare: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [], taskCount: 0 };
   const withRoster: Snapshot<"voice"> = { ...bare, team: { members: [{ id: "A-2", availability: "ready" }] } };
 
   it("accepts a roster gone with the capability that entitled it, and rejects one that stayed", () => {
@@ -169,11 +169,11 @@ describe("assertDuplicateEventDelivery", () => {
 });
 
 describe("assertReconnectWithMissedAssignments", () => {
-  const before: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [] };
+  const before: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [], taskCount: 0 };
   const reconnect = {
     id: "event-2", sessionId: "session-1",
     occurredAt: "2026-08-21T01:01:00Z",
-    event: { type: "snapshot", reason: "reconnected", snapshot: { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [voiceTask] } },
+    event: { type: "snapshot", reason: "reconnected", snapshot: { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [voiceTask], taskCount: 1 } },
   } as const satisfies ProviderEventEnvelope<"voice">;
 
   it("accepts a reconnect snapshot carrying the missed assignment", () => {
@@ -186,7 +186,7 @@ describe("assertReconnectWithMissedAssignments", () => {
   });
 
   it("rejects a task that was already present and therefore never missed", () => {
-    const populated: Snapshot<"voice"> = { ...before, tasks: [voiceTask] };
+    const populated: Snapshot<"voice"> = { ...before, tasks: [voiceTask], taskCount: 1 };
     expect(() => assertReconnectWithMissedAssignments(populated, reconnect, [voiceTask.id])).toThrow(/was not missed/);
   });
 
@@ -200,7 +200,7 @@ describe("assertBreakFollowsItsRequests", () => {
   const state = (approval: BreakApproval, over: Record<string, unknown> = {}, id: string = approval): ProviderEventEnvelope<"voice"> =>
     ({ id, sessionId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, accepting: true, ...over } } }) as ProviderEventEnvelope<"voice">;
   const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
-  const idle: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [] };
+  const idle: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [], taskCount: 0 };
 
   it("accepts every move the guide describes", () => {
     // Asked, decided, committed while working, begun when the work ended, ended.
@@ -246,7 +246,7 @@ describe("assertMediaFollowsTheTask", () => {
   it("accepts a call offered, started, made ready, whose media ends, completing, then ending", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), ended]))).toEqual([]);
     // A snapshot may carry the task in with its media ready; a callback puts media back and it ends again.
-    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), updated("in-progress", "e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [{ ...call("in-progress"), media: "ready" }] }))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), updated("in-progress", "e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [{ ...call("in-progress"), media: "ready" }], taskCount: 1 }))).toEqual([]);
   });
 
   it("refuses media that moves before the work began, arrives twice, or ends where none arrived", () => {
@@ -256,6 +256,15 @@ describe("assertMediaFollowsTheTask", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaEnded]))).toEqual(["stream.taskMediaEnded.silent"]);
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaReady("e2c")]))).toEqual(["stream.taskMediaReady.duplicate"]);
     expect(rulesOf(() => assertMediaFollowsTheTask([mediaReady()]))).toEqual(["stream.taskMediaReady.unknown"]);
+  });
+
+  it("lets an update re-state media, and refuses one that moves it", () => {
+    const restated = (id: string): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("paused"), media: "ready" } } });
+    const arrives = (id: string): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), media: "ready" } } });
+    // Republishing ready on a hold is a statement, not a second arrival.
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), restated("e2c")]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), arrives("e2c")]))).toEqual(["stream.taskUpdated.media"]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), { id: "e2d", sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), media: "ended" } } }]))).toEqual(["stream.taskUpdated.media"]);
   });
 
   it("refuses media that decides what follows", () => {
