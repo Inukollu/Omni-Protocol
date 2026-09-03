@@ -270,7 +270,13 @@ type HostReport = {
   };
 };
 
+type HostGuarantees = {
+  browserUrlVisibility?: true;
+  personConsent?: true;
+};
+
 type Host = {
+  guarantees: HostGuarantees;
   report(): HostReport;
   subscribe(listener: (report: HostReport) => void): Unsubscribe;
 };
@@ -1979,7 +1985,7 @@ provider includes an acceptance directive with each allocation:
 | Directive | Contract |
 | --- | --- |
 | `no-preference` | The provider leaves acceptance to Omni; with `autoAcceptTasks: true`, Omni accepts automatically. |
-| `manual` | The provider requires the agent's explicit acceptance: Omni presents **Accept** and waits, whatever its own policy would have done. |
+| `manual` | The provider requires the agent's explicit acceptance: Omni presents **Accept** and waits, whatever its own policy would have done. A host that declares `guarantees.personConsent` promises exactly this; a provider checks it before offering work only a person may take. |
 | `automatic` | Omni accepts immediately without agent interaction. |
 
 When Omni sent `autoAcceptTasks: false`, the provider omits `acceptanceMode` and every task
@@ -2334,7 +2340,7 @@ Each `TaskBrowser` defines one named browser in the task workspace.
 | `url` | Initial URL. Must use `http:` or `https:`; see below. Later navigation comes from Chromium. |
 | `sharedSession` | Required. `false` creates a task-specific browser session. |
 | `isolationScheme` | **Required when `sharedSession` is `true`**, and rejected when it is `false`. There is no default: see below. |
-| `urlVisibility` | What the agent sees of this tab's URL in Omni's chrome: `hidden`, `domain`, or `full`. Omitted, the URL shows as any browser's does; a provider says `hidden` where the URL carries what the agent may not read — a caller's number, a CRM token. Per browser, on the provider's word; Omni honours it tab by tab. |
+| `urlVisibility` | What the agent sees of this tab's URL in Omni's chrome: `hidden`, `domain`, or `full`. Omitted, the URL shows as any browser's does; a provider says `hidden` where the URL carries what the agent may not read — a caller's number, a CRM token. Per browser, on the provider's word; a host that declares `guarantees.browserUrlVisibility` honours it tab by tab, and a provider checks that guarantee before it sends such a URL at all. |
 
 ##### Choosing an isolation scheme
 
@@ -3193,6 +3199,21 @@ the microphone once as the voice connection opens, so the permission prompt land
 is signing in rather than over a contact, prompts, retries on the agent's request, tells the agent
 what failed, and reports. It never decides for the adapter what a missing microphone means.
 
+**The host also guarantees, and a promise the provider cannot see is not one it can rely on.**
+Two of this contract's obligations fall on the host rather than the provider — honouring a task
+browser's `urlVisibility`, and taking a `manual` offer only on the person's own press — and more
+than one desk speaks this contract. So `ConnectContext.host.guarantees` says which promises the
+connected host makes, declared once per connection, presence being the guarantee exactly as it is
+the permission everywhere else:
+
+| Guarantee | Contract |
+| --- | --- |
+| `browserUrlVisibility` | Every task browser's `urlVisibility` is honoured in this host's chrome, tab by tab. A provider that would send a caller's number in a URL checks this first and tokenises where the promise is absent. |
+| `personConsent` | A `manual` offer is accepted only by the person's own explicit act, never on their behalf. A provider whose work may only be taken by a human checks this first and does not offer it where the promise is absent. |
+
+A guarantee the host does not make is an absent key, never `false` — `validateHostGuarantees`
+refuses a false one, as it refuses a name this contract does not list.
+
 | Field | Contract |
 | --- | --- |
 | `online` | Whether the host has a network interface up. Not a claim that anything is reachable — the adapter knows whether it can reach its own platform far better than the host does — so `false` is a reason not to go ready and `true` is not a reason to. |
@@ -3650,6 +3671,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
+| `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |

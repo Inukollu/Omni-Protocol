@@ -5,7 +5,7 @@ import {
   type Connection,
   type Manifest,
   type ProviderEventEnvelope,
-  type AuthenticationState, type Host, type HostReport, type UserCapabilities, type Snapshot,
+  type AuthenticationState, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities, type Snapshot,
 } from "./index.js";
 import { ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject , stillHost } from "./testing.js";
 
@@ -484,6 +484,19 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ emit: listener => listener(ended("call-99")) })).toEqual([]);
   });
 
+  it("validates the guarantees of the host a test hands the adapter, and passes them through to it", async () => {
+    // A false guarantee is a host that cannot exist; the harness says so. A true one reaches the
+    // adapter through the wrapped host, so an adapter can decide on it.
+    const promising: Host = { guarantees: { personConsent: true }, report: () => ({ online: true }), subscribe: () => () => undefined };
+    let seen: HostGuarantees | undefined;
+    const { adapter } = makeAdapter();
+    const observing = { ...adapter, connect: async (connectContext: ConnectContext) => { seen = connectContext.host.guarantees; return adapter.connect(connectContext); } } as typeof adapter;
+    expect((await exerciseAdapter(observing, { ...context, host: { ...promising, report: () => speaking } }, { collectOnly: true })).violations.map(v => v.rule)).toEqual([]);
+    expect(seen).toEqual({ personConsent: true });
+    const lying: Host = { ...promising, guarantees: { personConsent: false } as unknown as HostGuarantees, report: () => speaking };
+    expect((await exerciseAdapter(makeAdapter().adapter, { ...context, host: lying }, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["host.guarantee.value"]);
+  });
+
   it("validates the host report a test hands the adapter, first and later, and lets go of it", async () => {
     // A malformed host report is a host that cannot exist; the harness says so rather than let
     // an adapter pass against it.
@@ -491,6 +504,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const failure = { code: "host.permission-denied", message: "Microphone access was refused", retryable: true };
     const unsubscribe = vi.fn(() => undefined);
     const host = (first: unknown, later?: unknown): Host => ({
+      guarantees: {},
       report: () => first as HostReport,
       subscribe: listener => { if (later !== undefined) listener(later as HostReport); return unsubscribe; },
     });
@@ -522,7 +536,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
 
   it("releases the host subscription when connect itself throws", async () => {
     const unsubscribe = vi.fn(() => undefined);
-    const host: Host = { report: () => speaking, subscribe: () => unsubscribe };
+    const host: Host = { guarantees: {}, report: () => speaking, subscribe: () => unsubscribe };
     await expect(exerciseAdapter(makeAdapter({ connect: async () => { throw new Error("no transport"); } }).adapter, { ...context, host }, { collectOnly: true })).rejects.toThrow(/no transport/);
     expect(unsubscribe).toHaveBeenCalledOnce();
   });

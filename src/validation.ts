@@ -30,6 +30,7 @@ import {
   type TeamPolicySetting,
   type TaskMediaState,
   type TransportRecovery,
+  type HostGuarantees,
   type CredentialField,
   type HostOutputUnavailableReason,
   type Channel,
@@ -1532,6 +1533,28 @@ function validateUnavailable(value: Record<string, unknown>, rule: string, path:
  * check belongs to the host's own tests and to the harness, which validates whatever host a test
  * hands the adapter.
  */
+const HOST_GUARANTEES = membersOf<keyof HostGuarantees>({ browserUrlVisibility: true, personConsent: true });
+
+/**
+ * What a host promises. Presence is the guarantee, so a key declared `false` is refused: a
+ * promise withheld is an absent key, never a false one, exactly as a capability is.
+ */
+export function validateHostGuarantees(guarantees: unknown, path = "host.guarantees"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(guarantees)) {
+    into.add("host.guarantees.shape", path, "a host declares its guarantees as an object, empty when it makes none");
+    return into.violations;
+  }
+  for (const [name, declared] of Object.entries(guarantees)) {
+    if (declared === undefined) continue;
+    if (!into.require((HOST_GUARANTEES as readonly string[]).includes(name), "host.guarantee.unknown", `${path}.${name}`,
+      `${name} is not a guarantee this contract names: ${HOST_GUARANTEES.join(", ")}`)) continue;
+    into.require(declared === true, "host.guarantee.value", `${path}.${name}`,
+      "a guarantee is declared by presence; one the host does not make is omitted, never false");
+  }
+  return into.violations;
+}
+
 export function validateHostReport(report: unknown, path = "host"): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(report)) {

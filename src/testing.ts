@@ -13,6 +13,7 @@ import {
   type Channel,
   type ConnectContext,
   type Host,
+  type HostGuarantees,
   type HostReport,
   type Manifest,
   type ProviderEvent,
@@ -22,6 +23,7 @@ import {
   assertNoViolations,
   validateAuthenticationState,
   validateEventEnvelope,
+  validateHostGuarantees,
   validateHostReport,
   validateManifest,
   validateResult,
@@ -280,6 +282,7 @@ export async function exerciseAdapter<C extends Channel>(
     // testing a host that cannot exist. Its first report and every later one are validated, a
     // voice connection's host reports its audio and no other does, and the host the adapter
     // receives is wrapped so the harness can tell whether the adapter ever asked.
+    violations.push(...validateHostGuarantees(context.host.guarantees, "context.host.guarantees"));
     const first = context.host.report();
     violations.push(...validateHostReport(first, "context.host"));
     const hasAudio = isRecord(first) && first.audio !== undefined;
@@ -294,6 +297,7 @@ export async function exerciseAdapter<C extends Channel>(
     });
     let consulted = false;
     const host: Host = {
+      guarantees: context.host.guarantees,
       report: () => { consulted = true; return context.host.report(); },
       subscribe: listener => { consulted = true; return context.host.subscribe(listener); },
     };
@@ -804,8 +808,8 @@ export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvel
 }
 
 /** A host that reports one thing and never changes: what most adapter tests hand `exerciseAdapter`. */
-export function stillHost(report: HostReport = { online: true }): Host {
-  return { report: () => report, subscribe: () => () => undefined };
+export function stillHost(report: HostReport = { online: true }, guarantees: HostGuarantees = {}): Host {
+  return { guarantees, report: () => report, subscribe: () => () => undefined };
 }
 
 /** One provider as the host sees it when freezing a break attempt's participant set. */

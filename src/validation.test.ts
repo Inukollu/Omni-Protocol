@@ -6,6 +6,7 @@ import {
   validateAuthenticationState,
   validateContact,
   validateEventEnvelope,
+  validateHostGuarantees,
   validateHostReport,
   validateManifest,
   validateScheduledActivity,
@@ -453,6 +454,18 @@ describe("validateEventEnvelope", () => {
     expect(summary({ title: "", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" })).toContain("event.summary.title");
     expect(summary({ title: "Q", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics: [{ id: "a", label: "A", value: 7 }] }))
       .toContain("event.summary.metric.value");
+  });
+});
+
+describe("the host guarantees", () => {
+  it("names only the guarantees the contract lists, each by presence and never false", () => {
+    expect(rules(validateHostGuarantees({}))).toEqual([]);
+    expect(rules(validateHostGuarantees({ browserUrlVisibility: true }))).toEqual([]);
+    expect(rules(validateHostGuarantees({ browserUrlVisibility: true, personConsent: true }))).toEqual([]);
+    // A promise withheld is an absent key: false is a host saying two things at once.
+    expect(rules(validateHostGuarantees({ personConsent: false }))).toEqual(["host.guarantee.value"]);
+    expect(rules(validateHostGuarantees({ hidesUrls: true }))).toEqual(["host.guarantee.unknown"]);
+    expect(rules(validateHostGuarantees("yes"))).toEqual(["host.guarantees.shape"]);
   });
 });
 

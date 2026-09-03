@@ -9,6 +9,7 @@ import {
   type OpenMediaRequest,
   type Manifest,
   type ProviderEvent,
+  type Host,
   type DispositionRules,
   type HostAudioInput,
   type AcceptanceMode,
@@ -203,6 +204,11 @@ export const staleCapacity: CapacityResult = { status: "accepted" };
 export const staleAccessScope = { access: { mode: "allow-all" },
   // @ts-expect-error The access rules say what they apply to: accessAppliesTo.
   accessPolicyScope: "initial-url" } satisfies PersonalBrowserCapability;
+export const promisingHost: Host = { guarantees: { browserUrlVisibility: true, personConsent: true }, report: () => noAudioHere, subscribe: () => () => undefined };
+export const reticentHost: Host = { guarantees: {}, report: () => noAudioHere, subscribe: () => () => undefined };
+export const lyingHost: Host = {
+  // @ts-expect-error A guarantee is declared by presence; a host that does not make one omits it, never false.
+  guarantees: { personConsent: false }, report: () => noAudioHere, subscribe: () => () => undefined };
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;

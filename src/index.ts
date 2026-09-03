@@ -319,7 +319,21 @@ export interface HostReport {
 }
 
 /** The host, as an adapter may ask it: a report now, and every change for the life of the connection. */
+/**
+ * What the host promises the provider, declared once per connection. Presence is the guarantee:
+ * an absent key is a host that makes no such promise, and a provider that needs one checks before
+ * it acts -- tokenising a URL it would otherwise send in the clear, or declining to offer work
+ * that only a person may accept.
+ */
+export interface HostGuarantees {
+  /** Every task browser's `urlVisibility` is honoured in this host's chrome, tab by tab. */
+  browserUrlVisibility?: true;
+  /** A `manual` offer is accepted only by the person's own explicit act, never on their behalf. */
+  personConsent?: true;
+}
+
 export interface Host {
+  guarantees: HostGuarantees;
   report(): HostReport;
   subscribe(listener: (report: HostReport) => void): Unsubscribe;
 }
