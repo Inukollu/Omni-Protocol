@@ -5,16 +5,16 @@ import {
   type Connection,
   type Manifest,
   type ProviderEventEnvelope,
-  type AuthenticationState, type Host, type HostReport, type SessionCapabilities, type Snapshot,
+  type AuthenticationState, type Host, type HostReport, type UserCapabilities, type Snapshot,
 } from "./index.js";
 import { ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject , stillHost } from "./testing.js";
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
-const speaking: HostReport = { online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "ready", localAudio: {} as MediaStream, flowing: true }, output: { status: "ready" } } };
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1", host: stillHost(speaking) };
+const speaking: HostReport = { online: true, audio: { input: { status: "ready", localAudio: {} as MediaStream, flowing: true }, output: { status: "ready" } } };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", host: stillHost(speaking) };
 /** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
 const hostFor = (manifest: unknown): Host =>
-  stillHost((manifest as { channel?: string } | undefined)?.channel === "voice" ? speaking : { online: true, browsers: { urlVisibility: "hidden" } });
+  stillHost((manifest as { channel?: string } | undefined)?.channel === "voice" ? speaking : { online: true });
 
 const conformingManifest = {
   id: "acme-voice",
@@ -23,7 +23,7 @@ const conformingManifest = {
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
   authenticationMethods: ["browser-sso"],
   idleCapabilities: {
-    dial: { destinationPolicy: "any-number" },
+    dial: { destinations: "any-number" },
     contacts: true,
     calendar: true,
     personalBrowser: { access: { mode: "block-all", allowList: ["https://*.example.com/*"], blockList: [] } },
@@ -33,9 +33,9 @@ const conformingManifest = {
 // Declares breaks and publishes a UserId, so the conforming connection below has to carry the
 // four break methods and describeUsers().
 const conformingSnapshot = {
-  status: "active",
-  sessionId: "session-1",
-  break: { approval: "not-requested", accepting: true },
+  transport: "active",
+  loginId: "session-1",
+  break: { approval: "not-requested", mayAsk: true },
   tasks: [{
     id: "call-42",
     title: "Customer call",
@@ -47,12 +47,12 @@ const conformingSnapshot = {
       mute: true,
       dispositions: { required: true, notes: "optional", codes: [{ id: "resolved", label: "Resolved" }, { id: "callback", label: "Callback needed" }] },
       blindTransfer: { allowManualEntry: true, destinations: [{ id: "tier2", label: "Tier 2", address: "+14155550111", kind: "queue" }] },
-      custom: [{ id: "request-supervisor", ui: { kind: "button", label: "Request supervisor", placement: "secondary" } }],
+      custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } }],
     },
     phase: "in-progress",
-    media: "ready",
+    media: "started",
     completionMode: "agent-command",
-    completionAllowance: 60,
+    wrapAllowance: 60,
     contact: { name: "Maya Rao", number: "+919876543210" },
     browsers: [
       { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", reuse: true, isolationScheme: "ProviderName.TaskTypeName.TabName" },
@@ -70,9 +70,9 @@ const conformingSnapshot = {
 
 /** Declares nothing optional, so no optional method is required of it. */
 const minimalSnapshot = {
-  status: "active",
-  sessionId: "session-1",
-  break: { approval: "not-requested", accepting: true },
+  transport: "active",
+  loginId: "session-1",
+  break: { approval: "not-requested", mayAsk: true },
   tasks: [], taskCount: 0,
 } satisfies Snapshot<"voice">;
 
@@ -93,7 +93,7 @@ interface AdapterOverrides {
   connection?: Partial<Record<keyof Connection<"voice">, unknown>>;
   authenticated?: boolean;
   /** What the login declares. Breaks by default, so the conforming connection needs the four methods. */
-  capabilities?: SessionCapabilities;
+  capabilities?: UserCapabilities;
   disconnect?: () => Promise<void>;
   close?: () => Promise<void>;
 }
@@ -160,7 +160,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
 const rules = async (overrides: AdapterOverrides) =>
   (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, host: hostFor(overrides.manifest ?? conformingManifest) }, { collectOnly: true })).violations.map(violation => violation.rule);
 
-const badEnvelope = { id: "", sessionId: "session-1", occurredAt: "not-a-time", event: { type: "provider-status", status: "active" } } as unknown as ProviderEventEnvelope<"voice">;
+const badEnvelope = { id: "", loginId: "session-1", occurredAt: "not-a-time", event: { type: "transport-status", status: "active" } } as unknown as ProviderEventEnvelope<"voice">;
 
 describe("exerciseAdapter", () => {
   it("accepts a rich conforming adapter and releases its resources", async () => {
@@ -183,8 +183,8 @@ describe("exerciseAdapter", () => {
     const state = (subjects: readonly ContractSubject[]) => subjects.filter(subject => !subject.startsWith("event."));
     const events = (subjects: readonly ContractSubject[]) => subjects.filter(subject => subject.startsWith("event."));
     const everyEvent: ContractSubject[] = [
-      "event.snapshot", "event.provider-status", "event.break-state", "event.task-offered", "event.task-updated",
-      "event.task-media-ready", "event.task-media-ended", "event.task-ended", "event.announcement", "event.provider-summary",
+      "event.snapshot", "event.transport-status", "event.break-state", "event.task-offered", "event.task-updated",
+      "event.task-media-started", "event.task-media-ended", "event.task-ended", "event.announcement", "event.provider-summary",
       "event.team-updated", "event.contacts-updated", "event.calendar-updated",
     ];
     // The rich task carries browsers, history, a disposition policy, transfer destinations and a
@@ -201,13 +201,13 @@ describe("exerciseAdapter", () => {
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.
     const reached = {
       ...conformingSnapshot,
-      break: { approval: "in-effect", accepting: true, reasons: [{ id: "lunch", label: "Lunch" }], imposed: { by: "M-1", endsAutomatically: false } },
+      break: { approval: "in-effect", mayAsk: true, reasons: [{ id: "lunch", label: "Lunch" }], imposed: { by: "M-1", endsAutomatically: false } },
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { consultControl: true } }, snapshot: reached })))
       .toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.locked", "team.policies"]);
     const later: ProviderEventEnvelope<"voice"> = {
-      id: "evt-team", sessionId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
+      id: "evt-team", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } },
     };
     const rosterOnly = { ...conformingSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
@@ -240,7 +240,7 @@ describe("exerciseAdapter", () => {
   });
 
   it("collects delivered events and deduplicates repeated ids", async () => {
-    const good = { id: "event-1", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "provider-status", status: "active" } } as ProviderEventEnvelope<"voice">;
+    const good = { id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } } as ProviderEventEnvelope<"voice">;
     const { adapter } = makeAdapter({ emit: listener => { listener(good); listener(good); } });
     const result = await exerciseAdapter(adapter, context);
     expect(result.events).toEqual([good]);
@@ -272,7 +272,7 @@ describe("exerciseAdapter", () => {
     const emit = vi.fn((listener: (envelope: ProviderEventEnvelope<"voice">) => void) => {
       listener(badEnvelope);
       // Reached only if the listener did not throw back into provider dispatch.
-      listener({ id: "event-2", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "provider-status", status: "active" } });
+      listener({ id: "event-2", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
     });
     const { adapter } = makeAdapter({ emit });
     const result = await exerciseAdapter(adapter, context, { collectOnly: true });
@@ -459,7 +459,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ capabilities: leads, snapshot: withColleague })).not.toContain("team.member.self");
     expect(await rules({ capabilities: leads, snapshot: withReader })).toContain("team.member.self");
     const later: ProviderEventEnvelope<"voice"> = {
-      id: "evt-team", sessionId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
+      id: "evt-team", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [colleague, reader] } },
     };
     expect(await rules({ capabilities: leads, snapshot: withColleague, emit: listener => listener(later) })).toContain("team.member.self");
@@ -469,7 +469,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     // The conforming snapshot carries call-42 in progress; its media may end. A task the stream
     // never introduced may not; the same events before any snapshot are judged alone.
     const at = "2026-08-21T09:05:00Z";
-    const ended = (taskId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${taskId}`, sessionId: "session-1", occurredAt: at, event: { type: "task-media-ended", taskId } });
+    const ended = (taskId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${taskId}`, loginId: "session-1", occurredAt: at, event: { type: "task-media-ended", taskId } });
     // Delivered from setCapacity, which the harness calls after the snapshot; before it, the
     // stream has no beginning and the same events are judged alone.
     const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
@@ -496,11 +496,11 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     });
     const run = async (h: Host) =>
       (await exerciseAdapter(makeAdapter().adapter, { ...context, host: h }, { collectOnly: true })).violations.map(violation => violation.rule);
-    const speaking = { online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "ready", localAudio: microphone, flowing: true }, output: { status: "ready" } } };
+    const speaking = { online: true, audio: { input: { status: "ready", localAudio: microphone, flowing: true }, output: { status: "ready" } } };
     expect(await run(host(speaking))).toEqual([]);
-    expect(await run(host({ online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "unavailable", reason: "denied", failure }, output: { status: "ready" } } }))).toEqual([]);
-    expect(await run(host({ online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "ready", flowing: true }, output: { status: "ready" } } }))).toEqual(["host.audio.input.localAudio"]);
-    expect(await run(host(speaking, { online: "yes", browsers: { urlVisibility: "hidden" } }))).toEqual(["host.online"]);
+    expect(await run(host({ online: true, audio: { input: { status: "unavailable", reason: "denied", failure }, output: { status: "ready" } } }))).toEqual([]);
+    expect(await run(host({ online: true, audio: { input: { status: "ready", flowing: true }, output: { status: "ready" } } }))).toEqual(["host.audio.input.localAudio"]);
+    expect(await run(host(speaking, { online: "yes" }))).toEqual(["host.online"]);
     expect(unsubscribe).toHaveBeenCalledTimes(4);
     expect(await rules({})).toEqual([]);
   });
@@ -511,9 +511,9 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const run = async (overrides: AdapterOverrides, host: Host) =>
       (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, host }, { collectOnly: true })).violations.map(violation => violation.rule);
     expect(await run({}, stillHost(speaking))).toEqual([]);
-    expect(await run({}, stillHost({ online: true, browsers: { urlVisibility: "hidden" } }))).toEqual(["context.host.audio.required"]);
+    expect(await run({}, stillHost({ online: true }))).toEqual(["context.host.audio.required"]);
     const chat = { manifest: chatManifest, snapshot: chatSnapshot, connection: { openMedia: undefined, dial: undefined } };
-    expect(await run(chat, stillHost({ online: true, browsers: { urlVisibility: "hidden" } }))).toEqual([]);
+    expect(await run(chat, stillHost({ online: true }))).toEqual([]);
     expect(await run(chat, stillHost(speaking))).toEqual(["context.host.audio.unexpected"]);
     // The obligation: a voice adapter asks. A chat adapter has nothing to ask about and is not held to it.
     expect(await rules({ ignoresHost: true })).toEqual(["connection.host.consulted"]);
@@ -530,7 +530,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   it("holds the break's moves to where it stood, from the connect snapshot on", async () => {
     // The conforming snapshot stands at not-requested: a grant may follow, a commit's state may not.
     const at = "2026-08-21T09:05:00Z";
-    const moved = (approval: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${approval}`, sessionId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, accepting: true } } }) as ProviderEventEnvelope<"voice">;
+    const moved = (approval: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${approval}`, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, mayAsk: true } } }) as ProviderEventEnvelope<"voice">;
     const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
       let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
       return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { deliver?.(envelope); return { status: "accepted" as const }; } } };
@@ -546,16 +546,16 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("holds the snapshot and every event to the login's session", async () => {
-    const elsewhere = { ...minimalSnapshot, sessionId: "session-0" } satisfies Snapshot<"voice">;
-    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot })).not.toContain("snapshot.sessionId.mismatch");
-    expect(await rules({ manifest: plainManifest, snapshot: elsewhere })).toContain("snapshot.sessionId.mismatch");
-    const stray: ProviderEventEnvelope<"voice"> = { id: "evt-1", sessionId: "session-0", occurredAt: "2026-08-21T09:00:00Z", event: { type: "provider-status", status: "active" } };
-    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, emit: listener => listener(stray) })).toContain("event.sessionId.mismatch");
+    const elsewhere = { ...minimalSnapshot, loginId: "session-0" } satisfies Snapshot<"voice">;
+    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot })).not.toContain("snapshot.loginId.mismatch");
+    expect(await rules({ manifest: plainManifest, snapshot: elsewhere })).toContain("snapshot.loginId.mismatch");
+    const stray: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-0", occurredAt: "2026-08-21T09:00:00Z", event: { type: "transport-status", status: "active" } };
+    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, emit: listener => listener(stray) })).toContain("event.loginId.mismatch");
   });
 
   it("passes autoAcceptTasks through, absent meaning true", async () => {
     const offered = (acceptanceMode?: "require-agent-acceptance"): ProviderEventEnvelope<"voice"> => ({
-      id: "evt-offer", sessionId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
+      id: "evt-offer", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
       event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending" }, ...(acceptanceMode ? { acceptanceMode } : {}) },
     });
     const run = async (autoAcceptTasks: boolean | undefined, envelope: ProviderEventEnvelope<"voice">) =>
@@ -570,12 +570,12 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   it("describeUsers(), when a UserId arrives on an event or on a task's lead or assisting", async () => {
     const at = "2026-08-21T09:05:00Z";
     const bare = { ...minimalSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, handlingHistory: [] }] } satisfies Snapshot<"voice">;
-    const joined = { ...bare, tasks: [{ ...bare.tasks[0]!, capabilities: { ...bare.tasks[0]!.capabilities, consultLead: true }, lead: { status: "joined", leadId: "L-9", since: at } }] } satisfies Snapshot<"voice">;
+    const joined = { ...bare, tasks: [{ ...bare.tasks[0]!, capabilities: { ...bare.tasks[0]!.capabilities, consultLead: true }, lead: { stage: "joined", leadId: "L-9", since: at } }] } satisfies Snapshot<"voice">;
     const assisting = { ...bare, tasks: [{ ...bare.tasks[0]!, assisting: { memberId: "A-1", since: at } }] } satisfies Snapshot<"voice">;
     expect(await rules({ manifest: plainManifest, snapshot: bare, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
     expect(await rules({ manifest: plainManifest, snapshot: joined, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     expect(await rules({ manifest: plainManifest, snapshot: assisting, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
-    const later: ProviderEventEnvelope<"voice"> = { id: "evt-team", sessionId: "session-1", occurredAt: at, event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } } };
+    const later: ProviderEventEnvelope<"voice"> = { id: "evt-team", loginId: "session-1", occurredAt: at, event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } } };
     expect(await rules({ manifest: plainManifest, capabilities: { team: {} }, snapshot: { ...bare, team: { members: [] } }, connection: { describeUsers: undefined }, emit: listener => listener(later) })).toContain("connection.describeUsers.required");
   });
 
@@ -593,7 +593,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("holds who-decided to the manifest's declared ladder, on the login and on the snapshot", async () => {
-    const laddered = { ...conformingManifest, orgTiers: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] } satisfies Manifest<"voice">;
+    const laddered = { ...conformingManifest, orgLevels: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] } satisfies Manifest<"voice">;
     const of = (setBy: string) => ({ preferences: [{ id: "mute" as const, label: "Mute", enabled: true, setBy }] });
     expect(await rules({ manifest: laddered, capabilities: of("region") })).toEqual([]);
     // The ladder is the whole ladder: the default the manifest left out is refused.
@@ -608,7 +608,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     const roster = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: roster, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
-    const imposed = { ...minimalSnapshot, break: { approval: "in-effect", accepting: true, imposed: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
+    const imposed = { ...minimalSnapshot, break: { approval: "in-effect", mayAsk: true, imposed: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: imposed, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     expect(await rules({ snapshot: minimalSnapshot, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
   });

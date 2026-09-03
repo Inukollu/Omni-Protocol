@@ -93,7 +93,7 @@ export interface ProtocolViolation {
 
 export type AuthenticationMethod = "browser-sso" | "credentials";
 
-export interface BrowserAccessPolicy {
+export interface BrowserAccess {
   /** The decision when no list entry matches. */
   mode: "allow-all" | "block-all";
   allowList?: string[];
@@ -101,14 +101,14 @@ export interface BrowserAccessPolicy {
 }
 
 export interface PersonalBrowserCapability {
-  access: BrowserAccessPolicy;
+  access: BrowserAccess;
   accessPolicyScope?: "initial-url" | "all-navigation";
 }
 
-export type DialDestinationPolicy = "contacts-only" | "any-number";
+export type DialDestinations = "contacts-only" | "any-number";
 
 export interface DialCapability {
-  destinationPolicy: DialDestinationPolicy;
+  destinations: DialDestinations;
 }
 
 /** Every idle capability a provider may declare. Only voice may `dial`; the channel arm says so. */
@@ -156,8 +156,8 @@ export interface Manifest<C extends Channel = Channel> {
   phaseLabels?: TaskPhaseLabels;
   /** Keyed by `taskType`. An entry replaces the channel default outright rather than merging. */
   taskTypePresentation?: Record<string, TaskTypePresentation>;
-  /** The organisation's whole ladder, stated outright, `person` included. Omitted for the typical four, `DEFAULT_TIERS`. */
-  orgTiers?: TierDeclaration[];
+  /** The organisation's whole ladder, stated outright, `person` included. Omitted for the typical four, `DEFAULT_LEVELS`. */
+  orgLevels?: LevelDeclaration[];
 }
 
 // ---------------------------------------------------------------------------
@@ -172,8 +172,8 @@ export interface SecretStore {
 
 export interface AuthenticationContext {
   protocolVersion: number;
-  /** Omni's identity for this login. The same value arrives later as `ConnectContext.sessionId`. */
-  sessionId: string;
+  /** Omni's identity for this login. The same value arrives later as `ConnectContext.loginId`. */
+  loginId: string;
   /** Scoped to this provider's manifest id. */
   secrets: SecretStore;
   signal?: AbortSignal;
@@ -209,7 +209,7 @@ export interface TeamCapabilities {
  * of who the agent is on this provider: the provider knows the roles and says so at sign-in.
  * Current as of the latest `authenticated` state, never fixed for the login.
  */
-export interface SessionCapabilities {
+export interface UserCapabilities {
   /** This login may request a break. Requires the four break methods. */
   breaks?: true;
   /** The choices the team left to this person, with where each stands. Omitted when there are none. Requires `setPreference`. */
@@ -226,8 +226,8 @@ export interface SessionCapabilities {
 export type AuthenticationState =
   | { status: "signed-out" }
   | { status: "authenticating" }
-  | { status: "authenticated"; identity: User; capabilities: SessionCapabilities; expiresAt?: IsoTimestamp }
-  | { status: "refreshing"; identity: User; capabilities: SessionCapabilities }
+  | { status: "authenticated"; identity: User; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "refreshing"; identity: User; capabilities: UserCapabilities }
   | { status: "expired"; identity?: User; failure?: AuthenticationFailure };
 
 export interface CredentialField {
@@ -255,7 +255,7 @@ export type CompleteAuthenticationRequest =
   | { flowId: string; method: "credentials"; values: Readonly<Record<string, string>> };
 
 export type CompleteAuthenticationResult =
-  | { status: "authenticated"; identity: User; capabilities: SessionCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "authenticated"; identity: User; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
   | { status: "rejected"; failure: AuthenticationFailure };
 
 export type AuthenticationActionResult =
@@ -310,8 +310,6 @@ export type HostAudioOutput =
 export type UrlVisibility = "full" | "domain" | "hidden";
 
 export interface HostReport {
-  /** What the agent can see of a task browser's URL in Omni's chrome. Task browsers only; the personal browser is the agent's. */
-  browsers: { urlVisibility: UrlVisibility };
   /** Whether the host has a network interface up. Not a claim that anything is reachable: the adapter knows its own platform's reachability better than the host does. */
   online: boolean;
   audio?: {
@@ -329,7 +327,7 @@ export interface Host {
 export interface ConnectContext {
   protocolVersion: number;
   /** The session that authenticated this connection. */
-  sessionId: string;
+  loginId: string;
   /** Omni-side policy: whether the agent's tasks are accepted without asking them. */
   autoAcceptTasks?: boolean;
   /**
@@ -341,14 +339,14 @@ export interface ConnectContext {
   log?: (entry: unknown) => void;
 }
 
-export type ConnectionStatus = "connecting" | "active" | "error";
+export type TransportStatus = "connecting" | "active" | "error";
 
 /**
  * What revives a connection that reported `error`: `reconnect` -- the login is good, dispose this
  * connection and call `connect()` again -- or `reauthenticate` -- run the authentication flow
  * first. The adapter knows which; the host acts on its word.
  */
-export type ConnectionRecovery = "reconnect" | "reauthenticate";
+export type TransportRecovery = "reconnect" | "reauthenticate";
 
 // ---------------------------------------------------------------------------
 // Idle contributions.
@@ -383,7 +381,7 @@ export interface DispositionCode {
   group?: string;
 }
 
-export interface DispositionPolicy {
+export interface DispositionRules {
   required?: boolean;
   notes?: "required" | "optional" | "hidden";
   codes?: DispositionCode[];
@@ -405,7 +403,7 @@ export interface DestinationDirectory {
 export interface CustomCapability {
   id: string;
   ui: {
-    kind: "button" | "toggle" | "menu-item";
+    control: "button" | "toggle" | "menu-item";
     label: string;
     placement: "primary" | "secondary" | "overflow";
     /** Where the control's work renders: inline in the workspace, or as a page of its own. Inline when absent. */
@@ -417,7 +415,7 @@ export interface CustomCapability {
 
 export interface SharedTaskCapabilities {
   browsers?: true;
-  dispositions?: true | DispositionPolicy;
+  dispositions?: true | DispositionRules;
   custom?: CustomCapability[];
 }
 
@@ -469,22 +467,31 @@ export const BROWSER_ISOLATION_SCHEMES = {
 export type BrowserIsolationScheme =
   (typeof BROWSER_ISOLATION_SCHEMES)[keyof typeof BROWSER_ISOLATION_SCHEMES];
 
-export interface TaskBrowserBase {
+/** One tab, in either workspace. */
+export interface Browser {
   id: string;
   name: string;
-  purpose: string;
   /** `http:` or `https:` only. */
   url: string;
 }
 
 /**
- * The union is what makes a reusing browser with no scheme fail to compile rather than inherit
- * a default -- which is how two tasks end up sharing a session nobody intended.
+ * A tab the task brought: fixed at the task's definition -- count and details -- with why it is
+ * there, whether its session is shared across tasks, and whether the agent may read its URL. The
+ * union is what makes a reusing browser with no scheme fail to compile rather than inherit a
+ * default -- which is how two tasks end up sharing a session nobody intended.
  */
-export type TaskBrowser = TaskBrowserBase & (
+export type TaskBrowser = Browser & {
+  purpose: string;
+  /** Hide this tab's URL from the agent in Omni's chrome. Omitted, the URL shows as any browser's does; a provider says `hidden` where the URL carries what the agent may not read. */
+  urlVisibility?: UrlVisibility;
+} & (
   | { reuse: false; isolationScheme?: never }
   | { reuse: true; isolationScheme: BrowserIsolationScheme }
 );
+
+/** A tab the agent opened in the personal workspace: theirs, as many as they like, and never on the wire. */
+export type PersonalBrowser = Browser;
 
 export const ALLOWED_BROWSER_URL_SCHEMES = ["http:", "https:"] as const;
 
@@ -561,8 +568,8 @@ export interface TaskHandlingStep {
  * and `0` are different claims: no deadline to see, and a deadline of now.
  */
 export type TaskCompletion =
-  | { completionMode: "agent-command"; completionAllowance?: DurationSeconds }
-  | { completionMode: "provider-automatic"; completionAllowance: DurationSeconds };
+  | { completionMode: "agent-command"; wrapAllowance?: DurationSeconds }
+  | { completionMode: "provider-automatic"; wrapAllowance: DurationSeconds };
 
 /**
  * A consultation in progress on a task: who is being consulted, and since when where the provider
@@ -580,7 +587,7 @@ export interface TaskConsultation {
  * `requested` while nobody has joined; `joined`, with `leadId`, once somebody has.
  */
 export interface TaskLead {
-  status: "requested" | "joined";
+  stage: "requested" | "joined";
   leadId?: UserId;
   note?: string;
   since: IsoTimestamp;
@@ -597,41 +604,41 @@ export interface TaskAssisting {
 }
 
 /**
- * A tier of the organisation's structure, by the id its manifest declares -- or one of the four
- * a typical organisation has, `DEFAULT_TIERS`, when the manifest declares no ladder. The protocol
- * never describes the chain: which tiers a person passes through is the structure's to know.
+ * A level of the organisation's structure, by the id its manifest declares -- or one of the four
+ * a typical organisation has, `DEFAULT_LEVELS`, when the manifest declares no ladder. The protocol
+ * never describes the chain: which levels a person passes through is the structure's to know.
  */
-export type Tier = string;
+export type Level = string;
 
-/** A tier the structure has, with the label a desk shows for "who decided". */
-export interface TierDeclaration {
-  id: Tier;
+/** A level the structure has, with the label a desk shows for "who decided". */
+export interface LevelDeclaration {
+  id: Level;
   label: string;
 }
 
 /**
- * The tiers a typical organisation has: the ladder in force when a manifest declares no
- * `orgTiers`. A manifest that declares any states its whole ladder outright.
+ * The levels a typical organisation has: the ladder in force when a manifest declares no
+ * `orgLevels`. A manifest that declares any states its whole ladder outright.
  */
-export const DEFAULT_TIERS = [
+export const DEFAULT_LEVELS = [
   { id: "org", label: "Your organisation" },
   { id: "site", label: "Your site" },
   { id: "team", label: "Your team" },
   { id: "person", label: "You" },
-] as const satisfies readonly TierDeclaration[];
+] as const satisfies readonly LevelDeclaration[];
 
 /** The ladder in force for a manifest: exactly what it declares, or the defaults when it declares none. */
-export function effectiveTiers(declared: readonly TierDeclaration[] | undefined): TierDeclaration[] {
-  return [...(declared ?? DEFAULT_TIERS)];
+export function effectiveLevels(declared: readonly LevelDeclaration[] | undefined): LevelDeclaration[] {
+  return [...(declared ?? DEFAULT_LEVELS)];
 }
 
 /**
- * Something the queue could allow, locked above the person: the tier that made it unchangeable,
- * and why if they said. `person` never locks their own value, and the queue is not a tier --
+ * Something the queue could allow, locked above the person: the level that made it unchangeable,
+ * and why if they said. `person` never locks their own value, and the queue is not a level --
  * what the queue does not allow at all is simply absent.
  */
 export interface Locked {
-  lockedBy: Tier;
+  lockedBy: Level;
   reason?: string;
 }
 
@@ -807,7 +814,7 @@ export interface BreakReason {
   label: string;
   group?: string;
   kind?: BreakKind;
-  /** Survives `accepting: false`: a mandatory rest is not something a busy hour can cancel. */
+  /** Survives `mayAsk: false`: a mandatory rest is not something a busy hour can cancel. */
   alwaysAvailable?: true;
 }
 
@@ -831,8 +838,8 @@ export type ImposedBreak =
 export interface BreakState {
   approval: BreakApproval;
   /** Whether the agent may ask at all. Distinct from the fate of a request already made. */
-  accepting: boolean;
-  /** Shown when `accepting` is false, such as "Busy hours". */
+  mayAsk: boolean;
+  /** Shown when `mayAsk` is false, such as "Busy hours". */
   refusedReason?: string;
   decisionReason?: string;
   retryAfterMs?: number;
@@ -911,7 +918,7 @@ export type PolicyKey =
 /** On for everyone, off for everyone, or the agent's own choice. Only `hold`, `mute` and skills may be `agent`. */
 export type TeamPolicySetting = "on" | "off" | "agent";
 
-/** One policy as the lead sees it: the setting, who set it, and `lockedBy` when a tier above the team made it theirs to keep. */
+/** One policy as the lead sees it: the setting, who set it, and `lockedBy` when a level above the team made it theirs to keep. */
 export interface TeamPolicy extends Resolved {
   setting: TeamPolicySetting;
 }
@@ -955,7 +962,7 @@ export interface TeamBreakCommandRequest {
  * `ended` once primary handling's audio ended, and the field omitted while none should be. The
  * provider's word -- a desk attaches and renders audio from it, never from its own senses.
  */
-export type TaskMediaState = "ready" | "ended";
+export type TaskMediaState = "started" | "ended";
 
 export interface VoiceMediaSession {
   remoteAudio: MediaStream;
@@ -981,22 +988,22 @@ export type OpenMediaResult =
 /**
  * What the team may leave to the person: a capability by its own name -- `hold`, `mute` -- or a
  * skill by its provider id. The same key as in `Task.capabilities`, because it is the same
- * capability seen at another tier. Callback and new call are never the person's; they are the
+ * capability seen at another level. Callback and new call are never the person's; they are the
  * team's, on or off, within what the queue allows.
  */
 export type PreferenceId = "hold" | "mute" | `skill:${string}`;
 
 /**
- * Who stated a value as it stands: a tier -- `person` among them -- or `provisioning`, the
- * protocol's own word for "no tier has said anything and the provider's default applies".
+ * Who stated a value as it stands: a level -- `person` among them -- or `provisioning`, the
+ * protocol's own word for "no level has said anything and the provider's default applies".
  * Nothing is hidden for want of a row.
  */
-export type SetBy = Tier | "provisioning";
+export type SetBy = Level | "provider";
 
 /** What every resolved value carries: who set it, and who locked it if anyone did. */
 export interface Resolved {
   setBy: SetBy;
-  lockedBy?: Tier;
+  lockedBy?: Level;
   /** Given with `lockedBy`, where whoever locked it said why. */
   reason?: string;
 }
@@ -1004,7 +1011,7 @@ export interface Resolved {
 /**
  * One choice the team may leave to the person, with where it stands and who set it. The provider
  * keeps it: it is the person's across sessions, written through `setPreference`. Listed whether
- * or not anyone has stated it, and even when a tier above has since locked it.
+ * or not anyone has stated it, and even when a level above has since locked it.
  */
 export interface AgentPreference extends Resolved {
   id: PreferenceId;
@@ -1022,8 +1029,8 @@ export type PreferenceResult =
   | { status: "failed"; failure: ProtocolFailure };
 
 export interface Snapshot<C extends Channel = Channel> {
-  status: ConnectionStatus;
-  sessionId: string;
+  transport: TransportStatus;
+  loginId: string;
   break: BreakState;
   /** Every task currently owned by this agent for this provider. */
   tasks: Task<C>[];
@@ -1061,8 +1068,8 @@ export interface ProviderSummary {
 
 export type ProviderEvent<C extends Channel = Channel> =
   | { type: "snapshot"; reason: "reconnected" | "provider-requested"; snapshot: Snapshot<C> }
-  | { type: "provider-status"; status: "connecting" | "active"; message?: string }
-  | { type: "provider-status"; status: "error"; recovery: ConnectionRecovery; message?: string }
+  | { type: "transport-status"; status: "connecting" | "active"; message?: string }
+  | { type: "transport-status"; status: "error"; recovery: TransportRecovery; message?: string }
   | { type: "break-state"; break: BreakState }
   | {
       type: "task-offered";
@@ -1072,7 +1079,7 @@ export type ProviderEvent<C extends Channel = Channel> =
       preparationEndsAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task<C> }
-  | { type: "task-media-ready"; taskId: TaskId }
+  | { type: "task-media-started"; taskId: TaskId }
   | { type: "task-media-ended"; taskId: TaskId }
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
@@ -1089,7 +1096,7 @@ export type ProviderEvent<C extends Channel = Channel> =
 export interface ProviderEventEnvelope<C extends Channel = Channel> {
   id: string;
   /** The login this belongs to. */
-  sessionId: string;
+  loginId: string;
   occurredAt: IsoTimestamp;
   event: ProviderEvent<C>;
 }
@@ -1241,7 +1248,7 @@ export interface BrowserSessionKeyInput {
  * guard -- comparing the identity -- never fires on a demotion, because the thing that changed is
  * not the thing being compared. Key order does not matter, and `team: {}` is not `team` absent.
  */
-export function sameCapabilities(a: SessionCapabilities, b: SessionCapabilities): boolean {
+export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): boolean {
   return a.breaks === b.breaks &&
     (a.team === undefined) === (b.team === undefined) &&
     a.team?.breakControl === b.team?.breakControl &&

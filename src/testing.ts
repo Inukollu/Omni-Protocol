@@ -1,6 +1,6 @@
 import {
   browserSessionKey,
-  effectiveTiers,
+  effectiveLevels,
   sameCapabilities,
   type Adapter,
   type AuthenticationState,
@@ -16,7 +16,7 @@ import {
   type HostReport,
   type Manifest,
   type ProviderEvent,
-  type SessionCapabilities,
+  type UserCapabilities,
 } from "./index.js";
 import {
   assertNoViolations,
@@ -65,8 +65,8 @@ const STATE_SUBJECTS = [
 // Pinned to the event union the way validation pins its closed sets: a type added to
 // `ProviderEvent` without a row here, or a row it lacks, is a compile error.
 const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
-  snapshot: true, "provider-status": true, "break-state": true, "task-offered": true, "task-updated": true,
-  "task-media-ready": true, "task-media-ended": true, "task-ended": true, announcement: true, "provider-summary": true,
+  snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
+  "task-media-started": true, "task-media-ended": true, "task-ended": true, announcement: true, "provider-summary": true,
   "team-updated": true, "contacts-updated": true, "calendar-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
@@ -209,8 +209,8 @@ export async function exerciseAdapter<C extends Channel>(
 
   try {
     authenticationState = await authentication.state();
-    const tiers = effectiveTiers(adapter.manifest.orgTiers).map(tier => tier.id);
-    violations.push(...validateAuthenticationState(authenticationState, "authentication", { tiers }));
+    const levels = effectiveLevels(adapter.manifest.orgLevels).map(level => level.id);
+    violations.push(...validateAuthenticationState(authenticationState, "authentication", { levels }));
     if (authenticationState.status !== "authenticated") {
       throw new Error(
         `Adapter contract exercise requires authenticated test state, received ${authenticationState.status}`,
@@ -232,7 +232,7 @@ export async function exerciseAdapter<C extends Channel>(
     const reader = (): ReaderContext => ({
       self: current().identity.id,
       capabilities: current().capabilities,
-      sessionId: context.sessionId,
+      loginId: context.loginId,
       autoAcceptTasks: context.autoAcceptTasks ?? true,
     });
 
@@ -249,7 +249,7 @@ export async function exerciseAdapter<C extends Channel>(
         message: `${because}, but the connection does not implement ${name}()`,
       });
     };
-    const requireCapabilityMethods = (on: Connection<C>, capabilities: SessionCapabilities) => {
+    const requireCapabilityMethods = (on: Connection<C>, capabilities: UserCapabilities) => {
       if (capabilities.breaks === true) {
         // The four stand or fall together: `granted` is a promise to honour a later commit, and
         // an adapter with requestBreak but no commitBreak leaves an agent a break that never starts.
@@ -264,7 +264,7 @@ export async function exerciseAdapter<C extends Channel>(
     };
 
     unsubscribeAuthentication = authentication.subscribe(state => {
-      const own = validateAuthenticationState(state, "authentication", { tiers });
+      const own = validateAuthenticationState(state, "authentication", { levels });
       violations.push(...own);
       if (own.length > 0) return;
       if (state.status === "refreshing") {
@@ -625,7 +625,7 @@ export class TaskStream {
   private readonly tasks = new Map<string, { phase: string; media: string }>();
 
   private static stated(task: unknown): { phase: string; media: string } {
-    const media = isRecord(task) && (task.media === "ready" || task.media === "ended") ? task.media : "none";
+    const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
     return { phase: String(isRecord(task) ? task.phase : undefined), media };
   }
 
@@ -670,31 +670,31 @@ export class TaskStream {
           }
         }
         // A task replaces the task, and an update re-states media without moving it: the
-        // transitions belong to task-media-ready and task-media-ended. Releasing ended is the
+        // transitions belong to task-media-started and task-media-ended. Releasing ended is the
         // one move an update may make, since wrapped audio has nothing left to end.
         {
           const next = TaskStream.stated(event.task);
           if (known.media !== next.media && !(known.media === "ended" && next.media === "none")) {
             refuse("stream.taskUpdated.media", `${at}.task.media`,
-              `a task-updated re-states media, it does not move it: ${id} held ${known.media} and the update says ${next.media}; audio arrives on task-media-ready and ends on task-media-ended`);
+              `a task-updated re-states media, it does not move it: ${id} held ${known.media} and the update says ${next.media}; audio arrives on task-media-started and ends on task-media-ended`);
           }
           this.tasks.set(id, next);
         }
         break;
-      case "task-media-ready":
+      case "task-media-started":
         if (id === undefined) break;
         if (known === undefined) {
-          refuse("stream.taskMediaReady.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
+          refuse("stream.taskMediaStarted.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
           break;
         }
         if (!WORK_BEGUN.has(known.phase)) {
-          refuse("stream.taskMediaReady.beforeWork", `${at}.taskId`,
+          refuse("stream.taskMediaStarted.beforeWork", `${at}.taskId`,
             `media cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
-        if (known.media === "ready") {
-          refuse("stream.taskMediaReady.duplicate", `${at}.taskId`, `media is already ready on ${id}; ready and ended alternate`);
+        if (known.media === "started") {
+          refuse("stream.taskMediaStarted.duplicate", `${at}.taskId`, `media already started on ${id}; started and ended alternate`);
         }
-        known.media = "ready";
+        known.media = "started";
         break;
       case "task-media-ended":
         if (id === undefined) break;
@@ -706,9 +706,9 @@ export class TaskStream {
           refuse("stream.taskMediaEnded.beforeWork", `${at}.taskId`,
             `media cannot end on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
-        if (known.media !== "ready") {
+        if (known.media !== "started") {
           refuse("stream.taskMediaEnded.silent", `${at}.taskId`,
-            `media cannot end on ${id} where none arrived: audio attaches on task-media-ready, or on a task carried with media ready`);
+            `media cannot end on ${id} where none arrived: audio attaches on task-media-started, or on a task carried with media started`);
         }
         known.media = "ended";
         break;
@@ -791,7 +791,7 @@ export function assertBreakFollowsItsRequests(envelopes: readonly ProviderEventE
 
 /**
  * The media follows the task and never decides it. Given a provider's stream -- optionally seeded
- * with the snapshot it began from -- every task is introduced once, `task-media-ready` and
+ * with the snapshot it began from -- every task is introduced once, `task-media-started` and
  * `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what
  * follows the media ending is `completing` or `task-ended`.
  */
@@ -804,7 +804,7 @@ export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvel
 }
 
 /** A host that reports one thing and never changes: what most adapter tests hand `exerciseAdapter`. */
-export function stillHost(report: HostReport = { online: true, browsers: { urlVisibility: "hidden" } }): Host {
+export function stillHost(report: HostReport = { online: true }): Host {
   return { report: () => report, subscribe: () => () => undefined };
 }
 
@@ -883,24 +883,24 @@ export function assertBreakBeginsAfterTask(steps: readonly BreakOnTaskStep[]): v
  * implementation; pass 0 to demand an exact match.
  */
 export function assertWrapTimeout(
-  task: Pick<TaskCompletion, "completionMode" | "completionAllowance">,
+  task: Pick<TaskCompletion, "completionMode" | "wrapAllowance">,
   mediaEndedAt: string,
   observedDeadline: string | undefined,
   toleranceMs = 1_000,
 ): void {
-  if (task.completionAllowance === undefined) {
+  if (task.wrapAllowance === undefined) {
     if (observedDeadline !== undefined) {
       throw new Error(`Wrap deadline mismatch: the task states no allowance, so there is no deadline, received ${observedDeadline}`);
     }
     return;
   }
   if (observedDeadline === undefined) {
-    throw new Error(`Wrap deadline mismatch: the task allows ${task.completionAllowance}s, but no deadline was observed`);
+    throw new Error(`Wrap deadline mismatch: the task allows ${task.wrapAllowance}s, but no deadline was observed`);
   }
   const ended = Date.parse(mediaEndedAt);
   const deadline = Date.parse(observedDeadline);
   if (Number.isNaN(ended) || Number.isNaN(deadline)) throw new Error("Wrap scenario requires valid ISO-8601 times");
-  const expected = ended + task.completionAllowance * 1_000;
+  const expected = ended + task.wrapAllowance * 1_000;
   if (Math.abs(deadline - expected) > toleranceMs) {
     throw new Error(
       `Wrap deadline mismatch: expected ${new Date(expected).toISOString()} within ${toleranceMs}ms, received ${observedDeadline}`,

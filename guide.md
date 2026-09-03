@@ -27,7 +27,7 @@ are used precisely throughout and mean nothing looser here.
 | **Channel** | The kind of work a provider carries: `voice`, `chat`, or `email`. Fixed per provider by its manifest. |
 | **Task type** | The provider's own name for a category of work — a queue, a mailbox folder, a chat source. Free-form, and finer-grained than a channel. |
 | **Capability** | A provider's declaration that a control exists for a task or a session. It says *offer this*, and nothing about who carries it out — that is fixed per command, see **Where a command executes**. |
-| **Login** | One authenticated sign-in to one provider, identified by `sessionId`. A transport reconnect keeps it; signing in again replaces it, and nothing tied to the old `sessionId` survives. |
+| **Login** | One authenticated sign-in to one provider, identified by `loginId`. A transport reconnect keeps it; signing in again replaces it, and nothing tied to the old `loginId` survives. |
 | **Transport** | The adapter's connection to its platform: a WebSocket or SignalR connection, required to be persistent and ordered. Which one and how it reconnects are the adapter's business; losing it does not end a login. |
 | **Connection** | The `Connection` object Omni holds for one login: the methods it can call and the events it receives. |
 | **Concurrent capacity** | How many tasks this provider may have allocated to the agent at once — an absolute ceiling, stated as `AgentCapacity.count` and standing until Omni restates it. The provider counts its own outstanding tasks against it. |
@@ -36,14 +36,15 @@ are used precisely throughout and mean nothing looser here.
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, roster. |
 
-Four words describe *what state a thing is in*, and they are not interchangeable. `status` is the
-one used twice, for two unrelated things — which is why a bare "status" in conversation is always
-worth pinning down:
+Six words describe *what state a thing is in*, and they are not interchangeable: each belongs to
+one thing, so a bare "status" in conversation is always the authentication session's, and a
+transport, a task, a break and a call each have a word of their own:
 
 | Word | Belongs to | Values |
 | --- | --- | --- |
 | `phase` | A task | `pending`, `confirmed`, `preparing`, `in-progress`, `paused`, `completing` |
-| `status` | A connection | `connecting`, `active`, `error` |
+| `media` | A task's audio | `started`, `ended` |
+| `transport` | A connection | `connecting`, `active`, `error` |
 | `status` | An authentication session | `signed-out`, `authenticating`, `authenticated`, `refreshing`, `expired` |
 | `approval` | A break request | `not-requested`, `awaiting-decision`, `granted`, `starting-after-task`, `in-effect` |
 | `availability` | A roster member | `ready`, `on-task`, `on-break`, `signed-out` |
@@ -146,20 +147,20 @@ type Attribute = { key: string; value: string };
 ```ts
 type AuthenticationMethod = "browser-sso" | "credentials";
 
-type BrowserAccessPolicy = {
+type BrowserAccess = {
   mode: "allow-all" | "block-all";
   allowList?: string[];
   blockList?: string[];
 };
 
 type PersonalBrowserCapability = {
-  access: BrowserAccessPolicy;
+  access: BrowserAccess;
   accessPolicyScope?: "initial-url" | "all-navigation";
 };
 
-type DialDestinationPolicy = "contacts-only" | "any-number";
+type DialDestinations = "contacts-only" | "any-number";
 
-type DialCapability = { destinationPolicy: DialDestinationPolicy };
+type DialCapability = { destinations: DialDestinations };
 
 type IdleCapabilities<C extends Channel = Channel> = {
   personalBrowser?: PersonalBrowserCapability;
@@ -176,7 +177,7 @@ type Manifest<C extends Channel = Channel> = {
   idleCapabilities?: IdleCapabilities<C>;
   phaseLabels?: TaskPhaseLabels;
   taskTypePresentation?: Record<string, TaskTypePresentation>;
-  orgTiers?: TierDeclaration[];
+  orgLevels?: LevelDeclaration[];
 };
 ```
 
@@ -215,7 +216,7 @@ type SecretStore = {
 
 type AuthenticationContext = {
   protocolVersion: number;
-  sessionId: string;
+  loginId: string;
   secrets: SecretStore;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
@@ -227,7 +228,7 @@ type TeamCapabilities = {
   policyControl?: true;
 };
 
-type SessionCapabilities = {
+type UserCapabilities = {
   breaks?: true;
   preferences?: AgentPreference[];
   team?: TeamCapabilities;
@@ -236,8 +237,8 @@ type SessionCapabilities = {
 type AuthenticationState =
   | { status: "signed-out" }
   | { status: "authenticating" }
-  | { status: "authenticated"; identity: User; capabilities: SessionCapabilities; expiresAt?: IsoTimestamp }
-  | { status: "refreshing"; identity: User; capabilities: SessionCapabilities }
+  | { status: "authenticated"; identity: User; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "refreshing"; identity: User; capabilities: UserCapabilities }
   | { status: "expired"; identity?: User; failure?: AuthenticationFailure };
 
 type AuthenticationFailure = {
@@ -262,7 +263,6 @@ type HostAudioOutput =
 type UrlVisibility = "full" | "domain" | "hidden";
 
 type HostReport = {
-  browsers: { urlVisibility: UrlVisibility };
   online: boolean;
   audio?: {
     input: HostAudioInput;
@@ -277,14 +277,14 @@ type Host = {
 
 type ConnectContext = {
   protocolVersion: number;
-  sessionId: string;
+  loginId: string;
   autoAcceptTasks?: boolean;
   host: Host;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
 };
 
-type ConnectionStatus = "connecting" | "active" | "error";
+type TransportStatus = "connecting" | "active" | "error";
 
 type CredentialField = {
   name: string;
@@ -311,7 +311,7 @@ type CompleteAuthenticationRequest =
   | { flowId: string; method: "credentials"; values: Readonly<Record<string, string>> };
 
 type CompleteAuthenticationResult =
-  | { status: "authenticated"; identity: User; capabilities: SessionCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "authenticated"; identity: User; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
   | { status: "rejected"; failure: AuthenticationFailure };
 
 type AuthenticationActionResult =
@@ -336,11 +336,11 @@ type AuthenticationSession = {
 ```ts
 type PreferenceId = "hold" | "mute" | `skill:${string}`;
 
-type SetBy = Tier | "provisioning";
+type SetBy = Level | "provider";
 
 type Resolved = {
   setBy: SetBy;
-  lockedBy?: Tier;
+  lockedBy?: Level;
   reason?: string;
 };
 
@@ -359,8 +359,8 @@ type PreferenceResult =
   | { status: "failed"; failure: ProtocolFailure };
 
 type Snapshot = {
-  status: ConnectionStatus;
-  sessionId: string;
+  transport: TransportStatus;
+  loginId: string;
   break: BreakState;
   tasks: Task[];
   taskCount: number;
@@ -411,7 +411,7 @@ type DialResult =
 ```ts
 type DispositionCode = { id: string; label: string; group?: string };
 
-type DispositionPolicy = {
+type DispositionRules = {
   required?: boolean;
   notes?: "required" | "optional" | "hidden";
   codes?: DispositionCode[];
@@ -432,7 +432,7 @@ type DestinationDirectory = {
 type CustomCapability = {
   id: string;
   ui: {
-    kind: "button" | "toggle" | "menu-item";
+    control: "button" | "toggle" | "menu-item";
     label: string;
     placement: "primary" | "secondary" | "overflow";
     render?: "inline" | "page";
@@ -442,7 +442,7 @@ type CustomCapability = {
 
 type SharedTaskCapabilities = {
   browsers?: true;
-  dispositions?: true | DispositionPolicy;
+  dispositions?: true | DispositionRules;
   custom?: CustomCapability[];
 };
 
@@ -482,17 +482,21 @@ const BROWSER_ISOLATION_SCHEMES = {
 type BrowserIsolationScheme =
   (typeof BROWSER_ISOLATION_SCHEMES)[keyof typeof BROWSER_ISOLATION_SCHEMES];
 
-type TaskBrowserBase = {
+type Browser = {
   id: string;
   name: string;
-  purpose: string;
   url: string;
 };
 
-type TaskBrowser = TaskBrowserBase & (
+type TaskBrowser = Browser & {
+  purpose: string;
+  urlVisibility?: UrlVisibility;
+} & (
   | { reuse: false; isolationScheme?: never }
   | { reuse: true; isolationScheme: BrowserIsolationScheme }
 );
+
+type PersonalBrowser = Browser;
 
 type BrowserSessionKeyInput = {
   providerId: string;
@@ -547,8 +551,8 @@ type TaskHandlingStep = {
 };
 
 type TaskCompletion =
-  | { completionMode: "agent-command"; completionAllowance?: DurationSeconds }
-  | { completionMode: "provider-automatic"; completionAllowance: DurationSeconds };
+  | { completionMode: "agent-command"; wrapAllowance?: DurationSeconds }
+  | { completionMode: "provider-automatic"; wrapAllowance: DurationSeconds };
 
 type TaskConsultation = {
   destination: string;
@@ -557,7 +561,7 @@ type TaskConsultation = {
 };
 
 type TaskLead = {
-  status: "requested" | "joined";
+  stage: "requested" | "joined";
   leadId?: UserId;
   note?: string;
   since: IsoTimestamp;
@@ -569,21 +573,21 @@ type TaskAssisting = {
   since: IsoTimestamp;
 };
 
-type Tier = string;
+type Level = string;
 
-type TierDeclaration = {
-  id: Tier;
+type LevelDeclaration = {
+  id: Level;
   label: string;
 };
 
 type Locked = {
-  lockedBy: Tier;
+  lockedBy: Level;
   reason?: string;
 };
 
 type Lockable<T> = T | Locked;
 
-type TaskMediaState = "ready" | "ended";
+type TaskMediaState = "started" | "ended";
 
 type Task<C extends Channel = Channel> = {
   id: TaskId;
@@ -705,33 +709,32 @@ what the queue allows: on for everyone, off for everyone, or left to the person.
 your team is a **policy**; what you do to yourself is a **preference**. A person belongs to one
 team and many queues, so a policy applies across every queue the person works.
 
-**The provider resolves; the protocol carries the result and who decided.** The structure's tiers
-are the provider's ladder: each tier states only what it sets, an enforcing policy at a tier above
+**The provider resolves; the protocol carries the result and who decided.** The structure's levels
+are the provider's ladder: each level states only what it sets, an enforcing policy at a level above
 the person settles the value for everyone below it, and where nothing enforces the most specific
-tier that says anything wins. The protocol names a tier by the id the manifest declares for it and
-never describes the chain between them: which tiers a person passes through is the structure's to
-know. A typical organisation has four, and they are the defaults — `DEFAULT_TIERS`: `org`, `site`,
+level that says anything wins. The protocol names a level by the id the manifest declares for it and
+never describes the chain between them: which levels a person passes through is the structure's to
+know. A typical organisation has four, and they are the defaults — `DEFAULT_LEVELS`: `org`, `site`,
 `team`, `person`, each with the label a desk shows. A structure that differs states its whole
-ladder in `Manifest.orgTiers`, `person` included: what the list carries is in force, and what it
-leaves out does not exist — a structure with no site tier declares `org`, `team`, `person`, and
-`site` is refused on its wire. A declared tier is one the provider's own store actually resolves
+ladder in `Manifest.orgLevels`, `person` included: what the list carries is in force, and what it
+leaves out does not exist — a structure with no site level declares `org`, `team`, `person`, and
+`site` is refused on its wire. A declared level is one the provider's own store actually resolves
 at: a label with no policy behind it decides nothing. A manifest that declares none has exactly
-the four. `lockedBy` is any tier in force except `person`, who never locks their own value;
-`setBy` is any tier in force, or `provisioning`, the protocol's word for "no tier has said
-anything and the provider's own configuration supplied the value" — the provider speaking, never
-Omni's provisioning file, which does not reach the wire. A host renders "who decided" from the
+the four. `lockedBy` is any level in force except `person`, who never locks their own value;
+`setBy` is any level in force, or `provider`, the protocol's word for "no level has said
+anything and the provider's own configuration supplied the value". A host renders "who decided" from the
 declared labels and needs no others, and validates every republished `authenticated` state
 against them, not only the sign-in. What the wire carries is the resolution:
 
-- **`lockedBy`** — a tier above the person made this value theirs to keep. A person never locks
-  their own value, and the queue is not a tier: what the queue does not allow at all is absent.
-- **`setBy`** — who stated the value as it stands: a tier, the `person` themself, or
-  `provisioning` where no tier has said anything. Provenance, not a lock: a value that came from a
-  broad tier as a default is still the person's to change.
+- **`lockedBy`** — a level above the person made this value theirs to keep. A person never locks
+  their own value, and the queue is not a level: what the queue does not allow at all is absent.
+- **`setBy`** — who stated the value as it stands: a level, the `person` themself, or
+  `provider` where no level has said anything. Provenance, not a lock: a value that came from a
+  broad level as a default is still the person's to change.
 
 **On a task, a control the queue could allow may stand locked in its place.** `Task.capabilities`
 is the effective set. What the queue does not allow is absent and nothing is shown. What the queue
-allows and a tier above the person locked is present as `{ lockedBy, reason? }` where the control's
+allows and a level above the person locked is present as `{ lockedBy, reason? }` where the control's
 value would be — `mute: { lockedBy: "team", reason: "Nobody on this team mutes" }` — and Omni
 renders that control disabled, saying who decided, so an agent who cannot press Mute knows whether
 to ask their lead or their site. `lockedBy` is the discriminant: a value that carries it is the
@@ -747,20 +750,20 @@ controls — is content, and is never locked.
 with `on`, `off`, or `agent`, for any task control, `dial`, or a skill — and only `hold`, `mute`
 and skills may be `agent`; callback and new call are the team's, on or off, within what the queue
 allows. The roster carries `policies` for such a login: every policy as it stands, who set it, and
-`lockedBy` where a tier above the team made it theirs to keep, which the lead sees and cannot
+`lockedBy` where a level above the team made it theirs to keep, which the lead sees and cannot
 change — `executeTeamPolicy` on it answers `failed` with `omni.capability-not-enabled`.
 
 **What the team left to the person is the person's, and the provider keeps it.** The login's
 `capabilities.preferences` lists every preference the person may hold — `hold`, `mute`, a skill —
 with where it stands and who set it: `setBy: "team"` while they inherit the team's default,
-`"person"` once they have set their own, `"provisioning"` where no tier has said anything. Nothing
-is hidden for want of a row, and a preference a tier above has since locked is listed with
+`"person"` once they have set their own, `"provider"` where no level has said anything. Nothing
+is hidden for want of a row, and a preference a level above has since locked is listed with
 `lockedBy`. `setPreference` is the person's act — `{ id, enabled }` to set their own, `{ id,
 inherit: true }` to give it up and inherit again — answered `applied` and republished as a new
 `authenticated` state when something changed, a state and not a flicker, as every republish of
 `authenticated` is; and it is durable: the person's across sessions. A lead may also set a
 person's preference from their own screen, which arrives the same way. A preference is keyed by
-the capability's own name because it is the same capability at another tier: effective in
+the capability's own name because it is the same capability at another level: effective in
 `Task.capabilities`, set for the team in `policies`, left to the person in `preferences`. The
 command `mute` acts on one call; the preference `mute` says whether the person wants the control
 at all, and a host renders it in its settings, never as the button on a call.
@@ -794,7 +797,7 @@ type ImposedBreak =
 
 type BreakState = {
   approval: BreakApproval;
-  accepting: boolean;
+  mayAsk: boolean;
   refusedReason?: string;
   decisionReason?: string;
   retryAfterMs?: number;
@@ -922,12 +925,12 @@ type ProviderSummary = {
   metrics?: SummaryMetric[];
 };
 
-type ConnectionRecovery = "reconnect" | "reauthenticate";
+type TransportRecovery = "reconnect" | "reauthenticate";
 
 type ProviderEvent =
   | { type: "snapshot"; reason: "reconnected" | "provider-requested"; snapshot: Snapshot }
-  | { type: "provider-status"; status: "connecting" | "active"; message?: string }
-  | { type: "provider-status"; status: "error"; recovery: ConnectionRecovery; message?: string }
+  | { type: "transport-status"; status: "connecting" | "active"; message?: string }
+  | { type: "transport-status"; status: "error"; recovery: TransportRecovery; message?: string }
   | { type: "break-state"; break: BreakState }
   | {
       type: "task-offered";
@@ -937,7 +940,7 @@ type ProviderEvent =
       preparationEndsAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task }
-  | { type: "task-media-ready"; taskId: TaskId }
+  | { type: "task-media-started"; taskId: TaskId }
   | { type: "task-media-ended"; taskId: TaskId }
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
@@ -948,7 +951,7 @@ type ProviderEvent =
 
 type ProviderEventEnvelope = {
   id: string;
-  sessionId: string;
+  loginId: string;
   occurredAt: IsoTimestamp;
   event: ProviderEvent;
 };
@@ -998,12 +1001,12 @@ const ALLOWED_BROWSER_URL_SCHEMES = ["http:", "https:"] as const;
 const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;
 type IdleCapability = (typeof IDLE_CAPABILITIES)[number];
 
-const DEFAULT_TIERS = [
+const DEFAULT_LEVELS = [
   { id: "org", label: "Your organisation" },
   { id: "site", label: "Your site" },
   { id: "team", label: "Your team" },
   { id: "person", label: "You" },
-] as const satisfies readonly TierDeclaration[];
+] as const satisfies readonly LevelDeclaration[];
 
 const IDLE_CAPABILITY_UI = {
   dial: "Dialpad",
@@ -1247,7 +1250,7 @@ make a repeat safe. Omni does not retry; if the agent acts again it is a new com
 
 On a persistent ordered transport there is only one way a command goes unsettled: the connection
 went away underneath it. **An adapter that cannot settle a command has lost its transport, and
-says so** — `provider-status` `connecting`, reconnect, snapshot — whichever channel the command
+says so** — `transport-status` `connecting`, reconnect, snapshot — whichever channel the command
 actually travelled on. An unsettled promise is therefore always followed by a snapshot, and that
 snapshot is the answer; Omni waits for it rather than calling `snapshot()` itself. While the
 transport is up, a result says the provider accepted the command, and the event that follows —
@@ -1256,7 +1259,7 @@ transport is up, a result says the provider accepted the command, and the event 
 **Classify on the rejection, never on a connection status published separately from it.** The
 status is a report about the wire and races the rejection; the rejection is the event. A rejection
 is the provider's answer only when it carries the provider's answer — a failure the provider
-named. Every other rejection is transport loss, whatever the last `provider-status` said.
+named. Every other rejection is transport loss, whatever the last `transport-status` said.
 
 A command therefore carries no key. The provider names its own records — a task, a lead request, a
 member — and Omni refers to them by those names; **Omni never asks a provider to remember a name
@@ -1346,7 +1349,7 @@ export default defineAdapter({
     supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
     authenticationMethods: ["browser-sso"],
     idleCapabilities: {
-      dial: { destinationPolicy: "any-number" },
+      dial: { destinations: "any-number" },
     },
   },
   createAuthenticationSession: context => createAcmeAuthentication(context),
@@ -1371,7 +1374,7 @@ compile time.
 | `idleCapabilities` | Declares actions Omni may offer while the agent has no active task, such as voice dialing. Task controls do not belong here. |
 | `phaseLabels` | Optional static adapter-defined display names for canonical `TaskPhase` values. They cannot vary at runtime. |
 | `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
-| `orgTiers` | The organisation's whole ladder as the provider calls it, each tier with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_TIERS`. See **Who decides what an agent may do**. |
+| `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
 
 ### Authentication methods
 
@@ -1425,11 +1428,11 @@ a destination policy:
 
 ```ts
 idleCapabilities: {
-  dial: { destinationPolicy: "any-number" }
+  dial: { destinations: "any-number" }
 }
 ```
 
-`destinationPolicy` is required and accepts one `DialDestinationPolicy`:
+`destinations` is required and accepts one `DialDestinations`:
 
 | Value | Contract |
 | --- | --- |
@@ -1624,7 +1627,7 @@ Creates the provider-scoped authentication session.
 | `AuthenticationContext` field | Contract |
 | --- | --- |
 | `protocolVersion` | The negotiated version, fixed for this login. |
-| `sessionId` | Omni-generated identity for this login. The same value Omni later passes as `ConnectContext.sessionId`, and how an adapter ties a connection back to the session that authenticated it. |
+| `loginId` | Omni-generated identity for this login. The same value Omni later passes as `ConnectContext.loginId`, and how an adapter ties a connection back to the session that authenticated it. |
 | `secrets` | Omni-provided `SecretStore`, scoped to this provider's manifest id. |
 | `signal` | Optional cancellation signal. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -1658,11 +1661,11 @@ login fix, rendered apart from a provider Omni cannot reach. Commands meanwhile 
 `omni.not-authenticated`.
 
 **Re-authentication restores the login; it does not replace it.** It runs on the session Omni
-kept, under the same `sessionId` — the old `flowId` died with the expiry, so the adapter issues a
+kept, under the same `loginId` — the old `flowId` died with the expiry, so the adapter issues a
 new challenge — and when the state returns to `authenticated` the connection and everything on it
 carry on: Omni does not call `connect()` again, since a second connection would be a second
 session for one agent. What "signing in again replaces the login" describes is a new
-`AuthenticationSession` under a new `sessionId`, after `signed-out`.
+`AuthenticationSession` under a new `loginId`, after `signed-out`.
 
 ### What the login may do
 
@@ -1813,14 +1816,14 @@ Creates one live provider connection for the signed-in agent.
 - The returned connection owns reconnect until Omni calls `disconnect()` or aborts `context.signal`.
 - May be called again on the same login after that: once per `Connection`, not once per login.
   Omni disposes a connection whose `error` named `recovery: "reconnect"` with `disconnect()` and
-  calls `connect()` afresh — see **`provider-status`**.
+  calls `connect()` afresh — see **`transport-status`**.
 
 ### `ConnectContext`
 
 | Field | Contract |
 | --- | --- |
 | `protocolVersion` | Version negotiated before authentication. Fixed for this login. |
-| `sessionId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.sessionId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
+| `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
 | `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login. Treated as `true` when omitted. When `true`, `task-offered` carries an `acceptanceMode`; when `false`, every task requires agent acceptance. |
 | `host` | The host's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The host reports, the adapter decides**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
@@ -1845,9 +1848,9 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 
 | Field | Contract |
 | --- | --- |
-| `status` | Current `ConnectionStatus` — whether this provider's transport can serve the session. Defined under **`provider-status`**. |
-| `sessionId` | Identity of this login session. It must match the connection context. |
-| `break` | Complete break state, including approval, accepting state, reasons, retry details, and any imposed break. |
+| `transport` | Current `TransportStatus` — whether this provider's transport can serve the login. Defined under **`transport-status`**. |
+| `loginId` | Identity of this login. It must match the connection context. |
+| `break` | Complete break state, including approval, whether the agent may ask, reasons, retry details, and any imposed break. |
 | `tasks` | Complete set of tasks currently offered to or owned by this agent. |
 | `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
@@ -2070,10 +2073,10 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
 | `contact` | Optional `Contact` for the person or entity on this task. Often a name and one address; a withheld caller ID may leave nothing to send at all. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preparing`, `in-progress`, `paused`, or `completing`. |
-| `media` | Voice only. The task's real-time audio as the provider holds it: `ready` while audio should be attached, `ended` once it ended, omitted while none should be. The provider's word — see **`task-media-ready`**. |
+| `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
-| `completionAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
+| `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `handlingHistory` | Optional ordered handling history for this currently open task. It is live task data, not a permanent archive. |
 | `consultation` | Voice only. Present while the agent is consulting a transfer destination: who is being consulted, and since when where the provider records it. Its presence is what makes `transfer` `complete` and `cancel` issuable. `label` is a name for the destination -- a person, a queue -- not a phrase; the host supplies the verb. See **Consult transfer**. |
@@ -2130,7 +2133,7 @@ command.
 routed to the agent and accepted as `acceptanceMode` dictates, and its presence and phase follow
 the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
 consult, a conference leg joining or leaving, a transfer, a callback — the media follows
-separately, arriving on `task-media-ready`, attaching through `openMedia` and ending with
+separately, arriving on `task-media-started`, attaching through `openMedia` and ending with
 `task-media-ended`. Omni does not ring,
 bridge, or hold a line. How the phone rings, whether it rings at all, and where legs join and leave
 are the adapter's and the platform's, transient, and decide neither when a task exists nor what
@@ -2142,7 +2145,7 @@ allowance starts on it and the callback control appears on it — and Omni follo
 follows any other. What Omni never does is derive a task's state from its own media session: a
 stream that drops, a track that ends, a transport that disconnects, a microphone that fails, an
 endpoint re-registering change nothing about the task until the provider says so. Structurally:
-`task-media-ready` and `task-media-ended` alternate on a task whose work has begun, media ends
+`task-media-started` and `task-media-ended` alternate on a task whose work has begun, media ends
 only where it arrived, what follows the media ending is `completing` or `task-ended`, and every
 task is introduced once — `exerciseAdapter` holds the stream to that from the connect snapshot on,
 and `assertMediaFollowsTheTask` holds any sequence.
@@ -2153,10 +2156,10 @@ and `assertMediaFollowsTheTask` holds any sequence.
 the task open until Omni sends the channel's `complete` command. With `provider-automatic`, the
 provider may complete the task without receiving that command.
 
-`completionAllowance` is independent of that decision. It is fixed, and when it starts depends on
+`wrapAllowance` is independent of that decision. It is fixed, and when it starts depends on
 whether the channel carries real-time media:
 
-| Channel | Completion allowance starts at |
+| Channel | Wrap allowance starts at |
 | --- | --- |
 | Voice and any channel with real-time media | The `task-media-ended` event |
 | Chat | When the conversation ends and the task enters `completing` |
@@ -2166,8 +2169,8 @@ whether the channel carries real-time media:
 ```ts
 const emailCompletion = {
   completionMode: "agent-command",
-  completionAllowance: 120,
-} satisfies Pick<Task<"email">, "completionMode" | "completionAllowance">;
+  wrapAllowance: 120,
+} satisfies Pick<Task<"email">, "completionMode" | "wrapAllowance">;
 ```
 
 In this example, the agent has two minutes after sending the email to add notes, select a
@@ -2177,7 +2180,7 @@ disposition, and complete the task.
 without waiting for a command; with `agent-command`, it still waits for `complete`.
 
 There is no value meaning "unlimited", because a number that is not a duration would be read as
-one. A provider that imposes no deadline says so by **omitting** `completionAllowance`, which
+one. A provider that imposes no deadline says so by **omitting** `wrapAllowance`, which
 only `agent-command` permits: the provider will not complete the task itself, so there is nothing
 for a deadline to trigger, and Omni counts nothing down. **Omitted and empty are different
 claims** applies -- omitted says there is no deadline to see, where `0` says the deadline is now.
@@ -2186,7 +2189,7 @@ Under `provider-automatic` the field is required, because the provider is going 
 ```ts
 const untimedWrap = {
   completionMode: "agent-command",
-} satisfies Pick<Task<"voice">, "completionMode" | "completionAllowance">;
+} satisfies Pick<Task<"voice">, "completionMode" | "wrapAllowance">;
 ```
 
 Here the customer has hung up, `task-media-ended` has been sent on time, the task is `completing`,
@@ -2202,7 +2205,7 @@ Omni issues `{ type: "callback" }`; it is issuable only in `completing`, and onl
 capability is declared. The provider knows who the party is; the command carries no destination.
 
 On `applied` the provider is placing the call and the task returns to `in-progress`: the agent is
-working again, and the completion allowance is **discarded, not paused**. From there the call is
+working again, and the wrap allowance is **discarded, not paused**. From there the call is
 reported as any call is -- `paused`, `in-progress`, and when its media ends, `task-media-ended`
 again, which starts a fresh allowance from that instant. A party who does not answer is a call
 whose media ended: the task returns to `completing` through the same event and the clock starts
@@ -2210,7 +2213,7 @@ again from there. At no point is an agent dialling against a deadline.
 
 **The control exists only while there is a window to use it in.** Under `agent-command` the task
 stays `completing` until the agent completes it, so the window is open for as long as they need.
-Under `provider-automatic` the window is the allowance -- and with `completionAllowance: 0` there
+Under `provider-automatic` the window is the allowance -- and with `wrapAllowance: 0` there
 is none: the provider disposes the task at provider end, and Omni does not offer Call back, whatever
 the task declares. A capability names a control that can be used; on a task with no `completing`
 window it cannot, and declaring it there changes nothing.
@@ -2221,8 +2224,8 @@ const callbackCapable = {
   capabilities: { hold: true, callback: true, dispositions: true },
   phase: "completing",
   completionMode: "provider-automatic",
-  completionAllowance: 30,
-} satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "completionMode" | "completionAllowance">;
+  wrapAllowance: 30,
+} satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "completionMode" | "wrapAllowance">;
 ```
 
 With ten seconds of the thirty left, the agent presses Call back: `execute({ command: { type:
@@ -2233,8 +2236,8 @@ from that instant.
 ```ts
 const immediateProviderCompletion = {
   completionMode: "provider-automatic",
-  completionAllowance: 0,
-} satisfies Pick<Task, "completionMode" | "completionAllowance">;
+  wrapAllowance: 0,
+} satisfies Pick<Task, "completionMode" | "wrapAllowance">;
 ```
 
 ### How a task has been handled
@@ -2309,6 +2312,13 @@ capabilities: { browsers: true }
 
 Tasks without browser definitions omit the capability and provide an empty `browsers` array.
 
+**A browser is one tab, and each workspace keeps its own.** `Browser` is what a tab is — an id, a
+name, a URL. The task workspace shows the task's `TaskBrowser` entries, one tab each, fixed at the
+task's definition: their count and their details, `urlVisibility` included, arrive with the task,
+and nothing adds a tab to a task later. The personal workspace is the agent's: as many
+`PersonalBrowser` tabs as they open, never on the wire, and no provider says anything about what
+they may see there.
+
 #### `TaskBrowser` and isolation
 
 Each `TaskBrowser` defines one named browser in the task workspace.
@@ -2321,6 +2331,7 @@ Each `TaskBrowser` defines one named browser in the task workspace.
 | `url` | Initial URL. Must use `http:` or `https:`; see below. Later navigation comes from Chromium. |
 | `reuse` | Required. `false` creates a task-specific browser session. |
 | `isolationScheme` | **Required when `reuse` is `true`**, and rejected when it is `false`. There is no default: see below. |
+| `urlVisibility` | What the agent sees of this tab's URL in Omni's chrome: `hidden`, `domain`, or `full`. Omitted, the URL shows as any browser's does; a provider says `hidden` where the URL carries what the agent may not read — a caller's number, a CRM token. Per browser, on the provider's word; Omni honours it tab by tab. |
 
 ##### Choosing a reuse scheme
 
@@ -2519,7 +2530,7 @@ commands and a provider that offers `consultTransfer` implements all three.
 
 `applied` on `complete` says the provider is bridging the customer to the destination and
 dropping the agent's leg. What follows is what follows any transfer: the agent's media ends and
-the provider reports `task-media-ended`, any completion allowance runs, and the task ends with a
+the provider reports `task-media-ended`, any wrap allowance runs, and the task ends with a
 `transferred` outcome naming the destination. `applied` on `cancel` says the destination is
 dropped; the task returns to `in-progress` with `consultation` gone. Omni waits for the
 provider's report of both, as it does for every command.
@@ -2550,13 +2561,13 @@ Every task may publish additional provider-specific controls in `capabilities.cu
 capabilities: {
   hold: true,
   custom: [
-    { id: "request-supervisor", ui: { kind: "button", label: "Request supervisor", placement: "secondary" } },
-    { id: "mark-vip", ui: { kind: "toggle", label: "Mark as VIP", placement: "overflow" } },
+    { id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } },
+    { id: "mark-vip", ui: { control: "toggle", label: "Mark as VIP", placement: "overflow" } },
   ],
 }
 ```
 
-Custom capability IDs must be non-empty and unique within the task. `ui.kind` is `button`, `toggle`,
+Custom capability IDs must be non-empty and unique within the task. `ui.control` is `button`, `toggle`,
 or `menu-item`; `ui.placement` is `primary`, `secondary`, or `overflow`. `ui.render` says where the
 control's work appears: `inline`, in the workspace beside the task, or `page`, as a page of its own
 — a tab in the same work area as the task's browsers, beside them, and alone on a task that has
@@ -2589,7 +2600,7 @@ Starts one outbound call from the idle dialpad. It is present only when the voic
 declares `dial`.
 
 - `destination` is the original number selected or entered by the agent.
-- The provider holds `destination` to its declared `destinationPolicy`: under `contacts-only`, a
+- The provider holds `destination` to its declared `destinations`: under `contacts-only`, a
   number that is not one of its contacts answers `failed` with `omni.destination-not-permitted`.
 - `dialled` confirms that outbound call creation completed.
 - `failed` contains a `ProtocolFailure` and confirms no call was placed.
@@ -2607,8 +2618,8 @@ nothing while none are being accepted — so they are not published separately.
 | Field | Contract |
 | --- | --- |
 | `approval` | Where the agent's current request stands. See the states below. |
-| `accepting` | Whether the agent may ask at all. Distinct from `approval`. |
-| `refusedReason` | Display-ready reason shown when `accepting` is false — a standing gate that applies to everyone. |
+| `mayAsk` | Whether the agent may ask at all. Distinct from `approval`. |
+| `refusedReason` | Display-ready reason shown when `mayAsk` is false — a standing gate that applies to everyone. |
 | `decisionReason` | The words whoever decided attached, from `decide.reason`. About one request and one decision, not a standing gate. |
 | `retryAfterMs` | How long until the agent may retry, when the provider can say. |
 | `reasons` | Not-ready codes this provider offers. Omitted when it defines none; an empty list is refused, being a second spelling of the same fact. |
@@ -2635,7 +2646,7 @@ A provider reports `starting-after-task` only after Omni commits a `granted` req
 work is still active. Omni does not send the request again, because asking again would not move
 it; it sends the commit again only from a reconnect snapshot that shows the grant still standing.
 
-`accepting: false` is what lets Omni withdraw the control rather than let an agent ask and be
+`mayAsk: false` is what lets Omni withdraw the control rather than let an agent ask and be
 refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest period is not
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
@@ -2973,7 +2984,7 @@ A lead who also takes calls sees their team on the idle dashboard. `Snapshot.tea
 | --- | --- |
 | `members` | Every member of this lead's team, whatever their state. `[]` says the lead has a team with nobody in it; omitting the roster says something else entirely — see **The login is the permission** below. |
 | `requests` | The members currently asking this lead to join a call, each with the task and the note. Required when the login declares `team.consultControl`, `[]` when nobody is asking; omitted when it does not. See **Consulting a lead**. |
-| `policies` | The team's policy per capability as it stands — the setting, who set it, and `lockedBy` where a tier above the team made it theirs to keep. Required when the login declares `team.policyControl`; omitted when it does not. See **Who decides what an agent may do**. |
+| `policies` | The team's policy per capability as it stands — the setting, who set it, and `lockedBy` where a level above the team made it theirs to keep. Required when the login declares `team.policyControl`; omitted when it does not. See **Who decides what an agent may do**. |
 
 | `TeamMember` field | Contract |
 | --- | --- |
@@ -3034,7 +3045,7 @@ never an identifier from another provider, and Omni does not translate between t
 from `describeUsers()`.
 
 `suspended` means requests are **rejected outright** rather than left pending — nobody is coming to
-approve them. A provider that suspends breaks must also publish `accepting: false` to the team's
+approve them. A provider that suspends breaks must also publish `mayAsk: false` to the team's
 agents so they see it before asking. A `place` must likewise reach that member as an `imposed` break
 on their own `BreakState`, or they are stopped from working with no way to see why.
 
@@ -3071,7 +3082,7 @@ executeTeamConsult({ command: { type: "decline", requestId: "req-7", reason: "In
 **On `join` the provider bridges three parties and the lead is on a task of their own**, on the
 same task id, arriving on the lead's connection as `task-offered` with `require-automatic-acceptance`
 -- the way a call an agent placed themselves arrives -- and carrying `assisting`. The agent's task
-moves to `lead: { status: "joined", leadId }`. A join is the lead's own act, so capacity does not
+moves to `lead: { stage: "joined", leadId }`. A join is the lead's own act, so capacity does not
 trigger it; but from then on it is an outstanding task the provider counts against the lead's
 stated ceiling like any other, nothing more is allocated to the lead while it stands, and a
 provider whose lead is already at the ceiling answers the join `failed`.
@@ -3108,7 +3119,7 @@ const consultLeadCapable = {
   channel: "voice",
   capabilities: { hold: true, consultLead: true, dispositions: true },
   phase: "in-progress",
-  lead: { status: "joined", leadId: "L-9", note: "Refund dispute, needs approval", since: "2026-08-21T09:04:00Z" },
+  lead: { stage: "joined", leadId: "L-9", note: "Refund dispute, needs approval", since: "2026-08-21T09:04:00Z" },
 } satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "lead">;
 ```
 
@@ -3184,7 +3195,6 @@ what failed, and reports. It never decides for the adapter what a missing microp
 | `online` | Whether the host has a network interface up. Not a claim that anything is reachable — the adapter knows whether it can reach its own platform far better than the host does — so `false` is a reason not to go ready and `true` is not a reason to. |
 | `audio` | Present on a voice connection, absent where there is no audio. |
 | `audio.input` | `ready` with `localAudio` — the microphone as captured, the same stream `openMedia` receives — and `flowing`, false while the hardware or OS says no audio moves through it (a headset's own mute switch, which Omni's Mute control never touches). `unavailable` with `reason`, since each wants a different fix from the agent: `no-device`; `denied`; `not-asked`, which a host that asks at connect never publishes; `in-use`, a device present and permitted that another application holds — on an agent desktop the commonest of all; `lost`, a capture that ended. A host decides the reason from the devices before the error name: a browser can report a permission error on a machine with no microphone at all, and "grant permission" is the wrong instruction for an agent who needs to plug one in. `failure` carries the words Omni showed them. |
-| `browsers.urlVisibility` | What Omni's own chrome shows of a task browser's URL: `hidden`, `domain`, or `full`. A statement about the chrome, not about what the page renders or a screenshot captures; task browsers only — the personal browser is the agent's own and nothing a provider sends appears in it. A provider reads it before deciding what URL it is willing to send: one that carries confidential data goes out under `hidden` and not under `full`. |
 | `audio.output` | `ready`, or `unavailable` with `reason` — `no-device`, or `lost` for one removed — and `failure`: an agent who cannot hear is as unable to take a call as one who cannot speak. |
 
 Omni republishes the report whenever it changes — a permission granted late, a headset unplugged,
@@ -3258,8 +3268,8 @@ carries as `audio.input.localAudio`, and absent while that input is `unavailable
 bridges audio without a host-side input may ignore it; one that needs it and finds it absent
 answers `unavailable` with a failure Omni shows the agent.
 
-**When to ask is the provider's word, not Omni's guess.** Omni opens media on `task-media-ready`,
-and on a task arriving with `media: "ready"` on a snapshot; it closes on `task-media-ended` and
+**When to ask is the provider's word, not Omni's guess.** Omni opens media on `task-media-started`,
+and on a task arriving with `media: "started"` on a snapshot; it closes on `task-media-ended` and
 when the task ends. Between those words, nothing Omni's own senses report — a stream that drops, a
 track that ends — moves the task or its audio.
 
@@ -3336,7 +3346,7 @@ Applies a `TaskCommandRequest` to one provider-local task.
 - `applied` confirms the side effect completed. `failed` confirms it did **not**, with a typed
   `ProtocolFailure`; a provider that will not and one that cannot report the same shape, and `code`
   says which.
-- A command sent while `provider-status` is not `active` answers `failed` with `omni.unavailable`.
+- A command sent while `transport-status` is not `active` answers `failed` with `omni.unavailable`.
   Neither Omni nor the adapter queues it.
 - **A command that asks for a state answers `applied` when that state holds, whoever brought it
   about; a command that acts answers `failed` when it cannot act.** Declining a lead request
@@ -3374,7 +3384,7 @@ react rather than only display the message:
 | `omni.task-not-found` | The provider-local task id is unknown, typically after the task already ended. |
 | `omni.destination-not-permitted` | The dial or transfer destination violates the provider's policy. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
-| `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `provider-status` is not `active`. |
+| `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `transport-status` is not `active`. |
 | `omni.break-already-committed` | Cancellation lost the commit/cancel race; Omni must finish commit recovery. |
 
 They are published as `OMNI_FAILURE_CODES`.
@@ -3386,14 +3396,14 @@ They are published as `OMNI_FAILURE_CODES`.
 | Field | Contract |
 | --- | --- |
 | `id` | Required identifier for this event, unique within the login. Omni does not act on it; it exists so a host log line and an adapter log line can be matched when something has to be traced. |
-| `sessionId` | Login session that produced the event. Omni rejects any other value, which only reaches it if an adapter kept an old connection emitting after a re-login. |
+| `loginId` | Login session that produced the event. Omni rejects any other value, which only reaches it if an adapter kept an old connection emitting after a re-login. |
 | `occurredAt` | Valid RFC-3339 timestamp with an explicit timezone, representing provider observation time. |
 | `event` | Typed `ProviderEvent` payload. |
 
 #### Provider instants are read against a provider clock
 
 Every deadline in this contract is a provider instant that Omni counts down: `allocationExpiresAt`,
-`preparationEndsAt`, and the wrap deadline of `task-media-ended` plus `completionAllowance` where
+`preparationEndsAt`, and the wrap deadline of `task-media-ended` plus `wrapAllowance` where
 one is stated.
 Comparing those against the host clock is wrong by whatever the two machines disagree by, and the
 damaging direction is early — **Accept** withdrawn from an offer still ringing, a wrap timer
@@ -3427,8 +3437,8 @@ Omni apply state the snapshot already superseded.
 
 #### Liveness
 
-`provider-status` is the only signal Omni has that a transport died. An adapter must emit
-`provider-status` with `connecting` or `error` as soon as it loses its transport, rather than
+`transport-status` is the only signal Omni has that a transport died. An adapter must emit
+`transport-status` with `connecting` or `error` as soon as it loses its transport, rather than
 leaving a stale `active` in place while it retries internally; Omni cannot distinguish a quiet
 healthy provider from a dead one.
 
@@ -3448,9 +3458,9 @@ snapshot. It carries what the login's capabilities call for — a roster for a l
 snapshot — and nothing they do not; a capability is withdrawn by a republished `authenticated`,
 never by an omission from a snapshot.
 
-### `provider-status`
+### `transport-status`
 
-Updates `ConnectionStatus`, and carries an optional `message` that may explain an error but must be
+Updates `TransportStatus`, and carries an optional `message` that may explain an error but must be
 safe for the agent to see.
 
 | Value | Contract |
@@ -3464,7 +3474,7 @@ died; the host knows how to run a login. `recovery` joins the two:
 
 - **`reconnect`** — the login is good and this connection is not: a backend restart, a session the
   platform no longer recognises. Omni calls `disconnect()` on the dead connection and then
-  `connect()` again on the same login — same `sessionId` — and the fresh connect snapshot
+  `connect()` again on the same login — same `loginId` — and the fresh connect snapshot
   re-establishes state exactly as a reconnect snapshot does. `connect()` is once per
   `Connection`, not once per login.
 - **`reauthenticate`** — the session under the login died: a token rejected, a remote logout. Omni
@@ -3476,7 +3486,7 @@ has to decide when to stop. Omni owns giving up: after however long it chooses t
 call `disconnect()` and either `connect()` afresh or surface the failure — so neither side waits
 for the other to blink.
 
-**Status is about the transport, nothing else.** It does not say whether the agent is available,
+**`transport` is about the transport, nothing else.** It does not say whether the agent is available,
 whether they are on a break, or how much work they can take: capacity travels on `setCapacity`,
 availability on `BreakState`. Nor does it carry authentication — a session that expired reports
 `expired` on `AuthenticationState` and fails actions with `omni.not-authenticated`, while
@@ -3491,7 +3501,7 @@ come — see **Liveness**.
 
 Replaces this provider's complete `break` object. Its `approval` uses the canonical
 `not-requested`, `awaiting-decision`, `granted`, `starting-after-task` and
-`in-effect` states defined under Breaks; the event also carries the corresponding accepting state,
+`in-effect` states defined under Breaks; the event also carries the corresponding may-ask state,
 reasons, retry details, and any imposed break.
 
 Each state is also held to the one before it. A commit's states, `starting-after-task` and
@@ -3524,17 +3534,17 @@ snapshots until it ends.
 Replaces the current representation of one provider-local task. It is a full task value, not a
 partial patch.
 
-### `task-media-ready`
+### `task-media-started`
 
 The provider's word that the task's audio should now attach. Omni calls `openMedia` on it — and on
-a task carried with `media: "ready"`, which is how a reconnect snapshot reattaches audio an
+a task carried with `media: "started"`, which is how a reconnect snapshot reattaches audio an
 earlier event brought — and renders the call as live from that word, never from its own senses. It
-names a task whose work has begun, and it alternates with `task-media-ended`: media that was never
-made ready cannot end, so a live call whose provider says nothing about its audio is a provider in
+names a task whose work has begun, and it alternates with `task-media-ended`: media that never
+started cannot end, so a live call whose provider says nothing about its audio is a provider in
 breach, not a state a desk fills in from its own devices.
 
 The event is the transition and the task's `media` field is the state. A `task-updated` re-states
-the media its task already holds — republishing `ready` on a hold is a statement, not a second
+the media its task already holds — republishing `started` on a hold is a statement, not a second
 arrival — but it does not move it: an update that itself flips the field is refused
 (`stream.taskUpdated.media`), and the pairing at the moment audio arrives is the phase change
 without the field, then the event. Releasing `ended` is the one move an update may make, since
@@ -3543,8 +3553,8 @@ wrapped audio has nothing left to end.
 ### `task-media-ended`
 
 Signals that a task's real-time media ended. For voice and similar channels, this starts the fixed
-completion timer. It does not remove the task, and it ends only audio that `task-media-ready` — or
-a task carried with `media: "ready"` — attached.
+completion timer. It does not remove the task, and it ends only audio that `task-media-started` — or
+a task carried with `media: "started"` — attached.
 
 ### `task-ended`
 
@@ -3632,7 +3642,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | Function | Validates |
 | --- | --- |
 | `validateManifest(manifest)` | Identity, protocol-version interoperability, authentication methods, and idle-capability shapes. |
-| `validateTask(task, { channel })` | Identity, channel agreement, phase, completion allowance, capability shapes, custom controls, and browsers. |
+| `validateTask(task, { channel })` | Identity, channel agreement, phase, wrap allowance, capability shapes, custom controls, and browsers. |
 | `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team roster, the stated `taskCount` reconciled against the tasks carried, and every task, contact, and activity, including idle-capability gating both ways: a contribution the manifest never declared is refused, and one it declares is required, `[]` included. |
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
@@ -3727,7 +3737,7 @@ cannot be established from TypeScript structure alone.
 | `stillHost(report?)` | A host that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a voice adapter. |
 | `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for a host that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |
 | `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a placed break arriving in effect with `imposed`. The harness applies the same rules after the connect snapshot. |
-| `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-ready` and `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what follows the media ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no media satisfies it by never testing it — pair it with the assertion that the media end is present. |
+| `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-started` and `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what follows the media ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no media satisfies it by never testing it — pair it with the assertion that the media end is present. |
 | `assertBreakParticipants(candidates, participants)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `in-effect` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
