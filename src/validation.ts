@@ -728,6 +728,7 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
     into.add("task.handlingHistory.shape", path, "handlingHistory must be an array when present");
     return;
   }
+  let previous: number | undefined;
   value.forEach((entry: unknown, index: number) => {
     const at = `${path}[${index}]`;
     if (!isPlainObject(entry)) {
@@ -735,7 +736,15 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
       return;
     }
     into.oneOf(entry.step, HANDLING_STEPS, "task.handlingHistory.step", `${at}.step`);
-    into.timestamp(entry.at, "task.handlingHistory.at", `${at}.at`);
+    if (into.timestamp(entry.at, "task.handlingHistory.at", `${at}.at`)) {
+      // The record is one entry per occurrence, oldest first: a second hold is a second entry
+      // after the first, never a revision of it or an entry filed out of its turn.
+      const instant = Date.parse(entry.at as string);
+      if (previous !== undefined && instant < previous) {
+        into.add("task.handlingHistory.order", `${at}.at`, "handling steps are oldest first; this entry is earlier than the one before it");
+      }
+      previous = instant;
+    }
     if (entry.seconds !== undefined) {
       // Omitted while a leg is still running. Nought is a claim that it took no time.
       into.require(isDurationSeconds(entry.seconds) && (entry.seconds as number) > 0,

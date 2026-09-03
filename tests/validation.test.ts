@@ -205,6 +205,19 @@ describe("validateTask", () => {
     expect(custom({ prompt: { fields: [{ name: "destination", type: "text" }] } })).toEqual(["task.custom.prompt.field.label"]);
     expect(custom({ prompt: { fields: [{ ...destination, type: "number" }] } })).toEqual(["task.custom.prompt.field.type"]);
   });
+  it("records each hold as its own entry, oldest first", () => {
+    const history = (value: unknown) => rules(validateTask(task({ handlingHistory: value }), { channel: "voice" }));
+    const answered = { step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" };
+    // Two holds are two entries; the running one omits its seconds.
+    expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4 }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9 }])).toEqual([]);
+    // Oldest first: a hold filed before the answer it followed is out of its turn.
+    expect(history([{ step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, answered])).toEqual(["task.handlingHistory.order"]);
+    expect(history([answered, { step: "held", at: "2026-08-21T00:59:41Z", by: "a-17" }])).toEqual([]);
+    // A malformed instant is its own violation and takes no part in the ordering.
+    expect(history([answered, { step: "held", at: "soon", by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual(["task.handlingHistory.at"]);
+  });
+
   it("refuses the task words the contract renamed, beside the words that replaced them", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
     const media = (value: unknown) => rules(validateTask(task({ media: value }), { channel: "voice" }));
