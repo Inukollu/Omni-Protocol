@@ -69,7 +69,7 @@ const STATE_SUBJECTS = [
 // `ProviderEvent` without a row here, or a row it lacks, is a compile error.
 const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
-  "task-media-started": true, "task-media-ended": true, "task-ended": true, announcement: true, "queue-summary": true,
+  "task-media-started": true, "task-media-ended": true, "task-ended": true, announcement: true, "queue-summary": true, diagnostic: true,
   "team-updated": true, "contacts-updated": true, "calendar-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
@@ -316,6 +316,12 @@ export async function exerciseAdapter<C extends Channel>(
     unsubscribe = connection.subscribe(envelope => {
       observeEvent(envelope, seen);
       violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader()));
+      // A diagnostic is informational to a host and a failure to a conformance run: the platform
+      // under test broke a rule the adapter relies on, and a green result must not paper over it.
+      if (isRecord(envelope?.event) && envelope.event.type === "diagnostic") {
+        violations.push({ rule: "diagnostic.raised", path: "event.diagnostic",
+          message: `the provider reported a diagnostic: expected ${String(envelope.event.expected)}; observed ${String(envelope.event.observed)}` });
+      }
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
       // Cross-event rules apply once the stream has a beginning: the connect snapshot.
       if (seeded) violations.push(...stream.apply(envelope), ...breaks.apply(envelope));
