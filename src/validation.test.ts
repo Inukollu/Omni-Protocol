@@ -36,7 +36,7 @@ const task = (over: Record<string, unknown> = {}) => {
     taskType: "Customer Support",
     capabilities,
     // A task supplies browsers only under the capability that shows them.
-    browsers: capabilities.browsers === true ? [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", reuse: false }] : [],
+    browsers: capabilities.browsers === true ? [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false }] : [],
     phase: "in-progress",
     completionMode: "agent-command",
     wrapAllowance: 15,
@@ -156,18 +156,18 @@ describe("validateTask", () => {
     const browser = (over: Record<string, unknown>) =>
       check({ browsers: [{ id: "b", name: "B", purpose: "P", url: "https://x.example.com", ...over }] });
     // The guide names the rule for a reusing browser that declares no scheme.
-    expect(browser({ reuse: true })).toContain("task.browser.isolationScheme.required");
-    expect(browser({ reuse: true })).not.toContain("task.browser.isolationScheme");
-    expect(browser({ reuse: true, isolationScheme: "Nonsense" })).toContain("task.browser.isolationScheme");
-    expect(browser({ reuse: false, isolationScheme: "TabName" })).toContain("task.browser.isolationScheme.unexpected");
-    expect(browser({})).toContain("task.browser.reuse");
+    expect(browser({ sharedSession: true })).toContain("task.browser.isolationScheme.required");
+    expect(browser({ sharedSession: true })).not.toContain("task.browser.isolationScheme");
+    expect(browser({ sharedSession: true, isolationScheme: "Nonsense" })).toContain("task.browser.isolationScheme");
+    expect(browser({ sharedSession: false, isolationScheme: "TabName" })).toContain("task.browser.isolationScheme.unexpected");
+    expect(browser({})).toContain("task.browser.sharedSession");
     // Controls: both legal shapes pass.
-    expect(browser({ reuse: true, isolationScheme: "TabName" })).toEqual([]);
-    expect(browser({ reuse: false })).toEqual([]);
+    expect(browser({ sharedSession: true, isolationScheme: "TabName" })).toEqual([]);
+    expect(browser({ sharedSession: false })).toEqual([]);
   });
 
   it("allows only http and https for a browser url", () => {
-    const url = (value: string) => check({ browsers: [{ id: "b", name: "B", purpose: "P", url: value, reuse: false }] });
+    const url = (value: string) => check({ browsers: [{ id: "b", name: "B", purpose: "P", url: value, sharedSession: false }] });
     expect(url("file:///etc/passwd")).toContain("task.browser.url.scheme");
     expect(url("javascript:alert(1)")).toContain("task.browser.url.scheme");
     expect(url("https://ok.example.com")).toEqual([]);
@@ -447,7 +447,7 @@ describe("validateEventEnvelope", () => {
   });
 
   it("validates a provider summary", () => {
-    const summary = (value: unknown) => check({ type: "provider-summary", summary: value });
+    const summary = (value: unknown) => check({ type: "queue-summary", summary: value });
     expect(summary({ title: "Queue", waitingCount: 3, updatedAt: "2026-08-21T09:00:00Z" })).toEqual([]);
     expect(summary({ title: "Queue", waitingCount: -1, updatedAt: "2026-08-21T09:00:00Z" })).toContain("event.summary.waitingCount");
     expect(summary({ title: "", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" })).toContain("event.summary.title");
@@ -458,7 +458,7 @@ describe("validateEventEnvelope", () => {
 
 describe("one word, one meaning", () => {
   it("lets each task browser say what the agent sees of its URL, in one of three words", () => {
-    const browser = (extra: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", reuse: false, ...extra }] }), { channel: "voice" }));
+    const browser = (extra: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedSession: false, ...extra }] }), { channel: "voice" }));
     expect(browser({})).toEqual([]);
     expect(browser({ urlVisibility: "hidden" })).toEqual([]);
     expect(browser({ urlVisibility: "domain" })).toEqual([]);
@@ -479,7 +479,11 @@ describe("one word, one meaning", () => {
     expect(event("task-media-started")).toEqual([]);
     expect(event("transport-status")).toEqual([]);
     // renamed away: the old event names must be refused, not aliased.
-    expect([event("task-media-ready"), event("provider-status")]).toEqual([["event.type"], ["event.type"]]);
+    expect([event("task-media-ready"), event("provider-status"), event("provider-summary")]).toEqual([["event.type"], ["event.type"], ["event.type"]]);
+    const tab = (browser: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/", ...browser }] }), { channel: "voice" }));
+    expect(tab({ sharedSession: false })).toEqual([]);
+    // renamed away: a browser still saying reuse has not said whether its session is shared.
+    expect(tab({ reuse: false })).toEqual(["task.browser.sharedSession"]);
     const brk = (state: Record<string, unknown>) => rules(validateSnapshot(snapshot({ break: { approval: "not-requested", ...state } }), manifest()));
     expect(brk({ mayAsk: true })).toEqual([]);
     expect(brk({ accepting: true })).toEqual(["break.mayAsk"]);
@@ -559,7 +563,7 @@ describe("who decides what an agent may do", () => {
   });
 
   it("withholds a number by locking it in place, never by a flag", () => {
-    const contact = (value: unknown) => rules(validateTask(task({ contact: value }), voice));
+    const contact = (value: unknown) => rules(validateTask(task({ party: value }), voice));
     expect(contact({ name: "Asha", number: "+14155550111" })).toEqual([]);
     expect(contact({ name: "Asha", number: { lockedBy: "org" } })).toEqual([]);
     expect(contact({ name: "Asha", number: { lockedBy: "person" } })).toEqual(["contact.number.locked.lockedBy.person"]);
@@ -753,7 +757,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("keeps browser names and attribute keys unique within a task", () => {
-    const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", reuse: false };
+    const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false };
     expect(rules(validateTask(task({ browsers: [crm, { ...crm, id: "kb", name: "Knowledge" }] }), voice))).toEqual([]);
     expect(rules(validateTask(task({ browsers: [crm, { ...crm, id: "kb" }] }), voice))).toEqual(["task.browser.name.unique"]);
     const order = { type: "text", key: "order", value: "42" };
@@ -769,7 +773,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("declares the capability that shows a task's browsers", () => {
-    const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", reuse: false };
+    const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false };
     expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [crm] }), voice))).toEqual([]);
     expect(rules(validateTask(task({ capabilities: {}, browsers: [] }), voice))).toEqual([]);
     expect(rules(validateTask(task({ capabilities: {}, browsers: [crm] }), voice))).toEqual(["task.browsers.capability"]);
@@ -844,7 +848,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("keeps summary metric ids unique", () => {
-    const summary = (metrics: unknown[]) => rules(validateEventEnvelope(envelope({ type: "provider-summary", summary: { title: "Voice", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics } }), manifest()));
+    const summary = (metrics: unknown[]) => rules(validateEventEnvelope(envelope({ type: "queue-summary", summary: { title: "Voice", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics } }), manifest()));
     const waiting = { id: "waiting", label: "Waiting", value: "3" };
     expect(summary([waiting, { ...waiting, id: "longest" }])).toEqual([]);
     expect(summary([waiting, waiting])).toEqual(["event.summary.metric.unique"]);
@@ -1012,7 +1016,7 @@ describe("the validators accept exactly what the contract publishes", () => {
   // suite that only ever fed it published values.
   it("every published isolation scheme, and no unpublished one", () => {
     const reusing = (isolationScheme: unknown) =>
-      task({ browsers: [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", reuse: true, isolationScheme }] });
+      task({ browsers: [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: true, isolationScheme }] });
     for (const scheme of Object.values(BROWSER_ISOLATION_SCHEMES)) {
       expect(rules(validateTask(reusing(scheme), { channel: "voice" }))).toEqual([]);
     }

@@ -287,7 +287,7 @@ function validateScheduledActivityInto(activity: unknown, path: string, into: Co
       );
     }
   }
-  if (activity.contact !== undefined) validateContactInto(activity.contact, `${path}.contact`, into);
+  if (activity.party !== undefined) validateContactInto(activity.party, `${path}.party`, into);
   validateAttributes(activity.attributes, `${path}.attributes`, into);
 }
 
@@ -667,7 +667,7 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
     // Reuse and its scheme travel together. A reusing browser with no scheme would otherwise
     // inherit whatever a host happened to default to, which is how two tasks end up sharing a
     // session nobody intended. The guide names the rule for the missing case.
-    if (browser.reuse === true) {
+    if (browser.sharedSession === true) {
       if (browser.isolationScheme === undefined) {
         into.add("task.browser.isolationScheme.required", `${at}.isolationScheme`,
           `a reusing browser must declare one of: ${ISOLATION_SCHEME_VALUES.join(", ")}`);
@@ -676,11 +676,11 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
           "task.browser.isolationScheme", `${at}.isolationScheme`,
           `an isolation scheme must be one of: ${ISOLATION_SCHEME_VALUES.join(", ")}`);
       }
-    } else if (browser.reuse === false) {
+    } else if (browser.sharedSession === false) {
       into.require(browser.isolationScheme === undefined, "task.browser.isolationScheme.unexpected",
-        `${at}.isolationScheme`, "a browser that does not reuse must not declare an isolation scheme");
+        `${at}.isolationScheme`, "a browser that does not share its session must not declare an isolation scheme");
     } else {
-      into.add("task.browser.reuse", `${at}.reuse`, "a browser must say whether it reuses a session");
+      into.add("task.browser.sharedSession", `${at}.sharedSession`, "a browser must say whether its session is shared across tasks");
     }
   });
 }
@@ -855,7 +855,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   if (task.reference !== undefined) {
     into.filled(task.reference, "task.reference", `${path}.reference`, "a reference must not be empty when present");
   }
-  if (task.contact !== undefined) validateContactInto(task.contact, `${path}.contact`, into, context.levels);
+  if (task.party !== undefined) validateContactInto(task.party, `${path}.party`, into, context.levels);
 
   validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into);
@@ -1272,7 +1272,7 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
   }
 }
 
-function validateProviderSummary(value: unknown, path: string, into: Collector): void {
+function validateQueueSummary(value: unknown, path: string, into: Collector): void {
   if (!isPlainObject(value)) {
     into.add("event.summary.shape", path, "a provider summary must be an object");
     return;
@@ -1399,8 +1399,8 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
         into.require(typeof event.html === "string", "event.announcement.html", `${at}.html`, "html must be a string when present");
       }
       break;
-    case "provider-summary":
-      validateProviderSummary(event.summary, `${at}.summary`, into);
+    case "queue-summary":
+      validateQueueSummary(event.summary, `${at}.summary`, into);
       break;
     case "team-updated":
       validateTeamRosterInto(event.team, `${at}.team`, { ...context, levels }, into);
