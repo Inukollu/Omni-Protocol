@@ -11,13 +11,17 @@ import { describe, expect, it } from "vitest";
 
 const root = join(__dirname, "..");
 const guide = readFileSync(join(root, "guide.md"), "utf8");
-const sources = readdirSync(__dirname).filter(name => name.endsWith(".ts") && name !== "guide.test.ts");
+// The vocabulary is the package and its tests: an export, a field, a union member, a rule id.
+const sources = [
+  ...readdirSync(join(root, "src")).filter(name => name.endsWith(".ts")).map(name => join(root, "src", name)),
+  ...readdirSync(__dirname).filter(name => name.endsWith(".ts") && name !== "guide.test.ts").map(name => join(__dirname, name)),
+];
 
 // A line under `@ts-expect-error` is a shape the code refuses, so the names on it are exactly the
 // ones the guide must not use; they stay out of the vocabulary.
 const vocabulary = new Set<string>();
 for (const name of sources) {
-  const lines = readFileSync(join(__dirname, name), "utf8").split("\n");
+  const lines = readFileSync(name, "utf8").split("\n");
   const text = lines.filter((line, index) => !(lines[index - 1] ?? "").includes("@ts-expect-error")).join("\n");
   for (const word of text.match(/[A-Za-z_$][A-Za-z0-9_$-]*/g) ?? []) vocabulary.add(word);
   for (const literal of text.match(/"([^"\\\n]|\\.)*"|'([^'\\\n]|\\.)*'|`([^`\\]|\\.)*`/g) ?? []) vocabulary.add(literal.slice(1, -1));
@@ -27,7 +31,7 @@ for (const name of sources) {
 // checked against the type and not merely against the existence of both words somewhere.
 const members = new Map<string, Set<string>>();
 {
-  const index = readFileSync(join(__dirname, "index.ts"), "utf8");
+  const index = readFileSync(join(root, "src", "index.ts"), "utf8");
   for (const block of index.matchAll(/^export (?:interface|type) ([A-Za-z]+)(?:<[^>]*>)?(?: =)? \{\n([\s\S]*?)^\}/gm)) {
     const fields = new Set<string>();
     for (const field of (block[2] as string).matchAll(/^\s+([A-Za-z_$][A-Za-z0-9_$]*)\??(?:[:(<]|\s*\()/gm)) fields.add(field[1] as string);

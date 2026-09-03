@@ -24,7 +24,7 @@ import {
   type TeamRoster,
   type TaskBrowser,
   type TaskCommand,
-} from "./index.js";
+} from "../src/index.js";
 
 export const voiceManifest = {
   id: "voice-provider",

@@ -25,7 +25,7 @@ const work = join(root, "node_modules", ".cache", "guide-examples");
 const modules = { index: "index.ts", validation: "validation.ts", testing: "testing.ts" } as const;
 
 const exported = (file: string): string[] =>
-  [...new Set([...readFileSync(join(__dirname, file), "utf8").matchAll(/^export (?:type|interface|function|const|class|async function) ([A-Za-z_$][A-Za-z0-9_$]*)/gm)]
+  [...new Set([...readFileSync(join(root, "src", file), "utf8").matchAll(/^export (?:type|interface|function|const|class|async function) ([A-Za-z_$][A-Za-z0-9_$]*)/gm)]
     .map(match => match[1] as string))].sort();
 const exports = Object.fromEntries(Object.entries(modules).map(([key, file]) => [key, exported(file)])) as Record<keyof typeof modules, string[]>;
 const source = (file: string) => `../../../src/${file.replace(/\.ts$/, ".js")}`;
@@ -144,7 +144,7 @@ describe("the guide's examples compile", () => {
     // And the mirror is whole: every type the package exports is declared under Shapes, so a
     // type added to the code without a place in the guide is a failing build, not a gap found later.
     const declared = new Set(blocks.flatMap(block => block.types.map(type => type.name)));
-    const exportedTypes = [...readFileSync(join(__dirname, "index.ts"), "utf8").matchAll(/^export (?:type|interface) ([A-Za-z_$][A-Za-z0-9_$]*)/gm)].map(match => match[1] as string);
+    const exportedTypes = [...readFileSync(join(root, "src", "index.ts"), "utf8").matchAll(/^export (?:type|interface) ([A-Za-z_$][A-Za-z0-9_$]*)/gm)].map(match => match[1] as string);
     expect(exportedTypes.filter(name => !declared.has(name))).toEqual([]);
     expect(complete.length).toBeGreaterThanOrEqual(35);
     expect(complete.flatMap(block => block.types).filter(type => exports.index.includes(type.name)).length).toBeGreaterThanOrEqual(60);

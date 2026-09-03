@@ -26,8 +26,8 @@ import {
   type TaskBrowser,
   type TaskCommandRequest,
   type TaskPhase,
-} from "./index.js";
-import { exerciseAdapter, stillHost } from "./testing.js";
+} from "../src/index.js";
+import { exerciseAdapter, stillHost } from "../src/testing.js";
 
 describe("Omni protocol", () => {
   it("creates collision-safe composite task and user keys", () => {
