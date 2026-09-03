@@ -63,6 +63,7 @@ const conformingSnapshot = {
       { step: "answered", at: "2026-08-21T09:00:00Z", by: "A-1" },
     ],
   }],
+  taskCount: 1,
   contacts: [{ name: "Asha Rao", number: "+919876543210", email: "asha@example.com", attributes: [{ key: "Category", value: "High priority" }] }],
   scheduledActivities: [{ id: "cb-1", title: "Callback", startsAt: "2026-08-21T10:00:00Z", endsAt: "2026-08-21T10:15:00Z" }],
 } satisfies Snapshot<"voice">;
@@ -72,7 +73,7 @@ const minimalSnapshot = {
   status: "active",
   sessionId: "session-1",
   break: { approval: "not-requested", accepting: true },
-  tasks: [],
+  tasks: [], taskCount: 0,
 } satisfies Snapshot<"voice">;
 
 /** Declares no idle capability, so the minimal snapshot owes it no contribution. */
@@ -219,6 +220,13 @@ describe("exerciseAdapter", () => {
     const result = await exerciseAdapter(makeAdapter().adapter, context, { collectOnly: true });
     expect(() => assertReached(result, ["tasks", "task.browsers", "contacts"])).not.toThrow();
     expect(() => assertReached(result, ["tasks", "team.members", "event.task-ended"])).toThrow(/never reached team\.members, event\.task-ended/);
+  });
+
+  it("holds a snapshot to its stated task count", async () => {
+    // The conforming fixtures carry reconciled counts; a count nobody's tasks agree with is refused.
+    expect(await rules({ manifest: plainManifest, snapshot: { ...minimalSnapshot, taskCount: 5 } })).toEqual(["snapshot.taskCount.mismatch"]);
+    const { taskCount: _stated, ...uncounted } = minimalSnapshot;
+    expect(await rules({ manifest: plainManifest, snapshot: uncounted })).toEqual(["snapshot.taskCount"]);
   });
 
   it("requires each contribution the manifest declares, [] included", async () => {

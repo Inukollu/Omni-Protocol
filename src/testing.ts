@@ -669,8 +669,17 @@ export class TaskStream {
               `after its media ended, ${id} completes or ends; ${phase} is a phase the audio does not decide`);
           }
         }
-        // A task replaces the task: the update's own media field is the state now stated.
-        this.tasks.set(id, TaskStream.stated(event.task));
+        // A task replaces the task, and an update re-states media without moving it: the
+        // transitions belong to task-media-ready and task-media-ended. Releasing ended is the
+        // one move an update may make, since wrapped audio has nothing left to end.
+        {
+          const next = TaskStream.stated(event.task);
+          if (known.media !== next.media && !(known.media === "ended" && next.media === "none")) {
+            refuse("stream.taskUpdated.media", `${at}.task.media`,
+              `a task-updated re-states media, it does not move it: ${id} held ${known.media} and the update says ${next.media}; audio arrives on task-media-ready and ends on task-media-ended`);
+          }
+          this.tasks.set(id, next);
+        }
         break;
       case "task-media-ready":
         if (id === undefined) break;

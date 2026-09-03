@@ -1138,6 +1138,14 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
 
   validateBreakState(snapshot.break, `${path}.break`, into);
 
+  // The count is the provider's confirmation of how much work it answered with. Stated, never
+  // inferred: an unanswered or blank state lacks it, and cannot pass as a confirmed empty.
+  if (into.require(typeof snapshot.taskCount === "number" && Number.isInteger(snapshot.taskCount) && snapshot.taskCount >= 0,
+    "snapshot.taskCount", `${path}.taskCount`, "a snapshot states its task count: a whole number, zero or more")
+    && Array.isArray(snapshot.tasks)) {
+    into.require(snapshot.taskCount === snapshot.tasks.length, "snapshot.taskCount.mismatch", `${path}.taskCount`,
+      `taskCount says ${snapshot.taskCount} and tasks carries ${snapshot.tasks.length}: a count that does not reconcile is an answer nobody gave`);
+  }
   if (!Array.isArray(snapshot.tasks)) {
     into.add("snapshot.tasks.shape", `${path}.tasks`, "a snapshot must carry a tasks array");
   } else {

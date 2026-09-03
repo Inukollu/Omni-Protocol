@@ -154,6 +154,8 @@ export const liveAudioTask = { ...emailTask, id: "call-12", channel: "voice", ca
 export const audiolessEmailTask = { ...emailTask, id: "email-9",
   // @ts-expect-error Real-time media is a voice affair; an email task carries no state for it.
   media: "ready" } satisfies Task<"email">;
+// @ts-expect-error A snapshot states its task count; a blank state cannot pass as a confirmed empty.
+export const uncountedSnapshot = { status: "active", sessionId: "s-1", break: { approval: "not-requested", accepting: true }, tasks: [] } satisfies Snapshot<"voice">;
 export const revivableError = { type: "provider-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "provider-status", status: "error" } satisfies ProviderEvent<"voice">;
@@ -174,7 +176,7 @@ export const expiredWithCapabilities: AuthenticationState = { status: "expired",
 export const completed: CompleteAuthenticationResult = { status: "authenticated", identity: asha, capabilities: { breaks: true } };
 // @ts-expect-error Completion says what the login may do, like the state it becomes.
 export const completedSilently: CompleteAuthenticationResult = { status: "authenticated", identity: asha };
-export const bareSnapshot: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [] };
+export const bareSnapshot: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [], taskCount: 0 };
 // @ts-expect-error Capabilities live on the login, not the snapshot.
 export const staleSnapshot: Snapshot<"voice"> = { ...bareSnapshot, sessionCapabilities: {} };
 export const roster: TeamRoster = { members: [], requests: [] };

@@ -1027,6 +1027,8 @@ export interface Snapshot<C extends Channel = Channel> {
   break: BreakState;
   /** Every task currently owned by this agent for this provider. */
   tasks: Task<C>[];
+  /** The provider's own count of those tasks, stated rather than inferred: it must equal `tasks.length`, so a blank or unanswered state can never pass as a confirmed empty. */
+  taskCount: number;
   contacts?: Contact[];
   scheduledActivities?: ScheduledActivity[];
   team?: TeamRoster;
