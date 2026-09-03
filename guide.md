@@ -155,7 +155,7 @@ type BrowserAccess = {
 
 type PersonalBrowserCapability = {
   access: BrowserAccess;
-  accessPolicyScope?: "initial-url" | "all-navigation";
+  accessAppliesTo?: "initial-url" | "all-navigation";
 };
 
 type DialDestinations = "contacts-only" | "any-number";
@@ -253,11 +253,11 @@ type HostAudioUnavailableReason = "no-device" | "denied" | "not-asked" | "in-use
 type HostOutputUnavailableReason = "no-device" | "lost";
 
 type HostAudioInput =
-  | { status: "ready"; localAudio: MediaStream; flowing: boolean }
+  | { status: "available"; localAudio: MediaStream; flowing: boolean }
   | { status: "unavailable"; reason: HostAudioUnavailableReason; failure: ProtocolFailure };
 
 type HostAudioOutput =
-  | { status: "ready" }
+  | { status: "available" }
   | { status: "unavailable"; reason: HostOutputUnavailableReason; failure: ProtocolFailure };
 
 type UrlVisibility = "full" | "domain" | "hidden";
@@ -315,7 +315,7 @@ type CompleteAuthenticationResult =
   | { status: "rejected"; failure: AuthenticationFailure };
 
 type AuthenticationActionResult =
-  | { status: "accepted" }
+  | { status: "applied" }
   | { status: "failed"; failure: AuthenticationFailure };
 
 type Unsubscribe = () => void;
@@ -374,7 +374,7 @@ type AgentCapacity = {
 };
 
 type CapacityResult =
-  | { status: "accepted" }
+  | { status: "applied" }
   | { status: "failed"; failure: ProtocolFailure };
 ```
 
@@ -413,7 +413,7 @@ type DispositionCode = { id: string; label: string; group?: string };
 
 type DispositionRules = {
   required?: boolean;
-  notes?: "required" | "optional" | "hidden";
+  notes?: "required" | "optional" | "none";
   codes?: DispositionCode[];
 };
 
@@ -609,8 +609,8 @@ type Task<C extends Channel = Channel> = {
 
 type AcceptanceMode =
   | "no-preference"
-  | "require-agent-acceptance"
-  | "require-automatic-acceptance";
+  | "manual"
+  | "automatic";
 
 type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
@@ -747,8 +747,8 @@ controls — is content, and is never locked.
 
 **A lead sets the team's policy from their roster.** A login that declares
 `capabilities.team.policyControl` may `executeTeamPolicy({ type: "set", capability, setting })`
-with `on`, `off`, or `agent`, for any task control, `dial`, or a skill — and only `hold`, `mute`
-and skills may be `agent`; callback and new call are the team's, on or off, within what the queue
+with `on`, `off`, or `person`, for any task control, `dial`, or a skill — and only `hold`, `mute`
+and skills may be `person`; callback and new call are the team's, on or off, within what the queue
 allows. The roster carries `policies` for such a login: every policy as it stands, who set it, and
 `lockedBy` where a level above the team made it theirs to keep, which the lead sees and cannot
 change — `executeTeamPolicy` on it answers `failed` with `omni.capability-not-enabled`.
@@ -856,7 +856,7 @@ type PolicyKey =
   | "dial"
   | `skill:${string}`;
 
-type TeamPolicySetting = "on" | "off" | "agent";
+type TeamPolicySetting = "on" | "off" | "person";
 
 type TeamPolicy = Resolved & {
   setting: TeamPolicySetting;
@@ -1474,12 +1474,12 @@ idleCapabilities: {
 | `access.mode` | `allow-all` permits unmatched URLs; `block-all` denies unmatched URLs. |
 | `access.allowList` | URL-pattern exceptions permitted when the mode is `block-all`. |
 | `access.blockList` | Explicit denials. A match takes precedence over the same policy's allow list and mode. |
-| `accessPolicyScope` | `all-navigation` by default: every redirect and navigation is checked. `initial-url` checks the starting URL alone. |
+| `accessAppliesTo` | `all-navigation` by default: every redirect and navigation is checked. `initial-url` checks the starting URL alone. |
 
 Patterns use the standard `URLPattern` syntax. Omni owns browser navigation, and the browser is
 hidden when no active provider contributes one.
 
-`accessPolicyScope` defaults to `all-navigation`: every redirect and subsequent navigation is
+`accessAppliesTo` defaults to `all-navigation`: every redirect and subsequent navigation is
 validated against the current combined policy, not only the starting URL. A provider may set
 `initial-url` to check the first hop alone, but that has to be asked for. A `block-all` policy
 enforced only on the initial URL stops nothing — one redirect leaves it — so the permissive
@@ -1682,7 +1682,7 @@ them from what arrives later.
 | `team` | This login leads a team. The provider publishes a `TeamRoster` to it on every snapshot — `[]` when nobody is in it — and to nobody else. |
 | `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — place, release, decide, set policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-decision`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
 | `team.consultControl` | This lead may join a member's call on request. Requires `executeTeamConsult`. |
-| `team.policyControl` | This lead sets the team's policy per capability — on, off, or the agent's — within what the queue allows. Requires `executeTeamPolicy`; the roster carries `policies`. |
+| `team.policyControl` | This lead sets the team's policy per capability — on, off, or the person's — within what the queue allows. Requires `executeTeamPolicy`; the roster carries `policies`. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
 A session action is available only when both the capability and Omni provisioning permit it.
@@ -1765,7 +1765,7 @@ settles. The adapter must not persist raw credentials. Field-specific failures m
 
 `cancelAuthentication(flowId)` cancels an abandoned Browser SSO window or credentials form and
 releases its temporary state. It does not sign out an already authenticated session. It answers
-`accepted`; a repeat, or a flow that already ended, is nothing to act on and answers `accepted`
+`applied`; a repeat, or a flow that already ended, is nothing to act on and answers `applied`
 too, by the rule that a command asking for a state answers success when that state holds.
 
 ### Completion and failures
@@ -1979,24 +1979,27 @@ provider includes an acceptance directive with each allocation:
 | Directive | Contract |
 | --- | --- |
 | `no-preference` | The provider leaves acceptance to Omni; with `autoAcceptTasks: true`, Omni accepts automatically. |
-| `require-agent-acceptance` | Omni presents **Accept** and waits for the agent. |
-| `require-automatic-acceptance` | Omni accepts immediately without agent interaction. |
+| `manual` | The provider requires the agent's explicit acceptance: Omni presents **Accept** and waits, whatever its own policy would have done. |
+| `automatic` | Omni accepts immediately without agent interaction. |
 
 When Omni sent `autoAcceptTasks: false`, the provider omits `acceptanceMode` and every task
-requires agent acceptance.
+requires agent acceptance. The two are never confused on the wire: `manual` is always the
+provider's requirement, stated on a wire where Omni was willing to accept for the agent; Omni's own
+no-auto-accept policy puts no word on the wire at all — the field is absent, and the **Accept**
+press is Omni's doing, not the provider's.
 
 **An absent value means `true`**, as `readyOnLogin` does, because an agent who has signed in and
 gone ready is telling the deployment they are working. Requiring a press before every contact is
 the exception a provisioning file asks for, not the state it falls into when a flag is missing.
 
 Nothing is given away by that default. `acceptanceMode` is the provider's own control and outranks
-it: `require-agent-acceptance` puts the decision back in the agent's hands for any task where it
+it: `manual` puts the decision back in the agent's hands for any task where it
 belongs, whatever the host was configured with.
 
 An automatically accepted task still arrives through `task-offered`.
 
 Agent-initiated work arrives through `task-offered` with
-`acceptanceMode: "require-automatic-acceptance"`.
+`acceptanceMode: "automatic"`.
 
 ### Pending
 
@@ -2011,7 +2014,7 @@ declare const task: Task;
 const allocation = {
   type: "task-offered",
   task,
-  acceptanceMode: "require-agent-acceptance",
+  acceptanceMode: "manual",
   allocationExpiresAt: "2026-08-25T10:41:07.000Z",
   preparationEndsAt: "2026-08-25T10:40:37.000Z",
 } satisfies Extract<ProviderEvent, { type: "task-offered" }>;
@@ -2464,7 +2467,7 @@ capabilities: {
 | Field | Contract |
 | --- | --- |
 | `required` | When `true`, Omni must collect a code before issuing `complete`. A required policy must publish at least one code. |
-| `notes` | `required`, `optional`, or `hidden`; controls the free-text field beside the code. |
+| `notes` | `required`, `optional`, or `none`; controls the free-text field beside the code. |
 | `codes` | Codes Omni offers. `id` values are non-empty and unique; Omni sends the chosen `id` as `TaskCommand.complete.disposition`. |
 
 With `dispositions: true` Omni shows a Complete control and sends `complete` with no code, because
@@ -2693,7 +2696,7 @@ everywhere; success is not.
 
 | Method | Succeeded |
 | --- | --- |
-| `setCapacity` | `accepted` |
+| `setCapacity` | `applied` |
 | `requestBreak` | `requested` |
 | `commitBreak` | `committed` |
 | `cancelBreak` | `cancelled` |
@@ -3080,7 +3083,7 @@ executeTeamConsult({ command: { type: "decline", requestId: "req-7", reason: "In
 ```
 
 **On `join` the provider bridges three parties and the lead is on a task of their own**, on the
-same task id, arriving on the lead's connection as `task-offered` with `require-automatic-acceptance`
+same task id, arriving on the lead's connection as `task-offered` with `automatic`
 -- the way a call an agent placed themselves arrives -- and carrying `assisting`. The agent's task
 moves to `lead: { stage: "joined", leadId }`. A join is the lead's own act, so capacity does not
 trigger it; but from then on it is an outstanding task the provider counts against the lead's
@@ -3194,8 +3197,8 @@ what failed, and reports. It never decides for the adapter what a missing microp
 | --- | --- |
 | `online` | Whether the host has a network interface up. Not a claim that anything is reachable — the adapter knows whether it can reach its own platform far better than the host does — so `false` is a reason not to go ready and `true` is not a reason to. |
 | `audio` | Present on a voice connection, absent where there is no audio. |
-| `audio.input` | `ready` with `localAudio` — the microphone as captured, the same stream `openMedia` receives — and `flowing`, false while the hardware or OS says no audio moves through it (a headset's own mute switch, which Omni's Mute control never touches). `unavailable` with `reason`, since each wants a different fix from the agent: `no-device`; `denied`; `not-asked`, which a host that asks at connect never publishes; `in-use`, a device present and permitted that another application holds — on an agent desktop the commonest of all; `lost`, a capture that ended. A host decides the reason from the devices before the error name: a browser can report a permission error on a machine with no microphone at all, and "grant permission" is the wrong instruction for an agent who needs to plug one in. `failure` carries the words Omni showed them. |
-| `audio.output` | `ready`, or `unavailable` with `reason` — `no-device`, or `lost` for one removed — and `failure`: an agent who cannot hear is as unable to take a call as one who cannot speak. |
+| `audio.input` | `available` with `localAudio` — the microphone as captured, the same stream `openMedia` receives — and `flowing`, false while the hardware or OS says no audio moves through it (a headset's own mute switch, which Omni's Mute control never touches). `unavailable` with `reason`, since each wants a different fix from the agent: `no-device`; `denied`; `not-asked`, which a host that asks at connect never publishes; `in-use`, a device present and permitted that another application holds — on an agent desktop the commonest of all; `lost`, a capture that ended. A host decides the reason from the devices before the error name: a browser can report a permission error on a machine with no microphone at all, and "grant permission" is the wrong instruction for an agent who needs to plug one in. `failure` carries the words Omni showed them. |
+| `audio.output` | `available`, or `unavailable` with `reason` — `no-device`, or `lost` for one removed — and `failure`: an agent who cannot hear is as unable to take a call as one who cannot speak. |
 
 Omni republishes the report whenever it changes — a permission granted late, a headset unplugged,
 a network gone — and it publishes a state, not a flicker: a change that resolves within moments is
@@ -3647,7 +3650,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
-| `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `ready` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `ready` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
+| `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
 

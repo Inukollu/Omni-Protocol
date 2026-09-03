@@ -236,7 +236,7 @@ describe("assertBreakFollowsItsRequests", () => {
 describe("assertMediaFollowsTheTask", () => {
   const at = "2026-08-21T09:00:00Z";
   const call = (phase: Task<"voice">["phase"]): Task<"voice"> => ({ ...voiceTask, phase });
-  const offered = (): ProviderEventEnvelope<"voice"> => ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: call("pending"), acceptanceMode: "require-agent-acceptance" } });
+  const offered = (): ProviderEventEnvelope<"voice"> => ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: call("pending"), acceptanceMode: "manual" } });
   const updated = (phase: Task<"voice">["phase"], id = "e2"): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: call(phase) } });
   const mediaReady = (id = "e2b"): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-media-started", taskId: voiceTask.id } });
   const mediaEnded: ProviderEventEnvelope<"voice"> = { id: "e3", loginId: "session-1", occurredAt: at, event: { type: "task-media-ended", taskId: voiceTask.id } };

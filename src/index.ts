@@ -102,7 +102,7 @@ export interface BrowserAccess {
 
 export interface PersonalBrowserCapability {
   access: BrowserAccess;
-  accessPolicyScope?: "initial-url" | "all-navigation";
+  accessAppliesTo?: "initial-url" | "all-navigation";
 }
 
 export type DialDestinations = "contacts-only" | "any-number";
@@ -259,7 +259,7 @@ export type CompleteAuthenticationResult =
   | { status: "rejected"; failure: AuthenticationFailure };
 
 export type AuthenticationActionResult =
-  | { status: "accepted" }
+  | { status: "applied" }
   | { status: "failed"; failure: AuthenticationFailure };
 
 export type Unsubscribe = () => void;
@@ -283,7 +283,7 @@ export interface AuthenticationSession {
  */
 export type HostAudioInput =
   /** Omni has the microphone. `flowing` is false while the hardware or OS says no audio moves through it. */
-  | { status: "ready"; localAudio: MediaStream; flowing: boolean }
+  | { status: "available"; localAudio: MediaStream; flowing: boolean }
   /** Omni does not, and `reason` says which fix the agent needs; `failure` is the words Omni showed them. */
   | { status: "unavailable"; reason: HostAudioUnavailableReason; failure: ProtocolFailure };
 
@@ -298,7 +298,7 @@ export type HostAudioUnavailableReason = "no-device" | "denied" | "not-asked" | 
 export type HostOutputUnavailableReason = "no-device" | "lost";
 
 export type HostAudioOutput =
-  | { status: "ready" }
+  | { status: "available" }
   | { status: "unavailable"; reason: HostOutputUnavailableReason; failure: ProtocolFailure };
 
 /**
@@ -384,7 +384,7 @@ export interface DispositionCode {
 
 export interface DispositionRules {
   required?: boolean;
-  notes?: "required" | "optional" | "hidden";
+  notes?: "required" | "optional" | "none";
   codes?: DispositionCode[];
 }
 
@@ -670,11 +670,16 @@ export type Task<C extends Channel = Channel> = {
     ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting; media?: TaskMediaState }
     : { consultation?: never; lead?: never; assisting?: never; media?: never });
 
-/** What the provider wants of Omni's acceptance policy for one offer. */
+/**
+ * What the provider wants of Omni's acceptance policy for one offer. Present only where Omni was
+ * willing to accept for the agent (`autoAcceptTasks: true`): `manual` is therefore always the
+ * provider's requirement of an explicit acceptance, never Omni's own policy, which travels as an
+ * absent field.
+ */
 export type AcceptanceMode =
   | "no-preference"
-  | "require-agent-acceptance"
-  | "require-automatic-acceptance";
+  | "manual"
+  | "automatic";
 
 export type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
@@ -853,7 +858,7 @@ export interface BreakState {
 }
 
 export type CapacityResult =
-  | { status: "accepted" }
+  | { status: "applied" }
   | { status: "failed"; failure: ProtocolFailure };
 
 /** Succeeding is not the outcome: `requested` says the provider holds it, not that it was granted. */
@@ -918,7 +923,7 @@ export type PolicyKey =
   | `skill:${string}`;
 
 /** On for everyone, off for everyone, or the agent's own choice. Only `hold`, `mute` and skills may be `agent`. */
-export type TeamPolicySetting = "on" | "off" | "agent";
+export type TeamPolicySetting = "on" | "off" | "person";
 
 /** One policy as the lead sees it: the setting, who set it, and `lockedBy` when a level above the team made it theirs to keep. */
 export interface TeamPolicy extends Resolved {

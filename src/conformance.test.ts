@@ -10,7 +10,7 @@ import {
 import { ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject , stillHost } from "./testing.js";
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
-const speaking: HostReport = { online: true, audio: { input: { status: "ready", localAudio: {} as MediaStream, flowing: true }, output: { status: "ready" } } };
+const speaking: HostReport = { online: true, audio: { input: { status: "available", localAudio: {} as MediaStream, flowing: true }, output: { status: "available" } } };
 const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", host: stillHost(speaking) };
 /** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
 const hostFor = (manifest: unknown): Host =>
@@ -116,8 +116,8 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         },
         start: async () => ({ status: "rejected" as const, failure: { code: "already-authenticated", message: "Already authenticated", retryable: false } }),
         complete: async () => ({ status: "rejected" as const, failure: { code: "no-flow", message: "No authentication flow", retryable: false } }),
-        cancelAuthentication: async () => ({ status: "accepted" as const }),
-        signOut: async () => ({ status: "accepted" as const }),
+        cancelAuthentication: async () => ({ status: "applied" as const }),
+        signOut: async () => ({ status: "applied" as const }),
         close,
       };
     },
@@ -136,7 +136,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
           overrides.emit?.(listener);
           return unsubscribe;
         },
-        setCapacity: async () => ({ status: "accepted" }),
+        setCapacity: async () => ({ status: "applied" }),
         execute: async () => ({ status: "applied" }),
         disconnect,
         describeUsers: async ids => ids.map(id => ({ id, displayName: `User ${id}` })),
@@ -399,7 +399,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
         capabilities: {},
         connection: {
           requestBreak: undefined,
-          setCapacity: async () => { publish?.(state); return { status: "accepted" as const }; },
+          setCapacity: async () => { publish?.(state); return { status: "applied" as const }; },
         },
         emitAuthentication: listener => { publish = listener; },
       };
@@ -476,7 +476,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
       return {
         emit: listener => { deliver = listener; },
-        connection: { setCapacity: async () => { deliver?.(envelope); return { status: "accepted" as const }; } },
+        connection: { setCapacity: async () => { deliver?.(envelope); return { status: "applied" as const }; } },
       };
     };
     expect(await rules(after(ended("call-42")))).toEqual([]);
@@ -496,10 +496,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     });
     const run = async (h: Host) =>
       (await exerciseAdapter(makeAdapter().adapter, { ...context, host: h }, { collectOnly: true })).violations.map(violation => violation.rule);
-    const speaking = { online: true, audio: { input: { status: "ready", localAudio: microphone, flowing: true }, output: { status: "ready" } } };
+    const speaking = { online: true, audio: { input: { status: "available", localAudio: microphone, flowing: true }, output: { status: "available" } } };
     expect(await run(host(speaking))).toEqual([]);
-    expect(await run(host({ online: true, audio: { input: { status: "unavailable", reason: "denied", failure }, output: { status: "ready" } } }))).toEqual([]);
-    expect(await run(host({ online: true, audio: { input: { status: "ready", flowing: true }, output: { status: "ready" } } }))).toEqual(["host.audio.input.localAudio"]);
+    expect(await run(host({ online: true, audio: { input: { status: "unavailable", reason: "denied", failure }, output: { status: "available" } } }))).toEqual([]);
+    expect(await run(host({ online: true, audio: { input: { status: "available", flowing: true }, output: { status: "available" } } }))).toEqual(["host.audio.input.localAudio"]);
     expect(await run(host(speaking, { online: "yes" }))).toEqual(["host.online"]);
     expect(unsubscribe).toHaveBeenCalledTimes(4);
     expect(await rules({})).toEqual([]);
@@ -533,14 +533,14 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const moved = (approval: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${approval}`, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, mayAsk: true } } }) as ProviderEventEnvelope<"voice">;
     const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
       let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
-      return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { deliver?.(envelope); return { status: "accepted" as const }; } } };
+      return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { deliver?.(envelope); return { status: "applied" as const }; } } };
     };
     expect(await rules(after(moved("granted")))).toEqual([]);
     expect(await rules(after(moved("in-effect")))).toEqual(["stream.breakState.commitBeforeGrant"]);
     // And backwards, through the harness: granted, in effect, then granted again.
     const both = (...envelopes: ProviderEventEnvelope<"voice">[]): AdapterOverrides => {
       let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
-      return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { envelopes.forEach(envelope => deliver?.(envelope)); return { status: "accepted" as const }; } } };
+      return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { envelopes.forEach(envelope => deliver?.(envelope)); return { status: "applied" as const }; } } };
     };
     expect(await rules(both(moved("granted"), moved("in-effect"), { ...moved("granted"), id: "evt-again" }))).toEqual(["stream.breakState.backwards"]);
   });
@@ -554,17 +554,17 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("passes autoAcceptTasks through, absent meaning true", async () => {
-    const offered = (acceptanceMode?: "require-agent-acceptance"): ProviderEventEnvelope<"voice"> => ({
+    const offered = (acceptanceMode?: "manual"): ProviderEventEnvelope<"voice"> => ({
       id: "evt-offer", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
       event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending" }, ...(acceptanceMode ? { acceptanceMode } : {}) },
     });
     const run = async (autoAcceptTasks: boolean | undefined, envelope: ProviderEventEnvelope<"voice">) =>
       (await exerciseAdapter(makeAdapter({ emit: listener => listener(envelope) }).adapter, { ...context, ...(autoAcceptTasks === undefined ? {} : { autoAcceptTasks }) }, { collectOnly: true }))
         .violations.map(violation => violation.rule);
-    expect(await run(undefined, offered("require-agent-acceptance"))).toEqual([]);
+    expect(await run(undefined, offered("manual"))).toEqual([]);
     expect(await run(undefined, offered())).toContain("event.taskOffered.acceptanceMode.required");
     expect(await run(false, offered())).toEqual([]);
-    expect(await run(false, offered("require-agent-acceptance"))).toContain("event.taskOffered.acceptanceMode.unexpected");
+    expect(await run(false, offered("manual"))).toContain("event.taskOffered.acceptanceMode.unexpected");
   });
 
   it("describeUsers(), when a UserId arrives on an event or on a task's lead or assisting", async () => {

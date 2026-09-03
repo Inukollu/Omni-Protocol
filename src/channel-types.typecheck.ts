@@ -9,6 +9,11 @@ import {
   type OpenMediaRequest,
   type Manifest,
   type ProviderEvent,
+  type DispositionRules,
+  type HostAudioInput,
+  type AcceptanceMode,
+  type CapacityResult,
+  type PersonalBrowserCapability,
   type PersonalBrowser,
   type AgentPreference,
   type SetPreferenceRequest,
@@ -184,6 +189,20 @@ export const staleSharing = { id: "kb", name: "Knowledge", url: "https://kb.exam
   reuse: false } satisfies TaskBrowser;
 // @ts-expect-error The queue board is queue-summary.
 export const staleSummary = { type: "provider-summary", summary: { title: "Sales", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" } } satisfies ProviderEvent<"voice">;
+export const stalePolicy = { setting: "on", setBy: "team" } satisfies TeamPolicy;
+// @ts-expect-error What the team leaves to the individual is person, the level's own word.
+export const staleAgentPolicy = { setting: "agent", setBy: "team" } satisfies TeamPolicy;
+// @ts-expect-error No notes field is none; hidden is what a URL can be.
+export const staleNotes = { required: true, notes: "hidden", codes: [] } satisfies DispositionRules;
+// @ts-expect-error A microphone is available or unavailable.
+export const staleMicrophone: HostAudioInput = { status: "ready", localAudio: {} as MediaStream, flowing: true };
+// @ts-expect-error Acceptance is manual or automatic.
+export const staleOffer: AcceptanceMode = "require-agent-acceptance";
+// @ts-expect-error A capacity is applied.
+export const staleCapacity: CapacityResult = { status: "accepted" };
+export const staleAccessScope = { access: { mode: "allow-all" },
+  // @ts-expect-error The access rules say what they apply to: accessAppliesTo.
+  accessPolicyScope: "initial-url" } satisfies PersonalBrowserCapability;
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;
@@ -215,8 +234,8 @@ export const rosterWithControl: TeamRoster = { members: [], breakControl: true }
 export const openWithoutHostAudio: OpenMediaRequest = { taskId: "call-42" };
 export const noMicrophone: HostReport = { online: true, audio: { input: { status: "unavailable", reason: "in-use", failure: { code: "host.in-use", message: "Another application holds the microphone", retryable: true } }, output: { status: "unavailable", reason: "no-device", failure: { code: "host.no-speaker", message: "No speaker", retryable: true } } } };
 export const noAudioHere: HostReport = { online: true };
-// @ts-expect-error A ready input carries the microphone it captured and says whether audio flows.
-export const readyWithoutAudio: HostReport = { online: true, audio: { input: { status: "ready" }, output: { status: "ready" } } };
+// @ts-expect-error An available input carries the microphone it captured and says whether audio flows.
+export const readyWithoutAudio: HostReport = { online: true, audio: { input: { status: "available" }, output: { status: "available" } } };
 
 // Who decides: a control the queue could allow may stand locked in its place, naming the level;
 // a preference carries who set it; only hold, mute and skills are ever the person's.
