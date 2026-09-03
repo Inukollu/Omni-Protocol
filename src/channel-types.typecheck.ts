@@ -211,6 +211,10 @@ export const reticentHost: Host = { guarantees: {}, report: () => noAudioHere, s
 export const lyingHost: Host = {
   // @ts-expect-error A guarantee is declared by presence; a host that does not make one omits it, never false.
   guarantees: { personConsent: false }, report: () => noAudioHere, subscribe: () => () => undefined };
+export const consentOffer = { type: "task-offered", task: { ...emailTask, id: "email-12", phase: "pending", acceptance: "consent" } } satisfies ProviderEvent<"email">;
+export const staleOfferMode = { type: "task-offered", task: { ...emailTask, id: "email-13", phase: "pending" },
+  // @ts-expect-error Acceptance is the task's word now, not the offer's.
+  acceptanceMode: "consent" } satisfies ProviderEvent<"email">;
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;

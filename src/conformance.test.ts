@@ -190,12 +190,12 @@ describe("exerciseAdapter", () => {
     // The rich task carries browsers, history, a disposition policy, transfer destinations and a
     // custom control, but no attributes and is neither consulting, asking for a lead, nor assisting.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.consultation", "task.lead", "task.assisting",
-      "task.media", "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
+      "task.media", "task.acceptance", "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
       "contacts", "scheduledActivities", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.
@@ -205,14 +205,14 @@ describe("exerciseAdapter", () => {
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { consultControl: true } }, snapshot: reached })))
-      .toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.locked", "team.policies"]);
+      .toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "team.policies"]);
     const later: ProviderEventEnvelope<"voice"> = {
       id: "evt-team", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } },
     };
     const rosterOnly = { ...conformingSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
     const withEvent = await run({ capabilities: { team: {} }, snapshot: rosterOnly, emit: listener => listener(later) });
-    expect(state(withEvent)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
+    expect(state(withEvent)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
     expect(events(withEvent)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
   });
 
@@ -568,17 +568,21 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("passes autoAcceptTasks through, absent meaning true", async () => {
-    const offered = (acceptanceMode?: "consent"): ProviderEventEnvelope<"voice"> => ({
+    const offered = (acceptance?: "consent"): ProviderEventEnvelope<"voice"> => ({
       id: "evt-offer", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
-      event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending" }, ...(acceptanceMode ? { acceptanceMode } : {}) },
+      event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending", media: undefined, ...(acceptance ? { acceptance } : {}) } },
     });
     const run = async (autoAcceptTasks: boolean | undefined, envelope: ProviderEventEnvelope<"voice">) =>
       (await exerciseAdapter(makeAdapter({ emit: listener => listener(envelope) }).adapter, { ...context, ...(autoAcceptTasks === undefined ? {} : { autoAcceptTasks }) }, { collectOnly: true }))
         .violations.map(violation => violation.rule);
     expect(await run(undefined, offered("consent"))).toEqual([]);
-    expect(await run(undefined, offered())).toContain("event.taskOffered.acceptanceMode.required");
+    expect(await run(undefined, offered())).toContain("task.acceptance.required");
     expect(await run(false, offered())).toEqual([]);
-    expect(await run(false, offered("consent"))).toContain("event.taskOffered.acceptanceMode.unexpected");
+    expect(await run(false, offered("consent"))).toContain("task.acceptance.unexpected");
+    // The word is on the task, so a reconnect snapshot says it too: a pending task carried in without it is refused the same way.
+    const carried = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, phase: "pending" as const, media: undefined }] };
+    expect(await rules({ snapshot: carried })).toContain("task.acceptance.required");
+    expect(await rules({ snapshot: { ...carried, tasks: [{ ...carried.tasks[0]!, acceptance: "consent" as const }] } })).toEqual([]);
   });
 
   it("describeUsers(), when a UserId arrives on an event or on a task's lead or assisting", async () => {

@@ -819,6 +819,8 @@ export interface TaskValidationContext {
   channel: string;
   /** The level ids in force, from the manifest. The defaults when absent. */
   levels?: readonly string[];
+  /** `ConnectContext.autoAcceptTasks` as sent, absent meaning `true`: whether a pending task states its `acceptance`. */
+  autoAcceptTasks?: boolean;
 }
 
 export function validateTask(task: unknown, context: TaskValidationContext, path = "task"): ProtocolViolation[] {
@@ -836,6 +838,19 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   into.filled(task.title, "task.title", `${path}.title`, "a task needs a title");
   into.filled(task.taskType, "task.taskType", `${path}.taskType`, "a task needs a task type");
   into.oneOf(task.phase, TASK_PHASES, "task.phase", `${path}.phase`);
+  // Acceptance is the offer's word, carried on the pending task so a snapshot can say it: it
+  // travels exactly when Omni said tasks may be auto-accepted, and only while the task is pending.
+  if (task.acceptance !== undefined) {
+    into.oneOf(task.acceptance, ACCEPTANCE_MODES, "task.acceptance", `${path}.acceptance`);
+    if (task.phase !== "pending") {
+      into.add("task.acceptance.unexpected", `${path}.acceptance`, "acceptance is an offer's word; a task past pending has been accepted");
+    } else if (context.autoAcceptTasks === false) {
+      into.add("task.acceptance.unexpected", `${path}.acceptance`,
+        "autoAcceptTasks is off, so every task requires agent acceptance and a pending task carries no acceptance");
+    }
+  } else if (task.phase === "pending" && context.autoAcceptTasks === true) {
+    into.add("task.acceptance.required", `${path}.acceptance`, "autoAcceptTasks is on, so a pending task states how it is accepted");
+  }
   into.oneOf(task.completionMode, COMPLETION_MODES, "task.completionMode", `${path}.completionMode`);
   // The allowance is coupled to the mode: a provider that will complete the task itself is going
   // to act on the allowance, so it must state one; a provider waiting for `complete` may omit it
@@ -1024,7 +1039,7 @@ export interface ReaderContext {
   levels?: readonly string[];
   /** The login's `loginId`. A snapshot or event naming another belongs to a login that is gone. */
   loginId?: string;
-  /** `ConnectContext.autoAcceptTasks` as sent, absent meaning `true`: whether `task-offered` carries an `acceptanceMode`. */
+  /** `ConnectContext.autoAcceptTasks` as sent, absent meaning `true`: whether a pending task states its `acceptance`. */
   autoAcceptTasks?: boolean;
 }
 
@@ -1156,7 +1171,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     const seen = new Set<string>();
     let assisting: number | undefined;
     snapshot.tasks.forEach((task: unknown, index: number) => {
-      validateTaskInto(task, { channel, levels }, `${path}.tasks[${index}]`, into);
+      validateTaskInto(task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks }, `${path}.tasks[${index}]`, into);
       // A lead assists one call at a time.
       if (isPlainObject(task) && task.assisting !== undefined) {
         if (assisting !== undefined) into.add("snapshot.assisting.single", `${path}.tasks[${index}].assisting`, "a lead assists one call at a time");
@@ -1358,29 +1373,18 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       validateBreakState(event.break, `${at}.break`, into);
       break;
     case "task-offered":
-      validateTaskInto(event.task, { channel, levels }, `${at}.task`, into);
+      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks }, `${at}.task`, into);
       // An offer introduces work that is not yet under way; work in progress arrives only on a snapshot.
       if (isPlainObject(event.task) && typeof event.task.phase === "string") {
         into.require((OFFERABLE_PHASES as readonly string[]).includes(event.task.phase), "event.taskOffered.phase", `${at}.task.phase`,
           `task-offered introduces a task as ${OFFERABLE_PHASES.join(", ")}, never as ${event.task.phase}`);
-      }
-      if (event.acceptanceMode !== undefined) {
-        into.oneOf(event.acceptanceMode, ACCEPTANCE_MODES, "event.taskOffered.acceptanceMode", `${at}.acceptanceMode`);
-      }
-      // The mode travels exactly when Omni said tasks may be auto-accepted.
-      if (context.autoAcceptTasks === true) {
-        into.require(event.acceptanceMode !== undefined, "event.taskOffered.acceptanceMode.required", `${at}.acceptanceMode`,
-          "autoAcceptTasks is on, so task-offered carries an acceptanceMode");
-      } else if (context.autoAcceptTasks === false) {
-        into.require(event.acceptanceMode === undefined, "event.taskOffered.acceptanceMode.unexpected", `${at}.acceptanceMode`,
-          "autoAcceptTasks is off, so every task requires agent acceptance and task-offered carries no acceptanceMode");
       }
       for (const field of ["allocationExpiresAt", "preparationEndsAt"] as const) {
         if (event[field] !== undefined) into.timestamp(event[field], `event.taskOffered.${field}`, `${at}.${field}`);
       }
       break;
     case "task-updated":
-      validateTaskInto(event.task, { channel, levels }, `${at}.task`, into);
+      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks }, `${at}.task`, into);
       break;
     case "task-media-started":
       into.require(isTaskId(event.taskId), "event.taskMediaStarted.taskId", `${at}.taskId`, "a task id is required");
