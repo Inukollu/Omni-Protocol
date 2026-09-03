@@ -197,8 +197,10 @@ export const staleAgentPolicy = { setting: "agent", setBy: "team" } satisfies Te
 export const staleNotes = { required: true, notes: "hidden", codes: [] } satisfies DispositionRules;
 // @ts-expect-error A microphone is available or unavailable.
 export const staleMicrophone: HostAudioInput = { status: "ready", localAudio: {} as MediaStream, flowing: true };
-// @ts-expect-error Acceptance is manual or automatic.
+// @ts-expect-error Acceptance is by consent or automatic.
 export const staleOffer: AcceptanceMode = "require-agent-acceptance";
+// @ts-expect-error The flag is consent; manual is a number typed by hand.
+export const staleManual: AcceptanceMode = "manual";
 // @ts-expect-error A capacity is applied.
 export const staleCapacity: CapacityResult = { status: "accepted" };
 export const staleAccessScope = { access: { mode: "allow-all" },

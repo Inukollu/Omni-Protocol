@@ -419,7 +419,7 @@ describe("validateEventEnvelope", () => {
     expect(check({ type: "snapshot", reason: "reconnected", snapshot: snapshot() })).toEqual([]);
     expect(check({ type: "snapshot", reason: "because", snapshot: snapshot() })).toContain("event.snapshot.reason");
     expect(check({ type: "break-state", break: { approval: "in-effect", mayAsk: false } })).toEqual([]);
-    expect(check({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "manual" })).toEqual([]);
+    expect(check({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "consent" })).toEqual([]);
     expect(check({ type: "task-offered", task: task(), acceptanceMode: "whenever" })).toContain("event.taskOffered.acceptanceMode");
     expect(check({ type: "task-media-ended", taskId: "call-42" })).toEqual([]);
     expect(check({ type: "task-media-ended", taskId: "" })).toContain("event.taskMediaEnded.taskId");
@@ -511,9 +511,9 @@ describe("one word, one meaning", () => {
     // renamed away: a microphone is available or unavailable; ready is a roster member's word.
     expect(input("ready")).toEqual(["host.audio.input.status"]);
     const offer = (acceptanceMode: string) => rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode }), manifest()));
-    expect(offer("manual")).toEqual([]);
+    expect(offer("consent")).toEqual([]);
     // renamed away: acceptance is manual or automatic.
-    expect(offer("require-agent-acceptance")).toEqual(["event.taskOffered.acceptanceMode"]);
+    expect([offer("require-agent-acceptance"), offer("manual")]).toEqual([["event.taskOffered.acceptanceMode"], ["event.taskOffered.acceptanceMode"]]);
     expect(rules(validateResult({ status: "applied" }, "setCapacity"))).toEqual([]);
     // renamed away: a capacity is applied, as every other setting is; accept is the offer's word.
     expect(rules(validateResult({ status: "accepted" }, "setCapacity"))).toEqual(["result.status"]);
@@ -870,7 +870,7 @@ describe("the other direction, everywhere", () => {
 
   it("offers a task only before it is under way, with the mode the login asked for", () => {
     const offer = (over: Record<string, unknown>, context: Record<string, unknown> = {}) =>
-      rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "manual", ...over }), manifest(), "event", context));
+      rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "consent", ...over }), manifest(), "event", context));
     for (const phase of ["pending", "confirmed", "preparing"]) expect(offer({ task: task({ phase }) })).toEqual([]);
     for (const phase of ["in-progress", "paused", "completing"]) expect(offer({ task: task({ phase }) })).toEqual(["event.taskOffered.phase"]);
     expect(offer({}, { autoAcceptTasks: true })).toEqual([]);
@@ -961,7 +961,7 @@ describe("rules that had no test", () => {
 
   it("event timestamps, outcomes, and status messages", () => {
     const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
-    const offer = { type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "manual" };
+    const offer = { type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "consent" };
     expect(check({ ...offer, allocationExpiresAt: "2026-08-21T09:01:00Z", preparationEndsAt: "2026-08-21T09:02:00Z" })).toEqual([]);
     expect(check({ ...offer, allocationExpiresAt: "soon" })).toEqual(["event.taskOffered.allocationExpiresAt"]);
     expect(check({ ...offer, preparationEndsAt: "soon" })).toEqual(["event.taskOffered.preparationEndsAt"]);

@@ -568,17 +568,17 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("passes autoAcceptTasks through, absent meaning true", async () => {
-    const offered = (acceptanceMode?: "manual"): ProviderEventEnvelope<"voice"> => ({
+    const offered = (acceptanceMode?: "consent"): ProviderEventEnvelope<"voice"> => ({
       id: "evt-offer", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
       event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending" }, ...(acceptanceMode ? { acceptanceMode } : {}) },
     });
     const run = async (autoAcceptTasks: boolean | undefined, envelope: ProviderEventEnvelope<"voice">) =>
       (await exerciseAdapter(makeAdapter({ emit: listener => listener(envelope) }).adapter, { ...context, ...(autoAcceptTasks === undefined ? {} : { autoAcceptTasks }) }, { collectOnly: true }))
         .violations.map(violation => violation.rule);
-    expect(await run(undefined, offered("manual"))).toEqual([]);
+    expect(await run(undefined, offered("consent"))).toEqual([]);
     expect(await run(undefined, offered())).toContain("event.taskOffered.acceptanceMode.required");
     expect(await run(false, offered())).toEqual([]);
-    expect(await run(false, offered("manual"))).toContain("event.taskOffered.acceptanceMode.unexpected");
+    expect(await run(false, offered("consent"))).toContain("event.taskOffered.acceptanceMode.unexpected");
   });
 
   it("describeUsers(), when a UserId arrives on an event or on a task's lead or assisting", async () => {

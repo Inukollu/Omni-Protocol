@@ -328,7 +328,7 @@ export interface HostReport {
 export interface HostGuarantees {
   /** Every task browser's `urlVisibility` is honoured in this host's chrome, tab by tab. */
   browserUrlVisibility?: true;
-  /** A `manual` offer is accepted only by the person's own explicit act, never on their behalf. */
+  /** A `consent` offer is accepted only by the person's own explicit act, never on their behalf. */
   personConsent?: true;
 }
 
@@ -686,13 +686,13 @@ export type Task<C extends Channel = Channel> = {
 
 /**
  * What the provider wants of Omni's acceptance policy for one offer. Present only where Omni was
- * willing to accept for the agent (`autoAcceptTasks: true`): `manual` is therefore always the
+ * willing to accept for the agent (`autoAcceptTasks: true`): `consent` is therefore always the
  * provider's requirement of an explicit acceptance, never Omni's own policy, which travels as an
  * absent field.
  */
 export type AcceptanceMode =
   | "no-preference"
-  | "manual"
+  | "consent"
   | "automatic";
 
 export type TaskOutcome =

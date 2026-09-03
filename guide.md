@@ -615,7 +615,7 @@ type Task<C extends Channel = Channel> = {
 
 type AcceptanceMode =
   | "no-preference"
-  | "manual"
+  | "consent"
   | "automatic";
 
 type TaskOutcome =
@@ -1985,11 +1985,11 @@ provider includes an acceptance directive with each allocation:
 | Directive | Contract |
 | --- | --- |
 | `no-preference` | The provider leaves acceptance to Omni; with `autoAcceptTasks: true`, Omni accepts automatically. |
-| `manual` | The provider requires the agent's explicit acceptance: Omni presents **Accept** and waits, whatever its own policy would have done. A host that declares `guarantees.personConsent` promises exactly this; a provider checks it before offering work only a person may take. |
+| `consent` | The provider requires the person's explicit consent: Omni presents **Accept** and waits, whatever its own policy would have done. A host that declares `guarantees.personConsent` promises exactly this; a provider checks it before offering work only a person may take. |
 | `automatic` | Omni accepts immediately without agent interaction. |
 
 When Omni sent `autoAcceptTasks: false`, the provider omits `acceptanceMode` and every task
-requires agent acceptance. The two are never confused on the wire: `manual` is always the
+requires agent acceptance. The two are never confused on the wire: `consent` is always the
 provider's requirement, stated on a wire where Omni was willing to accept for the agent; Omni's own
 no-auto-accept policy puts no word on the wire at all — the field is absent, and the **Accept**
 press is Omni's doing, not the provider's.
@@ -1999,7 +1999,7 @@ gone ready is telling the deployment they are working. Requiring a press before 
 the exception a provisioning file asks for, not the state it falls into when a flag is missing.
 
 Nothing is given away by that default. `acceptanceMode` is the provider's own control and outranks
-it: `manual` puts the decision back in the agent's hands for any task where it
+it: `consent` puts the decision back in the agent's hands for any task where it
 belongs, whatever the host was configured with.
 
 An automatically accepted task still arrives through `task-offered`.
@@ -2020,7 +2020,7 @@ declare const task: Task;
 const allocation = {
   type: "task-offered",
   task,
-  acceptanceMode: "manual",
+  acceptanceMode: "consent",
   allocationExpiresAt: "2026-08-25T10:41:07.000Z",
   preparationEndsAt: "2026-08-25T10:40:37.000Z",
 } satisfies Extract<ProviderEvent, { type: "task-offered" }>;
@@ -2030,7 +2030,7 @@ The rule the phase exists to express: **nothing is acquired on the agent's behal
 is pending.** A host that carries media must not open the microphone until the task is
 accepted. Omni does not open the task's browsers either — a task that rings out costs nothing.
 
-When manual acceptance is required, Omni offers the agent an **Accept** control. The call is the
+When consent is required, Omni offers the agent an **Accept** control. The call is the
 medium the task arrives on, not a separate decision.
 
 **Once a task is accepted, the call that comes with it is answered.** Omni has no discretion
@@ -3201,7 +3201,7 @@ what failed, and reports. It never decides for the adapter what a missing microp
 
 **The host also guarantees, and a promise the provider cannot see is not one it can rely on.**
 Two of this contract's obligations fall on the host rather than the provider — honouring a task
-browser's `urlVisibility`, and taking a `manual` offer only on the person's own press — and more
+browser's `urlVisibility`, and taking a `consent` offer only on the person's own press — and more
 than one desk speaks this contract. So `ConnectContext.host.guarantees` says which promises the
 connected host makes, declared once per connection, presence being the guarantee exactly as it is
 the permission everywhere else:
@@ -3209,7 +3209,7 @@ the permission everywhere else:
 | Guarantee | Contract |
 | --- | --- |
 | `browserUrlVisibility` | Every task browser's `urlVisibility` is honoured in this host's chrome, tab by tab. A provider that would send a caller's number in a URL checks this first and tokenises where the promise is absent. |
-| `personConsent` | A `manual` offer is accepted only by the person's own explicit act, never on their behalf. A provider whose work may only be taken by a human checks this first and does not offer it where the promise is absent. |
+| `personConsent` | A `consent` offer is accepted only by the person's own explicit act, never on their behalf. A provider whose work may only be taken by a human checks this first and does not offer it where the promise is absent. |
 
 A guarantee the host does not make is an absent key, never `false` — `validateHostGuarantees`
 refuses a false one, as it refuses a name this contract does not list.

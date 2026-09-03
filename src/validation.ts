@@ -95,7 +95,7 @@ const TASK_PHASES = membersOf<TaskPhase>({
 });
 const COMPLETION_MODES = membersOf<CompletionMode>({ "agent-command": true, "provider-automatic": true });
 const ACCEPTANCE_MODES = membersOf<AcceptanceMode>({
-  "no-preference": true, "manual": true, "automatic": true,
+  "no-preference": true, "consent": true, "automatic": true,
 });
 const TRANSPORT_STATUSES = membersOf<TransportStatus>({ connecting: true, active: true, error: true });
 const AUTHENTICATION_METHODS = membersOf<AuthenticationMethod>({ "browser-sso": true, credentials: true });
