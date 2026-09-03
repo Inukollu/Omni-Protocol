@@ -211,6 +211,9 @@ describe("validateTask", () => {
     const carried = { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 2, handlers: ["a-17", "a-23"] };
     expect(inherited(carried)).toEqual([]);
     expect(inherited({ ...carried, handleSeconds: 0, holdSeconds: 0, transfers: 0 })).toEqual([]);
+    // Each number is present when known: a provider that cannot say sends the handlers and no nought.
+    expect(inherited({ handlers: ["a-17"] })).toEqual([]);
+    expect(inherited({ transfers: 2, handlers: ["a-17"] })).toEqual([]);
     expect(inherited(undefined)).toEqual([]);
     // Presence is the claim that somebody else handled it, so nobody is not an answer.
     expect(inherited({ ...carried, handlers: [] })).toEqual(["task.inherited.handlers.empty"]);

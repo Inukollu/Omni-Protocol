@@ -220,6 +220,7 @@ export const spokenDiagnostic = { type: "diagnostic", expected: "a party arrives
 // @ts-expect-error A diagnostic says what was observed; a rule broken with nothing observed is half a sentence.
 export const halfDiagnostic = { type: "diagnostic", expected: "a party arrives with a name" } satisfies ProviderEvent<"voice">;
 export const handedTask = { ...emailTask, id: "email-14", inherited: { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 1, handlers: ["a-17"] } } satisfies Task<"email">;
+export const honestlyPartialTask = { ...emailTask, id: "email-16", inherited: { transfers: 2, handlers: ["a-17"] } } satisfies Task<"email">;
 export const handlerlessTask = { ...emailTask, id: "email-15",
   // @ts-expect-error What is inherited names who handled it; the type requires the handlers.
   inherited: { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 1 } } satisfies Task<"email">;

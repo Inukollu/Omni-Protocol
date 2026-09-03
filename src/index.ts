@@ -564,15 +564,15 @@ export type HandlingStep =
  * exactly when somebody else has handled the task; absent when nobody has.
  */
 export interface TaskInheritance {
-  /** Seconds others spent handling it before this agent. */
-  handleSeconds: DurationSeconds;
-  /** Seconds the caller spent on hold at others' hands. */
-  holdSeconds: DurationSeconds;
-  /** Seconds waiting before anyone answered. */
-  queueSeconds: DurationSeconds;
-  /** How many times the task changed hands. */
-  transfers: number;
-  /** Who handled it before, oldest first, resolved through `describeUsers()`; never empty. */
+  /** Seconds others spent handling it before this agent. Omitted when the provider cannot say; never a plausible nought. */
+  handleSeconds?: DurationSeconds;
+  /** Seconds the caller spent on hold at others' hands. Omitted when unknown. */
+  holdSeconds?: DurationSeconds;
+  /** Seconds waiting before anyone answered. Omitted when unknown. */
+  queueSeconds?: DurationSeconds;
+  /** How many times the task changed hands. Omitted when unknown. */
+  transfers?: number;
+  /** Who handled it before, oldest first, resolved through `describeUsers()`; never empty -- presence is the claim. */
   handlers: UserId[];
 }
 

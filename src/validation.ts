@@ -732,11 +732,17 @@ function validateInheritedInto(value: unknown, path: string, into: Collector): v
     into.add("task.inherited.shape", path, "inherited must be an object when present");
     return;
   }
+  // Each number is present when the provider knows it and absent when it does not: a plausible
+  // nought is the fallback the no-fallbacks rule forbids.
   for (const field of ["handleSeconds", "holdSeconds", "queueSeconds"] as const) {
-    into.require(isDurationSeconds(value[field]), `task.inherited.${field}`, `${path}.${field}`, `${field} must be a whole number of seconds, zero or more`);
+    if (value[field] !== undefined) {
+      into.require(isDurationSeconds(value[field]), `task.inherited.${field}`, `${path}.${field}`, `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
+    }
   }
-  into.require(typeof value.transfers === "number" && Number.isInteger(value.transfers) && value.transfers >= 0,
-    "task.inherited.transfers", `${path}.transfers`, "transfers must be a whole number, zero or more");
+  if (value.transfers !== undefined) {
+    into.require(typeof value.transfers === "number" && Number.isInteger(value.transfers) && value.transfers >= 0,
+      "task.inherited.transfers", `${path}.transfers`, "transfers must be a whole number, zero or more, or omitted when unknown");
+  }
   if (!Array.isArray(value.handlers)) {
     into.add("task.inherited.handlers.shape", `${path}.handlers`, "handlers must be an array of user ids");
     return;

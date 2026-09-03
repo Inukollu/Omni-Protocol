@@ -559,10 +559,10 @@ type HandlingStep =
   | "unanswered";
 
 type TaskInheritance = {
-  handleSeconds: DurationSeconds;
-  holdSeconds: DurationSeconds;
-  queueSeconds: DurationSeconds;
-  transfers: number;
+  handleSeconds?: DurationSeconds;
+  holdSeconds?: DurationSeconds;
+  queueSeconds?: DurationSeconds;
+  transfers?: number;
   handlers: UserId[];
 };
 
@@ -2111,7 +2111,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `handlingHistory` | Optional ordered handling history for this currently open task. It is live task data, not a permanent archive. |
-| `inherited` | What others used before this agent — `handleSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, and the `handlers` who did it — stated by the provider. Present exactly when somebody else handled the task, absent when nobody did. See **What the agent inherits**. |
+| `inherited` | What others used before this agent — `handleSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it, and the `handlers` who did it, always — stated by the provider and restated with the task. Present exactly when somebody else handled the task, absent when nobody did. See **What the agent inherits**. |
 | `consultation` | Voice only. Present while the agent is consulting a transfer destination: who is being consulted, and since when where the provider records it. Its presence is what makes `transfer` `complete` and `cancel` issuable. `label` is a name for the destination -- a person, a queue -- not a phrase; the host supplies the verb. See **Consult transfer**. |
 | `lead` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Consulting a lead**. |
 | `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead` `take-over` and `leave` issuable. See **Consulting a lead**. |
@@ -2391,10 +2391,16 @@ inherited: {
 **Presence is the claim.** `inherited` is present exactly when somebody else handled the task and
 absent when nobody did, so `handlers` is never empty (`task.inherited.handlers.empty`) — a task
 answered fresh from the queue carries no `inherited` at all, and a desk shows nothing rather than
-zeros. Every number is a whole count; `handlers` are bare `UserId`s from this provider's directory,
-and publishing them obliges `describeUsers()` as any id does. `handlingHistory` stays the detail
-behind the numbers; `inherited` is the summary the agent reads first. These five are what every
-platform reports; more will be added here as a need is shown, not invented ahead of one.
+zeros. **Each number is present when the provider knows it and absent when it does not**: a
+provider that knows the call changed hands twice but cannot say how long the first agent spent
+sends `transfers` and omits `handleSeconds`, never a plausible nought — the same rule as `seconds`
+on a step. Every number stated is a whole count; `handlers` are bare `UserId`s from this
+provider's directory, and publishing them obliges `describeUsers()` as any id does. **It is
+restated, not frozen**: `inherited` rides on the task and is replaced with it on every
+`task-updated` and snapshot, so a history entry that arrives late corrects the sums rather than
+leaving them wrong. `handlingHistory` stays the detail behind the numbers; `inherited` is the
+summary the agent reads first. These five are what every platform reports; more will be added
+here as a need is shown, not invented ahead of one.
 
 ### Browser capability
 
