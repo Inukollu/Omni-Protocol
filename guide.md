@@ -2260,6 +2260,8 @@ const immediateProviderCompletion = {
 handlingHistory: [
   { step: "queued",   at: "2026-08-21T00:59:00Z", seconds: 41 },
   { step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" },
+  { step: "held",     at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" },
+  { step: "held",     at: "2026-08-21T01:06:48Z", by: "a-17" },
 ]
 ```
 
@@ -2272,6 +2274,16 @@ It rides in the snapshot and is replaced whole like everything else there.
 
 Steps are `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conferenced`,
 `unanswered`, and each is defined on `TaskHandlingStep`.
+
+**The record is one entry per occurrence, oldest first.** Each hold is its own `held` entry — `at`
+when it began, `seconds` once it ended and omitted while it runs — and a second hold is a second
+entry after the first, never a revision of it. The same goes for every step: two mutes are two
+`muted` entries. Order is enforced: an entry earlier than the one before it is refused
+(`task.handlingHistory.order`). **Handle time is anchored, not restarted.** It runs from the
+`answered` step's `at` — from the task's first `in-progress` where the provider reports no
+history — until the task's media ends, and a hold neither pauses nor resets it: the hold's own
+duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is
+counting the wrong thing.
 
 `muted` is there because Omni performs the mute rather than the provider — see **Where a command
 executes** — so without a step the one participant that keeps the task's record would have no
