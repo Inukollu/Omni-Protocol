@@ -205,6 +205,23 @@ describe("validateTask", () => {
     expect(custom({ prompt: { fields: [{ name: "destination", type: "text" }] } })).toEqual(["task.custom.prompt.field.label"]);
     expect(custom({ prompt: { fields: [{ ...destination, type: "number" }] } })).toEqual(["task.custom.prompt.field.type"]);
   });
+  it("states what the agent inherits, present exactly when somebody else handled the task", () => {
+    const inherited = (value: unknown) => rules(validateTask(task({ inherited: value }), { channel: "voice" }));
+    const carried = { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 2, handlers: ["a-17", "a-23"] };
+    expect(inherited(carried)).toEqual([]);
+    expect(inherited({ ...carried, handleSeconds: 0, holdSeconds: 0, transfers: 0 })).toEqual([]);
+    expect(inherited(undefined)).toEqual([]);
+    // Presence is the claim that somebody else handled it, so nobody is not an answer.
+    expect(inherited({ ...carried, handlers: [] })).toEqual(["task.inherited.handlers.empty"]);
+    expect(inherited({ ...carried, handlers: ["a-17", ""] })).toEqual(["task.inherited.handler"]);
+    expect(inherited({ ...carried, handlers: "a-17" })).toEqual(["task.inherited.handlers.shape"]);
+    expect(inherited({ ...carried, holdSeconds: -5 })).toEqual(["task.inherited.holdSeconds"]);
+    expect(inherited({ ...carried, queueSeconds: 1.5 })).toEqual(["task.inherited.queueSeconds"]);
+    expect(inherited({ ...carried, handleSeconds: "312" })).toEqual(["task.inherited.handleSeconds"]);
+    expect(inherited({ ...carried, transfers: -1 })).toEqual(["task.inherited.transfers"]);
+    expect(inherited("lots")).toEqual(["task.inherited.shape"]);
+  });
+
   it("records each hold as its own entry, oldest first", () => {
     const history = (value: unknown) => rules(validateTask(task({ handlingHistory: value }), { channel: "voice" }));
     const answered = { step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" };

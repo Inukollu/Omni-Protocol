@@ -722,6 +722,31 @@ function validateTaskAttributes(value: unknown, path: string, into: Collector): 
   });
 }
 
+/**
+ * What the agent inherits, as the provider states it. Presence is the claim that somebody else
+ * handled the task, so the handlers cannot be nobody; every number is reported whole.
+ */
+function validateInheritedInto(value: unknown, path: string, into: Collector): void {
+  if (value === undefined) return;
+  if (!isPlainObject(value)) {
+    into.add("task.inherited.shape", path, "inherited must be an object when present");
+    return;
+  }
+  for (const field of ["handleSeconds", "holdSeconds", "queueSeconds"] as const) {
+    into.require(isDurationSeconds(value[field]), `task.inherited.${field}`, `${path}.${field}`, `${field} must be a whole number of seconds, zero or more`);
+  }
+  into.require(typeof value.transfers === "number" && Number.isInteger(value.transfers) && value.transfers >= 0,
+    "task.inherited.transfers", `${path}.transfers`, "transfers must be a whole number, zero or more");
+  if (!Array.isArray(value.handlers)) {
+    into.add("task.inherited.handlers.shape", `${path}.handlers`, "handlers must be an array of user ids");
+    return;
+  }
+  into.require(value.handlers.length > 0, "task.inherited.handlers.empty", `${path}.handlers`,
+    "inherited is present only when somebody else handled the task, so it names at least one handler; omit it when nobody did");
+  value.handlers.forEach((handler: unknown, index: number) =>
+    into.require(isUserId(handler), "task.inherited.handler", `${path}.handlers[${index}]`, "each handler is a non-empty user id"));
+}
+
 function validateHandlingHistory(value: unknown, path: string, into: Collector): void {
   if (value === undefined) return;
   if (!Array.isArray(value)) {
@@ -885,6 +910,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into);
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into);
+  validateInheritedInto(task.inherited, `${path}.inherited`, into);
   validateConsultation(task.consultation, context.channel, `${path}.consultation`, into);
   validateTaskMedia(task.media, context.channel, `${path}.media`, into);
   validateLead(task.lead, context.channel, `${path}.lead`, into);

@@ -558,6 +558,24 @@ export type HandlingStep =
   | "conferenced"
   | "unanswered";
 
+/**
+ * What the agent inherits with a task others handled before them, stated by the provider from its
+ * own record rather than summed by a desk from instants that may be rounded or skewed. Present
+ * exactly when somebody else has handled the task; absent when nobody has.
+ */
+export interface TaskInheritance {
+  /** Seconds others spent handling it before this agent. */
+  handleSeconds: DurationSeconds;
+  /** Seconds the caller spent on hold at others' hands. */
+  holdSeconds: DurationSeconds;
+  /** Seconds waiting before anyone answered. */
+  queueSeconds: DurationSeconds;
+  /** How many times the task changed hands. */
+  transfers: number;
+  /** Who handled it before, oldest first, resolved through `describeUsers()`; never empty. */
+  handlers: UserId[];
+}
+
 export interface TaskHandlingStep {
   step: HandlingStep;
   at: IsoTimestamp;
@@ -685,6 +703,8 @@ export type Task<C extends Channel = Channel> = {
   reference?: string;
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingStep[];
+  /** What others used before this agent: present exactly when somebody else handled the task. */
+  inherited?: TaskInheritance;
 } & TaskCompletion
   // Consulting, a lead on the call, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
   & (C extends "voice"

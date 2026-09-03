@@ -218,6 +218,10 @@ export const staleOfferMode = { type: "task-offered", task: { ...emailTask, id: 
 export const spokenDiagnostic = { type: "diagnostic", expected: "a party arrives with a name", observed: "party 4471 arrived id-only", taskId: "call-42" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error A diagnostic says what was observed; a rule broken with nothing observed is half a sentence.
 export const halfDiagnostic = { type: "diagnostic", expected: "a party arrives with a name" } satisfies ProviderEvent<"voice">;
+export const handedTask = { ...emailTask, id: "email-14", inherited: { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 1, handlers: ["a-17"] } } satisfies Task<"email">;
+export const handlerlessTask = { ...emailTask, id: "email-15",
+  // @ts-expect-error What is inherited names who handled it; the type requires the handlers.
+  inherited: { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 1 } } satisfies Task<"email">;
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;
