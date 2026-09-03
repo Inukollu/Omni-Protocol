@@ -178,6 +178,7 @@ type Manifest<C extends Channel = Channel> = {
   phaseLabels?: TaskPhaseLabels;
   taskTypePresentation?: Record<string, TaskTypePresentation>;
   orgLevels?: LevelDeclaration[];
+  runningStepReports?: true;
 };
 ```
 
@@ -1401,6 +1402,7 @@ compile time.
 | `phaseLabels` | Optional static adapter-defined display names for canonical `TaskPhase` values. They cannot vary at runtime. |
 | `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
+| `runningStepReports` | The provider takes running reports of a host-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the host sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The host records what it performs**. |
 
 ### Authentication methods
 
@@ -2362,14 +2364,16 @@ void connection.recordStep?.({ taskId, step: "muted", at, seconds: 42, ended: tr
 ```
 
 The entry is keyed by `step` and `at`, so every report about one leg names the same instant. The
-host is the authority for the legs it performs, so it may say how long so far whenever it likes —
-`seconds` is elapsed while the leg runs and final once it has ended — and **the end is stated,
-never inferred**: `ended: true` marks the last report, and it carries the final duration. What
-the adapter forwards upstream, and how often — every second, or once with both ends in hand — is
-the adapter's own business; the protocol makes second-by-second possible and decides nothing
-about it. The step appears in `handlingHistory` when the *provider* publishes it: Omni never
-writes the record itself. `recordStep` is required of a connection whose tasks declare `mute`,
-and answers `recorded`.
+host is the authority for the legs it performs, so it may say how long so far — `seconds` is
+elapsed while the leg runs and final once it has ended — and **the end is stated, never
+inferred**: `ended: true` marks the last report, and it carries the final duration. **What a
+provider never asked for never crosses.** The running report is sent only to a provider whose
+manifest declares `runningStepReports`; every other provider receives exactly two reports per
+leg, when it began and when it ended, and `validateHandlingReport(report, path, manifest)` refuses
+a running one it was never asked for (`handlingReport.running.unexpected`). What a provider that
+did ask for them forwards upstream, and how often, is its own business. The step appears in
+`handlingHistory` when the *provider* publishes it: Omni never writes the record itself.
+`recordStep` is required of a connection whose tasks declare `mute`, and answers `recorded`.
 
 #### What the agent inherits
 
@@ -3793,7 +3797,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
 | `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
-| `validateHandlingReport(report)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. |
+| `validateHandlingReport(report, path?, manifest?)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |

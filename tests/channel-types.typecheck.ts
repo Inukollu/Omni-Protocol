@@ -224,6 +224,10 @@ export const honestlyPartialTask = { ...emailTask, id: "email-16", inherited: { 
 export const handlerlessTask = { ...emailTask, id: "email-15",
   // @ts-expect-error What is inherited names who handled it; the type requires the handlers.
   inherited: { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 1 } } satisfies Task<"email">;
+export const tickingManifest = { ...voiceManifest, runningStepReports: true } satisfies Manifest<"voice">;
+export const beginEndManifest = { ...voiceManifest,
+  // @ts-expect-error A provider that takes begin and end only omits the declaration; false is not a word here.
+  runningStepReports: false } satisfies Manifest<"voice">;
 export const muteBegan = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z" } satisfies HandlingReport;
 export const muteRunning = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", seconds: 15 } satisfies HandlingReport;
 export const muteEnded = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", seconds: 42, ended: true } satisfies HandlingReport;

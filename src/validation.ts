@@ -411,6 +411,10 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
     }
   }
 
+  if (manifest.runningStepReports !== undefined) {
+    into.require(manifest.runningStepReports === true, "manifest.runningStepReports", `${path}.runningStepReports`,
+      "runningStepReports is declared by presence, as true; a provider that takes begin and end only omits it");
+  }
   if (manifest.orgLevels !== undefined) {
     if (!Array.isArray(manifest.orgLevels)) {
       into.add("manifest.orgLevels.shape", `${path}.orgLevels`, "orgLevels must be an array when present");
@@ -1610,7 +1614,7 @@ export function validateHostGuarantees(guarantees: unknown, path = "host.guarant
  * a task, a step, when it began, how long so far if the host says, and an explicit end that
  * carries the final duration.
  */
-export function validateHandlingReport(report: unknown, path = "handlingReport"): ProtocolViolation[] {
+export function validateHandlingReport(report: unknown, path = "handlingReport", manifest?: unknown): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(report)) {
     into.add("handlingReport.shape", path, "a handling report must be an object");
@@ -1628,6 +1632,11 @@ export function validateHandlingReport(report: unknown, path = "handlingReport")
       into.require(report.seconds !== undefined, "handlingReport.ended.seconds", `${path}.seconds`,
         "an ended leg states its final duration");
     }
+  } else if (report.seconds !== undefined && manifest !== undefined) {
+    // A running report crosses only to a provider that asked for one: begin and end are the whole
+    // of what the rest receive.
+    into.require(isPlainObject(manifest) && manifest.runningStepReports === true, "handlingReport.running.unexpected", `${path}.seconds`,
+      "this provider takes begin and end only; a running report was never asked for");
   }
   return into.violations;
 }

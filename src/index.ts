@@ -158,6 +158,12 @@ export interface Manifest<C extends Channel = Channel> {
   taskTypePresentation?: Record<string, TaskTypePresentation>;
   /** The organisation's whole ladder, stated outright, `person` included. Omitted for the typical four, `DEFAULT_LEVELS`. */
   orgLevels?: LevelDeclaration[];
+  /**
+   * The provider takes running reports of a host-performed step -- `recordStep` with `seconds`
+   * so far and no `ended`. Absent, the host sends exactly two reports per leg, when it began and
+   * when it ended, and a running report is refused: what a provider never asked for never crosses.
+   */
+  runningStepReports?: true;
 }
 
 // ---------------------------------------------------------------------------

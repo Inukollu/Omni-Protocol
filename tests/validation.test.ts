@@ -673,6 +673,14 @@ describe("validateHandlingReport", () => {
     expect(report({ step: "whispered" })).toEqual(["handlingReport.step"]);
     expect(report({ at: "now" })).toEqual(["handlingReport.at"]);
     expect(rules(validateHandlingReport("muted"))).toEqual(["handlingReport.shape"]);
+    // What a provider never asked for never crosses: a running report reaches only a manifest that declares it.
+    const running = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", seconds: 15 };
+    expect(rules(validateHandlingReport(running, "report", manifest({ runningStepReports: true })))).toEqual([]);
+    expect(rules(validateHandlingReport(running, "report", manifest()))).toEqual(["handlingReport.running.unexpected"]);
+    expect(rules(validateHandlingReport({ ...running, seconds: 42, ended: true }, "report", manifest()))).toEqual([]);
+    expect(rules(validateHandlingReport({ taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z" }, "report", manifest()))).toEqual([]);
+    expect(rules(validateManifest(manifest({ runningStepReports: true })))).toEqual([]);
+    expect(rules(validateManifest(manifest({ runningStepReports: false })))).toEqual(["manifest.runningStepReports"]);
     expect(rules(validateResult({ status: "recorded" }, "recordStep"))).toEqual([]);
     expect(rules(validateResult({ status: "applied" }, "recordStep"))).toEqual(["result.status"]);
   });
