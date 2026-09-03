@@ -164,8 +164,8 @@ describe("Omni protocol", () => {
           subscribe: () => () => undefined,
           start: async () => ({ status: "rejected" as const, failure: { code: "already-authenticated", message: "Already authenticated", retryable: false } }),
           complete: async () => ({ status: "rejected" as const, failure: { code: "no-flow", message: "No authentication flow", retryable: false } }),
-          cancelAuthentication: async () => ({ status: "accepted" as const }),
-          signOut: async () => ({ status: "accepted" as const }),
+          cancelAuthentication: async () => ({ status: "applied" as const }),
+          signOut: async () => ({ status: "applied" as const }),
           close: async () => undefined,
         };
       },
@@ -176,7 +176,7 @@ describe("Omni protocol", () => {
             listener({ id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
             return () => undefined;
           },
-          setCapacity: async capacity => (expect(capacity.count).toBeGreaterThanOrEqual(1), { status: "accepted" as const }),
+          setCapacity: async capacity => (expect(capacity.count).toBeGreaterThanOrEqual(1), { status: "applied" as const }),
           execute: async () => ({ status: "applied" as const }),
           disconnect,
         };

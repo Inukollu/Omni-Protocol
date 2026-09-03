@@ -6,6 +6,7 @@ import {
   validateAuthenticationState,
   validateContact,
   validateEventEnvelope,
+  validateHostGuarantees,
   validateHostReport,
   validateManifest,
   validateScheduledActivity,
@@ -418,7 +419,7 @@ describe("validateEventEnvelope", () => {
     expect(check({ type: "snapshot", reason: "reconnected", snapshot: snapshot() })).toEqual([]);
     expect(check({ type: "snapshot", reason: "because", snapshot: snapshot() })).toContain("event.snapshot.reason");
     expect(check({ type: "break-state", break: { approval: "in-effect", mayAsk: false } })).toEqual([]);
-    expect(check({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "require-agent-acceptance" })).toEqual([]);
+    expect(check({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "consent" })).toEqual([]);
     expect(check({ type: "task-offered", task: task(), acceptanceMode: "whenever" })).toContain("event.taskOffered.acceptanceMode");
     expect(check({ type: "task-media-ended", taskId: "call-42" })).toEqual([]);
     expect(check({ type: "task-media-ended", taskId: "" })).toContain("event.taskMediaEnded.taskId");
@@ -456,6 +457,18 @@ describe("validateEventEnvelope", () => {
   });
 });
 
+describe("the host guarantees", () => {
+  it("names only the guarantees the contract lists, each by presence and never false", () => {
+    expect(rules(validateHostGuarantees({}))).toEqual([]);
+    expect(rules(validateHostGuarantees({ browserUrlVisibility: true }))).toEqual([]);
+    expect(rules(validateHostGuarantees({ browserUrlVisibility: true, personConsent: true }))).toEqual([]);
+    // A promise withheld is an absent key: false is a host saying two things at once.
+    expect(rules(validateHostGuarantees({ personConsent: false }))).toEqual(["host.guarantee.value"]);
+    expect(rules(validateHostGuarantees({ hidesUrls: true }))).toEqual(["host.guarantee.unknown"]);
+    expect(rules(validateHostGuarantees("yes"))).toEqual(["host.guarantees.shape"]);
+  });
+});
+
 describe("one word, one meaning", () => {
   it("lets each task browser say what the agent sees of its URL, in one of three words", () => {
     const browser = (extra: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedSession: false, ...extra }] }), { channel: "voice" }));
@@ -484,6 +497,26 @@ describe("one word, one meaning", () => {
     expect(tab({ sharedSession: false })).toEqual([]);
     // renamed away: a browser still saying reuse has not said whether its session is shared.
     expect(tab({ reuse: false })).toEqual(["task.browser.sharedSession"]);
+    const lead = { capabilities: { team: { policyControl: true as const } } };
+    const setting = (value: string) => rules(validateTeamRoster({ members: [], policies: { mute: { setting: value, setBy: "team" } } }, "team", lead));
+    expect(setting("person")).toEqual([]);
+    // renamed away: what the team leaves to the individual is the person's, in the level's own word.
+    expect(setting("agent")).toEqual(["team.policy.setting"]);
+    const notes = (value: string) => rules(validateTask(task({ capabilities: { dispositions: { required: true, notes: value, codes: [{ id: "resolved", label: "Resolved" }] } } }), { channel: "voice" }));
+    expect(notes("none")).toEqual([]);
+    // renamed away: no notes field is none; hidden is what a URL can be.
+    expect(notes("hidden")).toEqual(["task.dispositions.notes"]);
+    const input = (status: string) => rules(validateHostReport({ online: true, audio: { input: { status, localAudio: {}, flowing: true }, output: { status: "available" } } }));
+    expect(input("available")).toEqual([]);
+    // renamed away: a microphone is available or unavailable; ready is a roster member's word.
+    expect(input("ready")).toEqual(["host.audio.input.status"]);
+    const offer = (acceptanceMode: string) => rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode }), manifest()));
+    expect(offer("consent")).toEqual([]);
+    // renamed away: acceptance is manual or automatic.
+    expect([offer("require-agent-acceptance"), offer("manual")]).toEqual([["event.taskOffered.acceptanceMode"], ["event.taskOffered.acceptanceMode"]]);
+    expect(rules(validateResult({ status: "applied" }, "setCapacity"))).toEqual([]);
+    // renamed away: a capacity is applied, as every other setting is; accept is the offer's word.
+    expect(rules(validateResult({ status: "accepted" }, "setCapacity"))).toEqual(["result.status"]);
     const brk = (state: Record<string, unknown>) => rules(validateSnapshot(snapshot({ break: { approval: "not-requested", ...state } }), manifest()));
     expect(brk({ mayAsk: true })).toEqual([]);
     expect(brk({ accepting: true })).toEqual(["break.mayAsk"]);
@@ -603,12 +636,12 @@ describe("who decides what an agent may do", () => {
   it("carries the team's policies on the roster, as the lead sees them", () => {
     const may = { capabilities: { team: { policyControl: true as const } } };
     const policies = (value: unknown) => rules(validateTeamRoster({ members: [], policies: value }, "team", may));
-    expect(policies({ mute: { setting: "off", setBy: "team" }, hold: { setting: "agent", setBy: "team" }, recording: { setting: "on", setBy: "site", lockedBy: "site", reason: "Compliance" }, dial: { setting: "on", setBy: "provider" }, "skill:billing": { setting: "agent", setBy: "org" } })).toEqual([]);
+    expect(policies({ mute: { setting: "off", setBy: "team" }, hold: { setting: "person", setBy: "team" }, recording: { setting: "on", setBy: "site", lockedBy: "site", reason: "Compliance" }, dial: { setting: "on", setBy: "provider" }, "skill:billing": { setting: "person", setBy: "org" } })).toEqual([]);
     expect(policies({ telepathy: { setting: "on", setBy: "team" } })).toEqual(["team.policy.key"]);
     expect(policies({ mute: "off" })).toEqual(["team.policy.shape"]);
     expect(policies({ mute: { setting: "maybe", setBy: "team" } })).toEqual(["team.policy.setting"]);
-    expect(policies({ callback: { setting: "agent", setBy: "team" } })).toEqual(["team.policy.agent"]);
-    expect(policies({ dial: { setting: "agent", setBy: "team" } })).toEqual(["team.policy.agent"]);
+    expect(policies({ callback: { setting: "person", setBy: "team" } })).toEqual(["team.policy.person"]);
+    expect(policies({ dial: { setting: "person", setBy: "team" } })).toEqual(["team.policy.person"]);
     expect(policies({ mute: { setting: "off" } })).toEqual(["team.policy.setBy"]);
     expect(policies({ mute: { setting: "off", setBy: "person" } })).toEqual(["team.policy.setBy"]);
     expect(policies("off")).toEqual(["team.policies.shape"]);
@@ -644,9 +677,9 @@ describe("who decides what an agent may do", () => {
 describe("validateHostReport", () => {
   const microphone = { id: "mic" };
   const failure = { code: "host.permission-denied", message: "Microphone access was refused", retryable: true };
-  const ready = { status: "ready", localAudio: microphone, flowing: true };
+  const ready = { status: "available", localAudio: microphone, flowing: true };
   const denied = { status: "unavailable", reason: "denied", failure };
-  const audio = (input: unknown, output: unknown = { status: "ready" }) => rules(validateHostReport({ online: true, audio: { input, output } }));
+  const audio = (input: unknown, output: unknown = { status: "available" }) => rules(validateHostReport({ online: true, audio: { input, output } }));
 
   it("accepts a report with and without audio, and holds each part to its shape", () => {
     expect(rules(validateHostReport({ online: true }))).toEqual([]);
@@ -662,12 +695,12 @@ describe("validateHostReport", () => {
   });
 
   it("refuses an input or output that carries the wrong things", () => {
-    expect(audio({ status: "ready", flowing: true })).toEqual(["host.audio.input.localAudio"]);
-    expect(audio({ status: "ready", localAudio: microphone })).toEqual(["host.audio.input.flowing"]);
+    expect(audio({ status: "available", flowing: true })).toEqual(["host.audio.input.localAudio"]);
+    expect(audio({ status: "available", localAudio: microphone })).toEqual(["host.audio.input.flowing"]);
     expect(audio({ ...ready, failure })).toEqual(["host.audio.input.failure.unexpected"]);
     expect(audio({ ...ready, reason: "lost" })).toEqual(["host.audio.input.reason.unexpected"]);
     expect(audio({ ...denied, flowing: true })).toEqual(["host.audio.input.flowing.unexpected"]);
-    expect(audio(ready, { status: "ready", reason: "no-device" })).toEqual(["host.audio.output.reason.unexpected"]);
+    expect(audio(ready, { status: "available", reason: "no-device" })).toEqual(["host.audio.output.reason.unexpected"]);
     expect(audio({ status: "unavailable", failure })).toEqual(["host.audio.input.reason"]);
     expect(audio({ status: "unavailable", reason: "broken", failure })).toEqual(["host.audio.input.reason"]);
     expect(audio({ status: "unavailable", reason: "lost" })).toEqual(["host.audio.input.failure.required"]);
@@ -675,7 +708,7 @@ describe("validateHostReport", () => {
     expect(audio({ ...denied, localAudio: microphone })).toEqual(["host.audio.input.localAudio.unexpected"]);
     expect(audio({ status: "muted" })).toEqual(["host.audio.input.status"]);
     expect(audio(undefined)).toEqual(["host.audio.input.shape"]);
-    expect(audio(ready, { status: "ready", failure })).toEqual(["host.audio.output.failure.unexpected"]);
+    expect(audio(ready, { status: "available", failure })).toEqual(["host.audio.output.failure.unexpected"]);
     expect(audio(ready, { status: "unavailable", reason: "no-device" })).toEqual(["host.audio.output.failure.required"]);
     expect(audio(ready, { status: "unavailable", failure })).toEqual(["host.audio.output.reason"]);
     expect(audio(ready, { status: "unavailable", reason: "denied", failure })).toEqual(["host.audio.output.reason"]);
@@ -690,7 +723,7 @@ describe("validateResult", () => {
   it("accepts each method's own answers and refuses a status it does not give", () => {
     // Every method's success status beside the same status on a method that does not answer it.
     const pairs = [
-      ["execute", "applied"], ["dial", "dialled"], ["setCapacity", "accepted"], ["requestBreak", "requested"],
+      ["execute", "applied"], ["dial", "dialled"], ["setCapacity", "applied"], ["requestBreak", "requested"],
       ["commitBreak", "committed"], ["cancelBreak", "cancelled"], ["endBreak", "ended"],
       ["executeTeamBreak", "applied"], ["executeTeamConsult", "applied"],
     ] as const;
@@ -837,7 +870,7 @@ describe("the other direction, everywhere", () => {
 
   it("offers a task only before it is under way, with the mode the login asked for", () => {
     const offer = (over: Record<string, unknown>, context: Record<string, unknown> = {}) =>
-      rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "require-agent-acceptance", ...over }), manifest(), "event", context));
+      rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "consent", ...over }), manifest(), "event", context));
     for (const phase of ["pending", "confirmed", "preparing"]) expect(offer({ task: task({ phase }) })).toEqual([]);
     for (const phase of ["in-progress", "paused", "completing"]) expect(offer({ task: task({ phase }) })).toEqual(["event.taskOffered.phase"]);
     expect(offer({}, { autoAcceptTasks: true })).toEqual([]);
@@ -928,7 +961,7 @@ describe("rules that had no test", () => {
 
   it("event timestamps, outcomes, and status messages", () => {
     const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
-    const offer = { type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "require-agent-acceptance" };
+    const offer = { type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "consent" };
     expect(check({ ...offer, allocationExpiresAt: "2026-08-21T09:01:00Z", preparationEndsAt: "2026-08-21T09:02:00Z" })).toEqual([]);
     expect(check({ ...offer, allocationExpiresAt: "soon" })).toEqual(["event.taskOffered.allocationExpiresAt"]);
     expect(check({ ...offer, preparationEndsAt: "soon" })).toEqual(["event.taskOffered.preparationEndsAt"]);

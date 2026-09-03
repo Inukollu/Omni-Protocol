@@ -102,7 +102,7 @@ export interface BrowserAccess {
 
 export interface PersonalBrowserCapability {
   access: BrowserAccess;
-  accessPolicyScope?: "initial-url" | "all-navigation";
+  accessAppliesTo?: "initial-url" | "all-navigation";
 }
 
 export type DialDestinations = "contacts-only" | "any-number";
@@ -259,7 +259,7 @@ export type CompleteAuthenticationResult =
   | { status: "rejected"; failure: AuthenticationFailure };
 
 export type AuthenticationActionResult =
-  | { status: "accepted" }
+  | { status: "applied" }
   | { status: "failed"; failure: AuthenticationFailure };
 
 export type Unsubscribe = () => void;
@@ -283,7 +283,7 @@ export interface AuthenticationSession {
  */
 export type HostAudioInput =
   /** Omni has the microphone. `flowing` is false while the hardware or OS says no audio moves through it. */
-  | { status: "ready"; localAudio: MediaStream; flowing: boolean }
+  | { status: "available"; localAudio: MediaStream; flowing: boolean }
   /** Omni does not, and `reason` says which fix the agent needs; `failure` is the words Omni showed them. */
   | { status: "unavailable"; reason: HostAudioUnavailableReason; failure: ProtocolFailure };
 
@@ -298,7 +298,7 @@ export type HostAudioUnavailableReason = "no-device" | "denied" | "not-asked" | 
 export type HostOutputUnavailableReason = "no-device" | "lost";
 
 export type HostAudioOutput =
-  | { status: "ready" }
+  | { status: "available" }
   | { status: "unavailable"; reason: HostOutputUnavailableReason; failure: ProtocolFailure };
 
 /**
@@ -319,7 +319,21 @@ export interface HostReport {
 }
 
 /** The host, as an adapter may ask it: a report now, and every change for the life of the connection. */
+/**
+ * What the host promises the provider, declared once per connection. Presence is the guarantee:
+ * an absent key is a host that makes no such promise, and a provider that needs one checks before
+ * it acts -- tokenising a URL it would otherwise send in the clear, or declining to offer work
+ * that only a person may accept.
+ */
+export interface HostGuarantees {
+  /** Every task browser's `urlVisibility` is honoured in this host's chrome, tab by tab. */
+  browserUrlVisibility?: true;
+  /** A `consent` offer is accepted only by the person's own explicit act, never on their behalf. */
+  personConsent?: true;
+}
+
 export interface Host {
+  guarantees: HostGuarantees;
   report(): HostReport;
   subscribe(listener: (report: HostReport) => void): Unsubscribe;
 }
@@ -384,7 +398,7 @@ export interface DispositionCode {
 
 export interface DispositionRules {
   required?: boolean;
-  notes?: "required" | "optional" | "hidden";
+  notes?: "required" | "optional" | "none";
   codes?: DispositionCode[];
 }
 
@@ -670,11 +684,16 @@ export type Task<C extends Channel = Channel> = {
     ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting; media?: TaskMediaState }
     : { consultation?: never; lead?: never; assisting?: never; media?: never });
 
-/** What the provider wants of Omni's acceptance policy for one offer. */
+/**
+ * What the provider wants of Omni's acceptance policy for one offer. Present only where Omni was
+ * willing to accept for the agent (`autoAcceptTasks: true`): `consent` is therefore always the
+ * provider's requirement of an explicit acceptance, never Omni's own policy, which travels as an
+ * absent field.
+ */
 export type AcceptanceMode =
   | "no-preference"
-  | "require-agent-acceptance"
-  | "require-automatic-acceptance";
+  | "consent"
+  | "automatic";
 
 export type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
@@ -853,7 +872,7 @@ export interface BreakState {
 }
 
 export type CapacityResult =
-  | { status: "accepted" }
+  | { status: "applied" }
   | { status: "failed"; failure: ProtocolFailure };
 
 /** Succeeding is not the outcome: `requested` says the provider holds it, not that it was granted. */
@@ -918,7 +937,7 @@ export type PolicyKey =
   | `skill:${string}`;
 
 /** On for everyone, off for everyone, or the agent's own choice. Only `hold`, `mute` and skills may be `agent`. */
-export type TeamPolicySetting = "on" | "off" | "agent";
+export type TeamPolicySetting = "on" | "off" | "person";
 
 /** One policy as the lead sees it: the setting, who set it, and `lockedBy` when a level above the team made it theirs to keep. */
 export interface TeamPolicy extends Resolved {

@@ -30,6 +30,7 @@ import {
   type TeamPolicySetting,
   type TaskMediaState,
   type TransportRecovery,
+  type HostGuarantees,
   type CredentialField,
   type HostOutputUnavailableReason,
   type Channel,
@@ -94,7 +95,7 @@ const TASK_PHASES = membersOf<TaskPhase>({
 });
 const COMPLETION_MODES = membersOf<CompletionMode>({ "agent-command": true, "provider-automatic": true });
 const ACCEPTANCE_MODES = membersOf<AcceptanceMode>({
-  "no-preference": true, "require-agent-acceptance": true, "require-automatic-acceptance": true,
+  "no-preference": true, "consent": true, "automatic": true,
 });
 const TRANSPORT_STATUSES = membersOf<TransportStatus>({ connecting: true, active: true, error: true });
 const AUTHENTICATION_METHODS = membersOf<AuthenticationMethod>({ "browser-sso": true, credentials: true });
@@ -113,9 +114,9 @@ const HANDLING_STEPS = membersOf<HandlingStep>({
 const DESTINATION_KINDS = membersOf<Destination["kind"]>({ queue: true, agent: true, external: true });
 const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
 const CUSTOM_UI_PLACEMENTS = membersOf<CustomCapability["ui"]["placement"]>({ primary: true, secondary: true, overflow: true });
-const NOTES_POLICIES = membersOf<NonNullable<DispositionRules["notes"]>>({ required: true, optional: true, hidden: true });
+const NOTES_RULES = membersOf<NonNullable<DispositionRules["notes"]>>({ required: true, optional: true, none: true });
 const ACCESS_MODES = membersOf<BrowserAccess["mode"]>({ "allow-all": true, "block-all": true });
-const ACCESS_POLICY_SCOPES = membersOf<NonNullable<PersonalBrowserCapability["accessPolicyScope"]>>({
+const ACCESS_APPLIES_TO = membersOf<NonNullable<PersonalBrowserCapability["accessAppliesTo"]>>({
   "initial-url": true, "all-navigation": true,
 });
 const DIAL_DESTINATION_POLICIES = membersOf<DialDestinations>({ "contacts-only": true, "any-number": true });
@@ -333,9 +334,9 @@ function validateIdleCapabilities(value: unknown, channel: string, path: string,
       into.add("manifest.personalBrowser.shape", `${path}.personalBrowser`, "personalBrowser must be an object when present");
     } else {
       validateBrowserAccess(browser.access, `${path}.personalBrowser.access`, into);
-      if (browser.accessPolicyScope !== undefined) {
-        into.oneOf(browser.accessPolicyScope, ACCESS_POLICY_SCOPES,
-          "manifest.personalBrowser.accessPolicyScope", `${path}.personalBrowser.accessPolicyScope`);
+      if (browser.accessAppliesTo !== undefined) {
+        into.oneOf(browser.accessAppliesTo, ACCESS_APPLIES_TO,
+          "manifest.personalBrowser.accessAppliesTo", `${path}.personalBrowser.accessAppliesTo`);
       }
     }
   }
@@ -514,7 +515,7 @@ function validateDispositions(value: unknown, path: string, into: Collector): vo
   if (value.required === true && !(Array.isArray(value.codes) && value.codes.length > 0)) {
     into.add("task.dispositions.required.codes", `${path}.codes`, "a required disposition policy must publish at least one code");
   }
-  if (value.notes !== undefined) into.oneOf(value.notes, NOTES_POLICIES, "task.dispositions.notes", `${path}.notes`);
+  if (value.notes !== undefined) into.oneOf(value.notes, NOTES_RULES, "task.dispositions.notes", `${path}.notes`);
   if (value.codes === undefined) return;
   if (!Array.isArray(value.codes)) {
     into.add("task.dispositions.codes", `${path}.codes`, "codes must be an array when present");
@@ -580,11 +581,11 @@ function validateCustomCapabilities(value: unknown, path: string, into: Collecto
 }
 
 const DEFAULT_LEVEL_IDS: readonly string[] = DEFAULT_LEVELS.map(level => level.id);
-const POLICY_SETTINGS = membersOf<TeamPolicySetting>({ on: true, off: true, agent: true });
+const POLICY_SETTINGS = membersOf<TeamPolicySetting>({ on: true, off: true, person: true });
 const POLICY_KEYS = new Set<string>([
   ...TASK_CAPABILITIES.voice, ...TASK_CAPABILITIES.chat, ...TASK_CAPABILITIES.email, "dial",
 ].filter(name => name !== "browsers" && name !== "dispositions" && name !== "custom"));
-const AGENT_SETTABLE = /^(hold|mute|skill:.+)$/;
+const PERSON_SETTABLE = /^(hold|mute|skill:.+)$/;
 const isLocked = (value: unknown): value is Record<string, unknown> => isPlainObject(value) && value.lockedBy !== undefined;
 
 /** The level ids in force: the manifest's, or the defaults when the caller holds no manifest. */
@@ -1484,7 +1485,7 @@ function validateTeamPoliciesInto(value: unknown, path: string, into: Collector,
       continue;
     }
     if (into.oneOf(policy.setting, POLICY_SETTINGS, "team.policy.setting", `${at}.setting`)) {
-      into.require(policy.setting !== "agent" || AGENT_SETTABLE.test(key), "team.policy.agent", `${at}.setting`,
+      into.require(policy.setting !== "person" || PERSON_SETTABLE.test(key), "team.policy.person", `${at}.setting`,
         `${key} is the team's, on or off; only hold, mute and skills may be left to the person`);
     }
     validateResolvedInto(policy, "team.policy", at, levels, into);
@@ -1532,6 +1533,28 @@ function validateUnavailable(value: Record<string, unknown>, rule: string, path:
  * check belongs to the host's own tests and to the harness, which validates whatever host a test
  * hands the adapter.
  */
+const HOST_GUARANTEES = membersOf<keyof HostGuarantees>({ browserUrlVisibility: true, personConsent: true });
+
+/**
+ * What a host promises. Presence is the guarantee, so a key declared `false` is refused: a
+ * promise withheld is an absent key, never a false one, exactly as a capability is.
+ */
+export function validateHostGuarantees(guarantees: unknown, path = "host.guarantees"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(guarantees)) {
+    into.add("host.guarantees.shape", path, "a host declares its guarantees as an object, empty when it makes none");
+    return into.violations;
+  }
+  for (const [name, declared] of Object.entries(guarantees)) {
+    if (declared === undefined) continue;
+    if (!into.require((HOST_GUARANTEES as readonly string[]).includes(name), "host.guarantee.unknown", `${path}.${name}`,
+      `${name} is not a guarantee this contract names: ${HOST_GUARANTEES.join(", ")}`)) continue;
+    into.require(declared === true, "host.guarantee.value", `${path}.${name}`,
+      "a guarantee is declared by presence; one the host does not make is omitted, never false");
+  }
+  return into.violations;
+}
+
 export function validateHostReport(report: unknown, path = "host"): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(report)) {
@@ -1548,7 +1571,7 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
   const at = `${path}.audio.input`;
   if (!isPlainObject(input)) {
     into.add("host.audio.input.shape", at, "audio carries its input");
-  } else if (input.status === "ready") {
+  } else if (input.status === "available") {
     into.require(typeof input.localAudio === "object" && input.localAudio !== null, "host.audio.input.localAudio", `${at}.localAudio`,
       "a ready input carries the captured microphone");
     into.require(typeof input.flowing === "boolean", "host.audio.input.flowing", `${at}.flowing`,
@@ -1563,20 +1586,20 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
     into.require(input.flowing === undefined, "host.audio.input.flowing.unexpected", `${at}.flowing`,
       "an unavailable input has nothing to flow");
   } else {
-    into.add("host.audio.input.status", `${at}.status`, `an input is ready or unavailable, not ${String(input.status)}`);
+    into.add("host.audio.input.status", `${at}.status`, `an input is available or unavailable, not ${String(input.status)}`);
   }
   const output = report.audio.output;
   const out = `${path}.audio.output`;
   if (!isPlainObject(output)) {
     into.add("host.audio.output.shape", out, "audio carries its output");
-  } else if (output.status === "ready") {
+  } else if (output.status === "available") {
     into.require(output.failure === undefined, "host.audio.output.failure.unexpected", `${out}.failure`, "a ready output carries no failure");
     into.require(output.reason === undefined, "host.audio.output.reason.unexpected", `${out}.reason`, "a ready output has no reason to be unavailable");
   } else if (output.status === "unavailable") {
     into.oneOf(output.reason, HOST_OUTPUT_REASONS, "host.audio.output.reason", `${out}.reason`);
     validateUnavailable(output, "host.audio.output", out, into);
   } else {
-    into.add("host.audio.output.status", `${out}.status`, `an output is ready or unavailable, not ${String(output.status)}`);
+    into.add("host.audio.output.status", `${out}.status`, `an output is available or unavailable, not ${String(output.status)}`);
   }
   return into.violations;
 }
@@ -1601,7 +1624,7 @@ export type ResultMethod =
 const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string }> = {
   execute: { success: "applied", failure: "failed" },
   dial: { success: "dialled", failure: "failed" },
-  setCapacity: { success: "accepted", failure: "failed" },
+  setCapacity: { success: "applied", failure: "failed" },
   requestBreak: { success: "requested", failure: "failed" },
   commitBreak: { success: "committed", failure: "failed" },
   cancelBreak: { success: "cancelled", failure: "failed" },
