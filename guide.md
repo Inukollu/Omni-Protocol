@@ -360,6 +360,15 @@ type SetPreferenceRequest =
   | { id: PreferenceId; enabled: boolean }
   | { id: PreferenceId; inherit: true };
 
+type HandlingReport = { taskId: TaskId; step: HandlingStep; at: IsoTimestamp } & (
+  | { ended: true; seconds: DurationSeconds }
+  | { ended?: never; seconds?: DurationSeconds }
+);
+
+type HandlingReportResult =
+  | { status: "recorded" }
+  | { status: "failed"; failure: ProtocolFailure };
+
 type PreferenceResult =
   | { status: "applied" }
   | { status: "failed"; failure: ProtocolFailure };
@@ -999,6 +1008,7 @@ type Connection<C extends Channel = Channel> = {
   executeTeamConsult?(request: TeamConsultCommandRequest): Promise<TeamCommandResult>;
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
+  recordStep?(report: HandlingReport): Promise<HandlingReportResult>;
   executeTeamPolicy?(request: TeamPolicyCommandRequest): Promise<TeamCommandResult>;
 };
 
@@ -1895,6 +1905,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `executeTeamBreak(command)` | The login declares `capabilities.team.breakControl`. |
 | `executeTeamConsult(command)` | The login declares `capabilities.team.consultControl`. |
 | `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
+| `recordStep(report)` | A task declares `mute`: the host performs that leg, and the provider's record has to have somewhere to take it. See **The host records what it performs**. |
 | `executeTeamPolicy(command)` | The login declares `capabilities.team.policyControl`. |
 | `openMedia(request)` | The manifest channel is `voice`. Every voice task's audio lands in Omni, so there is no voice adapter that does not implement it. |
 
@@ -2334,6 +2345,32 @@ A host must render the two differently. Showing an unattributed `answered` the s
 Omit `handlingHistory` entirely when the provider cannot observe the steps. An empty array is a different
 claim — it says the task has had none.
 
+#### The host records what it performs
+
+`muted` is the one leg Omni performs rather than the provider, and a record kept by the provider
+would have a hole exactly there. So the host reports it, through `recordStep`, and the provider
+writes it into its record as it writes every other leg:
+
+```ts
+declare const connection: Connection<"voice">;
+declare const taskId: TaskId;
+declare const at: IsoTimestamp;
+
+void connection.recordStep?.({ taskId, step: "muted", at });                          // the moment the agent mutes
+void connection.recordStep?.({ taskId, step: "muted", at, seconds: 15 });             // still running, if the host chooses to say
+void connection.recordStep?.({ taskId, step: "muted", at, seconds: 42, ended: true }); // the moment they unmute
+```
+
+The entry is keyed by `step` and `at`, so every report about one leg names the same instant. The
+host is the authority for the legs it performs, so it may say how long so far whenever it likes —
+`seconds` is elapsed while the leg runs and final once it has ended — and **the end is stated,
+never inferred**: `ended: true` marks the last report, and it carries the final duration. What
+the adapter forwards upstream, and how often — every second, or once with both ends in hand — is
+the adapter's own business; the protocol makes second-by-second possible and decides nothing
+about it. The step appears in `handlingHistory` when the *provider* publishes it: Omni never
+writes the record itself. `recordStep` is required of a connection whose tasks declare `mute`,
+and answers `recorded`.
+
 #### What the agent inherits
 
 A call that has changed hands arrives carrying what others already used of it, and the agent reads
@@ -2753,6 +2790,7 @@ everywhere; success is not.
 | Method | Succeeded |
 | --- | --- |
 | `setCapacity` | `applied` |
+| `recordStep` | `recorded` |
 | `requestBreak` | `requested` |
 | `commitBreak` | `committed` |
 | `cancelBreak` | `cancelled` |
@@ -3749,6 +3787,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
 | `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
+| `validateHandlingReport(report)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |

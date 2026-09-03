@@ -325,6 +325,7 @@ export async function exerciseAdapter<C extends Channel>(
           message: `the provider reported a diagnostic: expected ${String(envelope.event.expected)}; observed ${String(envelope.event.observed)}` });
       }
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
+      if (eventDeclaresMute(envelope)) requireMethod(live, "recordStep", "a task declares mute, which the host performs and must have somewhere to record");
       // Cross-event rules apply once the stream has a beginning: the connect snapshot.
       if (seeded) violations.push(...stream.apply(envelope), ...breaks.apply(envelope));
       if (typeof envelope?.id === "string") {
@@ -342,6 +343,9 @@ export async function exerciseAdapter<C extends Channel>(
     seeded = true;
     requireCapabilityMethods(live, current().capabilities);
     if (publishesUserIds(snapshot)) requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
+    if (isRecord(snapshot) && Array.isArray(snapshot.tasks) && snapshot.tasks.some(taskDeclaresMute)) {
+      requireMethod(live, "recordStep", "a task declares mute, which the host performs and must have somewhere to record");
+    }
 
     // Capacity is stated, not requested: nothing may be allocated until it is, so a connection
     // that will not accept one is a connection nothing can be given to.
@@ -415,6 +419,17 @@ const taskNamesUsers = (task: unknown): boolean =>
     (isRecord(task.inherited) && some(task.inherited.handlers)) ||
     (isRecord(task.lead) && task.lead.leadId !== undefined) ||
     isRecord(task.assisting));
+
+/** Mute is the leg the host performs, so a task that allows it obliges the provider to take the record. */
+const taskDeclaresMute = (task: unknown): boolean =>
+  isRecord(task) && isRecord(task.capabilities) && task.capabilities.mute !== undefined;
+function eventDeclaresMute(envelope: unknown): boolean {
+  const event = isRecord(envelope) ? envelope.event : undefined;
+  if (!isRecord(event)) return false;
+  if (event.type === "task-offered" || event.type === "task-updated") return taskDeclaresMute(event.task);
+  if (event.type === "snapshot" && isRecord(event.snapshot) && Array.isArray(event.snapshot.tasks)) return event.snapshot.tasks.some(taskDeclaresMute);
+  return false;
+}
 
 /** Whether an event publishes a `UserId`, on a roster, a task, or the snapshot a reconnect carries. */
 function eventNamesUsers(envelope: unknown): boolean {

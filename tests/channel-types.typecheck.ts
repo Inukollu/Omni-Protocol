@@ -9,6 +9,7 @@ import {
   type OpenMediaRequest,
   type Manifest,
   type ProviderEvent,
+  type HandlingReport,
   type Host,
   type DispositionRules,
   type HostAudioInput,
@@ -222,6 +223,11 @@ export const handedTask = { ...emailTask, id: "email-14", inherited: { handleSec
 export const handlerlessTask = { ...emailTask, id: "email-15",
   // @ts-expect-error What is inherited names who handled it; the type requires the handlers.
   inherited: { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 1 } } satisfies Task<"email">;
+export const muteBegan = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z" } satisfies HandlingReport;
+export const muteRunning = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", seconds: 15 } satisfies HandlingReport;
+export const muteEnded = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", seconds: 42, ended: true } satisfies HandlingReport;
+// @ts-expect-error An ended leg states its final duration; the type will not let the end go unmeasured.
+export const muteEndedUnmeasured = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", ended: true } satisfies HandlingReport;
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;

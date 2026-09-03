@@ -1599,6 +1599,33 @@ export function validateHostGuarantees(guarantees: unknown, path = "host.guarant
   return into.violations;
 }
 
+/**
+ * What the host reports of a leg it performed, as an adapter may validate it before forwarding:
+ * a task, a step, when it began, how long so far if the host says, and an explicit end that
+ * carries the final duration.
+ */
+export function validateHandlingReport(report: unknown, path = "handlingReport"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(report)) {
+    into.add("handlingReport.shape", path, "a handling report must be an object");
+    return into.violations;
+  }
+  into.require(isTaskId(report.taskId), "handlingReport.taskId", `${path}.taskId`, "a report names the task");
+  into.oneOf(report.step, HANDLING_STEPS, "handlingReport.step", `${path}.step`);
+  into.timestamp(report.at, "handlingReport.at", `${path}.at`);
+  if (report.seconds !== undefined) {
+    into.require(isDurationSeconds(report.seconds) && (report.seconds as number) > 0, "handlingReport.seconds", `${path}.seconds`,
+      "seconds must be a positive whole number; omit it rather than report nought");
+  }
+  if (report.ended !== undefined) {
+    if (into.require(report.ended === true, "handlingReport.ended", `${path}.ended`, "ended is declared by presence, as true; a running leg omits it")) {
+      into.require(report.seconds !== undefined, "handlingReport.ended.seconds", `${path}.seconds`,
+        "an ended leg states its final duration");
+    }
+  }
+  return into.violations;
+}
+
 export function validateHostReport(report: unknown, path = "host"): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(report)) {
@@ -1661,6 +1688,7 @@ export type ResultMethod =
   | "executeTeamConsult"
   | "openMedia"
   | "setPreference"
+  | "recordStep"
   | "executeTeamPolicy";
 
 // Pinned to the result unions: each method's one success status, and the status that carries a
@@ -1677,6 +1705,7 @@ const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string }
   executeTeamConsult: { success: "applied", failure: "failed" },
   openMedia: { success: "opened", failure: "unavailable" },
   setPreference: { success: "applied", failure: "failed" },
+  recordStep: { success: "recorded", failure: "failed" },
   executeTeamPolicy: { success: "applied", failure: "failed" },
 };
 

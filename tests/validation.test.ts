@@ -6,6 +6,7 @@ import {
   validateAuthenticationState,
   validateContact,
   validateEventEnvelope,
+  validateHandlingReport,
   validateHostGuarantees,
   validateHostReport,
   validateManifest,
@@ -652,6 +653,25 @@ describe("validateEventEnvelope", () => {
     expect(summary({ title: "", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" })).toContain("event.summary.title");
     expect(summary({ title: "Q", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics: [{ id: "a", label: "A", value: 7 }] }))
       .toContain("event.summary.metric.value");
+  });
+});
+
+describe("validateHandlingReport", () => {
+  it("takes a leg the host performed as it begins, runs, and ends", () => {
+    const report = (over: Record<string, unknown> = {}) => rules(validateHandlingReport({ taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", ...over }));
+    expect(report()).toEqual([]);
+    expect(report({ seconds: 15 })).toEqual([]);
+    expect(report({ seconds: 42, ended: true })).toEqual([]);
+    // The end is stated, never inferred, and it carries the final duration.
+    expect(report({ ended: true })).toEqual(["handlingReport.ended.seconds"]);
+    expect(report({ ended: false })).toEqual(["handlingReport.ended"]);
+    expect(report({ seconds: 0 })).toEqual(["handlingReport.seconds"]);
+    expect(report({ taskId: "" })).toEqual(["handlingReport.taskId"]);
+    expect(report({ step: "whispered" })).toEqual(["handlingReport.step"]);
+    expect(report({ at: "now" })).toEqual(["handlingReport.at"]);
+    expect(rules(validateHandlingReport("muted"))).toEqual(["handlingReport.shape"]);
+    expect(rules(validateResult({ status: "recorded" }, "recordStep"))).toEqual([]);
+    expect(rules(validateResult({ status: "applied" }, "recordStep"))).toEqual(["result.status"]);
   });
 });
 

@@ -1072,6 +1072,23 @@ export type SetPreferenceRequest =
   | { id: PreferenceId; enabled: boolean }
   | { id: PreferenceId; inherit: true };
 
+/**
+ * The host's report of a handling leg it performed itself -- a mute, which Omni does rather than
+ * the provider -- so the provider's record has an account of it. Keyed by `step` and `at`: the
+ * same entry is reported when it begins, as often as the host cares to while it runs, and once
+ * more with `ended`, when `seconds` is the final duration. The host is the authority for the
+ * legs it performs, so `seconds` may say how long so far at any time; the end is stated, never
+ * inferred from a number's presence. What the adapter forwards upstream, and how often, is its own.
+ */
+export type HandlingReport = { taskId: TaskId; step: HandlingStep; at: IsoTimestamp } & (
+  | { ended: true; seconds: DurationSeconds }
+  | { ended?: never; seconds?: DurationSeconds }
+);
+
+export type HandlingReportResult =
+  | { status: "recorded" }
+  | { status: "failed"; failure: ProtocolFailure };
+
 export type PreferenceResult =
   | { status: "applied" }
   | { status: "failed"; failure: ProtocolFailure };
@@ -1199,6 +1216,8 @@ export interface Connection<C extends Channel = Channel> {
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
   /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
+  /** Records a handling leg the host performed. Required of a connection whose tasks may declare `mute`. */
+  recordStep?(report: HandlingReport): Promise<HandlingReportResult>;
 }
 
 export interface Adapter<C extends Channel = Channel> {

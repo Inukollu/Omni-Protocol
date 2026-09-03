@@ -573,6 +573,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         executeTeamBreak: async () => ({ status: "applied" }),
         executeTeamConsult: async () => ({ status: "applied" }),
         setPreference: async () => ({ status: "applied" }),
+        recordStep: async () => ({ status: "recorded" }),
         executeTeamPolicy: async () => ({ status: "applied" }),
         openMedia: async () => ({ status: "unavailable", failure: { code: "test", message: "No media in a test", retryable: false } }),
       };
@@ -1055,6 +1056,17 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const lockedTask = (lockedBy: string) => ({ ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, capabilities: { ...conformingSnapshot.tasks[0]!.capabilities, mute: { lockedBy } } }] });
     expect(await rules({ manifest: laddered, snapshot: lockedTask("region") })).toEqual([]);
     expect(await rules({ manifest: laddered, snapshot: lockedTask("site") })).toEqual(["task.capability.locked.lockedBy.unknown"]);
+  });
+
+  it("recordStep(), when a task declares mute, on the snapshot or on an offer", async () => {
+    // The conforming task declares mute; the host performs that leg and needs somewhere to record it.
+    expect(await rules({ connection: { recordStep: undefined } })).toContain("connection.recordStep.required");
+    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, connection: { recordStep: undefined } })).not.toContain("connection.recordStep.required");
+    const muteless = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, capabilities: { ...conformingSnapshot.tasks[0]!.capabilities, mute: undefined } }] };
+    expect(await rules({ snapshot: muteless, connection: { recordStep: undefined } })).not.toContain("connection.recordStep.required");
+    const offered: ProviderEventEnvelope<"voice"> = { id: "evt-offer", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
+      event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, id: "call-77", phase: "pending", media: undefined, acceptance: "consent" } } };
+    expect(await rules({ snapshot: muteless, emit: listener => listener(offered), connection: { recordStep: undefined } })).toContain("connection.recordStep.required");
   });
 
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
