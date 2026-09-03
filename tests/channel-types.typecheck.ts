@@ -215,6 +215,9 @@ export const consentOffer = { type: "task-offered", task: { ...emailTask, id: "e
 export const staleOfferMode = { type: "task-offered", task: { ...emailTask, id: "email-13", phase: "pending" },
   // @ts-expect-error Acceptance is the task's word now, not the offer's.
   acceptanceMode: "consent" } satisfies ProviderEvent<"email">;
+export const spokenDiagnostic = { type: "diagnostic", expected: "a party arrives with a name", observed: "party 4471 arrived id-only", taskId: "call-42" } satisfies ProviderEvent<"voice">;
+// @ts-expect-error A diagnostic says what was observed; a rule broken with nothing observed is half a sentence.
+export const halfDiagnostic = { type: "diagnostic", expected: "a party arrives with a name" } satisfies ProviderEvent<"voice">;
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;

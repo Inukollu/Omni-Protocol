@@ -1404,6 +1404,11 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
         into.require(typeof event.html === "string", "event.announcement.html", `${at}.html`, "html must be a string when present");
       }
       break;
+    case "diagnostic":
+      into.filled(event.expected, "event.diagnostic.expected", `${at}.expected`, "a diagnostic states the rule that was broken, as a sentence");
+      into.filled(event.observed, "event.diagnostic.observed", `${at}.observed`, "a diagnostic states what was observed instead");
+      if (event.taskId !== undefined) into.require(isTaskId(event.taskId), "event.diagnostic.taskId", `${at}.taskId`, "taskId must be a task id when present");
+      break;
     case "queue-summary":
       validateQueueSummary(event.summary, `${at}.summary`, into);
       break;

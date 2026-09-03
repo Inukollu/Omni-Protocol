@@ -610,7 +610,7 @@ describe("exerciseAdapter", () => {
     const everyEvent: ContractSubject[] = [
       "event.snapshot", "event.transport-status", "event.break-state", "event.task-offered", "event.task-updated",
       "event.task-media-started", "event.task-media-ended", "event.task-ended", "event.announcement", "event.queue-summary",
-      "event.team-updated", "event.contacts-updated", "event.calendar-updated",
+      "event.diagnostic", "event.team-updated", "event.contacts-updated", "event.calendar-updated",
     ];
     // The rich task carries browsers, history, a disposition policy, transfer destinations and a
     // custom control, but no attributes and is neither consulting, asking for a lead, nor assisting.
@@ -907,6 +907,17 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules(after(ended("call-42")))).toEqual([]);
     expect(await rules(after(ended("call-99")))).toEqual(["stream.taskMediaEnded.unknown"]);
     expect(await rules({ emit: listener => listener(ended("call-99")) })).toEqual([]);
+  });
+
+  it("fails a run in which the provider reports a diagnostic, and says what it reported", async () => {
+    // Informational to a host, a failure here: a green conformance result must not sit over a
+    // platform that is breaking the rules the adapter relies on.
+    const diagnostic: ProviderEventEnvelope<"voice"> = { id: "evt-diag", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
+      event: { type: "diagnostic", expected: "a task-ended names the task the agent holds", observed: "task-ended named call-99 while call-42 was held", taskId: "call-99" } };
+    const result = await exerciseAdapter(makeAdapter({ emit: listener => listener(diagnostic) }).adapter, context, { collectOnly: true });
+    expect(result.violations.map(v => v.rule)).toEqual(["diagnostic.raised"]);
+    expect(result.violations[0]?.message).toContain("task-ended named call-99");
+    expect(result.notExercised).not.toContain("event.diagnostic");
   });
 
   it("validates the guarantees of the host a test hands the adapter, and passes them through to it", async () => {

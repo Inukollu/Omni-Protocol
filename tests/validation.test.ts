@@ -535,6 +535,15 @@ describe("validateEventEnvelope", () => {
     expect(check({ type: "transport-status", status: "active" })).toEqual([]);
   });
 
+  it("carries a diagnostic as two sentences and, where there is one, a task", () => {
+    const diagnostic = { type: "diagnostic", expected: "a state read answers with the agent's tasks or with nothing", observed: "GetMyState answered null one second after a live call was answered" };
+    expect(check(diagnostic)).toEqual([]);
+    expect(check({ ...diagnostic, taskId: "call-77" })).toEqual([]);
+    expect(check({ ...diagnostic, expected: "" })).toEqual(["event.diagnostic.expected"]);
+    expect(check({ ...diagnostic, observed: undefined })).toEqual(["event.diagnostic.observed"]);
+    expect(check({ ...diagnostic, taskId: "" })).toEqual(["event.diagnostic.taskId"]);
+  });
+
   it("requires an error to name its recovery, and nothing else to carry one", () => {
     expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "session gone" })).toEqual([]);
     expect(check({ type: "transport-status", status: "error", recovery: "reauthenticate" })).toEqual([]);

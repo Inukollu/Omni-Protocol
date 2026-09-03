@@ -1111,6 +1111,7 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
+  | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId }
   | { type: "team-updated"; team: TeamRoster }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };

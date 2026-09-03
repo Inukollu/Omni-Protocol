@@ -951,6 +951,7 @@ type ProviderEvent =
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
+  | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId }
   | { type: "team-updated"; team: TeamRoster }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
@@ -3466,7 +3467,8 @@ Omni apply state the snapshot already superseded.
 `transport-status` is the only signal Omni has that a transport died. An adapter must emit
 `transport-status` with `connecting` or `error` as soon as it loses its transport, rather than
 leaving a stale `active` in place while it retries internally; Omni cannot distinguish a quiet
-healthy provider from a dead one.
+healthy provider from a dead one. And what Omni is told, the agent is shown — see **The status is
+seen, not merely known** under `transport-status`.
 
 #### Requesting a resync
 
@@ -3522,6 +3524,12 @@ authentication state, not here.
 **Only `active` means work can arrive.** Omni stops expecting allocations in any other value, so an
 adapter that leaves a stale `active` in place is telling Omni to keep waiting for work that cannot
 come — see **Liveness**.
+
+**The status is seen, not merely known.** A host renders the transport's status where the agent
+works — `connecting` from the moment it is reported, `error` with what revives it — and never a
+healthy workspace over a transport that cannot serve it: an agent talking on a desk whose transport
+died was an incident, and it happened because the desk knew and did not say. The same obligation
+covers a `diagnostic`: shown where the agent works, and counted.
 
 ### `break-state`
 
@@ -3605,6 +3613,26 @@ same envelope ID is harmless.
 Publishes an agent-facing message. `text` is always required and is the accessible fallback.
 Optional HTML is sanitized by Omni. `announcedAt` and optional `expiresAt` are RFC-3339 times with
 explicit timezones.
+
+### `diagnostic`
+
+The provider's report that something its platform answered broke a rule the adapter relies on — a
+state read that contradicted itself, a `task-ended` naming a task nobody held, a party arriving
+without a name. `expected` is the rule as a sentence, `observed` is what came instead, and
+`taskId` names the task where there is one. **Informational, never behavioural**: the provider has
+already done the safe thing before it speaks, and nothing in the task or break machinery reacts to
+a diagnostic. It exists so that the loudness reaches a person — a host renders each one where the
+agent works and keeps a count an operator can read, because a healthy workspace over a shouting
+console is the silence problem one layer up. One event per occurrence; the host counts, the
+provider does not batch. `exerciseAdapter` treats a diagnostic delivered during a run as a
+violation (`diagnostic.raised`): a conformance run against a platform that is breaking its rules
+fails loudly rather than passing with a note.
+
+| Field | Contract |
+| --- | --- |
+| `expected` | Required. The rule that was broken, as a sentence a person can read. |
+| `observed` | Required. What the platform answered instead. |
+| `taskId` | Optional. The task concerned, where there is one. |
 
 ### `queue-summary`
 
