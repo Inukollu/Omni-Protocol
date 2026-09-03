@@ -18,13 +18,13 @@ describe("a public repo says less", () => {
       "orgTiers", "TierDeclaration", "DEFAULT_TIERS", "effectiveTiers", "task-media-ready", "TaskBrowserBase",
       "destinationPolicy", "completionAllowance", "DispositionPolicy", "BrowserAccessPolicy", "DialDestinationPolicy",
       "ProviderSummary", "provider-summary", "assertBrowserIsolationAndReuse", "reuse:",
-      "accessPolicyScope", "require-agent-acceptance", "require-automatic-acceptance", "team.policy.agent"];
+      "accessPolicyScope", "require-agent-acceptance", "require-automatic-acceptance", "team.policy.agent", "acceptanceMode"];
     // A line under @ts-expect-error, or under a "renamed away" note, is a refusal kept on purpose, not vocabulary.
     const marked = (line: string) => line.includes("@ts-expect-error") || line.includes("renamed away:");
     const refusals = (text: string) => { const lines = text.split("\n"); return lines.filter((_, index) => !marked(lines[index - 1] ?? "")).join("\n"); };
     const lingering = (text: string) => RENAMED.filter(word => refusals(text).includes(word));
     expect(lingering("the old sessionId key")).toEqual(["sessionId"]);
-    const files = ["guide.md", "README.md", ...readdirSync(__dirname).filter(name => name !== "hygiene.test.ts").map(name => `src/${name}`)];
+    const files = ["guide.md", "README.md", ...readdirSync(join(root, "src")).map(name => `src/${name}`), ...readdirSync(__dirname).filter(name => name !== "hygiene.test.ts").map(name => `tests/${name}`)];
     for (const file of files) expect(lingering(readFileSync(join(root, file), "utf8")), file).toEqual([]);
   });
 
@@ -36,7 +36,8 @@ describe("a public repo says less", () => {
       "README.md",
       "package.json",
       ...readdirSync(join(root, ".github/workflows")).map(name => `.github/workflows/${name}`),
-      ...readdirSync(__dirname).filter(name => name !== "hygiene.test.ts").map(name => `src/${name}`),
+      ...readdirSync(join(root, "src")).map(name => `src/${name}`),
+      ...readdirSync(__dirname).filter(name => name !== "hygiene.test.ts").map(name => `tests/${name}`),
     ];
     for (const file of files) {
       expect(offending(readFileSync(join(root, file), "utf8")), file).toEqual([]);

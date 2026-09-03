@@ -3,11 +3,11 @@
   "compilerOptions": {
     "declaration": false,
     "noEmit": true,
-    "rootDir": "src"
+    "rootDir": "."
   },
   "include": [
-    "src/**/*.typecheck.ts",
-    "src/**/*.test.ts"
+    "src/**/*.ts",
+    "tests/**/*.ts"
   ],
   "exclude": []
 }

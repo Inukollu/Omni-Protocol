@@ -604,6 +604,7 @@ type Task<C extends Channel = Channel> = {
   browsers: TaskBrowser[];
   party?: Contact;
   phase: TaskPhase;
+  acceptance?: AcceptanceMode;
   reference?: string;
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingStep[];
@@ -941,7 +942,6 @@ type ProviderEvent =
   | {
       type: "task-offered";
       task: Task;
-      acceptanceMode?: AcceptanceMode;
       allocationExpiresAt?: IsoTimestamp;
       preparationEndsAt?: IsoTimestamp;
     }
@@ -1830,7 +1830,7 @@ Creates one live provider connection for the signed-in agent.
 | --- | --- |
 | `protocolVersion` | Version negotiated before authentication. Fixed for this login. |
 | `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
-| `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login. Treated as `true` when omitted. When `true`, `task-offered` carries an `acceptanceMode`; when `false`, every task requires agent acceptance. |
+| `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login. Treated as `true` when omitted. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `host` | The host's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The host reports, the adapter decides**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -1974,13 +1974,15 @@ deliver again once it has gone quiet. Hold the capacity and deliver when work ar
 **4. A provider offers a task.** The provider emits `task-offered` within the stated capacity.
 
 **5. Omni decides how the task is accepted.** When `autoAcceptTasks` is `false`, every task requires
-agent acceptance. When it is `true`, the event's `acceptanceMode` states the provider's
+agent acceptance. When it is `true`, the pending task's `acceptance` states the provider's
 intent.
 
 ### Acceptance modes
 
 During login, Omni sends the agent's `autoAcceptTasks` value to the provider. When it is `true`, the
-provider includes an acceptance directive with each allocation:
+provider states `acceptance` on each pending task — on the task rather than the offer, so a
+reconnect snapshot says it too and an offer the host never received is not accepted on the
+person's behalf for want of a word:
 
 | Directive | Contract |
 | --- | --- |
@@ -1988,7 +1990,7 @@ provider includes an acceptance directive with each allocation:
 | `consent` | The provider requires the person's explicit consent: Omni presents **Accept** and waits, whatever its own policy would have done. A host that declares `guarantees.personConsent` promises exactly this; a provider checks it before offering work only a person may take. |
 | `automatic` | Omni accepts immediately without agent interaction. |
 
-When Omni sent `autoAcceptTasks: false`, the provider omits `acceptanceMode` and every task
+When Omni sent `autoAcceptTasks: false`, the provider omits `acceptance` and every task
 requires agent acceptance. The two are never confused on the wire: `consent` is always the
 provider's requirement, stated on a wire where Omni was willing to accept for the agent; Omni's own
 no-auto-accept policy puts no word on the wire at all — the field is absent, and the **Accept**
@@ -1998,19 +2000,19 @@ press is Omni's doing, not the provider's.
 gone ready is telling the deployment they are working. Requiring a press before every contact is
 the exception a provisioning file asks for, not the state it falls into when a flag is missing.
 
-Nothing is given away by that default. `acceptanceMode` is the provider's own control and outranks
+Nothing is given away by that default. `acceptance` is the provider's own control and outranks
 it: `consent` puts the decision back in the agent's hands for any task where it
 belongs, whatever the host was configured with.
 
 An automatically accepted task still arrives through `task-offered`.
 
-Agent-initiated work arrives through `task-offered` with
-`acceptanceMode: "automatic"`.
+Agent-initiated work arrives through `task-offered` with the task's
+`acceptance: "automatic"`.
 
 ### Pending
 
 A task in the `pending` phase has been **offered to the agent and not yet accepted**. Omni applies
-`autoAcceptTasks` and the allocation's `acceptanceMode` to decide whether acceptance is
+`autoAcceptTasks` and the task's `acceptance` to decide whether acceptance is
 automatic or requires the agent. A provider that requires automatic acceptance still emits
 `task-offered`; it does not introduce new work as `in-progress`.
 
@@ -2019,8 +2021,7 @@ declare const task: Task;
 
 const allocation = {
   type: "task-offered",
-  task,
-  acceptanceMode: "consent",
+  task: { ...task, phase: "pending", acceptance: "consent" },
   allocationExpiresAt: "2026-08-25T10:41:07.000Z",
   preparationEndsAt: "2026-08-25T10:40:37.000Z",
 } satisfies Extract<ProviderEvent, { type: "task-offered" }>;
@@ -2083,6 +2084,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `party` | The person or entity on the other end of this task, as a `Contact`: often a name and one address; a withheld caller ID may leave nothing to send at all. Optional. The party is who the task is *with*; `contacts` is the directory. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preparing`, `in-progress`, `paused`, or `completing`. |
 | `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. |
+| `acceptance` | How this offer is accepted — `no-preference`, `consent`, or `automatic` — stated on the pending task so a reconnect snapshot says it too. Required while `pending` when `autoAcceptTasks` was `true`, forbidden when it was `false`, and absent past `pending`. See **Acceptance modes**. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
@@ -2134,12 +2136,12 @@ The canonical task transitions are:
 | Any phase | Provider emits `task-ended` | Removed |
 
 Allocation, acceptance, and progress are distinct. Acceptance follows `autoAcceptTasks` and the
-allocation's `acceptanceMode`, moving the task from `pending` to `confirmed`. The provider reports
+task's `acceptance`, moving the task from `pending` to `confirmed`. The provider reports
 subsequent transitions to `preparing` or `in-progress`; Omni does not infer them from the acceptance
 command.
 
 **A task is never its audio.** A voice task is the allocation: the call is offered when it is
-routed to the agent and accepted as `acceptanceMode` dictates, and its presence and phase follow
+routed to the agent and accepted as its `acceptance` dictates, and its presence and phase follow
 the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
 consult, a conference leg joining or leaving, a transfer, a callback — the media follows
 separately, arriving on `task-media-started`, attaching through `openMedia` and ending with
@@ -3548,8 +3550,8 @@ multi-provider break**.
 ### `task-offered`
 
 Offers a task to Omni without a separate offer acknowledgement. An offer does not accept
-the task: when its phase is `pending`, Omni applies `autoAcceptTasks` and the event's
-`acceptanceMode`. `task-offered` must not introduce a task as `in-progress`; only a reconnect or
+the task: when its phase is `pending`, Omni applies `autoAcceptTasks` and the task's
+`acceptance`. `task-offered` must not introduce a task as `in-progress`; only a reconnect or
 resync snapshot may report work already in progress. The provider should include the task in later
 snapshots until it ends.
 

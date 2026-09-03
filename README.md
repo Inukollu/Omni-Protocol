@@ -15,6 +15,7 @@ system.
 | `src/index.ts` | The TypeScript declarations. |
 | `src/validation.ts` | Runtime validators Omni applies to adapter output. |
 | `src/testing.ts` | Conformance helpers an adapter runs against its own test state. |
+| `tests/` | One test file per source module, plus the guards over the guide and the repository's own text. |
 
 ## Entry points
 

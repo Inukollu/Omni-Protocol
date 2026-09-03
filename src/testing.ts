@@ -52,6 +52,7 @@ const STATE_SUBJECTS = [
   "task.lead",
   "task.assisting",
   "task.media",
+  "task.acceptance",
   "task.dispositions",
   "task.destinations",
   "task.custom",
@@ -92,6 +93,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (value.lead !== undefined) seen.add("task.lead");
   if (value.assisting !== undefined) seen.add("task.assisting");
   if (value.media !== undefined) seen.add("task.media");
+  if (value.acceptance !== undefined) seen.add("task.acceptance");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
   if (isRecord(capabilities.dispositions)) seen.add("task.dispositions");
   for (const directory of ["blindTransfer", "consultTransfer", "conference"]) {

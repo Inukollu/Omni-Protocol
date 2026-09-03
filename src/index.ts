@@ -674,6 +674,13 @@ export type Task<C extends Channel = Channel> = {
   /** The person or entity on the other end of this task. Who the task is with; `contacts` on the snapshot is the directory. */
   party?: Contact;
   phase: TaskPhase;
+  /**
+   * How this offer is accepted, stated on the pending task rather than the offer so a reconnect
+   * snapshot says it too: an offer the host never received is not accepted on the person's behalf
+   * for want of a word. Required while `pending` when Omni said it may auto-accept
+   * (`autoAcceptTasks: true`), forbidden when it said not, and absent past `pending`.
+   */
+  acceptance?: AcceptanceMode;
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
   attributes?: TaskAttribute[];
@@ -1095,7 +1102,6 @@ export type ProviderEvent<C extends Channel = Channel> =
   | {
       type: "task-offered";
       task: Task<C>;
-      acceptanceMode?: AcceptanceMode;
       allocationExpiresAt?: IsoTimestamp;
       preparationEndsAt?: IsoTimestamp;
     }
