@@ -726,46 +726,31 @@ function validateTaskAttributes(value: unknown, path: string, into: Collector): 
   });
 }
 
-/**
- * What the agent inherits, as the provider states it. Presence is the claim that somebody else
- * handled the task, so the handlers cannot be nobody; every number is reported whole.
- */
-function validateInheritedInto(value: unknown, path: string, into: Collector): void {
+function validateHandlingHistory(value: unknown, path: string, into: Collector): void {
   if (value === undefined) return;
   if (!isPlainObject(value)) {
-    into.add("task.inherited.shape", path, "inherited must be an object when present");
+    into.add("task.handlingHistory.shape", path, "handlingHistory must be an object with its steps when present");
     return;
   }
-  // Each number is present when the provider knows it and absent when it does not: a plausible
-  // nought is the fallback the no-fallbacks rule forbids.
+  // What the record adds up to before this agent: each total present when the provider knows it
+  // and absent when it does not, never a plausible nought.
   for (const field of ["handleSeconds", "holdSeconds", "queueSeconds"] as const) {
     if (value[field] !== undefined) {
-      into.require(isDurationSeconds(value[field]), `task.inherited.${field}`, `${path}.${field}`, `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
+      into.require(isDurationSeconds(value[field]), `task.handlingHistory.${field}`, `${path}.${field}`,
+        `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
     }
   }
   if (value.transfers !== undefined) {
     into.require(typeof value.transfers === "number" && Number.isInteger(value.transfers) && value.transfers >= 0,
-      "task.inherited.transfers", `${path}.transfers`, "transfers must be a whole number, zero or more, or omitted when unknown");
+      "task.handlingHistory.transfers", `${path}.transfers`, "transfers must be a whole number, zero or more, or omitted when unknown");
   }
-  if (!Array.isArray(value.handlers)) {
-    into.add("task.inherited.handlers.shape", `${path}.handlers`, "handlers must be an array of user ids");
-    return;
-  }
-  into.require(value.handlers.length > 0, "task.inherited.handlers.empty", `${path}.handlers`,
-    "inherited is present only when somebody else handled the task, so it names at least one handler; omit it when nobody did");
-  value.handlers.forEach((handler: unknown, index: number) =>
-    into.require(isUserId(handler), "task.inherited.handler", `${path}.handlers[${index}]`, "each handler is a non-empty user id"));
-}
-
-function validateHandlingHistory(value: unknown, path: string, into: Collector): void {
-  if (value === undefined) return;
-  if (!Array.isArray(value)) {
-    into.add("task.handlingHistory.shape", path, "handlingHistory must be an array when present");
+  if (!Array.isArray(value.steps)) {
+    into.add("task.handlingHistory.steps.shape", `${path}.steps`, "handlingHistory carries its steps as an array, empty when the task has had none");
     return;
   }
   let previous: number | undefined;
-  value.forEach((entry: unknown, index: number) => {
-    const at = `${path}[${index}]`;
+  value.steps.forEach((entry: unknown, index: number) => {
+    const at = `${path}.steps[${index}]`;
     if (!isPlainObject(entry)) {
       into.add("task.handlingHistory.entry", at, "each handling step must be an object");
       return;
@@ -920,7 +905,6 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into);
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into);
-  validateInheritedInto(task.inherited, `${path}.inherited`, into);
   validateConsultation(task.consultation, context.channel, `${path}.consultation`, into);
   validateTaskMedia(task.media, context.channel, `${path}.media`, into);
   validateLead(task.lead, context.channel, `${path}.lead`, into);

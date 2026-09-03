@@ -219,20 +219,11 @@ export const staleOfferMode = { type: "task-offered", task: { ...emailTask, id: 
 export const spokenDiagnostic = { type: "diagnostic", expected: "a party arrives with a name", observed: "party 4471 arrived id-only", taskId: "call-42" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error A diagnostic says what was observed; a rule broken with nothing observed is half a sentence.
 export const halfDiagnostic = { type: "diagnostic", expected: "a party arrives with a name" } satisfies ProviderEvent<"voice">;
-export const handedTask = { ...emailTask, id: "email-14", inherited: { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 1, handlers: ["a-17"] } } satisfies Task<"email">;
-export const honestlyPartialTask = { ...emailTask, id: "email-16", inherited: { transfers: 2, handlers: ["a-17"] } } satisfies Task<"email">;
-export const handlerlessTask = { ...emailTask, id: "email-15",
-  // @ts-expect-error What is inherited names who handled it; the type requires the handlers.
-  inherited: { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 1 } } satisfies Task<"email">;
-export const tickingManifest = { ...voiceManifest, runningStepReports: true } satisfies Manifest<"voice">;
-export const beginEndManifest = { ...voiceManifest,
-  // @ts-expect-error A provider that takes begin and end only omits the declaration; false is not a word here.
-  runningStepReports: false } satisfies Manifest<"voice">;
-export const muteBegan = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z" } satisfies HandlingReport;
-export const muteRunning = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", seconds: 15 } satisfies HandlingReport;
-export const muteEnded = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", seconds: 42, ended: true } satisfies HandlingReport;
-// @ts-expect-error An ended leg states its final duration; the type will not let the end go unmeasured.
-export const muteEndedUnmeasured = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", ended: true } satisfies HandlingReport;
+export const recordedTask = { ...emailTask, id: "email-14", handlingHistory: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], handleSeconds: 312, transfers: 1 } } satisfies Task<"email">;
+export const bareStepsTask = { ...emailTask, id: "email-15", handlingHistory: { steps: [] } } satisfies Task<"email">;
+export const arrayRecordTask = { ...emailTask, id: "email-16",
+  // @ts-expect-error The record is an object carrying its steps and what they add up to, not a bare array.
+  handlingHistory: [{ step: "answered", at: "2026-08-21T00:59:41Z" }] } satisfies Task<"email">;
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;

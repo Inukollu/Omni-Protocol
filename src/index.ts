@@ -565,21 +565,22 @@ export type HandlingStep =
   | "unanswered";
 
 /**
- * What the agent inherits with a task others handled before them, stated by the provider from its
- * own record rather than summed by a desk from instants that may be rounded or skewed. Present
- * exactly when somebody else has handled the task; absent when nobody has.
+ * The call record: the steps that brought the task here, one entry per occurrence and oldest
+ * first, and what they add up to before this agent -- stated by the provider from its own record,
+ * never summed by a desk from instants. Each total is present when the provider knows it and
+ * absent when it does not; a plausible nought is the fallback the no-fallbacks rule forbids. The
+ * record rides on the task and is replaced with it, so a late entry corrects the sums.
  */
-export interface TaskInheritance {
-  /** Seconds others spent handling it before this agent. Omitted when the provider cannot say; never a plausible nought. */
+export interface TaskHandlingHistory {
+  steps: TaskHandlingStep[];
+  /** Seconds others spent handling it before this agent. */
   handleSeconds?: DurationSeconds;
-  /** Seconds the caller spent on hold at others' hands. Omitted when unknown. */
+  /** Seconds the caller spent on hold at others' hands. */
   holdSeconds?: DurationSeconds;
-  /** Seconds waiting before anyone answered. Omitted when unknown. */
+  /** Seconds waiting before anyone answered. */
   queueSeconds?: DurationSeconds;
-  /** How many times the task changed hands. Omitted when unknown. */
+  /** How many times the task changed hands. */
   transfers?: number;
-  /** Who handled it before, oldest first, resolved through `describeUsers()`; never empty -- presence is the claim. */
-  handlers: UserId[];
 }
 
 export interface TaskHandlingStep {
@@ -708,9 +709,7 @@ export type Task<C extends Channel = Channel> = {
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
   attributes?: TaskAttribute[];
-  handlingHistory?: TaskHandlingStep[];
-  /** What others used before this agent: present exactly when somebody else handled the task. */
-  inherited?: TaskInheritance;
+  handlingHistory?: TaskHandlingHistory;
 } & TaskCompletion
   // Consulting, a lead on the call, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
   & (C extends "voice"

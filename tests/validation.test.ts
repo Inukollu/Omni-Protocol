@@ -206,28 +206,26 @@ describe("validateTask", () => {
     expect(custom({ prompt: { fields: [{ name: "destination", type: "text" }] } })).toEqual(["task.custom.prompt.field.label"]);
     expect(custom({ prompt: { fields: [{ ...destination, type: "number" }] } })).toEqual(["task.custom.prompt.field.type"]);
   });
-  it("states what the agent inherits, present exactly when somebody else handled the task", () => {
-    const inherited = (value: unknown) => rules(validateTask(task({ inherited: value }), { channel: "voice" }));
-    const carried = { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 2, handlers: ["a-17", "a-23"] };
-    expect(inherited(carried)).toEqual([]);
-    expect(inherited({ ...carried, handleSeconds: 0, holdSeconds: 0, transfers: 0 })).toEqual([]);
-    // Each number is present when known: a provider that cannot say sends the handlers and no nought.
-    expect(inherited({ handlers: ["a-17"] })).toEqual([]);
-    expect(inherited({ transfers: 2, handlers: ["a-17"] })).toEqual([]);
-    expect(inherited(undefined)).toEqual([]);
-    // Presence is the claim that somebody else handled it, so nobody is not an answer.
-    expect(inherited({ ...carried, handlers: [] })).toEqual(["task.inherited.handlers.empty"]);
-    expect(inherited({ ...carried, handlers: ["a-17", ""] })).toEqual(["task.inherited.handler"]);
-    expect(inherited({ ...carried, handlers: "a-17" })).toEqual(["task.inherited.handlers.shape"]);
-    expect(inherited({ ...carried, holdSeconds: -5 })).toEqual(["task.inherited.holdSeconds"]);
-    expect(inherited({ ...carried, queueSeconds: 1.5 })).toEqual(["task.inherited.queueSeconds"]);
-    expect(inherited({ ...carried, handleSeconds: "312" })).toEqual(["task.inherited.handleSeconds"]);
-    expect(inherited({ ...carried, transfers: -1 })).toEqual(["task.inherited.transfers"]);
-    expect(inherited("lots")).toEqual(["task.inherited.shape"]);
+  it("states what the record adds up to before this agent, each total present when known", () => {
+    const record = (over: Record<string, unknown>) => rules(validateTask(task({ handlingHistory: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], ...over } }), { channel: "voice" }));
+    expect(record({ handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 2 })).toEqual([]);
+    expect(record({ handleSeconds: 0, holdSeconds: 0, transfers: 0 })).toEqual([]);
+    // Each total is present when the provider knows it: the rest are absent, never a plausible nought.
+    expect(record({ transfers: 2 })).toEqual([]);
+    expect(record({})).toEqual([]);
+    expect(record({ holdSeconds: -5 })).toEqual(["task.handlingHistory.holdSeconds"]);
+    expect(record({ queueSeconds: 1.5 })).toEqual(["task.handlingHistory.queueSeconds"]);
+    expect(record({ handleSeconds: "312" })).toEqual(["task.handlingHistory.handleSeconds"]);
+    expect(record({ transfers: -1 })).toEqual(["task.handlingHistory.transfers"]);
+    expect(rules(validateTask(task({ handlingHistory: { transfers: 2 } }), { channel: "voice" }))).toEqual(["task.handlingHistory.steps.shape"]);
+    expect(rules(validateTask(task({ handlingHistory: [] }), { channel: "voice" }))).toEqual(["task.handlingHistory.shape"]);
+    // The entries moved under steps, and a violation says where it found them.
+    const misstep = validateTask(task({ handlingHistory: { steps: [{ step: "ringing", at: "2026-08-21T09:00:00Z" }] } }), { channel: "voice" });
+    expect(misstep.map(v => `${v.rule} @ ${v.path}`)).toEqual(["task.handlingHistory.step @ task.handlingHistory.steps[0].step"]);
   });
 
   it("records each hold as its own entry, oldest first", () => {
-    const history = (value: unknown) => rules(validateTask(task({ handlingHistory: value }), { channel: "voice" }));
+    const history = (steps: unknown) => rules(validateTask(task({ handlingHistory: { steps } }), { channel: "voice" }));
     const answered = { step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" };
     // Two holds are two entries; the running one omits its seconds.
     expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
@@ -311,7 +309,7 @@ describe("validateTask", () => {
 
   it("omits an unfinished duration rather than reporting nought", () => {
     const history = (over: Record<string, unknown>) =>
-      check({ handlingHistory: [{ step: "answered", at: "2026-08-21T09:00:00Z", ...over }] });
+      check({ handlingHistory: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", ...over }] } });
     expect(history({ seconds: 0 })).toContain("task.handlingHistory.seconds");
     expect(history({ seconds: -5 })).toContain("task.handlingHistory.seconds");
     expect(history({ seconds: 22 })).toEqual([]);
@@ -320,12 +318,12 @@ describe("validateTask", () => {
 
   it("takes a handling step without a person, and rejects an empty one", () => {
     const history = (over: Record<string, unknown>) =>
-      check({ handlingHistory: [{ step: "answered", at: "2026-08-21T09:00:00Z", ...over }] });
+      check({ handlingHistory: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", ...over }] } });
     // Absent means the provider could not attribute it, which is a legitimate report.
     expect(history({})).toEqual([]);
     expect(history({ by: "" })).toContain("task.handlingHistory.by");
     expect(history({ by: "agent-17" })).toEqual([]);
-    expect(check({ handlingHistory: [{ step: "ringing", at: "2026-08-21T09:00:00Z" }] })).toContain("task.handlingHistory.step");
+    expect(check({ handlingHistory: { steps: [{ step: "ringing", at: "2026-08-21T09:00:00Z" }] } })).toContain("task.handlingHistory.step");
   });
 
   it("validates each kind of task attribute", () => {
@@ -844,7 +842,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("names nobody on a queued step", () => {
-    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ handlingHistory: [{ at: "2026-08-21T09:00:00Z", ...entry }] }), voice));
+    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ handlingHistory: { steps: [{ at: "2026-08-21T09:00:00Z", ...entry }] } }), voice));
     expect(step({ step: "answered", by: "A-1" })).toEqual([]);
     expect(step({ step: "queued" })).toEqual([]);
     expect(step({ step: "queued", by: "A-1" })).toEqual(["task.handlingHistory.by.unexpected"]);

@@ -48,7 +48,6 @@ const STATE_SUBJECTS = [
   "task.browsers",
   "task.attributes",
   "task.handlingHistory",
-  "task.inherited",
   "task.consultation",
   "task.lead",
   "task.assisting",
@@ -89,8 +88,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   seen.add("tasks");
   if (some(value.browsers)) seen.add("task.browsers");
   if (some(value.attributes)) seen.add("task.attributes");
-  if (some(value.handlingHistory)) seen.add("task.handlingHistory");
-  if (value.inherited !== undefined) seen.add("task.inherited");
+  if (isRecord(value.handlingHistory) && some(value.handlingHistory.steps)) seen.add("task.handlingHistory");
   if (value.consultation !== undefined) seen.add("task.consultation");
   if (value.lead !== undefined) seen.add("task.lead");
   if (value.assisting !== undefined) seen.add("task.assisting");
@@ -415,8 +413,7 @@ const teamNamesUsers = (team: unknown): boolean =>
 
 const taskNamesUsers = (task: unknown): boolean =>
   isRecord(task) && (
-    (Array.isArray(task.handlingHistory) && task.handlingHistory.some(step => isRecord(step) && step.by !== undefined)) ||
-    (isRecord(task.inherited) && some(task.inherited.handlers)) ||
+    (isRecord(task.handlingHistory) && Array.isArray(task.handlingHistory.steps) && task.handlingHistory.steps.some(step => isRecord(step) && step.by !== undefined)) ||
     (isRecord(task.lead) && task.lead.leadId !== undefined) ||
     isRecord(task.assisting));
 

@@ -483,10 +483,10 @@ const conformingSnapshot = {
       { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedSession: true, isolationScheme: "ProviderName.TaskTypeName.TabName" },
       { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedSession: false },
     ],
-    handlingHistory: [
-      { step: "queued", at: "2026-08-21T08:59:19Z", seconds: 41 },
-      { step: "answered", at: "2026-08-21T09:00:00Z", by: "A-1" },
-    ],
+    handlingHistory: { steps: [
+        { step: "queued", at: "2026-08-21T08:59:19Z", seconds: 41 },
+        { step: "answered", at: "2026-08-21T09:00:00Z", by: "A-1" },
+    ] },
   }],
   taskCount: 1,
   contacts: [{ name: "Asha Rao", number: "+919876543210", email: "asha@example.com", attributes: [{ key: "Category", value: "High priority" }] }],
@@ -616,11 +616,11 @@ describe("exerciseAdapter", () => {
     // The rich task carries browsers, history, a disposition policy, transfer destinations and a
     // custom control, but no attributes and is neither consulting, asking for a lead, nor assisting.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.inherited", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
-      "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.inherited", "task.consultation", "task.lead", "task.assisting",
+      "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.consultation", "task.lead", "task.assisting",
       "task.media", "task.acceptance", "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
       "contacts", "scheduledActivities", "team.policies",
     ]);
@@ -631,14 +631,14 @@ describe("exerciseAdapter", () => {
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { consultControl: true } }, snapshot: reached })))
-      .toEqual(["task.attributes", "task.inherited", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "team.policies"]);
+      .toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "team.policies"]);
     const later: ProviderEventEnvelope<"voice"> = {
       id: "evt-team", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } },
     };
     const rosterOnly = { ...conformingSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
     const withEvent = await run({ capabilities: { team: {} }, snapshot: rosterOnly, emit: listener => listener(later) });
-    expect(state(withEvent)).toEqual(["task.attributes", "task.inherited", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
+    expect(state(withEvent)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
     expect(events(withEvent)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
   });
 
@@ -1024,7 +1024,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
 
   it("describeUsers(), when a UserId arrives on an event or on a task's lead or assisting", async () => {
     const at = "2026-08-21T09:05:00Z";
-    const bare = { ...minimalSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, handlingHistory: [] }] } satisfies Snapshot<"voice">;
+    const bare = { ...minimalSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, handlingHistory: { steps: [] } }] } satisfies Snapshot<"voice">;
     const joined = { ...bare, tasks: [{ ...bare.tasks[0]!, capabilities: { ...bare.tasks[0]!.capabilities, consultLead: true }, lead: { stage: "joined", leadId: "L-9", since: at } }] } satisfies Snapshot<"voice">;
     const assisting = { ...bare, tasks: [{ ...bare.tasks[0]!, assisting: { memberId: "A-1", since: at } }] } satisfies Snapshot<"voice">;
     expect(await rules({ manifest: plainManifest, snapshot: bare, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
@@ -1077,10 +1077,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const imposed = { ...minimalSnapshot, break: { approval: "in-effect", mayAsk: true, imposed: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: imposed, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     expect(await rules({ snapshot: minimalSnapshot, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
-    // What the agent inherits names who handled the task before them, and a name obliges the directory.
-    const handed = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, handlingHistory: [], inherited: { handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 1, handlers: ["A-2"] } }] } satisfies Snapshot<"voice">;
-    expect(await rules({ snapshot: handed, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
-    expect(await rules({ snapshot: handed })).toEqual([]);
+
   });
 
   it("nothing optional of an adapter that declares nothing optional", async () => {
