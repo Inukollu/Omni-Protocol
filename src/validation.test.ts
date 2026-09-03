@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BREAK_KINDS, BROWSER_ISOLATION_SCHEMES, IDLE_CAPABILITIES, effectiveTiers } from "./index.js";
+import { BREAK_KINDS, BROWSER_ISOLATION_SCHEMES, IDLE_CAPABILITIES, effectiveLevels } from "./index.js";
 import {
   assertNoViolations,
   ProtocolConformanceError,
@@ -39,15 +39,15 @@ const task = (over: Record<string, unknown> = {}) => {
     browsers: capabilities.browsers === true ? [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", reuse: false }] : [],
     phase: "in-progress",
     completionMode: "agent-command",
-    completionAllowance: 15,
+    wrapAllowance: 15,
     ...over,
   };
 };
 
 const snapshot = (over: Record<string, unknown> = {}) => ({
-  status: "active",
-  sessionId: "session-1",
-  break: { approval: "not-requested", accepting: true },
+  transport: "active",
+  loginId: "session-1",
+  break: { approval: "not-requested", mayAsk: true },
   tasks: [],
   taskCount: Array.isArray(over.tasks) ? over.tasks.length : 0,
   ...over,
@@ -55,7 +55,7 @@ const snapshot = (over: Record<string, unknown> = {}) => ({
 
 const envelope = (event: unknown, over: Record<string, unknown> = {}) => ({
   id: "evt-1",
-  sessionId: "session-1",
+  loginId: "session-1",
   occurredAt: "2026-08-21T09:00:00Z",
   event,
   ...over,
@@ -91,7 +91,7 @@ describe("timestamps", () => {
 describe("validateManifest", () => {
   it("accepts a conforming manifest", () => {
     expect(validateManifest(manifest())).toEqual([]);
-    expect(validateManifest(manifest({ idleCapabilities: { dial: { destinationPolicy: "any-number" }, contacts: true } }))).toEqual([]);
+    expect(validateManifest(manifest({ idleCapabilities: { dial: { destinations: "any-number" }, contacts: true } }))).toEqual([]);
   });
 
   it.each([
@@ -108,10 +108,10 @@ describe("validateManifest", () => {
   });
 
   it("lets only voice declare dial", () => {
-    const chat = { ...manifest({ channel: "chat" }), idleCapabilities: { dial: { destinationPolicy: "any-number" } } };
+    const chat = { ...manifest({ channel: "chat" }), idleCapabilities: { dial: { destinations: "any-number" } } };
     expect(rules(validateManifest(chat))).toContain("manifest.idleCapability.channel");
     // The control: the same capability on voice is fine, so the rejection is about the channel.
-    expect(validateManifest(manifest({ idleCapabilities: { dial: { destinationPolicy: "any-number" } } }))).toEqual([]);
+    expect(validateManifest(manifest({ idleCapabilities: { dial: { destinations: "any-number" } } }))).toEqual([]);
   });
 
   it("declares presence capabilities by presence", () => {
@@ -130,8 +130,8 @@ describe("validateTask", () => {
   it.each([
     ["an unknown phase", { phase: "ringing" }, "task.phase"],
     ["an unknown completion mode", { completionMode: "whenever" }, "task.completionMode"],
-    ["a fractional allowance", { completionAllowance: 1.5 }, "task.completionAllowance"],
-    ["a negative allowance", { completionAllowance: -1 }, "task.completionAllowance"],
+    ["a fractional allowance", { wrapAllowance: 1.5 }, "task.wrapAllowance"],
+    ["a negative allowance", { wrapAllowance: -1 }, "task.wrapAllowance"],
     ["an empty id", { id: "  " }, "task.id"],
     ["no title", { title: "" }, "task.title"],
   ])("rejects %s", (_label, over, rule) => {
@@ -207,7 +207,7 @@ describe("validateTask", () => {
 
 describe("break state", () => {
   const check = (over: Record<string, unknown>) =>
-    rules(validateSnapshot(snapshot({ break: { approval: "not-requested", accepting: true, ...over } }), manifest()));
+    rules(validateSnapshot(snapshot({ break: { approval: "not-requested", mayAsk: true, ...over } }), manifest()));
 
   it("accepts each approval and rejects one the contract dropped", () => {
     for (const approval of ["not-requested", "awaiting-decision", "granted", "starting-after-task", "in-effect"]) {
@@ -223,7 +223,7 @@ describe("break state", () => {
     // A break begins when the work ends. Until then the state is starting-after-task, which may
     // stand beside any task; in-effect beside one is a report of a state the agent cannot be in.
     const withTask = (approval: string) =>
-      rules(validateSnapshot(snapshot({ tasks: [task()], break: { approval, accepting: true } }), manifest()));
+      rules(validateSnapshot(snapshot({ tasks: [task()], break: { approval, mayAsk: true } }), manifest()));
     expect(withTask("starting-after-task")).toEqual([]);
     expect(withTask("granted")).toEqual([]);
     expect(withTask("in-effect")).toEqual(["break.in-effect.tasks"]);
@@ -311,8 +311,8 @@ describe("validateSnapshot", () => {
   });
 
   it.each([
-    ["a status the contract dropped", snapshot({ status: "inactive" }), "snapshot.status"],
-    ["no session id", snapshot({ sessionId: "" }), "snapshot.sessionId"],
+    ["a transport the contract dropped", snapshot({ transport: "inactive" }), "snapshot.transport"],
+    ["no login id", snapshot({ loginId: "" }), "snapshot.loginId"],
     ["two tasks with one id", snapshot({ tasks: [task(), task()] }), "task.id.unique"],
   ])("rejects %s", (_label, value, rule) => {
     expect(rules(validateSnapshot(value, manifest()))).toContain(rule);
@@ -369,20 +369,20 @@ describe("validateEventEnvelope", () => {
     rules(validateEventEnvelope(envelope(event, over), manifest()));
 
   it("requires the envelope to name its session", () => {
-    // A login is identified by its session id, and an event that does not name one cannot be
+    // A login is identified by its login id, and an event that does not name one cannot be
     // attributed to the login it belongs to.
-    expect(check({ type: "provider-status", status: "active" }, { sessionId: "" })).toContain("event.sessionId");
-    expect(check({ type: "provider-status", status: "active" })).toEqual([]);
+    expect(check({ type: "transport-status", status: "active" }, { loginId: "" })).toContain("event.loginId");
+    expect(check({ type: "transport-status", status: "active" })).toEqual([]);
   });
 
   it("requires an error to name its recovery, and nothing else to carry one", () => {
-    expect(check({ type: "provider-status", status: "error", recovery: "reconnect", message: "session gone" })).toEqual([]);
-    expect(check({ type: "provider-status", status: "error", recovery: "reauthenticate" })).toEqual([]);
-    expect(check({ type: "provider-status", status: "error" })).toEqual(["event.providerStatus.recovery.required"]);
-    expect(check({ type: "provider-status", status: "error", recovery: "retry" })).toEqual(["event.providerStatus.recovery"]);
+    expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "session gone" })).toEqual([]);
+    expect(check({ type: "transport-status", status: "error", recovery: "reauthenticate" })).toEqual([]);
+    expect(check({ type: "transport-status", status: "error" })).toEqual(["event.transportStatus.recovery.required"]);
+    expect(check({ type: "transport-status", status: "error", recovery: "retry" })).toEqual(["event.transportStatus.recovery"]);
     // Both directions: a status with nothing to revive carries no recovery.
-    expect(check({ type: "provider-status", status: "connecting", recovery: "reconnect" })).toEqual(["event.providerStatus.recovery.unexpected"]);
-    expect(check({ type: "provider-status", status: "active" })).toEqual([]);
+    expect(check({ type: "transport-status", status: "connecting", recovery: "reconnect" })).toEqual(["event.transportStatus.recovery.unexpected"]);
+    expect(check({ type: "transport-status", status: "active" })).toEqual([]);
   });
 
   it("carries the reader into a team-updated and into a reconnect snapshot", () => {
@@ -417,13 +417,13 @@ describe("validateEventEnvelope", () => {
   it("validates each event type", () => {
     expect(check({ type: "snapshot", reason: "reconnected", snapshot: snapshot() })).toEqual([]);
     expect(check({ type: "snapshot", reason: "because", snapshot: snapshot() })).toContain("event.snapshot.reason");
-    expect(check({ type: "break-state", break: { approval: "in-effect", accepting: false } })).toEqual([]);
+    expect(check({ type: "break-state", break: { approval: "in-effect", mayAsk: false } })).toEqual([]);
     expect(check({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "require-agent-acceptance" })).toEqual([]);
     expect(check({ type: "task-offered", task: task(), acceptanceMode: "whenever" })).toContain("event.taskOffered.acceptanceMode");
     expect(check({ type: "task-media-ended", taskId: "call-42" })).toEqual([]);
     expect(check({ type: "task-media-ended", taskId: "" })).toContain("event.taskMediaEnded.taskId");
-    expect(check({ type: "task-media-ready", taskId: "call-42" })).toEqual([]);
-    expect(check({ type: "task-media-ready", taskId: "" })).toContain("event.taskMediaReady.taskId");
+    expect(check({ type: "task-media-started", taskId: "call-42" })).toEqual([]);
+    expect(check({ type: "task-media-started", taskId: "" })).toContain("event.taskMediaStarted.taskId");
     expect(check({ type: "announcement", text: "Hello", announcedAt: "2026-08-21T09:00:00Z" })).toEqual([]);
     expect(check({ type: "announcement", text: "", announcedAt: "2026-08-21T09:00:00Z" })).toContain("event.announcement.text");
     expect(check({ type: "team-updated", team: { members: [] } })).toEqual([]);
@@ -456,6 +456,37 @@ describe("validateEventEnvelope", () => {
   });
 });
 
+describe("one word, one meaning", () => {
+  it("lets each task browser say what the agent sees of its URL, in one of three words", () => {
+    const browser = (extra: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", reuse: false, ...extra }] }), { channel: "voice" }));
+    expect(browser({})).toEqual([]);
+    expect(browser({ urlVisibility: "hidden" })).toEqual([]);
+    expect(browser({ urlVisibility: "domain" })).toEqual([]);
+    expect(browser({ urlVisibility: "full" })).toEqual([]);
+    expect(browser({ urlVisibility: "partial" })).toEqual(["task.browser.urlVisibility"]);
+  });
+
+  it("refuses the words the contract renamed, beside the words that replaced them", () => {
+    // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
+    const user = { id: "agent-1", displayName: "Ada" };
+    const prefs = (setBy: string) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ id: "mute", label: "Mute", enabled: true, setBy }] } }));
+    expect(prefs("provider")).toEqual([]);
+    expect(prefs("provisioning")).toEqual(["preference.setBy.unknown"]);
+    const media = (value: unknown) => rules(validateTask(task({ media: value }), { channel: "voice" }));
+    expect(media("started")).toEqual([]);
+    expect(media("ready")).toEqual(["task.media"]);
+    const event = (type: string) => rules(validateEventEnvelope(envelope({ type, taskId: "call-42", status: "active" }), manifest()));
+    expect(event("task-media-started")).toEqual([]);
+    expect(event("transport-status")).toEqual([]);
+    // renamed away: the old event names must be refused, not aliased.
+    expect([event("task-media-ready"), event("provider-status")]).toEqual([["event.type"], ["event.type"]]);
+    const brk = (state: Record<string, unknown>) => rules(validateSnapshot(snapshot({ break: { approval: "not-requested", ...state } }), manifest()));
+    expect(brk({ mayAsk: true })).toEqual([]);
+    expect(brk({ accepting: true })).toEqual(["break.mayAsk"]);
+    expect(brk({ mayAsk: "yes" })).toEqual(["break.mayAsk"]);
+  });
+});
+
 describe("absence of knowledge is never evidence of absence", () => {
   it("requires a snapshot to state its task count, reconciled with the tasks it carries", () => {
     const count = (over: Record<string, unknown> = {}) => rules(validateSnapshot(snapshot(over), manifest()));
@@ -475,7 +506,7 @@ describe("absence of knowledge is never evidence of absence", () => {
 describe("audio arrives on the provider's word", () => {
   it("carries the task's media state on voice alone, in one of two words", () => {
     const media = (value: unknown, channel = "voice") => rules(validateTask(task({ channel, media: value }), { channel }));
-    expect(media("ready")).toEqual([]);
+    expect(media("started")).toEqual([]);
     expect(media("ended")).toEqual([]);
     expect(media(undefined)).toEqual([]);
     expect(media("live")).toEqual(["task.media"]);
@@ -487,33 +518,33 @@ describe("audio arrives on the provider's word", () => {
 describe("who decides what an agent may do", () => {
   const voice = { channel: "voice" };
 
-  it("takes the typical four tiers by default, or exactly the ladder the manifest states", () => {
-    expect(effectiveTiers(undefined).map(tier => tier.id)).toEqual(["org", "site", "team", "person"]);
+  it("takes the typical four levels by default, or exactly the ladder the manifest states", () => {
+    expect(effectiveLevels(undefined).map(level => level.id)).toEqual(["org", "site", "team", "person"]);
     // A declared ladder is the whole ladder: what it leaves out does not exist.
-    const tiers = effectiveTiers([{ id: "org", label: "Your organisation" }, { id: "team", label: "Your queue group" }, { id: "person", label: "You" }]);
-    expect(tiers.map(tier => `${tier.id}=${tier.label}`)).toEqual(["org=Your organisation", "team=Your queue group", "person=You"]);
-    const m = (orgTiers: unknown) => rules(validateManifest(manifest({ orgTiers })));
+    const levels = effectiveLevels([{ id: "org", label: "Your organisation" }, { id: "team", label: "Your queue group" }, { id: "person", label: "You" }]);
+    expect(levels.map(level => `${level.id}=${level.label}`)).toEqual(["org=Your organisation", "team=Your queue group", "person=You"]);
+    const m = (orgLevels: unknown) => rules(validateManifest(manifest({ orgLevels })));
     expect(m([{ id: "region", label: "Your region" }, { id: "person", label: "You" }])).toEqual([]);
-    expect(m("region")).toEqual(["manifest.orgTiers.shape"]);
-    expect(m(["region"])).toEqual(["manifest.orgTier.shape"]);
-    expect(m([{ label: "Your region" }])).toEqual(["manifest.orgTier.id"]);
-    expect(m([{ id: "region" }])).toEqual(["manifest.orgTier.label"]);
-    expect(m([{ id: "region", label: "A" }, { id: "region", label: "B" }])).toEqual(["manifest.orgTier.unique"]);
+    expect(m("region")).toEqual(["manifest.orgLevels.shape"]);
+    expect(m(["region"])).toEqual(["manifest.orgLevel.shape"]);
+    expect(m([{ label: "Your region" }])).toEqual(["manifest.orgLevel.id"]);
+    expect(m([{ id: "region" }])).toEqual(["manifest.orgLevel.label"]);
+    expect(m([{ id: "region", label: "A" }, { id: "region", label: "B" }])).toEqual(["manifest.orgLevel.unique"]);
     // The subject of every resolution cannot be declared away.
-    expect(m([{ id: "org", label: "Your organisation" }, { id: "team", label: "Your team" }])).toEqual(["manifest.orgTiers.person"]);
+    expect(m([{ id: "org", label: "Your organisation" }, { id: "team", label: "Your team" }])).toEqual(["manifest.orgLevels.person"]);
   });
 
-  it("lets a control stand locked in its place, naming the tier, and never a queue's own content", () => {
+  it("lets a control stand locked in its place, naming the level, and never a queue's own content", () => {
     const caps = (capabilities: unknown) => rules(validateTask(task({ capabilities }), voice));
     expect(caps({ hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" }, recording: { lockedBy: "site" } })).toEqual([]);
     expect(caps({ blindTransfer: { lockedBy: "org" } })).toEqual([]);
     expect(caps({ mute: { lockedBy: "person" } })).toEqual(["task.capability.locked.lockedBy.person"]);
-    // A tier is one of the four defaults when the manifest declares no ladder.
+    // A level is one of the four defaults when the manifest declares no ladder.
     expect(caps({ mute: { lockedBy: "org" } })).toEqual([]);
     expect(caps({ mute: { lockedBy: "region" } })).toEqual(["task.capability.locked.lockedBy.unknown"]);
     // The control: a manifest that declares no ladder has all four defaults in force.
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "site" } } })] }), manifest()))).toEqual([]);
-    const regional = manifest({ orgTiers: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] });
+    const regional = manifest({ orgLevels: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] });
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "region" } } })] }), regional))).toEqual([]);
     // The ladder is the whole ladder: a default the manifest left out is not in force.
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "site" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
@@ -543,8 +574,8 @@ describe("who decides what an agent may do", () => {
     const user = { id: "agent-1", displayName: "Ada" };
     const prefs = (value: unknown) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: value } }));
     const mute = { id: "mute", label: "Mute", enabled: true, setBy: "team" };
-    expect(prefs([mute, { id: "hold", label: "Hold", enabled: false, setBy: "person" }, { id: "skill:billing", label: "Billing", enabled: true, setBy: "provisioning" }])).toEqual([]);
-    // Nothing is hidden: a preference a tier above has since locked is listed, locked.
+    expect(prefs([mute, { id: "hold", label: "Hold", enabled: false, setBy: "person" }, { id: "skill:billing", label: "Billing", enabled: true, setBy: "provider" }])).toEqual([]);
+    // Nothing is hidden: a preference a level above has since locked is listed, locked.
     expect(prefs([{ ...mute, lockedBy: "site", reason: "No mute at this site" }])).toEqual([]);
     expect(prefs(undefined)).toEqual([]);
     expect(prefs([])).toEqual(["authentication.capability.preferences.empty"]);
@@ -556,8 +587,8 @@ describe("who decides what an agent may do", () => {
     expect(prefs([{ id: "mute", label: "Mute", enabled: true }])).toEqual(["preference.setBy"]);
     expect(prefs([{ ...mute, setBy: "queue" }])).toEqual(["preference.setBy.unknown"]);
     expect(prefs([{ ...mute, lockedBy: "person" }])).toEqual(["preference.lockedBy.person"]);
-    // Given the manifest's tiers, a declared one is accepted and an undeclared one is not.
-    const declared = { tiers: ["org", "region", "team", "person"] };
+    // Given the manifest's levels, a declared one is accepted and an undeclared one is not.
+    const declared = { levels: ["org", "region", "team", "person"] };
     expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...mute, setBy: "region" }] } }, "authentication", declared))).toEqual([]);
     expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...mute, setBy: "site" }] } }, "authentication", declared))).toEqual(["preference.setBy.unknown"]);
     expect(prefs([{ ...mute, reason: "Because" }])).toEqual(["preference.reason.unexpected"]);
@@ -568,7 +599,7 @@ describe("who decides what an agent may do", () => {
   it("carries the team's policies on the roster, as the lead sees them", () => {
     const may = { capabilities: { team: { policyControl: true as const } } };
     const policies = (value: unknown) => rules(validateTeamRoster({ members: [], policies: value }, "team", may));
-    expect(policies({ mute: { setting: "off", setBy: "team" }, hold: { setting: "agent", setBy: "team" }, recording: { setting: "on", setBy: "site", lockedBy: "site", reason: "Compliance" }, dial: { setting: "on", setBy: "provisioning" }, "skill:billing": { setting: "agent", setBy: "org" } })).toEqual([]);
+    expect(policies({ mute: { setting: "off", setBy: "team" }, hold: { setting: "agent", setBy: "team" }, recording: { setting: "on", setBy: "site", lockedBy: "site", reason: "Compliance" }, dial: { setting: "on", setBy: "provider" }, "skill:billing": { setting: "agent", setBy: "org" } })).toEqual([]);
     expect(policies({ telepathy: { setting: "on", setBy: "team" } })).toEqual(["team.policy.key"]);
     expect(policies({ mute: "off" })).toEqual(["team.policy.shape"]);
     expect(policies({ mute: { setting: "maybe", setBy: "team" } })).toEqual(["team.policy.setting"]);
@@ -584,12 +615,12 @@ describe("who decides what an agent may do", () => {
   });
 
   it("lets a custom action ask for what it needs and say where it renders", () => {
-    const custom = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { custom: [{ id: "transfer-out", ui: { kind: "button", label: "Transfer out", placement: "secondary" }, ...over }] } }), voice));
+    const custom = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { custom: [{ id: "transfer-out", ui: { control: "button", label: "Transfer out", placement: "secondary" }, ...over }] } }), voice));
     const destination = { name: "destination", label: "Number", type: "text" };
     expect(custom({})).toEqual([]);
     expect(custom({ prompt: { fields: [destination] } })).toEqual([]);
-    expect(custom({ ui: { kind: "button", label: "Transfer out", placement: "secondary", render: "page" } })).toEqual([]);
-    expect(custom({ ui: { kind: "button", label: "Transfer out", placement: "secondary", render: "popup" } })).toEqual(["task.custom.ui.render"]);
+    expect(custom({ ui: { control: "button", label: "Transfer out", placement: "secondary", render: "page" } })).toEqual([]);
+    expect(custom({ ui: { control: "button", label: "Transfer out", placement: "secondary", render: "popup" } })).toEqual(["task.custom.ui.render"]);
     expect(custom({ prompt: { fields: [] } })).toEqual(["task.custom.prompt.fields"]);
     expect(custom({ prompt: "destination" })).toEqual(["task.custom.prompt.shape"]);
     expect(custom({ prompt: { fields: ["destination"] } })).toEqual(["task.custom.prompt.field.shape"]);
@@ -611,16 +642,14 @@ describe("validateHostReport", () => {
   const failure = { code: "host.permission-denied", message: "Microphone access was refused", retryable: true };
   const ready = { status: "ready", localAudio: microphone, flowing: true };
   const denied = { status: "unavailable", reason: "denied", failure };
-  const audio = (input: unknown, output: unknown = { status: "ready" }) => rules(validateHostReport({ online: true, browsers: { urlVisibility: "hidden" }, audio: { input, output } }));
+  const audio = (input: unknown, output: unknown = { status: "ready" }) => rules(validateHostReport({ online: true, audio: { input, output } }));
 
   it("accepts a report with and without audio, and holds each part to its shape", () => {
-    expect(rules(validateHostReport({ online: true, browsers: { urlVisibility: "hidden" } }))).toEqual([]);
-    expect(rules(validateHostReport({ online: false, browsers: { urlVisibility: "full" } }))).toEqual([]);
-    expect(rules(validateHostReport({ browsers: { urlVisibility: "domain" } }))).toEqual(["host.online"]);
-    expect(rules(validateHostReport({ online: true }))).toEqual(["host.browsers.shape"]);
-    expect(rules(validateHostReport({ online: true, browsers: { urlVisibility: "partial" } }))).toEqual(["host.browsers.urlVisibility"]);
+    expect(rules(validateHostReport({ online: true }))).toEqual([]);
+    expect(rules(validateHostReport({ online: false }))).toEqual([]);
+    expect(rules(validateHostReport({}))).toEqual(["host.online"]);
     expect(rules(validateHostReport("online"))).toEqual(["host.shape"]);
-    expect(rules(validateHostReport({ online: true, browsers: { urlVisibility: "hidden" }, audio: "ready" }))).toEqual(["host.audio.shape"]);
+    expect(rules(validateHostReport({ online: true, audio: "ready" }))).toEqual(["host.audio.shape"]);
     expect(audio(ready)).toEqual([]);
     expect(audio({ ...ready, flowing: false })).toEqual([]);
     expect(audio(denied)).toEqual([]);
@@ -647,7 +676,7 @@ describe("validateHostReport", () => {
     expect(audio(ready, { status: "unavailable", failure })).toEqual(["host.audio.output.reason"]);
     expect(audio(ready, { status: "unavailable", reason: "denied", failure })).toEqual(["host.audio.output.reason"]);
     expect(audio(ready, { status: "silent" })).toEqual(["host.audio.output.status"]);
-    expect(rules(validateHostReport({ online: true, browsers: { urlVisibility: "hidden" }, audio: { input: ready } }))).toEqual(["host.audio.output.shape"]);
+    expect(rules(validateHostReport({ online: true, audio: { input: ready } }))).toEqual(["host.audio.output.shape"]);
   });
 });
 
@@ -750,9 +779,9 @@ describe("the other direction, everywhere", () => {
 
   it("holds the break state's parts to its approval", () => {
     const check = (over: Record<string, unknown>) =>
-      rules(validateSnapshot(snapshot({ break: { approval: "not-requested", accepting: true, ...over } }), manifest()));
-    expect(check({ accepting: false, refusedReason: "Busy hours" })).toEqual([]);
-    expect(check({ accepting: true, refusedReason: "Busy hours" })).toEqual(["break.refusedReason.accepting"]);
+      rules(validateSnapshot(snapshot({ break: { approval: "not-requested", mayAsk: true, ...over } }), manifest()));
+    expect(check({ mayAsk: false, refusedReason: "Busy hours" })).toEqual([]);
+    expect(check({ mayAsk: true, refusedReason: "Busy hours" })).toEqual(["break.refusedReason.mayAsk"]);
     const placed = { by: "M-1", endsAutomatically: false };
     expect(check({ approval: "in-effect", imposed: placed })).toEqual([]);
     expect(check({ approval: "not-requested", imposed: placed })).toEqual(["break.imposed.approval"]);
@@ -777,13 +806,13 @@ describe("the other direction, everywhere", () => {
   });
 
   it("holds a snapshot and an event to the login's session, once told it", () => {
-    const login = { sessionId: "session-1" };
+    const login = { loginId: "session-1" };
     expect(rules(validateSnapshot(snapshot(), manifest(), "snapshot", login))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ sessionId: "session-0" }), manifest(), "snapshot", login))).toEqual(["snapshot.sessionId.mismatch"]);
-    expect(rules(validateSnapshot(snapshot({ sessionId: "session-0" }), manifest()))).toEqual([]);
-    const status = { type: "provider-status", status: "active" };
+    expect(rules(validateSnapshot(snapshot({ loginId: "session-0" }), manifest(), "snapshot", login))).toEqual(["snapshot.loginId.mismatch"]);
+    expect(rules(validateSnapshot(snapshot({ loginId: "session-0" }), manifest()))).toEqual([]);
+    const status = { type: "transport-status", status: "active" };
     expect(rules(validateEventEnvelope(envelope(status), manifest(), "event", login))).toEqual([]);
-    expect(rules(validateEventEnvelope(envelope(status, { sessionId: "session-0" }), manifest(), "event", login))).toEqual(["event.sessionId.mismatch"]);
+    expect(rules(validateEventEnvelope(envelope(status, { loginId: "session-0" }), manifest(), "event", login))).toEqual(["event.loginId.mismatch"]);
   });
 
   it("lets a lead assist one call at a time", () => {
@@ -844,8 +873,8 @@ describe("rules that had no test", () => {
     expect(m({ taskTypePresentation: { Support: { singular: "Support call", plural: "Support calls", referenceLabel: "" } } })).toEqual(["manifest.taskTypePresentation.referenceLabel"]);
     expect(m({ phaseLabels: { pending: "Ringing" } })).toEqual([]);
     expect(m({ phaseLabels: { pending: "" } })).toEqual(["manifest.phaseLabels.label"]);
-    expect(m({ idleCapabilities: { dial: { destinationPolicy: "any-number" } } })).toEqual([]);
-    expect(m({ idleCapabilities: { dial: {} } })).toEqual(["manifest.dial.destinationPolicy"]);
+    expect(m({ idleCapabilities: { dial: { destinations: "any-number" } } })).toEqual([]);
+    expect(m({ idleCapabilities: { dial: {} } })).toEqual(["manifest.dial.destinations"]);
     expect(m({ idleCapabilities: { personalBrowser: { access: { mode: "block-all", allowList: [], blockList: [] } } } })).toEqual([]);
     expect(m({ idleCapabilities: { personalBrowser: { access: "block-all" } } })).toEqual(["manifest.personalBrowser.access.shape"]);
   });
@@ -864,14 +893,14 @@ describe("rules that had no test", () => {
 
   it("custom controls", () => {
     const custom = (over: unknown) => rules(validateTask(task({ capabilities: { custom: over } }), voice));
-    const control = { id: "supervisor", ui: { kind: "button", label: "Request supervisor", placement: "secondary" } };
+    const control = { id: "supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } };
     expect(custom([control])).toEqual([]);
     expect(custom("supervisor")).toEqual(["task.custom.shape"]);
     expect(custom(["supervisor"])).toEqual(["task.custom.entry"]);
     expect(custom([{ ui: control.ui }])).toEqual(["task.custom.id"]);
     expect(custom([control, control])).toEqual(["task.custom.unique"]);
     expect(custom([{ id: "supervisor" }])).toEqual(["task.custom.ui"]);
-    expect(custom([{ ...control, ui: { ...control.ui, kind: "dial" } }])).toEqual(["task.custom.ui.kind"]);
+    expect(custom([{ ...control, ui: { ...control.ui, control: "dial" } }])).toEqual(["task.custom.ui.control"]);
     expect(custom([{ ...control, ui: { ...control.ui, label: "" } }])).toEqual(["task.custom.ui.label"]);
     expect(custom([{ ...control, ui: { ...control.ui, placement: "footer" } }])).toEqual(["task.custom.ui.placement"]);
   });
@@ -904,8 +933,8 @@ describe("rules that had no test", () => {
     expect(ended({ type: "transferred", destination: "" })).toEqual(["event.taskEnded.outcome.transferred"]);
     expect(ended({ type: "cancelled", reason: "Caller hung up" })).toEqual([]);
     expect(ended({ type: "cancelled", reason: "" })).toEqual(["event.taskEnded.outcome.cancelled"]);
-    expect(check({ type: "provider-status", status: "error", recovery: "reconnect", message: "Upstream down" })).toEqual([]);
-    expect(check({ type: "provider-status", status: "error", recovery: "reconnect", message: "" })).toEqual(["event.providerStatus.message"]);
+    expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "Upstream down" })).toEqual([]);
+    expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "" })).toEqual(["event.transportStatus.message"]);
   });
 });
 
@@ -991,7 +1020,7 @@ describe("the validators accept exactly what the contract publishes", () => {
   });
 
   it("every published break kind, and no unpublished one", () => {
-    const withKind = (kind: unknown) => snapshot({ break: { approval: "not-requested", accepting: true, reasons: [{ id: "r1", label: "Rest", kind }] } });
+    const withKind = (kind: unknown) => snapshot({ break: { approval: "not-requested", mayAsk: true, reasons: [{ id: "r1", label: "Rest", kind }] } });
     for (const kind of BREAK_KINDS) {
       expect(rules(validateSnapshot(withKind(kind), manifest()))).toEqual([]);
     }
@@ -1000,7 +1029,7 @@ describe("the validators accept exactly what the contract publishes", () => {
 
   it("every published idle capability on voice, and dial on nothing else", () => {
     const declaring = (name: string, channel: string) => {
-      const value = name === "dial" ? { destinationPolicy: "any-number" }
+      const value = name === "dial" ? { destinations: "any-number" }
         : name === "personalBrowser" ? { access: { mode: "allow-all" } }
         : true;
       return manifest({ channel, idleCapabilities: { [name]: value } });
@@ -1015,22 +1044,22 @@ describe("the validators accept exactly what the contract publishes", () => {
   });
 });
 
-describe("the completion allowance follows the completion mode", () => {
+describe("the wrap allowance follows the completion mode", () => {
   const voice = { channel: "voice" };
   it("may be omitted only where the provider will not act on it", () => {
     // A provider waiting for `complete` may leave the deadline open...
-    expect(rules(validateTask(task({ completionMode: "agent-command", completionAllowance: undefined }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: undefined }), voice))).toEqual([]);
     // ...and one that completes the task itself must say when.
-    expect(rules(validateTask(task({ completionMode: "provider-automatic", completionAllowance: undefined }), voice)))
-      .toContain("task.completionAllowance.required");
+    expect(rules(validateTask(task({ completionMode: "provider-automatic", wrapAllowance: undefined }), voice)))
+      .toContain("task.wrapAllowance.required");
     // The controls: stated, either mode is fine, and zero is a deadline of now, not an absence.
-    expect(rules(validateTask(task({ completionMode: "provider-automatic", completionAllowance: 0 }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ completionMode: "agent-command", completionAllowance: 0 }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ completionMode: "provider-automatic", wrapAllowance: 0 }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: 0 }), voice))).toEqual([]);
   });
 
   it("is still a duration when present, whatever the mode", () => {
-    expect(rules(validateTask(task({ completionMode: "agent-command", completionAllowance: 1.5 }), voice))).toContain("task.completionAllowance");
-    expect(rules(validateTask(task({ completionMode: "agent-command", completionAllowance: "60" }), voice))).toContain("task.completionAllowance");
+    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: 1.5 }), voice))).toContain("task.wrapAllowance");
+    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: "60" }), voice))).toContain("task.wrapAllowance");
   });
 });
 
@@ -1082,13 +1111,13 @@ describe("consulting a lead", () => {
 
   it("carries the request on the agent's task: requested names nobody, joined names the lead", () => {
     const since = "2026-08-21T09:04:00Z";
-    expect(rules(validateTask(task({ lead: { status: "requested", note: "Refund dispute", since } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ lead: { status: "joined", leadId: "L-9", since } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ lead: { status: "joined", since } }), voice))).toContain("task.lead.leadId");
-    expect(rules(validateTask(task({ lead: { status: "requested", leadId: "L-9", since } }), voice))).toContain("task.lead.leadId.unexpected");
-    expect(rules(validateTask(task({ lead: { status: "declined", since } }), voice))).toContain("task.lead.status");
-    expect(rules(validateTask(task({ lead: { status: "requested" } }), voice))).toContain("task.lead.since");
-    expect(rules(validateTask(task({ channel: "chat", capabilities: {}, lead: { status: "requested", since } }), { channel: "chat" })))
+    expect(rules(validateTask(task({ lead: { stage: "requested", note: "Refund dispute", since } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ lead: { stage: "joined", leadId: "L-9", since } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ lead: { stage: "joined", since } }), voice))).toContain("task.lead.leadId");
+    expect(rules(validateTask(task({ lead: { stage: "requested", leadId: "L-9", since } }), voice))).toContain("task.lead.leadId.unexpected");
+    expect(rules(validateTask(task({ lead: { stage: "declined", since } }), voice))).toContain("task.lead.stage");
+    expect(rules(validateTask(task({ lead: { stage: "requested" } }), voice))).toContain("task.lead.since");
+    expect(rules(validateTask(task({ channel: "chat", capabilities: {}, lead: { stage: "requested", since } }), { channel: "chat" })))
       .toContain("task.lead.channel");
   });
 

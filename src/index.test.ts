@@ -140,7 +140,7 @@ describe("Omni protocol", () => {
     const event: ProviderEvent = {
       type: "snapshot",
       reason: "reconnected",
-      snapshot: { status: "active", sessionId: "session-1", break: { approval: "starting-after-task", accepting: true }, tasks: [], taskCount: 0 },
+      snapshot: { transport: "active", loginId: "session-1", break: { approval: "starting-after-task", mayAsk: true }, tasks: [], taskCount: 0 },
     };
     expect(event.snapshot.break.approval).toBe("starting-after-task");
   });
@@ -171,9 +171,9 @@ describe("Omni protocol", () => {
       },
       async connect() {
         return {
-          snapshot: () => ({ status: "active" as const, sessionId: "session-1", break: { approval: "not-requested" as const, accepting: true }, tasks: [], taskCount: 0 }),
+          snapshot: () => ({ transport: "active" as const, loginId: "session-1", break: { approval: "not-requested" as const, mayAsk: true }, tasks: [], taskCount: 0 }),
           subscribe: listener => {
-            listener({ id: "event-1", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "provider-status", status: "active" } });
+            listener({ id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
             return () => undefined;
           },
           setCapacity: async capacity => (expect(capacity.count).toBeGreaterThanOrEqual(1), { status: "accepted" as const }),
@@ -183,9 +183,9 @@ describe("Omni protocol", () => {
       },
     });
 
-    const result = await exerciseAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1", host: stillHost() });
+    const result = await exerciseAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", host: stillHost() });
     expect(result.violations).toEqual([]);
-    expect(result.events.map(item => item.event)).toEqual([{ type: "provider-status", status: "active" }]);
+    expect(result.events.map(item => item.event)).toEqual([{ type: "transport-status", status: "active" }]);
     expect(disconnect).toHaveBeenCalledOnce();
   });
 });

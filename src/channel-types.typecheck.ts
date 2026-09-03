@@ -9,6 +9,7 @@ import {
   type OpenMediaRequest,
   type Manifest,
   type ProviderEvent,
+  type PersonalBrowser,
   type AgentPreference,
   type SetPreferenceRequest,
   type TeamPolicy,
@@ -26,7 +27,7 @@ export const voiceManifest = {
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
   authenticationMethods: ["browser-sso"],
   idleCapabilities: {
-    dial: { destinationPolicy: "any-number" },
+    dial: { destinations: "any-number" },
   },
 } satisfies Manifest<"voice">;
 
@@ -39,13 +40,13 @@ export const chatManifest = {
   idleCapabilities: {
     contacts: true,
     // @ts-expect-error Dial is available only to a voice provider.
-    dial: { destinationPolicy: "any-number" },
+    dial: { destinations: "any-number" },
   },
 } satisfies Manifest<"chat">;
 
 export const ladderedManifest = {
   ...voiceManifest,
-  orgTiers: [
+  orgLevels: [
     { id: "org", label: "Your organisation" },
     { id: "team", label: "Your queue group" },
     { id: "person", label: "You" },
@@ -54,8 +55,8 @@ export const ladderedManifest = {
 
 export const mergedTiersManifest = {
   ...voiceManifest,
-  // @ts-expect-error The field is orgTiers: a fixture keeping the old `tiers` key must fail the build.
-  tiers: [{ id: "org", label: "Your organisation" }],
+  // @ts-expect-error The field is orgLevels: a fixture keeping the old `levels` key must fail the build.
+  levels: [{ id: "org", label: "Your organisation" }],
 } satisfies Manifest<"voice">;
 
 export const emailTask = {
@@ -67,7 +68,7 @@ export const emailTask = {
   phase: "in-progress",
   browsers: [],
   completionMode: "agent-command",
-  completionAllowance: 60,
+  wrapAllowance: 60,
 } satisfies Task<"email">;
 
 export const invalidEmailTask = {
@@ -82,7 +83,7 @@ export const invalidEmailTask = {
   phase: "in-progress",
   browsers: [],
   completionMode: "agent-command",
-  completionAllowance: 60,
+  wrapAllowance: 60,
 } satisfies Task<"email">;
 
 // A reusing browser declares its scheme, and a browser that does not reuse declares none.
@@ -114,10 +115,10 @@ export const voiceDtmf: TaskCommand<"voice"> = { type: "dtmf", digits: "12" };
 
 // The allowance is coupled to the mode: a provider that completes the task itself must say when;
 // one waiting for `complete` may leave the deadline open.
-export const untimedAgentCommandTask = { ...emailTask, id: "email-3", completionMode: "agent-command", completionAllowance: undefined } satisfies Task<"email">;
-export const timedProviderAutomaticTask = { ...emailTask, id: "email-4", completionMode: "provider-automatic", completionAllowance: 0 } satisfies Task<"email">;
+export const untimedAgentCommandTask = { ...emailTask, id: "email-3", completionMode: "agent-command", wrapAllowance: undefined } satisfies Task<"email">;
+export const timedProviderAutomaticTask = { ...emailTask, id: "email-4", completionMode: "provider-automatic", wrapAllowance: 0 } satisfies Task<"email">;
 // @ts-expect-error provider-automatic completion needs an allowance to act on.
-export const untimedProviderAutomaticTask: Task<"email"> = { ...emailTask, id: "email-5", completionMode: "provider-automatic", completionAllowance: undefined };
+export const untimedProviderAutomaticTask: Task<"email"> = { ...emailTask, id: "email-5", completionMode: "provider-automatic", wrapAllowance: undefined };
 
 // Calling back belongs to voice: the capability and the command exist on no other channel.
 export const callbackCapableVoiceTask = { ...emailTask, id: "call-9", channel: "voice", capabilities: { callback: true, dispositions: true } } satisfies Task<"voice">;
@@ -148,18 +149,37 @@ export const leadTakesOver: TaskCommand<"voice"> = { type: "lead", action: "take
 export const leadLeaves: TaskCommand<"voice"> = { type: "lead", action: "leave" };
 // @ts-expect-error A chat has no call for a lead to join.
 export const chatAskLead: TaskCommand<"chat"> = { type: "lead", action: "request" };
-export const leadRequestedTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: { consultLead: true }, lead: { status: "requested", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
+export const leadRequestedTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: { consultLead: true }, lead: { stage: "requested", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
 export const leadsOwnTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: {}, assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } } satisfies Task<"voice">;
-export const liveAudioTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, media: "ready" } satisfies Task<"voice">;
+export const liveAudioTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, media: "started" } satisfies Task<"voice">;
 export const audiolessEmailTask = { ...emailTask, id: "email-9",
   // @ts-expect-error Real-time media is a voice affair; an email task carries no state for it.
-  media: "ready" } satisfies Task<"email">;
+  media: "started" } satisfies Task<"email">;
 // @ts-expect-error A snapshot states its task count; a blank state cannot pass as a confirmed empty.
-export const uncountedSnapshot = { status: "active", sessionId: "s-1", break: { approval: "not-requested", accepting: true }, tasks: [] } satisfies Snapshot<"voice">;
-export const revivableError = { type: "provider-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
+export const uncountedSnapshot = { transport: "active", loginId: "s-1", break: { approval: "not-requested", mayAsk: true }, tasks: [] } satisfies Snapshot<"voice">;
+export const hiddenUrlBrowser = { id: "crm", name: "CRM", url: "https://crm.example.com/42", purpose: "Customer record", reuse: false, urlVisibility: "hidden" } satisfies TaskBrowser;
+export const plainUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", reuse: false } satisfies TaskBrowser;
+export const partialUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", reuse: false,
+  // @ts-expect-error A URL is hidden, shown to its domain, or shown in full; there is no fourth word.
+  urlVisibility: "partial" } satisfies TaskBrowser;
+export const agentsOwnTab = { id: "tab-1", name: "Intranet", url: "https://intranet.example.com/" } satisfies PersonalBrowser;
+// The renamed keys are refused by the type, so a fixture kept from an older release fails the build.
+export const staleLogin = { transport: "active", break: { approval: "not-requested", mayAsk: true }, tasks: [], taskCount: 0,
+  // @ts-expect-error The login is identified by loginId.
+  sessionId: "session-1" } satisfies Snapshot<"voice">;
+export const staleBreak = { transport: "active", loginId: "login-1", tasks: [], taskCount: 0,
+  // @ts-expect-error Whether the agent may ask is mayAsk.
+  break: { approval: "not-requested", accepting: true } } satisfies Snapshot<"voice">;
+export const staleLadder = { ...voiceManifest,
+  // @ts-expect-error The org's ladder is orgLevels.
+  orgTiers: [{ id: "org", label: "Your organisation" }] } satisfies Manifest<"voice">;
+export const staleWrap = { ...emailTask, id: "email-10",
+  // @ts-expect-error The wrap allowance is wrapAllowance.
+  completionAllowance: 30 } satisfies Task<"email">;
+export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
-export const silentError = { type: "provider-status", status: "error" } satisfies ProviderEvent<"voice">;
-export const plainActive = { type: "provider-status", status: "active",
+export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;
+export const plainActive = { type: "transport-status", status: "active",
   // @ts-expect-error Recovery goes with an error; an active status has nothing to revive.
   recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An email task cannot be a joined call.
@@ -176,7 +196,7 @@ export const expiredWithCapabilities: AuthenticationState = { status: "expired",
 export const completed: CompleteAuthenticationResult = { status: "authenticated", identity: asha, capabilities: { breaks: true } };
 // @ts-expect-error Completion says what the login may do, like the state it becomes.
 export const completedSilently: CompleteAuthenticationResult = { status: "authenticated", identity: asha };
-export const bareSnapshot: Snapshot<"voice"> = { status: "active", sessionId: "session-1", break: { approval: "not-requested", accepting: true }, tasks: [], taskCount: 0 };
+export const bareSnapshot: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [], taskCount: 0 };
 // @ts-expect-error Capabilities live on the login, not the snapshot.
 export const staleSnapshot: Snapshot<"voice"> = { ...bareSnapshot, sessionCapabilities: {} };
 export const roster: TeamRoster = { members: [], requests: [] };
@@ -185,14 +205,12 @@ export const rosterWithControl: TeamRoster = { members: [], breakControl: true }
 
 // The host reports; a request may lack the microphone, and a ready input may not.
 export const openWithoutHostAudio: OpenMediaRequest = { taskId: "call-42" };
-export const noMicrophone: HostReport = { online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "unavailable", reason: "in-use", failure: { code: "host.in-use", message: "Another application holds the microphone", retryable: true } }, output: { status: "unavailable", reason: "no-device", failure: { code: "host.no-speaker", message: "No speaker", retryable: true } } } };
-export const noAudioHere: HostReport = { online: true, browsers: { urlVisibility: "domain" } };
-// @ts-expect-error A host says what its chrome shows of a task browser's URL.
-export const silentAboutUrls: HostReport = { online: true };
+export const noMicrophone: HostReport = { online: true, audio: { input: { status: "unavailable", reason: "in-use", failure: { code: "host.in-use", message: "Another application holds the microphone", retryable: true } }, output: { status: "unavailable", reason: "no-device", failure: { code: "host.no-speaker", message: "No speaker", retryable: true } } } };
+export const noAudioHere: HostReport = { online: true };
 // @ts-expect-error A ready input carries the microphone it captured and says whether audio flows.
-export const readyWithoutAudio: HostReport = { online: true, browsers: { urlVisibility: "hidden" }, audio: { input: { status: "ready" }, output: { status: "ready" } } };
+export const readyWithoutAudio: HostReport = { online: true, audio: { input: { status: "ready" }, output: { status: "ready" } } };
 
-// Who decides: a control the queue could allow may stand locked in its place, naming the tier;
+// Who decides: a control the queue could allow may stand locked in its place, naming the level;
 // a preference carries who set it; only hold, mute and skills are ever the person's.
 export const lockedMute: Task<"voice"> = { ...emailTask, id: "call-12", channel: "voice", capabilities: { hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" } }, contact: { name: "Asha", number: { lockedBy: "org" }, email: { lockedBy: "site" } } };
 // @ts-expect-error An email task has no mute to lock.

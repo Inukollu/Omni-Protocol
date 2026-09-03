@@ -22,30 +22,30 @@ import {
   type AuthenticationMethod,
   type AuthenticationState,
   type BreakApproval,
-  type BrowserAccessPolicy,
+  type BrowserAccess,
   type HostAudioUnavailableReason,
   type UrlVisibility,
-  DEFAULT_TIERS,
-  effectiveTiers,
+  DEFAULT_LEVELS,
+  effectiveLevels,
   type TeamPolicySetting,
   type TaskMediaState,
-  type ConnectionRecovery,
+  type TransportRecovery,
   type CredentialField,
   type HostOutputUnavailableReason,
   type Channel,
   type CompletionMode,
-  type ConnectionStatus,
+  type TransportStatus,
   type CustomCapability,
   type Destination,
-  type DialDestinationPolicy,
-  type DispositionPolicy,
+  type DialDestinations,
+  type DispositionRules,
   type HandlingStep,
   type IdleCapabilities,
   type IdleCapability,
   type PersonalBrowserCapability,
   type ProtocolViolation,
   type ProviderEvent,
-  type SessionCapabilities,
+  type UserCapabilities,
   type TeamCapabilities,
   type TaskCapabilities,
   type TaskLead,
@@ -88,7 +88,7 @@ const membersOf = <U extends string>(members: Record<U, true>): readonly U[] =>
   Object.keys(members) as U[];
 
 const CHANNELS = membersOf<Channel>({ voice: true, chat: true, email: true });
-const CONNECTION_RECOVERIES = membersOf<ConnectionRecovery>({ reconnect: true, reauthenticate: true });
+const TRANSPORT_RECOVERIES = membersOf<TransportRecovery>({ reconnect: true, reauthenticate: true });
 const TASK_PHASES = membersOf<TaskPhase>({
   pending: true, confirmed: true, preparing: true, "in-progress": true, paused: true, completing: true,
 });
@@ -96,7 +96,7 @@ const COMPLETION_MODES = membersOf<CompletionMode>({ "agent-command": true, "pro
 const ACCEPTANCE_MODES = membersOf<AcceptanceMode>({
   "no-preference": true, "require-agent-acceptance": true, "require-automatic-acceptance": true,
 });
-const CONNECTION_STATUSES = membersOf<ConnectionStatus>({ connecting: true, active: true, error: true });
+const TRANSPORT_STATUSES = membersOf<TransportStatus>({ connecting: true, active: true, error: true });
 const AUTHENTICATION_METHODS = membersOf<AuthenticationMethod>({ "browser-sso": true, credentials: true });
 const AUTHENTICATION_STATUSES = membersOf<AuthenticationState["status"]>({
   "signed-out": true, authenticating: true, authenticated: true, refreshing: true, expired: true,
@@ -111,18 +111,18 @@ const HANDLING_STEPS = membersOf<HandlingStep>({
   queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
 });
 const DESTINATION_KINDS = membersOf<Destination["kind"]>({ queue: true, agent: true, external: true });
-const CUSTOM_UI_KINDS = membersOf<CustomCapability["ui"]["kind"]>({ button: true, toggle: true, "menu-item": true });
+const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
 const CUSTOM_UI_PLACEMENTS = membersOf<CustomCapability["ui"]["placement"]>({ primary: true, secondary: true, overflow: true });
-const NOTES_POLICIES = membersOf<NonNullable<DispositionPolicy["notes"]>>({ required: true, optional: true, hidden: true });
-const ACCESS_MODES = membersOf<BrowserAccessPolicy["mode"]>({ "allow-all": true, "block-all": true });
+const NOTES_POLICIES = membersOf<NonNullable<DispositionRules["notes"]>>({ required: true, optional: true, hidden: true });
+const ACCESS_MODES = membersOf<BrowserAccess["mode"]>({ "allow-all": true, "block-all": true });
 const ACCESS_POLICY_SCOPES = membersOf<NonNullable<PersonalBrowserCapability["accessPolicyScope"]>>({
   "initial-url": true, "all-navigation": true,
 });
-const DIAL_DESTINATION_POLICIES = membersOf<DialDestinationPolicy>({ "contacts-only": true, "any-number": true });
+const DIAL_DESTINATION_POLICIES = membersOf<DialDestinations>({ "contacts-only": true, "any-number": true });
 const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
   reconnected: true, "provider-requested": true,
 });
-const SESSION_CAPABILITIES = membersOf<keyof SessionCapabilities>({ breaks: true, team: true, preferences: true });
+const SESSION_CAPABILITIES = membersOf<keyof UserCapabilities>({ breaks: true, team: true, preferences: true });
 const MEMBER_BREAKS = membersOf<Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">>({
   "awaiting-decision": true, granted: true, "starting-after-task": true,
 });
@@ -248,7 +248,7 @@ export function validateContact(contact: unknown, path = "contact"): ProtocolVio
   return into.violations;
 }
 
-function validateContactInto(contact: unknown, path: string, into: Collector, tiers?: readonly string[]): void {
+function validateContactInto(contact: unknown, path: string, into: Collector, levels?: readonly string[]): void {
   if (!isPlainObject(contact)) {
     into.add("contact.shape", path, "a contact must be an object");
     return;
@@ -256,7 +256,7 @@ function validateContactInto(contact: unknown, path: string, into: Collector, ti
   for (const field of ["name", "number", "email"] as const) {
     if (contact[field] === undefined) continue;
     if ((field === "number" || field === "email") && isLocked(contact[field])) {
-      validateLockedInto(contact[field] as Record<string, unknown>, `contact.${field}.locked`, `${path}.${field}`, tiers, into);
+      validateLockedInto(contact[field] as Record<string, unknown>, `contact.${field}.locked`, `${path}.${field}`, levels, into);
       continue;
     }
     into.filled(contact[field], `contact.${field}`, `${path}.${field}`, `${field} must not be empty when present`);
@@ -295,7 +295,7 @@ function validateScheduledActivityInto(activity: unknown, path: string, into: Co
 // Manifest.
 // ---------------------------------------------------------------------------
 
-function validateBrowserAccessPolicy(value: unknown, path: string, into: Collector): void {
+function validateBrowserAccess(value: unknown, path: string, into: Collector): void {
   if (!isPlainObject(value)) {
     into.add("manifest.personalBrowser.access.shape", path, "an access policy must be an object");
     return;
@@ -332,7 +332,7 @@ function validateIdleCapabilities(value: unknown, channel: string, path: string,
     if (!isPlainObject(browser)) {
       into.add("manifest.personalBrowser.shape", `${path}.personalBrowser`, "personalBrowser must be an object when present");
     } else {
-      validateBrowserAccessPolicy(browser.access, `${path}.personalBrowser.access`, into);
+      validateBrowserAccess(browser.access, `${path}.personalBrowser.access`, into);
       if (browser.accessPolicyScope !== undefined) {
         into.oneOf(browser.accessPolicyScope, ACCESS_POLICY_SCOPES,
           "manifest.personalBrowser.accessPolicyScope", `${path}.personalBrowser.accessPolicyScope`);
@@ -343,8 +343,8 @@ function validateIdleCapabilities(value: unknown, channel: string, path: string,
     if (!isPlainObject(value.dial)) {
       into.add("manifest.dial.shape", `${path}.dial`, "dial must be an object when present");
     } else {
-      into.oneOf(value.dial.destinationPolicy, DIAL_DESTINATION_POLICIES,
-        "manifest.dial.destinationPolicy", `${path}.dial.destinationPolicy`);
+      into.oneOf(value.dial.destinations, DIAL_DESTINATION_POLICIES,
+        "manifest.dial.destinations", `${path}.dial.destinations`);
     }
   }
   for (const flag of ["calendar", "contacts"] as const) {
@@ -410,30 +410,30 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
     }
   }
 
-  if (manifest.orgTiers !== undefined) {
-    if (!Array.isArray(manifest.orgTiers)) {
-      into.add("manifest.orgTiers.shape", `${path}.orgTiers`, "orgTiers must be an array when present");
+  if (manifest.orgLevels !== undefined) {
+    if (!Array.isArray(manifest.orgLevels)) {
+      into.add("manifest.orgLevels.shape", `${path}.orgLevels`, "orgLevels must be an array when present");
     } else {
       const ids = new Set<string>();
       let wellFormed = true;
-      manifest.orgTiers.forEach((tier: unknown, index: number) => {
-        const at = `${path}.orgTiers[${index}]`;
-        if (!isPlainObject(tier)) {
-          into.add("manifest.orgTier.shape", at, "each tier must be an object with an id and a label");
+      manifest.orgLevels.forEach((level: unknown, index: number) => {
+        const at = `${path}.orgLevels[${index}]`;
+        if (!isPlainObject(level)) {
+          into.add("manifest.orgLevel.shape", at, "each level must be an object with an id and a label");
           wellFormed = false;
           return;
         }
-        if (into.filled(tier.id, "manifest.orgTier.id", `${at}.id`, "a tier needs an id")) {
-          if (ids.has(tier.id as string)) {
-            into.add("manifest.orgTier.unique", `${at}.id`, `duplicate tier: ${tier.id}`);
+        if (into.filled(level.id, "manifest.orgLevel.id", `${at}.id`, "a level needs an id")) {
+          if (ids.has(level.id as string)) {
+            into.add("manifest.orgLevel.unique", `${at}.id`, `duplicate level: ${level.id}`);
             wellFormed = false;
           }
-          ids.add(tier.id as string);
+          ids.add(level.id as string);
         } else wellFormed = false;
-        if (!into.filled(tier.label, "manifest.orgTier.label", `${at}.label`, "a tier needs the label a desk shows for it")) wellFormed = false;
+        if (!into.filled(level.label, "manifest.orgLevel.label", `${at}.label`, "a level needs the label a desk shows for it")) wellFormed = false;
       });
       if (wellFormed && !ids.has("person")) {
-        into.add("manifest.orgTiers.person", `${path}.orgTiers`,
+        into.add("manifest.orgLevels.person", `${path}.orgLevels`,
           "a declared ladder states the whole ladder and must include person, the subject of every resolution");
       }
     }
@@ -555,7 +555,7 @@ function validateCustomCapabilities(value: unknown, path: string, into: Collecto
       into.add("task.custom.ui", `${at}.ui`, "a custom capability needs a ui description");
       return;
     }
-    into.oneOf(custom.ui.kind, CUSTOM_UI_KINDS, "task.custom.ui.kind", `${at}.ui.kind`);
+    into.oneOf(custom.ui.control, CUSTOM_UI_CONTROLS, "task.custom.ui.control", `${at}.ui.control`);
     into.filled(custom.ui.label, "task.custom.ui.label", `${at}.ui.label`, "a custom control needs a label");
     into.oneOf(custom.ui.placement, CUSTOM_UI_PLACEMENTS, "task.custom.ui.placement", `${at}.ui.placement`);
     if (custom.ui.render !== undefined) into.oneOf(custom.ui.render, CUSTOM_RENDERS, "task.custom.ui.render", `${at}.ui.render`);
@@ -579,7 +579,7 @@ function validateCustomCapabilities(value: unknown, path: string, into: Collecto
   });
 }
 
-const DEFAULT_TIER_IDS: readonly string[] = DEFAULT_TIERS.map(tier => tier.id);
+const DEFAULT_LEVEL_IDS: readonly string[] = DEFAULT_LEVELS.map(level => level.id);
 const POLICY_SETTINGS = membersOf<TeamPolicySetting>({ on: true, off: true, agent: true });
 const POLICY_KEYS = new Set<string>([
   ...TASK_CAPABILITIES.voice, ...TASK_CAPABILITIES.chat, ...TASK_CAPABILITIES.email, "dial",
@@ -587,43 +587,43 @@ const POLICY_KEYS = new Set<string>([
 const AGENT_SETTABLE = /^(hold|mute|skill:.+)$/;
 const isLocked = (value: unknown): value is Record<string, unknown> => isPlainObject(value) && value.lockedBy !== undefined;
 
-/** The tier ids in force: the manifest's, or the defaults when the caller holds no manifest. */
-const tierIds = (tiers: readonly string[] | undefined): readonly string[] => tiers ?? DEFAULT_TIER_IDS;
+/** The level ids in force: the manifest's, or the defaults when the caller holds no manifest. */
+const levelIds = (levels: readonly string[] | undefined): readonly string[] => levels ?? DEFAULT_LEVEL_IDS;
 
-/** `lockedBy`: a declared tier other than `person`, who never locks their own value. */
-function validateLockedByInto(value: unknown, rule: string, path: string, tiers: readonly string[] | undefined, into: Collector): void {
-  if (!into.filled(value, rule, path, "lockedBy names the tier that locked it")) return;
+/** `lockedBy`: a declared level other than `person`, who never locks their own value. */
+function validateLockedByInto(value: unknown, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
+  if (!into.filled(value, rule, path, "lockedBy names the level that locked it")) return;
   into.require(value !== "person", `${rule}.person`, path, "a person never locks their own value");
-  into.require(tierIds(tiers).includes(value as string), `${rule}.unknown`, path,
-    `${String(value)} is not a tier this manifest declares: in force are ${tierIds(tiers).join(", ")}`);
+  into.require(levelIds(levels).includes(value as string), `${rule}.unknown`, path,
+    `${String(value)} is not a level this manifest declares: in force are ${levelIds(levels).join(", ")}`);
 }
 
 /** `{ lockedBy, reason? }` standing in for a value: who locked it, and a reason if given. */
-function validateLockedInto(value: Record<string, unknown>, rule: string, path: string, tiers: readonly string[] | undefined, into: Collector): void {
-  validateLockedByInto(value.lockedBy, `${rule}.lockedBy`, `${path}.lockedBy`, tiers, into);
+function validateLockedInto(value: Record<string, unknown>, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
+  validateLockedByInto(value.lockedBy, `${rule}.lockedBy`, `${path}.lockedBy`, levels, into);
   if (value.reason !== undefined) into.filled(value.reason, `${rule}.reason`, `${path}.reason`, "a reason must not be empty when present");
 }
 
 /** What every resolved value carries: who set it, and who locked it if anyone. */
-function validateResolvedInto(value: Record<string, unknown>, rule: string, path: string, tiers: readonly string[] | undefined, into: Collector): void {
-  if (into.filled(value.setBy, `${rule}.setBy`, `${path}.setBy`, "setBy names who stated the value: a tier, or provisioning")) {
-    into.require(value.setBy === "provisioning" || tierIds(tiers).includes(value.setBy as string), `${rule}.setBy.unknown`, `${path}.setBy`,
-      `${String(value.setBy)} is neither provisioning nor a tier this manifest declares`);
+function validateResolvedInto(value: Record<string, unknown>, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
+  if (into.filled(value.setBy, `${rule}.setBy`, `${path}.setBy`, "setBy names who stated the value: a level, or provisioning")) {
+    into.require(value.setBy === "provider" || levelIds(levels).includes(value.setBy as string), `${rule}.setBy.unknown`, `${path}.setBy`,
+      `${String(value.setBy)} is neither provisioning nor a level this manifest declares`);
   }
-  if (value.lockedBy !== undefined) validateLockedByInto(value.lockedBy, `${rule}.lockedBy`, `${path}.lockedBy`, tiers, into);
+  if (value.lockedBy !== undefined) validateLockedByInto(value.lockedBy, `${rule}.lockedBy`, `${path}.lockedBy`, levels, into);
   if (value.reason !== undefined) {
     into.filled(value.reason, `${rule}.reason`, `${path}.reason`, "a reason must not be empty when present");
     into.require(value.lockedBy !== undefined, `${rule}.reason.unexpected`, `${path}.reason`, "a reason goes with lockedBy: it says why it was locked");
   }
 }
 
-/** The tier ids a manifest puts in force, for validators that receive one. */
-function manifestTiers(manifest: unknown): readonly string[] | undefined {
+/** The level ids a manifest puts in force, for validators that receive one. */
+function manifestLevels(manifest: unknown): readonly string[] | undefined {
   if (!isPlainObject(manifest)) return undefined;
-  const declared = Array.isArray(manifest.orgTiers)
-    ? manifest.orgTiers.filter((tier: unknown): tier is { id: string; label: string } => isPlainObject(tier) && typeof tier.id === "string")
+  const declared = Array.isArray(manifest.orgLevels)
+    ? manifest.orgLevels.filter((level: unknown): level is { id: string; label: string } => isPlainObject(level) && typeof level.id === "string")
     : undefined;
-  return effectiveTiers(declared).map(tier => tier.id);
+  return effectiveLevels(declared).map(level => level.id);
 }
 const CUSTOM_RENDERS = membersOf<NonNullable<CustomCapability["ui"]["render"]>>({ inline: true, page: true });
 const CREDENTIAL_FIELD_TYPES = membersOf<CredentialField["type"]>({ text: true, password: true });
@@ -652,6 +652,9 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
       names.add(browser.name as string);
     }
     into.filled(browser.purpose, "task.browser.purpose", `${at}.purpose`, "a browser needs a purpose");
+    if (browser.urlVisibility !== undefined) {
+      into.oneOf(browser.urlVisibility, URL_VISIBILITIES, "task.browser.urlVisibility", `${at}.urlVisibility`);
+    }
 
     if (into.filled(browser.url, "task.browser.url", `${at}.url`, "a browser needs a url")) {
       let scheme: string | undefined;
@@ -749,7 +752,7 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
 }
 
 /** Present only while consulting, and only on voice: elsewhere there is nobody to consult. */
-const TASK_MEDIA_STATES = membersOf<TaskMediaState>({ ready: true, ended: true });
+const TASK_MEDIA_STATES = membersOf<TaskMediaState>({ started: true, ended: true });
 
 /** Real-time media is a voice affair, and its state is one of two words. */
 function validateTaskMedia(value: unknown, channel: string, path: string, into: Collector): void {
@@ -775,7 +778,7 @@ function validateConsultation(value: unknown, channel: string, path: string, int
   if (value.since !== undefined) into.timestamp(value.since, "task.consultation.since", `${path}.since`);
 }
 
-const LEAD_STATUSES = membersOf<TaskLead["status"]>({ requested: true, joined: true });
+const LEAD_STAGES = membersOf<TaskLead["stage"]>({ requested: true, joined: true });
 
 /** The agent's request for a lead. Voice only; `joined` names the lead, `requested` cannot. */
 function validateLead(value: unknown, channel: string, path: string, into: Collector): void {
@@ -785,8 +788,8 @@ function validateLead(value: unknown, channel: string, path: string, into: Colle
     into.add("task.lead.shape", path, "lead must be an object when present");
     return;
   }
-  if (into.oneOf(value.status, LEAD_STATUSES, "task.lead.status", `${path}.status`)) {
-    if (value.status === "joined") {
+  if (into.oneOf(value.stage, LEAD_STAGES, "task.lead.stage", `${path}.stage`)) {
+    if (value.stage === "joined") {
       into.require(isUserId(value.leadId), "task.lead.leadId", `${path}.leadId`, "a joined lead is named by their user id");
     } else {
       into.require(value.leadId === undefined, "task.lead.leadId.unexpected", `${path}.leadId`,
@@ -813,8 +816,8 @@ function validateAssisting(value: unknown, channel: string, path: string, into: 
 export interface TaskValidationContext {
   /** The provider's channel, from its manifest. A task must agree with it. */
   channel: string;
-  /** The tier ids in force, from the manifest. The defaults when absent. */
-  tiers?: readonly string[];
+  /** The level ids in force, from the manifest. The defaults when absent. */
+  levels?: readonly string[];
 }
 
 export function validateTask(task: unknown, context: TaskValidationContext, path = "task"): ProtocolViolation[] {
@@ -836,12 +839,12 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   // The allowance is coupled to the mode: a provider that will complete the task itself is going
   // to act on the allowance, so it must state one; a provider waiting for `complete` may omit it
   // to say it imposes no deadline. Present, it is a duration either way.
-  if (task.completionAllowance === undefined) {
-    into.require(task.completionMode !== "provider-automatic", "task.completionAllowance.required",
-      `${path}.completionAllowance`, "provider-automatic completion needs an allowance to act on");
+  if (task.wrapAllowance === undefined) {
+    into.require(task.completionMode !== "provider-automatic", "task.wrapAllowance.required",
+      `${path}.wrapAllowance`, "provider-automatic completion needs an allowance to act on");
   } else {
-    into.require(isDurationSeconds(task.completionAllowance), "task.completionAllowance", `${path}.completionAllowance`,
-      "completionAllowance must be a whole number of seconds, zero or more, or omitted under agent-command");
+    into.require(isDurationSeconds(task.wrapAllowance), "task.wrapAllowance", `${path}.wrapAllowance`,
+      "wrapAllowance must be a whole number of seconds, zero or more, or omitted under agent-command");
   }
 
   // The channel is fixed per provider by its manifest, so a task claiming another one is a
@@ -852,7 +855,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   if (task.reference !== undefined) {
     into.filled(task.reference, "task.reference", `${path}.reference`, "a reference must not be empty when present");
   }
-  if (task.contact !== undefined) validateContactInto(task.contact, `${path}.contact`, into, context.tiers);
+  if (task.contact !== undefined) validateContactInto(task.contact, `${path}.contact`, into, context.levels);
 
   validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into);
@@ -886,7 +889,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     if (isLocked(declared)) {
       if (into.require(name !== "browsers" && name !== "dispositions" && name !== "custom", "task.capability.locked.unexpected",
         `${path}.capabilities.${name}`, `${name} is what the queue provides, not a control anyone locks`)) {
-        validateLockedInto(declared, "task.capability.locked", `${path}.capabilities.${name}`, context.tiers, into);
+        validateLockedInto(declared, "task.capability.locked", `${path}.capabilities.${name}`, context.levels, into);
       }
       continue;
     }
@@ -936,17 +939,17 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     return;
   }
   into.oneOf(value.approval, BREAK_APPROVALS, "break.approval", `${path}.approval`);
-  into.require(typeof value.accepting === "boolean", "break.accepting", `${path}.accepting`, "accepting must be a boolean");
+  into.require(typeof value.mayAsk === "boolean", "break.mayAsk", `${path}.mayAsk`, "mayAsk says whether the agent may ask for a break: a boolean");
 
   for (const field of ["refusedReason", "decisionReason"] as const) {
     if (value[field] !== undefined) {
       into.filled(value[field], `break.${field}`, `${path}.${field}`, `${field} must not be empty when present`);
     }
   }
-  // The refusal is the reason the control is withdrawn; beside `accepting: true` it explains nothing.
+  // The refusal is the reason the control is withdrawn; beside `mayAsk: true` it explains nothing.
   if (value.refusedReason !== undefined) {
-    into.require(value.accepting !== true, "break.refusedReason.accepting", `${path}.refusedReason`,
-      "refusedReason is shown when accepting is false; omit it while the agent may ask");
+    into.require(value.mayAsk !== true, "break.refusedReason.mayAsk", `${path}.refusedReason`,
+      "refusedReason is shown when mayAsk is false; omit it while the agent may ask");
   }
   if (value.retryAfterMs !== undefined) {
     into.require(typeof value.retryAfterMs === "number" && Number.isFinite(value.retryAfterMs) && value.retryAfterMs >= 0,
@@ -1015,11 +1018,11 @@ export interface ReaderContext {
    * The login's `AuthenticationState.capabilities`. The login is the permission: a lead's
    * snapshot carries a roster, nobody else's does, and `requests` need `team.consultControl`.
    */
-  capabilities?: SessionCapabilities;
-  /** The tier ids in force. Filled from the manifest by `validateSnapshot` and `validateEventEnvelope`; the defaults otherwise. */
-  tiers?: readonly string[];
-  /** The login's `sessionId`. A snapshot or event naming another belongs to a login that is gone. */
-  sessionId?: string;
+  capabilities?: UserCapabilities;
+  /** The level ids in force. Filled from the manifest by `validateSnapshot` and `validateEventEnvelope`; the defaults otherwise. */
+  levels?: readonly string[];
+  /** The login's `loginId`. A snapshot or event naming another belongs to a login that is gone. */
+  loginId?: string;
   /** `ConnectContext.autoAcceptTasks` as sent, absent meaning `true`: whether `task-offered` carries an `acceptanceMode`. */
   autoAcceptTasks?: boolean;
 }
@@ -1051,7 +1054,7 @@ function validateTeamRosterInto(roster: unknown, path: string, context: ReaderCo
       into.add("team.policies.capability", `${path}.policies`, "policies require team.policyControl on the login: a lead who may not set them has nothing to see");
     }
   }
-  if (roster.policies !== undefined) validateTeamPoliciesInto(roster.policies, `${path}.policies`, into, context.tiers);
+  if (roster.policies !== undefined) validateTeamPoliciesInto(roster.policies, `${path}.policies`, into, context.levels);
   if (roster.requests === undefined) {
     // `[]` says nobody is asking; omission says the lead may not be asked. A login that may be
     // asked therefore always carries the list.
@@ -1127,13 +1130,13 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     return into.violations;
   }
   const channel = isPlainObject(manifest) && typeof manifest.channel === "string" ? manifest.channel : "voice";
-  const tiers = context.tiers ?? manifestTiers(manifest);
+  const levels = context.levels ?? manifestLevels(manifest);
 
-  into.oneOf(snapshot.status, CONNECTION_STATUSES, "snapshot.status", `${path}.status`);
-  if (into.filled(snapshot.sessionId, "snapshot.sessionId", `${path}.sessionId`, "a snapshot needs the session id it belongs to")
-    && context.sessionId !== undefined) {
-    into.require(snapshot.sessionId === context.sessionId, "snapshot.sessionId.mismatch", `${path}.sessionId`,
-      `a snapshot for session ${String(snapshot.sessionId)} on a login whose session is ${context.sessionId}`);
+  into.oneOf(snapshot.transport, TRANSPORT_STATUSES, "snapshot.transport", `${path}.status`);
+  if (into.filled(snapshot.loginId, "snapshot.loginId", `${path}.loginId`, "a snapshot needs the login id it belongs to")
+    && context.loginId !== undefined) {
+    into.require(snapshot.loginId === context.loginId, "snapshot.loginId.mismatch", `${path}.loginId`,
+      `a snapshot for session ${String(snapshot.loginId)} on a login whose session is ${context.loginId}`);
   }
 
   validateBreakState(snapshot.break, `${path}.break`, into);
@@ -1152,7 +1155,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     const seen = new Set<string>();
     let assisting: number | undefined;
     snapshot.tasks.forEach((task: unknown, index: number) => {
-      validateTaskInto(task, { channel, tiers }, `${path}.tasks[${index}]`, into);
+      validateTaskInto(task, { channel, levels }, `${path}.tasks[${index}]`, into);
       // A lead assists one call at a time.
       if (isPlainObject(task) && task.assisting !== undefined) {
         if (assisting !== undefined) into.add("snapshot.assisting.single", `${path}.tasks[${index}].assisting`, "a lead assists one call at a time");
@@ -1221,7 +1224,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     into.add("team.required", `${path}.team`,
       "the login declares capabilities.team, so every snapshot carries a roster: [] when nobody is in it");
   }
-  if (snapshot.team !== undefined) validateTeamRosterInto(snapshot.team, `${path}.team`, { ...context, tiers }, into);
+  if (snapshot.team !== undefined) validateTeamRosterInto(snapshot.team, `${path}.team`, { ...context, levels }, into);
 
   return into.violations;
 }
@@ -1311,13 +1314,13 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
     return into.violations;
   }
   const channel = isPlainObject(manifest) && typeof manifest.channel === "string" ? manifest.channel : "voice";
-  const tiers = context.tiers ?? manifestTiers(manifest);
+  const levels = context.levels ?? manifestLevels(manifest);
 
   into.filled(envelope.id, "event.id", `${path}.id`, "an event needs an id");
-  if (into.filled(envelope.sessionId, "event.sessionId", `${path}.sessionId`, "an event needs the session id it belongs to")
-    && context.sessionId !== undefined) {
-    into.require(envelope.sessionId === context.sessionId, "event.sessionId.mismatch", `${path}.sessionId`,
-      `an event for session ${String(envelope.sessionId)} on a login whose session is ${context.sessionId}`);
+  if (into.filled(envelope.loginId, "event.loginId", `${path}.loginId`, "an event needs the login id it belongs to")
+    && context.loginId !== undefined) {
+    into.require(envelope.loginId === context.loginId, "event.loginId.mismatch", `${path}.loginId`,
+      `an event for session ${String(envelope.loginId)} on a login whose session is ${context.loginId}`);
   }
   const idle = isPlainObject(manifest) && isPlainObject(manifest.idleCapabilities) ? manifest.idleCapabilities : {};
   into.timestamp(envelope.occurredAt, "event.occurredAt", `${path}.occurredAt`);
@@ -1332,29 +1335,29 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
   switch (event.type) {
     case "snapshot":
       into.oneOf(event.reason, SNAPSHOT_REASONS, "event.snapshot.reason", `${at}.reason`);
-      into.violations.push(...validateSnapshot(event.snapshot, manifest, `${at}.snapshot`, { ...context, tiers }));
+      into.violations.push(...validateSnapshot(event.snapshot, manifest, `${at}.snapshot`, { ...context, levels }));
       break;
-    case "provider-status":
-      into.oneOf(event.status, CONNECTION_STATUSES, "event.providerStatus.status", `${at}.status`);
+    case "transport-status":
+      into.oneOf(event.status, TRANSPORT_STATUSES, "event.transportStatus.status", `${at}.status`);
       // An error says how to revive it; any other status has nothing to revive.
       if (event.status === "error") {
-        if (into.require(event.recovery !== undefined, "event.providerStatus.recovery.required", `${at}.recovery`,
+        if (into.require(event.recovery !== undefined, "event.transportStatus.recovery.required", `${at}.recovery`,
           "an error names its recovery: reconnect, or reauthenticate")) {
-          into.oneOf(event.recovery, CONNECTION_RECOVERIES, "event.providerStatus.recovery", `${at}.recovery`);
+          into.oneOf(event.recovery, TRANSPORT_RECOVERIES, "event.transportStatus.recovery", `${at}.recovery`);
         }
       } else {
-        into.require(event.recovery === undefined, "event.providerStatus.recovery.unexpected", `${at}.recovery`,
+        into.require(event.recovery === undefined, "event.transportStatus.recovery.unexpected", `${at}.recovery`,
           "recovery goes with an error; nothing needs reviving here");
       }
       if (event.message !== undefined) {
-        into.filled(event.message, "event.providerStatus.message", `${at}.message`, "a message must not be empty when present");
+        into.filled(event.message, "event.transportStatus.message", `${at}.message`, "a message must not be empty when present");
       }
       break;
     case "break-state":
       validateBreakState(event.break, `${at}.break`, into);
       break;
     case "task-offered":
-      validateTaskInto(event.task, { channel, tiers }, `${at}.task`, into);
+      validateTaskInto(event.task, { channel, levels }, `${at}.task`, into);
       // An offer introduces work that is not yet under way; work in progress arrives only on a snapshot.
       if (isPlainObject(event.task) && typeof event.task.phase === "string") {
         into.require((OFFERABLE_PHASES as readonly string[]).includes(event.task.phase), "event.taskOffered.phase", `${at}.task.phase`,
@@ -1376,10 +1379,10 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       }
       break;
     case "task-updated":
-      validateTaskInto(event.task, { channel, tiers }, `${at}.task`, into);
+      validateTaskInto(event.task, { channel, levels }, `${at}.task`, into);
       break;
-    case "task-media-ready":
-      into.require(isTaskId(event.taskId), "event.taskMediaReady.taskId", `${at}.taskId`, "a task id is required");
+    case "task-media-started":
+      into.require(isTaskId(event.taskId), "event.taskMediaStarted.taskId", `${at}.taskId`, "a task id is required");
       break;
     case "task-media-ended":
       into.require(isTaskId(event.taskId), "event.taskMediaEnded.taskId", `${at}.taskId`, "a task id is required");
@@ -1400,7 +1403,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       validateProviderSummary(event.summary, `${at}.summary`, into);
       break;
     case "team-updated":
-      validateTeamRosterInto(event.team, `${at}.team`, { ...context, tiers }, into);
+      validateTeamRosterInto(event.team, `${at}.team`, { ...context, levels }, into);
       break;
     case "contacts-updated":
       into.require(idle.contacts === true, "event.contacts.capability", `${at}.contacts`,
@@ -1442,7 +1445,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
 const PREFERENCE_ID = /^(hold|mute|skill:.+)$/;
 
 /** The choices left to the person, each with where it stands. */
-function validatePreferencesInto(value: unknown, path: string, into: Collector, tiers?: readonly string[]): void {
+function validatePreferencesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
   if (!Array.isArray(value)) {
     into.add("preferences.shape", path, "preferences must be an array");
     return;
@@ -1461,12 +1464,12 @@ function validatePreferencesInto(value: unknown, path: string, into: Collector, 
     }
     into.filled(preference.label, "preference.label", `${at}.label`, "a preference needs a label");
     into.require(typeof preference.enabled === "boolean", "preference.enabled", `${at}.enabled`, "a preference says where it stands");
-    validateResolvedInto(preference, "preference", at, tiers, into);
+    validateResolvedInto(preference, "preference", at, levels, into);
   });
 }
 
 /** The team's policy per capability as the lead sees it: the setting, who set it, who locked it. */
-function validateTeamPoliciesInto(value: unknown, path: string, into: Collector, tiers?: readonly string[]): void {
+function validateTeamPoliciesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
   if (!isPlainObject(value)) {
     into.add("team.policies.shape", path, "policies must be an object keyed by capability");
     return;
@@ -1484,7 +1487,7 @@ function validateTeamPoliciesInto(value: unknown, path: string, into: Collector,
       into.require(policy.setting !== "agent" || AGENT_SETTABLE.test(key), "team.policy.agent", `${at}.setting`,
         `${key} is the team's, on or off; only hold, mute and skills may be left to the person`);
     }
-    validateResolvedInto(policy, "team.policy", at, tiers, into);
+    validateResolvedInto(policy, "team.policy", at, levels, into);
     into.require(policy.setBy !== "person", "team.policy.setBy", `${at}.setBy`, "a team policy is not set by a person");
   }
 }
@@ -1536,11 +1539,6 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
     return into.violations;
   }
   into.require(typeof report.online === "boolean", "host.online", `${path}.online`, "a host report says whether it has a network");
-  if (!isPlainObject(report.browsers)) {
-    into.add("host.browsers.shape", `${path}.browsers`, "a host report says what its chrome shows of a task browser's URL");
-  } else {
-    into.oneOf(report.browsers.urlVisibility, URL_VISIBILITIES, "host.browsers.urlVisibility", `${path}.browsers.urlVisibility`);
-  }
   if (report.audio === undefined) return into.violations;
   if (!isPlainObject(report.audio)) {
     into.add("host.audio.shape", `${path}.audio`, "audio must be an object when present, with input and output");
@@ -1660,7 +1658,7 @@ function validateUser(value: unknown, rule: string, path: string, into: Collecto
   into.filled(value.displayName, `${rule}.displayName`, `${path}.displayName`, "an identity needs a display name");
 }
 
-function validateSessionCapabilitiesInto(value: unknown, path: string, into: Collector, tiers?: readonly string[]): void {
+function validateUserCapabilitiesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
   if (!isPlainObject(value)) {
     into.add("authentication.capabilities.shape", path,
       "a usable login declares its capabilities: an object, {} when it has none");
@@ -1675,7 +1673,7 @@ function validateSessionCapabilitiesInto(value: unknown, path: string, into: Col
         into.add("authentication.capability.preferences.empty", `${path}.preferences`,
           "a login with nothing left to the person omits preferences rather than declaring an empty list");
       }
-      validatePreferencesInto(declared, `${path}.preferences`, into, tiers);
+      validatePreferencesInto(declared, `${path}.preferences`, into, levels);
       continue;
     }
     if (name === "team") {
@@ -1700,8 +1698,8 @@ function validateSessionCapabilitiesInto(value: unknown, path: string, into: Col
 
 /** What a login is validated against beyond its own shape. */
 export interface LoginValidationContext {
-  /** The tier ids in force, from the manifest. The defaults when absent. */
-  tiers?: readonly string[];
+  /** The level ids in force, from the manifest. The defaults when absent. */
+  levels?: readonly string[];
 }
 
 export function validateAuthenticationState(state: unknown, path = "authentication", context: LoginValidationContext = {}): ProtocolViolation[] {
@@ -1718,7 +1716,7 @@ export function validateAuthenticationState(state: unknown, path = "authenticati
   // may carry an identity. Anything else is a state claiming knowledge it does not have.
   if (state.status === "authenticated" || state.status === "refreshing") {
     validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
-    validateSessionCapabilitiesInto(state.capabilities, `${path}.capabilities`, into, context.tiers);
+    validateUserCapabilitiesInto(state.capabilities, `${path}.capabilities`, into, context.levels);
   } else if (state.status === "expired") {
     if (state.identity !== undefined) validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
     if (state.failure !== undefined) {

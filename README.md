@@ -65,7 +65,7 @@ clean result is read for what it covers and not for the whole contract; `assertR
 subjects)` is the paired assertion.
 
 ```ts
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1", host: stillHost(report) };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", host: stillHost(report) };
 const result = await exerciseAdapter(adapter, context, { collectOnly: true });
 expect(result.violations).toEqual([]);
 expect(result.disconnectWasClean).toBe(true);
