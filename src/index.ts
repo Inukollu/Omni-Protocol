@@ -158,6 +158,12 @@ export interface Manifest<C extends Channel = Channel> {
   taskTypePresentation?: Record<string, TaskTypePresentation>;
   /** The organisation's whole ladder, stated outright, `person` included. Omitted for the typical four, `DEFAULT_LEVELS`. */
   orgLevels?: LevelDeclaration[];
+  /**
+   * The provider takes running reports of a host-performed step -- `recordStep` with `seconds`
+   * so far and no `ended`. Absent, the host sends exactly two reports per leg, when it began and
+   * when it ended, and a running report is refused: what a provider never asked for never crosses.
+   */
+  runningStepReports?: true;
 }
 
 // ---------------------------------------------------------------------------
@@ -558,6 +564,25 @@ export type HandlingStep =
   | "conferenced"
   | "unanswered";
 
+/**
+ * The call record: the steps that brought the task here, one entry per occurrence and oldest
+ * first, and what they add up to before this agent -- stated by the provider from its own record,
+ * never summed by a desk from instants. Each total is present when the provider knows it and
+ * absent when it does not; a plausible nought is the fallback the no-fallbacks rule forbids. The
+ * record rides on the task and is replaced with it, so a late entry corrects the sums.
+ */
+export interface TaskHandlingHistory {
+  steps: TaskHandlingStep[];
+  /** Seconds others spent handling it before this agent. */
+  handleSeconds?: DurationSeconds;
+  /** Seconds the caller spent on hold at others' hands. */
+  holdSeconds?: DurationSeconds;
+  /** Seconds waiting before anyone answered. */
+  queueSeconds?: DurationSeconds;
+  /** How many times the task changed hands. */
+  transfers?: number;
+}
+
 export interface TaskHandlingStep {
   step: HandlingStep;
   at: IsoTimestamp;
@@ -684,7 +709,7 @@ export type Task<C extends Channel = Channel> = {
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
   attributes?: TaskAttribute[];
-  handlingHistory?: TaskHandlingStep[];
+  handlingHistory?: TaskHandlingHistory;
 } & TaskCompletion
   // Consulting, a lead on the call, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
   & (C extends "voice"
@@ -1052,6 +1077,23 @@ export type SetPreferenceRequest =
   | { id: PreferenceId; enabled: boolean }
   | { id: PreferenceId; inherit: true };
 
+/**
+ * The host's report of a handling leg it performed itself -- a mute, which Omni does rather than
+ * the provider -- so the provider's record has an account of it. Keyed by `step` and `at`: the
+ * same entry is reported when it begins, as often as the host cares to while it runs, and once
+ * more with `ended`, when `seconds` is the final duration. The host is the authority for the
+ * legs it performs, so `seconds` may say how long so far at any time; the end is stated, never
+ * inferred from a number's presence. What the adapter forwards upstream, and how often, is its own.
+ */
+export type HandlingReport = { taskId: TaskId; step: HandlingStep; at: IsoTimestamp } & (
+  | { ended: true; seconds: DurationSeconds }
+  | { ended?: never; seconds?: DurationSeconds }
+);
+
+export type HandlingReportResult =
+  | { status: "recorded" }
+  | { status: "failed"; failure: ProtocolFailure };
+
 export type PreferenceResult =
   | { status: "applied" }
   | { status: "failed"; failure: ProtocolFailure };
@@ -1179,6 +1221,8 @@ export interface Connection<C extends Channel = Channel> {
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
   /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
+  /** Records a handling leg the host performed. Required of a connection whose tasks may declare `mute`. */
+  recordStep?(report: HandlingReport): Promise<HandlingReportResult>;
 }
 
 export interface Adapter<C extends Channel = Channel> {

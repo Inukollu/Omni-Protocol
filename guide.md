@@ -178,6 +178,7 @@ type Manifest<C extends Channel = Channel> = {
   phaseLabels?: TaskPhaseLabels;
   taskTypePresentation?: Record<string, TaskTypePresentation>;
   orgLevels?: LevelDeclaration[];
+  runningStepReports?: true;
 };
 ```
 
@@ -359,6 +360,15 @@ type AgentPreference = Resolved & {
 type SetPreferenceRequest =
   | { id: PreferenceId; enabled: boolean }
   | { id: PreferenceId; inherit: true };
+
+type HandlingReport = { taskId: TaskId; step: HandlingStep; at: IsoTimestamp } & (
+  | { ended: true; seconds: DurationSeconds }
+  | { ended?: never; seconds?: DurationSeconds }
+);
+
+type HandlingReportResult =
+  | { status: "recorded" }
+  | { status: "failed"; failure: ProtocolFailure };
 
 type PreferenceResult =
   | { status: "applied" }
@@ -549,6 +559,14 @@ type HandlingStep =
   | "conferenced"
   | "unanswered";
 
+type TaskHandlingHistory = {
+  steps: TaskHandlingStep[];
+  handleSeconds?: DurationSeconds;
+  holdSeconds?: DurationSeconds;
+  queueSeconds?: DurationSeconds;
+  transfers?: number;
+};
+
 type TaskHandlingStep = {
   step: HandlingStep;
   at: IsoTimestamp;
@@ -607,7 +625,7 @@ type Task<C extends Channel = Channel> = {
   acceptance?: AcceptanceMode;
   reference?: string;
   attributes?: TaskAttribute[];
-  handlingHistory?: TaskHandlingStep[];
+  handlingHistory?: TaskHandlingHistory;
 } & TaskCompletion & (
   C extends "voice"
     ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting; media?: TaskMediaState }
@@ -990,6 +1008,7 @@ type Connection<C extends Channel = Channel> = {
   executeTeamConsult?(request: TeamConsultCommandRequest): Promise<TeamCommandResult>;
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
+  recordStep?(report: HandlingReport): Promise<HandlingReportResult>;
   executeTeamPolicy?(request: TeamPolicyCommandRequest): Promise<TeamCommandResult>;
 };
 
@@ -1382,6 +1401,7 @@ compile time.
 | `phaseLabels` | Optional static adapter-defined display names for canonical `TaskPhase` values. They cannot vary at runtime. |
 | `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
+| `runningStepReports` | The provider takes running reports of a host-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the host sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The host records what it performs**. |
 
 ### Authentication methods
 
@@ -1886,6 +1906,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `executeTeamBreak(command)` | The login declares `capabilities.team.breakControl`. |
 | `executeTeamConsult(command)` | The login declares `capabilities.team.consultControl`. |
 | `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
+| `recordStep(report)` | A task declares `mute`: the host performs that leg, and the provider's record has to have somewhere to take it. See **The host records what it performs**. |
 | `executeTeamPolicy(command)` | The login declares `capabilities.team.policyControl`. |
 | `openMedia(request)` | The manifest channel is `voice`. Every voice task's audio lands in Omni, so there is no voice adapter that does not implement it. |
 
@@ -2090,7 +2111,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
-| `handlingHistory` | Optional ordered handling history for this currently open task. It is live task data, not a permanent archive. |
+| `handlingHistory` | The call record: `steps` — the ordered handling history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `handleSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **How a task has been handled**. |
 | `consultation` | Voice only. Present while the agent is consulting a transfer destination: who is being consulted, and since when where the provider records it. Its presence is what makes `transfer` `complete` and `cancel` issuable. `label` is a name for the destination -- a person, a queue -- not a phrase; the host supplies the verb. See **Consult transfer**. |
 | `lead` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Consulting a lead**. |
 | `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead` `take-over` and `leave` issuable. See **Consulting a lead**. |
@@ -2254,15 +2275,23 @@ const immediateProviderCompletion = {
 
 ### How a task has been handled
 
-`Task.handlingHistory` is the sequence of steps that brought the task to the agent, oldest first:
+`Task.handlingHistory` is the call record: the steps that brought the task to the agent, oldest
+first, and what they add up to before this agent:
 
 ```ts
-handlingHistory: [
-  { step: "queued",   at: "2026-08-21T00:59:00Z", seconds: 41 },
-  { step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" },
-  { step: "held",     at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" },
-  { step: "held",     at: "2026-08-21T01:06:48Z", by: "a-17" },
-]
+handlingHistory: {
+  steps: [
+    { step: "queued",      at: "2026-08-21T00:59:00Z", seconds: 41 },
+    { step: "answered",    at: "2026-08-21T00:59:41Z", seconds: 312, by: "a-17" },
+    { step: "held",        at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" },
+    { step: "transferred", at: "2026-08-21T01:04:53Z", by: "a-17" },
+    { step: "answered",    at: "2026-08-21T01:05:02Z", by: "a-23" },
+  ],
+  handleSeconds: 312,   // handled by others before this agent
+  holdSeconds: 35,      // holds others put the caller on
+  queueSeconds: 41,     // waiting before anyone answered
+  transfers: 1,         // hands the call has changed
+}
 ```
 
 **This is not an archive.** It is live data about a task that is still open: it travels with the task
@@ -2321,8 +2350,46 @@ A host must render the two differently. Showing an unattributed `answered` the s
 `queued` tells the agent nobody was involved, which is not what was said. Omni renders it as
 *"not recorded"* in the place the name would go.
 
-Omit `handlingHistory` entirely when the provider cannot observe the steps. An empty array is a different
-claim — it says the task has had none.
+Omit `handlingHistory` entirely when the provider cannot observe the steps. Empty `steps` is a
+different claim — it says the task has had none.
+
+**What the record adds up to is stated, not summed.** A call that has changed hands arrives
+carrying what others already used of it, and the agent reads that before they say hello: the
+totals are the provider's own — never a desk summing instants that may be rounded or skewed, for
+the same reason `seconds` is reported and not derived — and each is present when the provider
+knows it and absent when it does not, never a plausible nought. A fresh call from the queue has
+`steps` with no prior `answered` and no totals to state, and a desk shows nothing rather than
+zeros. The record is restated with the task on every `task-updated` and snapshot, so an entry
+that arrives late corrects the sums. These four are what every platform reports; more will be
+added here as a need is shown, not invented ahead of one.
+
+#### The host records what it performs
+
+`muted` is the one leg Omni performs rather than the provider, and a record kept by the provider
+would have a hole exactly there. So the host reports it, through `recordStep`, and the provider
+writes it into its record as it writes every other leg:
+
+```ts
+declare const connection: Connection<"voice">;
+declare const taskId: TaskId;
+declare const at: IsoTimestamp;
+
+void connection.recordStep?.({ taskId, step: "muted", at });                          // the moment the agent mutes
+void connection.recordStep?.({ taskId, step: "muted", at, seconds: 15 });             // still running, if the host chooses to say
+void connection.recordStep?.({ taskId, step: "muted", at, seconds: 42, ended: true }); // the moment they unmute
+```
+
+The entry is keyed by `step` and `at`, so every report about one leg names the same instant. The
+host is the authority for the legs it performs, so it may say how long so far — `seconds` is
+elapsed while the leg runs and final once it has ended — and **the end is stated, never
+inferred**: `ended: true` marks the last report, and it carries the final duration. **What a
+provider never asked for never crosses.** The running report is sent only to a provider whose
+manifest declares `runningStepReports`; every other provider receives exactly two reports per
+leg, when it began and when it ended, and `validateHandlingReport(report, path, manifest)` refuses
+a running one it was never asked for (`handlingReport.running.unexpected`). What a provider that
+did ask for them forwards upstream, and how often, is its own business. The step appears in
+`handlingHistory` when the *provider* publishes it: Omni never writes the record itself.
+`recordStep` is required of a connection whose tasks declare `mute`, and answers `recorded`.
 
 ### Browser capability
 
@@ -2718,6 +2785,7 @@ everywhere; success is not.
 | Method | Succeeded |
 | --- | --- |
 | `setCapacity` | `applied` |
+| `recordStep` | `recorded` |
 | `requestBreak` | `requested` |
 | `commitBreak` | `committed` |
 | `cancelBreak` | `cancelled` |
@@ -3714,6 +3782,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
 | `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
+| `validateHandlingReport(report, path?, manifest?)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |

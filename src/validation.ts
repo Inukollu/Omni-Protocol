@@ -411,6 +411,10 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
     }
   }
 
+  if (manifest.runningStepReports !== undefined) {
+    into.require(manifest.runningStepReports === true, "manifest.runningStepReports", `${path}.runningStepReports`,
+      "runningStepReports is declared by presence, as true; a provider that takes begin and end only omits it");
+  }
   if (manifest.orgLevels !== undefined) {
     if (!Array.isArray(manifest.orgLevels)) {
       into.add("manifest.orgLevels.shape", `${path}.orgLevels`, "orgLevels must be an array when present");
@@ -724,13 +728,29 @@ function validateTaskAttributes(value: unknown, path: string, into: Collector): 
 
 function validateHandlingHistory(value: unknown, path: string, into: Collector): void {
   if (value === undefined) return;
-  if (!Array.isArray(value)) {
-    into.add("task.handlingHistory.shape", path, "handlingHistory must be an array when present");
+  if (!isPlainObject(value)) {
+    into.add("task.handlingHistory.shape", path, "handlingHistory must be an object with its steps when present");
+    return;
+  }
+  // What the record adds up to before this agent: each total present when the provider knows it
+  // and absent when it does not, never a plausible nought.
+  for (const field of ["handleSeconds", "holdSeconds", "queueSeconds"] as const) {
+    if (value[field] !== undefined) {
+      into.require(isDurationSeconds(value[field]), `task.handlingHistory.${field}`, `${path}.${field}`,
+        `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
+    }
+  }
+  if (value.transfers !== undefined) {
+    into.require(typeof value.transfers === "number" && Number.isInteger(value.transfers) && value.transfers >= 0,
+      "task.handlingHistory.transfers", `${path}.transfers`, "transfers must be a whole number, zero or more, or omitted when unknown");
+  }
+  if (!Array.isArray(value.steps)) {
+    into.add("task.handlingHistory.steps.shape", `${path}.steps`, "handlingHistory carries its steps as an array, empty when the task has had none");
     return;
   }
   let previous: number | undefined;
-  value.forEach((entry: unknown, index: number) => {
-    const at = `${path}[${index}]`;
+  value.steps.forEach((entry: unknown, index: number) => {
+    const at = `${path}.steps[${index}]`;
     if (!isPlainObject(entry)) {
       into.add("task.handlingHistory.entry", at, "each handling step must be an object");
       return;
@@ -1573,6 +1593,38 @@ export function validateHostGuarantees(guarantees: unknown, path = "host.guarant
   return into.violations;
 }
 
+/**
+ * What the host reports of a leg it performed, as an adapter may validate it before forwarding:
+ * a task, a step, when it began, how long so far if the host says, and an explicit end that
+ * carries the final duration.
+ */
+export function validateHandlingReport(report: unknown, path = "handlingReport", manifest?: unknown): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(report)) {
+    into.add("handlingReport.shape", path, "a handling report must be an object");
+    return into.violations;
+  }
+  into.require(isTaskId(report.taskId), "handlingReport.taskId", `${path}.taskId`, "a report names the task");
+  into.oneOf(report.step, HANDLING_STEPS, "handlingReport.step", `${path}.step`);
+  into.timestamp(report.at, "handlingReport.at", `${path}.at`);
+  if (report.seconds !== undefined) {
+    into.require(isDurationSeconds(report.seconds) && (report.seconds as number) > 0, "handlingReport.seconds", `${path}.seconds`,
+      "seconds must be a positive whole number; omit it rather than report nought");
+  }
+  if (report.ended !== undefined) {
+    if (into.require(report.ended === true, "handlingReport.ended", `${path}.ended`, "ended is declared by presence, as true; a running leg omits it")) {
+      into.require(report.seconds !== undefined, "handlingReport.ended.seconds", `${path}.seconds`,
+        "an ended leg states its final duration");
+    }
+  } else if (report.seconds !== undefined && manifest !== undefined) {
+    // A running report crosses only to a provider that asked for one: begin and end are the whole
+    // of what the rest receive.
+    into.require(isPlainObject(manifest) && manifest.runningStepReports === true, "handlingReport.running.unexpected", `${path}.seconds`,
+      "this provider takes begin and end only; a running report was never asked for");
+  }
+  return into.violations;
+}
+
 export function validateHostReport(report: unknown, path = "host"): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(report)) {
@@ -1635,6 +1687,7 @@ export type ResultMethod =
   | "executeTeamConsult"
   | "openMedia"
   | "setPreference"
+  | "recordStep"
   | "executeTeamPolicy";
 
 // Pinned to the result unions: each method's one success status, and the status that carries a
@@ -1651,6 +1704,7 @@ const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string }
   executeTeamConsult: { success: "applied", failure: "failed" },
   openMedia: { success: "opened", failure: "unavailable" },
   setPreference: { success: "applied", failure: "failed" },
+  recordStep: { success: "recorded", failure: "failed" },
   executeTeamPolicy: { success: "applied", failure: "failed" },
 };
 

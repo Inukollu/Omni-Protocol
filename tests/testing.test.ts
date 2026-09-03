@@ -483,10 +483,10 @@ const conformingSnapshot = {
       { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedSession: true, isolationScheme: "ProviderName.TaskTypeName.TabName" },
       { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedSession: false },
     ],
-    handlingHistory: [
-      { step: "queued", at: "2026-08-21T08:59:19Z", seconds: 41 },
-      { step: "answered", at: "2026-08-21T09:00:00Z", by: "A-1" },
-    ],
+    handlingHistory: { steps: [
+        { step: "queued", at: "2026-08-21T08:59:19Z", seconds: 41 },
+        { step: "answered", at: "2026-08-21T09:00:00Z", by: "A-1" },
+    ] },
   }],
   taskCount: 1,
   contacts: [{ name: "Asha Rao", number: "+919876543210", email: "asha@example.com", attributes: [{ key: "Category", value: "High priority" }] }],
@@ -573,6 +573,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         executeTeamBreak: async () => ({ status: "applied" }),
         executeTeamConsult: async () => ({ status: "applied" }),
         setPreference: async () => ({ status: "applied" }),
+        recordStep: async () => ({ status: "recorded" }),
         executeTeamPolicy: async () => ({ status: "applied" }),
         openMedia: async () => ({ status: "unavailable", failure: { code: "test", message: "No media in a test", retryable: false } }),
       };
@@ -1023,7 +1024,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
 
   it("describeUsers(), when a UserId arrives on an event or on a task's lead or assisting", async () => {
     const at = "2026-08-21T09:05:00Z";
-    const bare = { ...minimalSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, handlingHistory: [] }] } satisfies Snapshot<"voice">;
+    const bare = { ...minimalSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, handlingHistory: { steps: [] } }] } satisfies Snapshot<"voice">;
     const joined = { ...bare, tasks: [{ ...bare.tasks[0]!, capabilities: { ...bare.tasks[0]!.capabilities, consultLead: true }, lead: { stage: "joined", leadId: "L-9", since: at } }] } satisfies Snapshot<"voice">;
     const assisting = { ...bare, tasks: [{ ...bare.tasks[0]!, assisting: { memberId: "A-1", since: at } }] } satisfies Snapshot<"voice">;
     expect(await rules({ manifest: plainManifest, snapshot: bare, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
@@ -1057,6 +1058,17 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ manifest: laddered, snapshot: lockedTask("site") })).toEqual(["task.capability.locked.lockedBy.unknown"]);
   });
 
+  it("recordStep(), when a task declares mute, on the snapshot or on an offer", async () => {
+    // The conforming task declares mute; the host performs that leg and needs somewhere to record it.
+    expect(await rules({ connection: { recordStep: undefined } })).toContain("connection.recordStep.required");
+    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, connection: { recordStep: undefined } })).not.toContain("connection.recordStep.required");
+    const muteless = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, capabilities: { ...conformingSnapshot.tasks[0]!.capabilities, mute: undefined } }] };
+    expect(await rules({ snapshot: muteless, connection: { recordStep: undefined } })).not.toContain("connection.recordStep.required");
+    const offered: ProviderEventEnvelope<"voice"> = { id: "evt-offer", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
+      event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, id: "call-77", phase: "pending", media: undefined, acceptance: "consent" } } };
+    expect(await rules({ snapshot: muteless, emit: listener => listener(offered), connection: { recordStep: undefined } })).toContain("connection.recordStep.required");
+  });
+
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
     // The conforming snapshot names A-1 in a handling step; a roster and an imposed break count too.
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
@@ -1065,6 +1077,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const imposed = { ...minimalSnapshot, break: { approval: "in-effect", mayAsk: true, imposed: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: imposed, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     expect(await rules({ snapshot: minimalSnapshot, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
+
   });
 
   it("nothing optional of an adapter that declares nothing optional", async () => {

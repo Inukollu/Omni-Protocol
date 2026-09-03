@@ -9,6 +9,7 @@ import {
   type OpenMediaRequest,
   type Manifest,
   type ProviderEvent,
+  type HandlingReport,
   type Host,
   type DispositionRules,
   type HostAudioInput,
@@ -218,6 +219,11 @@ export const staleOfferMode = { type: "task-offered", task: { ...emailTask, id: 
 export const spokenDiagnostic = { type: "diagnostic", expected: "a party arrives with a name", observed: "party 4471 arrived id-only", taskId: "call-42" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error A diagnostic says what was observed; a rule broken with nothing observed is half a sentence.
 export const halfDiagnostic = { type: "diagnostic", expected: "a party arrives with a name" } satisfies ProviderEvent<"voice">;
+export const recordedTask = { ...emailTask, id: "email-14", handlingHistory: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], handleSeconds: 312, transfers: 1 } } satisfies Task<"email">;
+export const bareStepsTask = { ...emailTask, id: "email-15", handlingHistory: { steps: [] } } satisfies Task<"email">;
+export const arrayRecordTask = { ...emailTask, id: "email-16",
+  // @ts-expect-error The record is an object carrying its steps and what they add up to, not a bare array.
+  handlingHistory: [{ step: "answered", at: "2026-08-21T00:59:41Z" }] } satisfies Task<"email">;
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;
