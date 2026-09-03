@@ -367,7 +367,8 @@ export interface ScheduledActivity {
   title: string;
   startsAt: IsoTimestamp;
   endsAt?: IsoTimestamp;
-  contact?: Contact;
+  /** The person the activity reaches -- a callback's customer. */
+  party?: Contact;
   attributes?: Attribute[];
 }
 
@@ -486,8 +487,8 @@ export type TaskBrowser = Browser & {
   /** Hide this tab's URL from the agent in Omni's chrome. Omitted, the URL shows as any browser's does; a provider says `hidden` where the URL carries what the agent may not read. */
   urlVisibility?: UrlVisibility;
 } & (
-  | { reuse: false; isolationScheme?: never }
-  | { reuse: true; isolationScheme: BrowserIsolationScheme }
+  | { sharedSession: false; isolationScheme?: never }
+  | { sharedSession: true; isolationScheme: BrowserIsolationScheme }
 );
 
 /** A tab the agent opened in the personal workspace: theirs, as many as they like, and never on the wire. */
@@ -529,7 +530,7 @@ export interface TaskAttributeBase {
 
 export type TaskAttribute = TaskAttributeBase & (
   | { type: "text"; value: string }
-  | { type: "contact"; contact: Contact }
+  | { type: "contact"; party: Contact }
   | { type: "timestamp"; at: IsoTimestamp }
 );
 
@@ -656,7 +657,8 @@ export type Task<C extends Channel = Channel> = {
   taskType: string;
   capabilities: TaskCapabilities<C>;
   browsers: TaskBrowser[];
-  contact?: Contact;
+  /** The person or entity on the other end of this task. Who the task is with; `contacts` on the snapshot is the directory. */
+  party?: Contact;
   phase: TaskPhase;
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
@@ -1058,7 +1060,7 @@ export interface SummaryMetric {
   value: string;
 }
 
-export interface ProviderSummary {
+export interface QueueSummary {
   title: string;
   subtitle?: string;
   waitingCount: number;
@@ -1083,7 +1085,7 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "task-media-ended"; taskId: TaskId }
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
-  | { type: "provider-summary"; summary: ProviderSummary }
+  | { type: "queue-summary"; summary: QueueSummary }
   | { type: "team-updated"; team: TeamRoster }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
@@ -1258,7 +1260,7 @@ export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): bool
 /**
  * The storage-profile key a reusing browser shares, or `undefined` where it shares nothing.
  *
- * Fails closed. A browser with `reuse: false` has no key; nor does a reusing one whose scheme is
+ * Fails closed. A browser with `sharedSession: false` has no key; nor does a reusing one whose scheme is
  * missing or unknown -- the type forbids that, but an adapter compiled against another version can
  * still send it, and the safe reading is "do not share", never "share with everyone named the
  * same". Every part is encoded, separator included, before joining, so a tab called `a.b`
@@ -1266,7 +1268,7 @@ export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): bool
  */
 export function browserSessionKey(input: BrowserSessionKeyInput): string | undefined {
   const { providerId, taskId, taskType, browser } = input;
-  if (browser.reuse !== true) return undefined;
+  if (browser.sharedSession !== true) return undefined;
   // `encodeURIComponent` leaves `.` untouched, and `.` is the separator: a raw join would let
   // provider `Acme.Voice` with type `Support` forge the key of `Acme` with `Voice.Support`.
   const part = (value: string) => encodeURIComponent(value).replaceAll(".", "%2E");

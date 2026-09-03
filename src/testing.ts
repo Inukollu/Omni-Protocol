@@ -66,7 +66,7 @@ const STATE_SUBJECTS = [
 // `ProviderEvent` without a row here, or a row it lacks, is a compile error.
 const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
-  "task-media-started": true, "task-media-ended": true, "task-ended": true, announcement: true, "provider-summary": true,
+  "task-media-started": true, "task-media-ended": true, "task-ended": true, announcement: true, "queue-summary": true,
   "team-updated": true, "contacts-updated": true, "calendar-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
@@ -915,19 +915,19 @@ export type BrowserIsolationScenario = BrowserSessionKeyInput;
 const sessionKeyFor = (scenario: BrowserIsolationScenario): string | undefined => browserSessionKey(scenario);
 
 /** Validates whether two task-browser definitions should share one browser session. */
-export function assertBrowserIsolationAndReuse(
+export function assertBrowserSessionIsolation(
   left: BrowserIsolationScenario,
   right: BrowserIsolationScenario,
   expectedReuse: boolean,
 ): void {
   const leftKey = sessionKeyFor(left);
   const rightKey = sessionKeyFor(right);
-  // A browser that does not reuse has no session key at all, so two of them never share one.
-  // Treating "no key" as a match would report reuse nobody asked for.
+  // A browser that does not share its session has no session key at all, so two of them never share one.
+  // Treating "no key" as a match would report sharing nobody asked for.
   const actualReuse = leftKey !== undefined && leftKey === rightKey;
   if (actualReuse !== expectedReuse) {
     throw new Error(
-      `Browser reuse mismatch: expected ${expectedReuse}, received ${actualReuse} (${String(leftKey)} vs ${String(rightKey)})`,
+      `Browser session sharing mismatch: expected ${expectedReuse}, received ${actualReuse} (${String(leftKey)} vs ${String(rightKey)})`,
     );
   }
 }

@@ -90,20 +90,20 @@ export const invalidEmailTask = {
 // There is no default: sharing a signed-in session is a decision, not something to inherit.
 export const reusingBrowser = {
   id: "crm", name: "CRM", purpose: "Contact record", url: "https://crm.example.com/contact/42",
-  reuse: true,
+  sharedSession: true,
   isolationScheme: BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME,
 } satisfies TaskBrowser;
 
 export const isolatedBrowser = {
   id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/",
-  reuse: false,
+  sharedSession: false,
 } satisfies TaskBrowser;
 
 // Each refused shape sits on one line so the directive above it covers wherever tsc anchors it.
 // @ts-expect-error A reusing browser with no isolation scheme does not compile.
-export const reusingBrowserWithoutAScheme: TaskBrowser = { id: "crm", name: "CRM", purpose: "Contact record", url: "https://crm.example.com/contact/42", reuse: true };
+export const reusingBrowserWithoutAScheme: TaskBrowser = { id: "crm", name: "CRM", purpose: "Contact record", url: "https://crm.example.com/contact/42", sharedSession: true };
 // @ts-expect-error A browser that does not reuse has no scheme to declare.
-export const isolatedBrowserWithAScheme: TaskBrowser = { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", reuse: false, isolationScheme: BROWSER_ISOLATION_SCHEMES.TAB_NAME };
+export const isolatedBrowserWithAScheme: TaskBrowser = { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedSession: false, isolationScheme: BROWSER_ISOLATION_SCHEMES.TAB_NAME };
 
 // Every command reaches the provider through `execute`; the union is the channel's whole set.
 export const voiceMute: TaskCommand<"voice"> = { type: "mute", muted: true };
@@ -157,9 +157,9 @@ export const audiolessEmailTask = { ...emailTask, id: "email-9",
   media: "started" } satisfies Task<"email">;
 // @ts-expect-error A snapshot states its task count; a blank state cannot pass as a confirmed empty.
 export const uncountedSnapshot = { transport: "active", loginId: "s-1", break: { approval: "not-requested", mayAsk: true }, tasks: [] } satisfies Snapshot<"voice">;
-export const hiddenUrlBrowser = { id: "crm", name: "CRM", url: "https://crm.example.com/42", purpose: "Customer record", reuse: false, urlVisibility: "hidden" } satisfies TaskBrowser;
-export const plainUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", reuse: false } satisfies TaskBrowser;
-export const partialUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", reuse: false,
+export const hiddenUrlBrowser = { id: "crm", name: "CRM", url: "https://crm.example.com/42", purpose: "Customer record", sharedSession: false, urlVisibility: "hidden" } satisfies TaskBrowser;
+export const plainUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", sharedSession: false } satisfies TaskBrowser;
+export const partialUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", sharedSession: false,
   // @ts-expect-error A URL is hidden, shown to its domain, or shown in full; there is no fourth word.
   urlVisibility: "partial" } satisfies TaskBrowser;
 export const agentsOwnTab = { id: "tab-1", name: "Intranet", url: "https://intranet.example.com/" } satisfies PersonalBrowser;
@@ -176,6 +176,14 @@ export const staleLadder = { ...voiceManifest,
 export const staleWrap = { ...emailTask, id: "email-10",
   // @ts-expect-error The wrap allowance is wrapAllowance.
   completionAllowance: 30 } satisfies Task<"email">;
+export const staleParty = { ...emailTask, id: "email-11",
+  // @ts-expect-error The person on the other end is the party.
+  contact: { name: "Asha" } } satisfies Task<"email">;
+export const staleSharing = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup",
+  // @ts-expect-error A browser says whether its session is shared: sharedSession.
+  reuse: false } satisfies TaskBrowser;
+// @ts-expect-error The queue board is queue-summary.
+export const staleSummary = { type: "provider-summary", summary: { title: "Sales", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" } } satisfies ProviderEvent<"voice">;
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;
@@ -212,7 +220,7 @@ export const readyWithoutAudio: HostReport = { online: true, audio: { input: { s
 
 // Who decides: a control the queue could allow may stand locked in its place, naming the level;
 // a preference carries who set it; only hold, mute and skills are ever the person's.
-export const lockedMute: Task<"voice"> = { ...emailTask, id: "call-12", channel: "voice", capabilities: { hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" } }, contact: { name: "Asha", number: { lockedBy: "org" }, email: { lockedBy: "site" } } };
+export const lockedMute: Task<"voice"> = { ...emailTask, id: "call-12", channel: "voice", capabilities: { hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" } }, party: { name: "Asha", number: { lockedBy: "org" }, email: { lockedBy: "site" } } };
 // @ts-expect-error An email task has no mute to lock.
 export const emailLockedMute: Task<"email"> = { ...emailTask, capabilities: { mute: { lockedBy: "team" } } };
 export const skillChoice: AgentPreference = { id: "skill:billing", label: "Billing", enabled: true, setBy: "person" };

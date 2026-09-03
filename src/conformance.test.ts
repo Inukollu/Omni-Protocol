@@ -53,10 +53,10 @@ const conformingSnapshot = {
     media: "started",
     completionMode: "agent-command",
     wrapAllowance: 60,
-    contact: { name: "Maya Rao", number: "+919876543210" },
+    party: { name: "Maya Rao", number: "+919876543210" },
     browsers: [
-      { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", reuse: true, isolationScheme: "ProviderName.TaskTypeName.TabName" },
-      { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", reuse: false },
+      { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedSession: true, isolationScheme: "ProviderName.TaskTypeName.TabName" },
+      { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedSession: false },
     ],
     handlingHistory: [
       { step: "queued", at: "2026-08-21T08:59:19Z", seconds: 41 },
@@ -184,7 +184,7 @@ describe("exerciseAdapter", () => {
     const events = (subjects: readonly ContractSubject[]) => subjects.filter(subject => subject.startsWith("event."));
     const everyEvent: ContractSubject[] = [
       "event.snapshot", "event.transport-status", "event.break-state", "event.task-offered", "event.task-updated",
-      "event.task-media-started", "event.task-media-ended", "event.task-ended", "event.announcement", "event.provider-summary",
+      "event.task-media-started", "event.task-media-ended", "event.task-ended", "event.announcement", "event.queue-summary",
       "event.team-updated", "event.contacts-updated", "event.calendar-updated",
     ];
     // The rich task carries browsers, history, a disposition policy, transfer destinations and a

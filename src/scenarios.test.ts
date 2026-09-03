@@ -12,7 +12,7 @@ import {
 } from "./index.js";
 import {
   assertAuthenticationRestoreAndExpiry,
-  assertBrowserIsolationAndReuse,
+  assertBrowserSessionIsolation,
   assertCapabilityWithdrawal,
   assertCommandRefusedAfterWithdrawal,
   assertBreakBeginsAfterTask,
@@ -395,27 +395,27 @@ describe("browser isolation", () => {
     name: "CRM",
     purpose: "Customer record",
     url: "https://crm.example.test/customer/42",
-    reuse: true,
+    sharedSession: true,
     isolationScheme: BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME,
   } as const satisfies TaskBrowser;
-  const isolated = { ...browser, reuse: false, isolationScheme: undefined } as const satisfies TaskBrowser;
+  const isolated = { ...browser, sharedSession: false, isolationScheme: undefined } as const satisfies TaskBrowser;
 
   it("shares one session across tasks under a task-type scheme", () => {
-    expect(() => assertBrowserIsolationAndReuse(
+    expect(() => assertBrowserSessionIsolation(
       { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
       { providerId: "voiceco", taskId: "call-2", taskType: "Support", browser: { ...browser, id: "crm-copy" } },
       true,
     )).not.toThrow();
   });
 
-  it("never shares a session when reuse is false", () => {
-    expect(() => assertBrowserIsolationAndReuse(
+  it("never shares a session when sharedSession is false", () => {
+    expect(() => assertBrowserSessionIsolation(
       { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
       { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser: isolated },
       false,
     )).not.toThrow();
     // Two isolated browsers do not share with each other either: "no key" is not a matching key.
-    expect(() => assertBrowserIsolationAndReuse(
+    expect(() => assertBrowserSessionIsolation(
       { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser: isolated },
       { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser: isolated },
       false,
@@ -423,18 +423,18 @@ describe("browser isolation", () => {
     expect(browserSessionKey({ providerId: "voiceco", taskId: "c", taskType: "Support", browser: isolated })).toBeUndefined();
   });
 
-  it("reports a mismatch between expected and derived reuse", () => {
-    expect(() => assertBrowserIsolationAndReuse(
+  it("reports a mismatch between expected and derived sharing", () => {
+    expect(() => assertBrowserSessionIsolation(
       { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
       { providerId: "otherco", taskId: "call-1", taskType: "Support", browser },
       true,
-    )).toThrow(/Browser reuse mismatch/);
+    )).toThrow(/Browser session sharing mismatch/);
     // And in the other direction, so the helper is known to check rather than to throw.
-    expect(() => assertBrowserIsolationAndReuse(
+    expect(() => assertBrowserSessionIsolation(
       { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
       { providerId: "voiceco", taskId: "call-2", taskType: "Support", browser },
       false,
-    )).toThrow(/Browser reuse mismatch/);
+    )).toThrow(/Browser session sharing mismatch/);
   });
 
   it("keeps every adversarial naming variant in its own session", () => {

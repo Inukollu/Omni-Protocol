@@ -209,7 +209,7 @@ describe("browserSessionKey", () => {
   const input = (browser: TaskBrowser): BrowserSessionKeyInput =>
     ({ providerId: "mailflow", taskId: "EMAIL-829102", taskType: "Support", browser });
   const reusing = (isolationScheme: TaskBrowser["isolationScheme"]) =>
-    ({ ...base, reuse: true, isolationScheme } as TaskBrowser);
+    ({ ...base, sharedSession: true, isolationScheme } as TaskBrowser);
 
   it("keys each scheme exactly as the guide documents it", () => {
     expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_ID__TAB_NAME)))).toBe("mailflow.EMAIL-829102.CRM");
@@ -221,7 +221,7 @@ describe("browserSessionKey", () => {
   });
 
   it("fails closed: a browser that does not reuse, or reuses under no declared scheme, shares nothing", () => {
-    expect(browserSessionKey(input({ ...base, reuse: false }))).toBeUndefined();
+    expect(browserSessionKey(input({ ...base, sharedSession: false }))).toBeUndefined();
     // The type forbids these, but an adapter compiled against another version can still send
     // them, and the safe reading is "do not share", never "share with everyone named the same".
     expect(browserSessionKey(input(reusing(undefined)))).toBeUndefined();

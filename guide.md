@@ -393,7 +393,7 @@ type ScheduledActivity = {
   title: string;
   startsAt: IsoTimestamp;
   endsAt?: IsoTimestamp;
-  contact?: Contact;
+  party?: Contact;
   attributes?: Attribute[];
 };
 
@@ -492,8 +492,8 @@ type TaskBrowser = Browser & {
   purpose: string;
   urlVisibility?: UrlVisibility;
 } & (
-  | { reuse: false; isolationScheme?: never }
-  | { reuse: true; isolationScheme: BrowserIsolationScheme }
+  | { sharedSession: false; isolationScheme?: never }
+  | { sharedSession: true; isolationScheme: BrowserIsolationScheme }
 );
 
 type PersonalBrowser = Browser;
@@ -507,7 +507,7 @@ type BrowserSessionKeyInput = {
 ```
 
 That union is what makes a reusing browser with no scheme fail to compile rather than inherit a
-default — see **Choosing a reuse scheme**.
+default — see **Choosing an isolation scheme**.
 
 ### Task
 
@@ -529,7 +529,7 @@ type TaskAttributeBase = {
 
 type TaskAttribute = TaskAttributeBase & (
   | { type: "text"; value: string }
-  | { type: "contact"; contact: Contact }
+  | { type: "contact"; party: Contact }
   | { type: "timestamp"; at: IsoTimestamp }
 );
 
@@ -596,7 +596,7 @@ type Task<C extends Channel = Channel> = {
   taskType: string;
   capabilities: TaskCapabilities<C>;
   browsers: TaskBrowser[];
-  contact?: Contact;
+  party?: Contact;
   phase: TaskPhase;
   reference?: string;
   attributes?: TaskAttribute[];
@@ -917,7 +917,7 @@ type OpenMediaRequest = {
 ```ts
 type SummaryMetric = { id: string; label: string; value: string };
 
-type ProviderSummary = {
+type QueueSummary = {
   title: string;
   subtitle?: string;
   waitingCount: number;
@@ -944,7 +944,7 @@ type ProviderEvent =
   | { type: "task-media-ended"; taskId: TaskId }
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
-  | { type: "provider-summary"; summary: ProviderSummary }
+  | { type: "queue-summary"; summary: QueueSummary }
   | { type: "team-updated"; team: TeamRoster }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
@@ -1526,7 +1526,7 @@ changes.
 | `title` | Required agent-facing activity title. |
 | `startsAt` | Required RFC-3339 start time with an explicit timezone. |
 | `endsAt` | Optional RFC-3339 end time with an explicit timezone. |
-| `contact` | Optional related `Contact`. |
+| `party` | The person the activity reaches — a callback's customer — as a `Contact`. Optional. |
 | `attributes` | Optional ordered `Attribute` entries. Keys must be non-empty. |
 
 **There is no `type` field**, for the reason there is none on `Contact`: an open category is
@@ -2071,7 +2071,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `taskType` | Required provider-defined source or category of work, such as a voice `Queue Name`, `Mailbox Folder`, `Chat Source`, `Support`, `Billing`, or `Returns`. |
 | `capabilities` | Controls and workspace features available for this specific task. |
 | `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
-| `contact` | Optional `Contact` for the person or entity on this task. Often a name and one address; a withheld caller ID may leave nothing to send at all. |
+| `party` | The person or entity on the other end of this task, as a `Contact`: often a name and one address; a withheld caller ID may leave nothing to send at all. Optional. The party is who the task is *with*; `contacts` is the directory. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preparing`, `in-progress`, `paused`, or `completing`. |
 | `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
@@ -2091,7 +2091,7 @@ const attributes: TaskAttribute[] = [
     key: "related-contact",
     label: "Related contact",
     type: "contact",
-    contact: { name: "Asha Rao", number: "+919876543210" },
+    party: { name: "Asha Rao", number: "+919876543210" },
   },
   {
     key: "answered",
@@ -2329,14 +2329,14 @@ Each `TaskBrowser` defines one named browser in the task workspace.
 | `name` | Agent-facing tab label, unique within the task, and an input to schemes containing `TAB_NAME`. |
 | `purpose` | Human-readable explanation of the browser's role. |
 | `url` | Initial URL. Must use `http:` or `https:`; see below. Later navigation comes from Chromium. |
-| `reuse` | Required. `false` creates a task-specific browser session. |
-| `isolationScheme` | **Required when `reuse` is `true`**, and rejected when it is `false`. There is no default: see below. |
+| `sharedSession` | Required. `false` creates a task-specific browser session. |
+| `isolationScheme` | **Required when `sharedSession` is `true`**, and rejected when it is `false`. There is no default: see below. |
 | `urlVisibility` | What the agent sees of this tab's URL in Omni's chrome: `hidden`, `domain`, or `full`. Omitted, the URL shows as any browser's does; a provider says `hidden` where the URL carries what the agent may not read — a caller's number, a CRM token. Per browser, on the provider's word; Omni honours it tab by tab. |
 
-##### Choosing a reuse scheme
+##### Choosing an isolation scheme
 
 Every scheme is supported and the provider picks the one its deployment needs. There is no
-default, and a `reuse: true` browser that declares none is invalid — the type will not compile
+default, and a `sharedSession: true` browser that declares none is invalid — the type will not compile
 it and `validateSnapshot` reports `task.browser.isolationScheme.required`.
 
 That is deliberate. Sharing a signed-in session decides **who else may see those credentials**,
@@ -2358,7 +2358,7 @@ page rather than following a disallowed URL, and `isAllowedBrowserUrl()` is the 
 
 ##### Reuse and isolation
 
-With `reuse: true`, definitions producing the same isolation key share one **storage profile**:
+With `sharedSession: true`, definitions producing the same isolation key share one **storage profile**:
 cookies, local storage, session storage, permissions, and cached credentials. Different keys are
 isolated from one another.
 
@@ -2382,7 +2382,7 @@ browsers: [
     name: "CRM",
     purpose: "Contact record",
     url: "https://crm.example.com/contact/42",
-    reuse: true,
+    sharedSession: true,
     isolationScheme: BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME,
   }
 ]
@@ -3580,7 +3580,7 @@ Publishes an agent-facing message. `text` is always required and is the accessib
 Optional HTML is sanitized by Omni. `announcedAt` and optional `expiresAt` are RFC-3339 times with
 explicit timezones.
 
-### `provider-summary`
+### `queue-summary`
 
 Publishes the provider's current dashboard contribution. Omni combines only the latest summary from
 each connected provider.
@@ -3742,7 +3742,7 @@ cannot be established from TypeScript structure alone.
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `in-effect` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
 | `assertWrapTimeout(task, mediaEndedAt, deadline, toleranceMs?)` | The wrap deadline equals media end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |
-| `assertBrowserIsolationAndReuse(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |
+| `assertBrowserSessionIsolation(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |
 | `assertNoBrowserSessionKeyCollisions(scenarios)` | No two distinct scenarios derive the same session key. Feed it adversarial names. |
 
 Adapters should run the relevant scenarios against deterministic test state before publishing.
