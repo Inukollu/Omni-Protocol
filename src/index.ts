@@ -343,6 +343,13 @@ export interface ConnectContext {
 
 export type ConnectionStatus = "connecting" | "active" | "error";
 
+/**
+ * What revives a connection that reported `error`: `reconnect` -- the login is good, dispose this
+ * connection and call `connect()` again -- or `reauthenticate` -- run the authentication flow
+ * first. The adapter knows which; the host acts on its word.
+ */
+export type ConnectionRecovery = "reconnect" | "reauthenticate";
+
 // ---------------------------------------------------------------------------
 // Idle contributions.
 // ---------------------------------------------------------------------------
@@ -649,10 +656,10 @@ export type Task<C extends Channel = Channel> = {
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingStep[];
 } & TaskCompletion
-  // Consulting, and a lead on the call, are voice affairs; the arm makes them compile errors elsewhere.
+  // Consulting, a lead on the call, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
   & (C extends "voice"
-    ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting }
-    : { consultation?: never; lead?: never; assisting?: never });
+    ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting; media?: TaskMediaState }
+    : { consultation?: never; lead?: never; assisting?: never; media?: never });
 
 /** What the provider wants of Omni's acceptance policy for one offer. */
 export type AcceptanceMode =
@@ -943,6 +950,13 @@ export interface TeamBreakCommandRequest {
 // Media.
 // ---------------------------------------------------------------------------
 
+/**
+ * The task's real-time audio as the provider holds it: `ready` while audio should be attached,
+ * `ended` once primary handling's audio ended, and the field omitted while none should be. The
+ * provider's word -- a desk attaches and renders audio from it, never from its own senses.
+ */
+export type TaskMediaState = "ready" | "ended";
+
 export interface VoiceMediaSession {
   remoteAudio: MediaStream;
   setMuted(muted: boolean): void;
@@ -1045,7 +1059,8 @@ export interface ProviderSummary {
 
 export type ProviderEvent<C extends Channel = Channel> =
   | { type: "snapshot"; reason: "reconnected" | "provider-requested"; snapshot: Snapshot<C> }
-  | { type: "provider-status"; status: ConnectionStatus; message?: string }
+  | { type: "provider-status"; status: "connecting" | "active"; message?: string }
+  | { type: "provider-status"; status: "error"; recovery: ConnectionRecovery; message?: string }
   | { type: "break-state"; break: BreakState }
   | {
       type: "task-offered";
@@ -1055,6 +1070,7 @@ export type ProviderEvent<C extends Channel = Channel> =
       preparationEndsAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task<C> }
+  | { type: "task-media-ready"; taskId: TaskId }
   | { type: "task-media-ended"; taskId: TaskId }
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }

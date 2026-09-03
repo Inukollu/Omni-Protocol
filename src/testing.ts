@@ -49,6 +49,7 @@ const STATE_SUBJECTS = [
   "task.consultation",
   "task.lead",
   "task.assisting",
+  "task.media",
   "task.dispositions",
   "task.destinations",
   "task.custom",
@@ -65,7 +66,7 @@ const STATE_SUBJECTS = [
 // `ProviderEvent` without a row here, or a row it lacks, is a compile error.
 const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "provider-status": true, "break-state": true, "task-offered": true, "task-updated": true,
-  "task-media-ended": true, "task-ended": true, announcement: true, "provider-summary": true,
+  "task-media-ready": true, "task-media-ended": true, "task-ended": true, announcement: true, "provider-summary": true,
   "team-updated": true, "contacts-updated": true, "calendar-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
@@ -88,6 +89,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (value.consultation !== undefined) seen.add("task.consultation");
   if (value.lead !== undefined) seen.add("task.lead");
   if (value.assisting !== undefined) seen.add("task.assisting");
+  if (value.media !== undefined) seen.add("task.media");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
   if (isRecord(capabilities.dispositions)) seen.add("task.dispositions");
   for (const directory of ["blindTransfer", "consultTransfer", "conference"]) {
@@ -611,22 +613,28 @@ export function assertDeniedAndRetriedBreak(approvals: readonly BreakApproval[])
 // ---------------------------------------------------------------------------
 // The task stream. Each event is validated on its own; what one event may say about a task
 // depends on what was said before, and only something that watched the whole stream can hold a
-// provider to it. A task is never its audio: media ends only on work that has begun, and what
-// follows the media ending is the work completing or ending, never a phase the audio decided.
+// provider to it. A task is never its audio: media arrives on the provider's word, ends only
+// where it arrived and on work that has begun, and what follows the media ending is the work
+// completing or ending, never a phase the audio decided.
 // ---------------------------------------------------------------------------
 
 const WORK_BEGUN = new Set(["in-progress", "paused", "completing"]);
 
 /** What a stream has said about the tasks it carries, and the rules across events. */
 export class TaskStream {
-  private readonly tasks = new Map<string, { phase: string; mediaEnded: boolean }>();
+  private readonly tasks = new Map<string, { phase: string; media: string }>();
+
+  private static stated(task: unknown): { phase: string; media: string } {
+    const media = isRecord(task) && (task.media === "ready" || task.media === "ended") ? task.media : "none";
+    return { phase: String(isRecord(task) ? task.phase : undefined), media };
+  }
 
   /** Replaces what is known with a snapshot's tasks, as a snapshot replaces Omni's state. */
   seed(snapshot: unknown): void {
     this.tasks.clear();
     if (!isRecord(snapshot) || !Array.isArray(snapshot.tasks)) return;
     for (const task of snapshot.tasks) {
-      if (isRecord(task) && typeof task.id === "string") this.tasks.set(task.id, { phase: String(task.phase), mediaEnded: false });
+      if (isRecord(task) && typeof task.id === "string") this.tasks.set(task.id, TaskStream.stated(task));
     }
   }
 
@@ -646,7 +654,7 @@ export class TaskStream {
       case "task-offered":
         if (id === undefined) break;
         if (known !== undefined) refuse("stream.taskOffered.duplicate", `${at}.task.id`, `${id} is already on the stream; an offer introduces a task once`);
-        this.tasks.set(id, { phase: String(isRecord(event.task) ? event.task.phase : undefined), mediaEnded: false });
+        this.tasks.set(id, TaskStream.stated(event.task));
         break;
       case "task-updated":
         if (id === undefined) break;
@@ -654,15 +662,30 @@ export class TaskStream {
           refuse("stream.taskUpdated.unknown", `${at}.task.id`, `${id} was never offered or carried on a snapshot`);
           break;
         }
-        if (known.mediaEnded) {
+        if (known.media === "ended") {
           const phase = isRecord(event.task) ? String(event.task.phase) : "";
           if (phase !== "completing") {
             refuse("stream.taskMediaEnded.follow", `${at}.task.phase`,
               `after its media ended, ${id} completes or ends; ${phase} is a phase the audio does not decide`);
           }
-          known.mediaEnded = phase === "completing" ? false : known.mediaEnded;
         }
-        known.phase = isRecord(event.task) ? String(event.task.phase) : known.phase;
+        // A task replaces the task: the update's own media field is the state now stated.
+        this.tasks.set(id, TaskStream.stated(event.task));
+        break;
+      case "task-media-ready":
+        if (id === undefined) break;
+        if (known === undefined) {
+          refuse("stream.taskMediaReady.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
+          break;
+        }
+        if (!WORK_BEGUN.has(known.phase)) {
+          refuse("stream.taskMediaReady.beforeWork", `${at}.taskId`,
+            `media cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
+        }
+        if (known.media === "ready") {
+          refuse("stream.taskMediaReady.duplicate", `${at}.taskId`, `media is already ready on ${id}; ready and ended alternate`);
+        }
+        known.media = "ready";
         break;
       case "task-media-ended":
         if (id === undefined) break;
@@ -674,7 +697,11 @@ export class TaskStream {
           refuse("stream.taskMediaEnded.beforeWork", `${at}.taskId`,
             `media cannot end on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
-        known.mediaEnded = true;
+        if (known.media !== "ready") {
+          refuse("stream.taskMediaEnded.silent", `${at}.taskId`,
+            `media cannot end on ${id} where none arrived: audio attaches on task-media-ready, or on a task carried with media ready`);
+        }
+        known.media = "ended";
         break;
       case "task-ended":
         if (id === undefined) break;
@@ -755,8 +782,9 @@ export function assertBreakFollowsItsRequests(envelopes: readonly ProviderEventE
 
 /**
  * The media follows the task and never decides it. Given a provider's stream -- optionally seeded
- * with the snapshot it began from -- every task is introduced once, `task-media-ended` names a
- * task whose work has begun, and what follows it is `completing` or `task-ended`.
+ * with the snapshot it began from -- every task is introduced once, `task-media-ready` and
+ * `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what
+ * follows the media ending is `completing` or `task-ended`.
  */
 export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
   const stream = new TaskStream();
