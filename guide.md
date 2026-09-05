@@ -36,7 +36,7 @@ are used precisely throughout and mean nothing looser here.
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, roster. |
 | **Dial** | One outbound call the host asks a provider to place — from the idle dialpad, a transfer, a conference add, or a callback. Identified by the host's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
-| **On the call** | Who a voice task's audio joins right now, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in. |
+| **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in from the moment their dial is placed. |
 
 Six words describe *what state a thing is in*, and they are not interchangeable: each belongs to
 one thing, so a bare "status" in conversation is always the authentication session's, and a
@@ -1399,6 +1399,10 @@ export default defineAdapter({
 });
 ```
 
+`dialOutcomes` is a compile error off voice, as `dial` is. An adapter written once over
+`C extends Channel` therefore sets it the way it already sets `idleCapabilities`, with
+`as Pick<Manifest<C>, "dialOutcomes">`; an adapter written for one channel needs no cast.
+
 ### `Adapter.manifest`
 
 Static metadata that Omni can inspect before connecting.
@@ -2129,7 +2133,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `handlingHistory` | The call record: `steps` — the ordered handling history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `handleSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **How a task has been handled**. |
-| `onCall` | Voice only. Who is on the call right now, as the provider states it, replaced whole with the task: `party` is the customer, `agent` a person by user id, `consulted` and `conferenced` somebody a dial brought in -- with the `destination` dialled, the `dialId` where a host placed it, and `held: true` on anyone parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
+| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destination` dialled, the `dialId` where a host placed it, and `held: true` on anyone parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `lead` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Consulting a lead**. |
 | `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead` `take-over` and `leave` issuable. See **Consulting a lead**. |
 
@@ -2558,7 +2562,7 @@ const taskCapabilities = {
 | `blindTransfer` | Secondary menu item: Blind transfer | Omni may transfer the caller directly to a destination. |
 | `consultTransfer` | Secondary menu item: Consult transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Consult transfer**. |
 | `consultLead` | Secondary menu item: Consult lead | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.lead`. See **Consulting a lead**. |
-| `conference` | Secondary button: Conference | Omni may dial a destination into the active call, and drop a `conferenced` entry from it. |
+| `conference` | Secondary button: Conference | Omni may dial a destination into the active call, and drop a `conferenced` entry from it -- one still ringing included, which calls the dial off. |
 | `recording` | Overflow menu item: Recording | Omni may expose start, pause, resume, and stop recording controls. |
 | `dispositions` | Primary button: Complete | Omni may request task disposal with a provider disposition and notes. |
 
@@ -2825,7 +2829,17 @@ neither carries a destination. `consulted` and `conferenced` were, so both carry
 and, where a host's dial brought them, its `dialId`; a person the platform added itself carries
 none. `held: true` is presence as claim. A snapshot establishes state, so a host that attaches
 after a transfer reads the room from here rather than inferring it from a sequence of outcomes it
-never saw. A `conference` `remove` names the `destination` of the `conferenced` entry to drop.
+never saw.
+
+**A dialled entry is listed from the moment the dial is placed, not from the answer.** The entry is
+what makes `transfer` `cancel` issuable and what `conference` `remove` names, and a destination the
+agent cannot call off while it rings is a parked customer with no way back -- which is the very case
+`cancelled` exists for. Consult and conference behave alike here: the `consulted` or `conferenced`
+entry appears with its `dialId` when the dial is placed, whether it has answered is the
+`dial-outcome`'s to say, and a `conference` `remove` naming a still-ringing `destination` calls that
+dial off, with `cancelled` as its outcome. A consult destination that never answers is a dial that
+ended: the provider returns the task to `in-progress` with no `consulted` entry, as **Consult
+transfer** states, so the customer is never left parked by a conforming provider.
 
 The desk shows a dial as placed on `dialling`, never as reached; shows the person in the room when
 they appear on `onCall`; and shows the outcome, with the switch's reason, against the call it

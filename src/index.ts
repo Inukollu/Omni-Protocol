@@ -645,11 +645,13 @@ export type OnCallRole = "party" | "agent" | "consulted" | "conferenced";
 export const ON_CALL_ROLES = ["party", "agent", "consulted", "conferenced"] as const satisfies readonly OnCallRole[];
 
 /**
- * Somebody on the call right now, as the provider states it: who, since when, and whether they
- * are held aside. `party` is the customer; `agent` a person, by user id; `consulted` and
- * `conferenced` someone a dial brought in, carrying the dial when a host placed it and the address
- * either way. `label` names a destination -- a person, a queue -- not a phrase. At most one
- * `party` and one `consulted`: the consult commands name neither because there is exactly one.
+ * Somebody on the call, or being brought onto it, as the provider states it: who, since when, and
+ * whether they are held aside. `party` is the customer; `agent` a person, by user id; `consulted`
+ * and `conferenced` someone a dial is bringing in -- listed from the moment the dial is placed, so
+ * the agent can call it off while it rings -- carrying the dial when a host placed it and the
+ * address either way. Whether they answered is the `dial-outcome`'s to say. `label` names a
+ * destination -- a person, a queue -- not a phrase. At most one `party` and one `consulted`: the
+ * consult commands name neither because there is exactly one.
  */
 export type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party" }
@@ -819,7 +821,7 @@ export type VoiceTaskCommand =
   | { type: "lead"; action: "leave" }
   /** Dial `destination` into the call. Gated by `conference`. */
   | { type: "conference"; action: "add"; dialId: DialId; destination: string }
-  /** Drop the `conferenced` entry on `Task.onCall` with this destination. */
+  /** Drop the `conferenced` entry on `Task.onCall` with this destination; while it still rings, this calls the dial off. */
   | { type: "conference"; action: "remove"; destination: string }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);
