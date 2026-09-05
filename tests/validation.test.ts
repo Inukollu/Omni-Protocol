@@ -109,7 +109,7 @@ describe("validateManifest", () => {
 
   it("accepts a conforming manifest", () => {
     expect(validateManifest(manifest())).toEqual([]);
-    expect(validateManifest(manifest({ idleCapabilities: { dial: { destinations: "any-number" }, contacts: true } }))).toEqual([]);
+    expect(validateManifest(manifest({ idleCapabilities: { dial: { destinations: "any-number" }, contacts: true }, dialOutcomes: ["answered", "no-answer"] }))).toEqual([]);
   });
 
   it.each([
@@ -129,7 +129,7 @@ describe("validateManifest", () => {
     const chat = { ...manifest({ channel: "chat" }), idleCapabilities: { dial: { destinations: "any-number" } } };
     expect(rules(validateManifest(chat))).toContain("manifest.idleCapability.channel");
     // The control: the same capability on voice is fine, so the rejection is about the channel.
-    expect(validateManifest(manifest({ idleCapabilities: { dial: { destinations: "any-number" } } }))).toEqual([]);
+    expect(validateManifest(manifest({ idleCapabilities: { dial: { destinations: "any-number" } }, dialOutcomes: ["answered", "no-answer"] }))).toEqual([]);
   });
 
   it("declares presence capabilities by presence", () => {
@@ -766,7 +766,7 @@ describe("validateResult", () => {
   it("accepts each method's own answers and refuses a status it does not give", () => {
     // Every method's success status beside the same status on a method that does not answer it.
     const pairs = [
-      ["execute", "applied"], ["dial", "dialled"], ["setCapacity", "applied"], ["requestBreak", "requested"],
+      ["execute", "applied"], ["setCapacity", "applied"], ["requestBreak", "requested"],
       ["commitBreak", "committed"], ["cancelBreak", "cancelled"], ["endBreak", "ended"],
       ["executeTeamBreak", "applied"], ["executeTeamConsult", "applied"],
     ] as const;
@@ -775,6 +775,8 @@ describe("validateResult", () => {
       expect(rules(validateResult({ status: "failed", failure }, method))).toEqual([]);
     }
     expect(rules(validateResult({ status: "applied" }, "dial"))).toEqual(["result.status"]);
+    // renamed away: dialled overstated what happened; a dial is accepted and being placed, and its outcome comes later.
+    expect(rules(validateResult({ status: "dialled", dialId: "dial-1" }, "dial"))).toEqual(["result.status"]);
     expect(rules(validateResult({ status: "ok" }, "execute"))).toEqual(["result.status"]);
     expect(rules(validateResult({ status: "opened", session: { close: () => undefined } }, "openMedia"))).toEqual([]);
     expect(rules(validateResult({ status: "unavailable", failure }, "openMedia"))).toEqual([]);
@@ -959,8 +961,8 @@ describe("rules that had no test", () => {
     expect(m({ taskTypePresentation: { Support: { singular: "Support call", plural: "Support calls", referenceLabel: "" } } })).toEqual(["manifest.taskTypePresentation.referenceLabel"]);
     expect(m({ phaseLabels: { pending: "Ringing" } })).toEqual([]);
     expect(m({ phaseLabels: { pending: "" } })).toEqual(["manifest.phaseLabels.label"]);
-    expect(m({ idleCapabilities: { dial: { destinations: "any-number" } } })).toEqual([]);
-    expect(m({ idleCapabilities: { dial: {} } })).toEqual(["manifest.dial.destinations"]);
+    expect(m({ idleCapabilities: { dial: { destinations: "any-number" } }, dialOutcomes: ["answered", "no-answer"] })).toEqual([]);
+    expect(m({ idleCapabilities: { dial: {} }, dialOutcomes: ["answered", "no-answer"] })).toEqual(["manifest.dial.destinations"]);
     expect(m({ idleCapabilities: { personalBrowser: { access: { mode: "block-all", allowList: [], blockList: [] } } } })).toEqual([]);
     expect(m({ idleCapabilities: { personalBrowser: { access: "block-all" } } })).toEqual(["manifest.personalBrowser.access.shape"]);
   });
@@ -1151,7 +1153,8 @@ describe("the validators accept exactly what the contract publishes", () => {
       const value = name === "dial" ? { destinations: "any-number" }
         : name === "personalBrowser" ? { access: { mode: "allow-all" } }
         : true;
-      return manifest({ channel, idleCapabilities: { [name]: value } });
+      // A dialpad dials, so declaring it declares how a dial ends; off voice, dial is the only violation looked for.
+      return manifest({ channel, idleCapabilities: { [name]: value }, ...(name === "dial" && channel === "voice" ? { dialOutcomes: ["answered", "no-answer"] } : {}) });
     };
     for (const name of IDLE_CAPABILITIES) {
       expect(rules(validateManifest(declaring(name, "voice")))).toEqual([]);
@@ -1207,14 +1210,126 @@ describe("consult transfer", () => {
     }
   });
 
-  it("carries the consultation in progress on voice, and nowhere else", () => {
-    expect(rules(validateTask(task({ consultation: { destination: "+14155550111", label: "Tier 2", since: "2026-08-21T09:05:00Z" } }), voice))).toEqual([]);
+  it("carries the consulted destination on the call, on voice and nowhere else", () => {
+    const consulted = { role: "consulted", destination: "+14155550111", label: "Tier 2", dialId: "dial-3", since: "2026-08-21T09:05:00Z" };
+    expect(rules(validateTask(task({ onCall: [consulted] }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ onCall: [{ role: "consulted", destination: "+14155550111", since: "2026-08-21T09:05:00Z" }] }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ onCall: [{ ...consulted, destination: "" }] }), voice))).toEqual(["task.onCall.destination"]);
+    expect(rules(validateTask(task({ onCall: [{ ...consulted, since: "yesterday" }] }), voice))).toEqual(["task.onCall.since"]);
+    expect(rules(validateTask(task({ onCall: consulted }), voice))).toEqual(["task.onCall.shape"]);
+    expect(rules(validateTask(task({ channel: "email", capabilities: {}, onCall: [consulted] }), { channel: "email" }))).toEqual(["task.onCall.channel"]);
+    // One at a time: complete and cancel name no destination because there is exactly one.
+    expect(rules(validateTask(task({ onCall: [consulted, { ...consulted, destination: "+14155550199" }] }), voice))).toEqual(["task.onCall.consulted.single"]);
+    // renamed away: the consultation folded into who is on the call; the old field is refused as unknown, not read.
     expect(rules(validateTask(task({ consultation: { destination: "+14155550111" } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ consultation: { destination: "" } }), voice))).toContain("task.consultation.destination");
-    expect(rules(validateTask(task({ consultation: { destination: "+14155550111", since: "yesterday" } }), voice))).toContain("task.consultation.since");
-    expect(rules(validateTask(task({ consultation: "+14155550111" }), voice))).toContain("task.consultation.shape");
-    expect(rules(validateTask(task({ channel: "email", capabilities: {}, consultation: { destination: "+14155550111" } }), { channel: "email" })))
-      .toContain("task.consultation.channel");
+  });
+});
+
+describe("who is on the call", () => {
+  const voice = { channel: "voice" };
+  const since = "2026-08-21T09:05:00Z";
+  const onCall = (entries: unknown) => rules(validateTask(task({ onCall: entries }), voice));
+  const party = { role: "party", since };
+  const agent = { role: "agent", userId: "A-1", since };
+  const conferenced = { role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", label: "Tier 2", since };
+
+  it("states each role with what that role needs, and refuses what another role would carry", () => {
+    expect(onCall([party, agent, conferenced])).toEqual([]);
+    expect(onCall([{ ...party, held: true }, { ...conferenced, held: true }])).toEqual([]);
+    expect(onCall([])).toEqual([]);
+    expect(onCall([{ role: "caller", since }])).toEqual(["task.onCall.role"]);
+    expect(onCall(["A-1"])).toEqual(["task.onCall.entry"]);
+    expect(onCall([{ ...party, held: false }])).toEqual(["task.onCall.held"]);
+    expect(onCall([{ role: "agent", since }])).toEqual(["task.onCall.userId"]);
+    expect(onCall([{ ...party, userId: "A-1" }])).toEqual(["task.onCall.userId.unexpected"]);
+    expect(onCall([{ ...conferenced, userId: "A-1" }])).toEqual(["task.onCall.userId.unexpected"]);
+    // A party or an agent was dialled from nowhere.
+    expect(onCall([{ ...party, destination: "+14155550111" }])).toEqual(["task.onCall.destination.unexpected"]);
+    expect(onCall([{ ...agent, dialId: "dial-1" }])).toEqual(["task.onCall.dialId.unexpected"]);
+    expect(onCall([{ ...party, label: "Maya" }])).toEqual(["task.onCall.label.unexpected"]);
+    expect(onCall([{ ...conferenced, dialId: "" }])).toEqual(["task.onCall.dialId"]);
+    expect(onCall([{ ...conferenced, label: "" }])).toEqual(["task.onCall.label"]);
+    expect(onCall([party, party])).toEqual(["task.onCall.party.single"]);
+    // Two conferenced people are ordinary; the singular rules are party and consulted.
+    expect(onCall([conferenced, { ...conferenced, destination: "+14155550199", dialId: "dial-3c9" }])).toEqual([]);
+  });
+});
+
+describe("every dial has an outcome", () => {
+  const voice = { channel: "voice" };
+  const dialling = (over: Record<string, unknown> = {}) => manifest({ dialOutcomes: ["answered", "no-answer"], ...over });
+
+  it("takes a manifest's word for which outcomes it distinguishes, both ways", () => {
+    const m = (over: Record<string, unknown>) => rules(validateManifest(manifest(over)));
+    expect(m({ dialOutcomes: ["answered", "busy", "no-answer", "unreachable", "rejected"] })).toEqual([]);
+    expect(m({ dialOutcomes: ["answered", "no-answer"] })).toEqual([]);
+    expect(m({ dialOutcomes: [] })).toEqual(["manifest.dialOutcomes.shape"]);
+    expect(m({ dialOutcomes: "answered" })).toEqual(["manifest.dialOutcomes.shape"]);
+    expect(m({ dialOutcomes: ["answered", "ringing"] })).toEqual(["manifest.dialOutcome"]);
+    expect(m({ dialOutcomes: ["answered", "busy", "busy"] })).toEqual(["manifest.dialOutcome.unique"]);
+    // Both branches: a success the provider cannot state, or a failure it cannot, leaves the desk guessing.
+    expect(m({ dialOutcomes: ["busy", "no-answer"] })).toEqual(["manifest.dialOutcomes.answered"]);
+    expect(m({ dialOutcomes: ["answered"] })).toEqual(["manifest.dialOutcomes.failure"]);
+    expect(m({ channel: "chat", dialOutcomes: ["answered", "no-answer"] })).toEqual(["manifest.dialOutcomes.channel"]);
+    // A dialpad dials.
+    expect(m({ idleCapabilities: { dial: { destinations: "any-number" } } })).toEqual(["manifest.dialOutcomes.required"]);
+    expect(m({ idleCapabilities: { contacts: true } })).toEqual([]);
+  });
+
+  it("requires a task that may dial to come from a manifest that says how a dial ends", () => {
+    for (const name of ["callback", "blindTransfer", "consultTransfer", "conference"]) {
+      const dials = task({ capabilities: { [name]: true } });
+      expect(rules(validateSnapshot(snapshot({ tasks: [dials] }), dialling()))).toEqual([]);
+      expect(rules(validateSnapshot(snapshot({ tasks: [dials] }), manifest()))).toEqual(["task.capability.dialOutcomes.required"]);
+      expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: dials }), manifest()))).toEqual(["task.capability.dialOutcomes.required"]);
+    }
+    // A locked control is still a declared one; the queue could unlock it without a manifest change.
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { conference: { lockedBy: "team" } } })] }), manifest()))).toEqual(["task.capability.dialOutcomes.required"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { hold: true } })] }), manifest()))).toEqual([]);
+    // Without a manifest to ask, the question is not asked.
+    expect(rules(validateTask(task({ capabilities: { conference: true } }), voice))).toEqual([]);
+  });
+
+  it("carries the outcome once the manifest declared it, against a task or none, with the switch's words", () => {
+    const check = (event: unknown, m = dialling()) => rules(validateEventEnvelope(envelope(event), m));
+    const answered = { type: "dial-outcome", dialId: "dial-7f2", outcome: "answered" };
+    expect(check(answered)).toEqual([]);
+    expect(check({ ...answered, taskId: "call-91", destination: "+14155550111" })).toEqual([]);
+    expect(check({ ...answered, outcome: "no-answer", reason: "No route to destination" })).toEqual([]);
+    expect(check({ ...answered, dialId: "" })).toEqual(["event.dialOutcome.dialId"]);
+    expect(check({ ...answered, outcome: "ringing" })).toEqual(["event.dialOutcome.outcome"]);
+    // A distinction the manifest did not declare is a guess dressed as a code.
+    expect(check({ ...answered, outcome: "busy" })).toEqual(["event.dialOutcome.undeclared"]);
+    expect(check(answered, manifest())).toEqual(["event.dialOutcome.undeclared"]);
+    expect(check({ ...answered, taskId: "" })).toEqual(["event.dialOutcome.taskId"]);
+    expect(check({ ...answered, destination: "" })).toEqual(["event.dialOutcome.destination"]);
+    expect(check({ ...answered, reason: "" })).toEqual(["event.dialOutcome.reason"]);
+  });
+
+  it("answers dialling with the host's dialId restated, and applied names no dial", () => {
+    expect(rules(validateResult({ status: "dialling", dialId: "dial-7f2" }, "dial", "result", "dial-7f2"))).toEqual([]);
+    expect(rules(validateResult({ status: "dialling", dialId: "dial-7f2" }, "dial"))).toEqual([]);
+    expect(rules(validateResult({ status: "dialling" }, "dial"))).toEqual(["result.dialId"]);
+    // The host compares and confirms: an answer for another dial is an answer to nothing it asked.
+    expect(rules(validateResult({ status: "dialling", dialId: "dial-000" }, "dial", "result", "dial-7f2"))).toEqual(["result.dialId.mismatch"]);
+    // execute dials when its command did, and then answers dialling rather than applied.
+    expect(rules(validateResult({ status: "dialling", dialId: "dial-7f2" }, "execute", "result", "dial-7f2"))).toEqual([]);
+    expect(rules(validateResult({ status: "applied" }, "execute", "result", "dial-7f2"))).toEqual(["result.status"]);
+    expect(rules(validateResult({ status: "dialling", dialId: "dial-7f2" }, "execute"))).toEqual(["result.status"]);
+    expect(rules(validateResult({ status: "applied", dialId: "dial-7f2" }, "execute"))).toEqual(["result.dialId.unexpected"]);
+    expect(rules(validateResult({ status: "failed", failure: { code: "omni.destination-not-permitted", message: "Not in contacts", retryable: false } }, "execute", "result", "dial-7f2"))).toEqual([]);
+  });
+
+  it("lets a step that dialled say which dial and where, and no other step", () => {
+    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ handlingHistory: { steps: [{ at: "2026-08-21T09:00:00Z", by: "A-1", ...entry }] } }), voice));
+    for (const dialled of ["transferred", "conferenced", "unanswered"]) {
+      expect(step({ step: dialled, dialId: "dial-7f2", destination: "+14155550111" })).toEqual([]);
+      expect(step({ step: dialled, destination: "+14155550111" })).toEqual([]);
+    }
+    expect(step({ step: "transferred", dialId: "" })).toEqual(["task.handlingHistory.dialId"]);
+    expect(step({ step: "transferred", destination: "" })).toEqual(["task.handlingHistory.destination"]);
+    expect(step({ step: "held", dialId: "dial-7f2" })).toEqual(["task.handlingHistory.dialId.unexpected"]);
+    expect(step({ step: "answered", destination: "+14155550111" })).toEqual(["task.handlingHistory.destination.unexpected"]);
   });
 });
 

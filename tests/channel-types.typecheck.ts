@@ -9,7 +9,6 @@ import {
   type OpenMediaRequest,
   type Manifest,
   type ProviderEvent,
-  type HandlingReport,
   type Host,
   type DispositionRules,
   type HostAudioInput,
@@ -25,6 +24,7 @@ import {
   type TeamRoster,
   type TaskBrowser,
   type TaskCommand,
+  type OnCall,
 } from "../src/index.js";
 
 export const voiceManifest = {
@@ -129,25 +129,46 @@ export const untimedProviderAutomaticTask: Task<"email"> = { ...emailTask, id: "
 
 // Calling back belongs to voice: the capability and the command exist on no other channel.
 export const callbackCapableVoiceTask = { ...emailTask, id: "call-9", channel: "voice", capabilities: { callback: true, dispositions: true } } satisfies Task<"voice">;
-export const voiceCallback: TaskCommand<"voice"> = { type: "callback" };
+export const voiceCallback: TaskCommand<"voice"> = { type: "callback", dialId: "dial-1" };
+// @ts-expect-error A callback dials, and every dial carries the host's dialId.
+export const unplacedCallback: TaskCommand<"voice"> = { type: "callback" };
 // @ts-expect-error Chat has nobody to call back.
 export const chatCallbackCapability: Task<"chat">["capabilities"] = { callback: true };
 // @ts-expect-error Email has nobody to call back.
-export const emailCallback: TaskCommand<"email"> = { type: "callback" };
+export const emailCallback: TaskCommand<"email"> = { type: "callback", dialId: "dial-1" };
 
 // A transfer is blind with a destination, or one of the three consult steps; never both at once.
-export const blindTransfer: TaskCommand<"voice"> = { type: "transfer", destination: "+14155550111" };
-export const consult: TaskCommand<"voice"> = { type: "transfer", action: "consult", destination: "+14155550111" };
+export const blindTransfer: TaskCommand<"voice"> = { type: "transfer", dialId: "dial-2", destination: "+14155550111" };
+export const consult: TaskCommand<"voice"> = { type: "transfer", action: "consult", dialId: "dial-3", destination: "+14155550111" };
+// @ts-expect-error A transfer dials its destination, so it carries the host's dialId.
+export const unplacedTransfer: TaskCommand<"voice"> = { type: "transfer", destination: "+14155550111" };
 export const completeConsultation: TaskCommand<"voice"> = { type: "transfer", action: "complete" };
 export const cancelConsultation: TaskCommand<"voice"> = { type: "transfer", action: "cancel" };
 // @ts-expect-error A transfer says where the customer goes, or which consult step it is.
 export const aimlessTransfer: TaskCommand<"voice"> = { type: "transfer" };
 // @ts-expect-error Completing a consultation names no destination: there is exactly one already.
 export const overdeterminedCompletion: TaskCommand<"voice"> = { type: "transfer", action: "complete", destination: "+14155550111" };
-// The consultation in progress is voice-only, like the capability that starts it.
-export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { consultTransfer: true }, phase: "paused", consultation: { destination: "+14155550111" } } satisfies Task<"voice">;
-// @ts-expect-error Email has nobody to consult.
-export const consultingEmailTask: Task<"email"> = { ...emailTask, id: "email-6", consultation: { destination: "+14155550111" } };
+// Who is on the call is voice-only, like the commands that bring people onto it.
+export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { consultTransfer: true }, phase: "paused", onCall: [{ role: "consulted", destination: "+14155550111", dialId: "dial-3", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
+// @ts-expect-error Email has nobody on a call.
+export const consultingEmailTask: Task<"email"> = { ...emailTask, id: "email-6", onCall: [{ role: "consulted", destination: "+14155550111", since: "2026-08-21T09:05:00Z" }] };
+// @ts-expect-error A party was dialled from nowhere and names no destination.
+export const misplacedParty: OnCall = { role: "party", destination: "+14155550111", since: "2026-08-21T09:05:00Z" };
+// @ts-expect-error An agent on the call is named by user id, not by a destination.
+export const misplacedAgent: OnCall = { role: "agent", destination: "+14155550111", since: "2026-08-21T09:05:00Z" };
+
+// A conference add dials and carries the host's dialId; a remove names who leaves, by destination.
+export const addToConference: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", destination: "+14155550111" };
+export const removeFromConference: TaskCommand<"voice"> = { type: "conference", action: "remove", destination: "+14155550111" };
+// @ts-expect-error A conference add is a dial, so it carries the host's dialId.
+export const unplacedConferenceAdd: TaskCommand<"voice"> = { type: "conference", action: "add", destination: "+14155550111" };
+// @ts-expect-error renamed away: the address a conference dials is its destination, as on every other dial.
+export const conferenceParticipant: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", participant: "+14155550111" };
+
+// A dial ends one way or another, and only voice has dials to end.
+export const voiceDialOutcomes: Manifest<"voice">["dialOutcomes"] = ["answered", "no-answer"];
+// @ts-expect-error Chat dials nothing and declares no dial outcomes.
+export const chatDialOutcomes: Manifest<"chat">["dialOutcomes"] = ["answered", "no-answer"];
 
 // Consulting a lead: the agent asks and withdraws; the lead takes over or leaves. Voice only.
 export const askLead: TaskCommand<"voice"> = { type: "lead", action: "request", note: "Refund dispute" };

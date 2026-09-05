@@ -35,6 +35,8 @@ are used precisely throughout and mean nothing looser here.
 | **Event** | One completed transaction reported after a snapshot established the baseline. |
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, roster. |
+| **Dial** | One outbound call the host asks a provider to place — from the idle dialpad, a transfer, a conference add, or a callback. Identified by the host's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
+| **On the call** | Who a voice task's audio joins right now, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in. |
 
 Six words describe *what state a thing is in*, and they are not interchangeable: each belongs to
 one thing, so a bare "status" in conversation is always the authentication session's, and a
@@ -94,6 +96,7 @@ the semantic name in every contract field rather than repeating the primitive ty
 type IsoTimestamp = string;
 type UserId = string;
 type TaskId = string;
+type DialId = string;
 type DurationSeconds = number;
 ```
 
@@ -162,6 +165,8 @@ type DialDestinations = "contacts-only" | "any-number";
 
 type DialCapability = { destinations: DialDestinations };
 
+type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected";
+
 type IdleCapabilities<C extends Channel = Channel> = {
   personalBrowser?: PersonalBrowserCapability;
   calendar?: true;
@@ -178,6 +183,7 @@ type Manifest<C extends Channel = Channel> = {
   phaseLabels?: TaskPhaseLabels;
   taskTypePresentation?: Record<string, TaskTypePresentation>;
   orgLevels?: LevelDeclaration[];
+  dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   runningStepReports?: true;
 };
 ```
@@ -414,11 +420,12 @@ type ScheduledActivity = {
 };
 
 type DialRequest = {
+  dialId: DialId;
   destination: string;
 };
 
 type DialResult =
-  | { status: "dialled" }
+  | { status: "dialling"; dialId: DialId }
   | { status: "failed"; failure: ProtocolFailure };
 ```
 
@@ -570,6 +577,8 @@ type TaskHandlingHistory = {
 type TaskHandlingStep = {
   step: HandlingStep;
   at: IsoTimestamp;
+  dialId?: DialId;
+  destination?: string;
   seconds?: DurationSeconds;
   by?: UserId;
 };
@@ -578,11 +587,13 @@ type TaskCompletion =
   | { completionMode: "agent-command"; wrapAllowance?: DurationSeconds }
   | { completionMode: "provider-automatic"; wrapAllowance: DurationSeconds };
 
-type TaskConsultation = {
-  destination: string;
-  label?: string;
-  since?: IsoTimestamp;
-};
+type OnCallRole = "party" | "agent" | "consulted" | "conferenced";
+
+type OnCall = { since: IsoTimestamp; held?: true } & (
+  | { role: "party" }
+  | { role: "agent"; userId: UserId }
+  | { role: "consulted" | "conferenced"; destination: string; dialId?: DialId; label?: string }
+);
 
 type TaskLead = {
   stage: "requested" | "joined";
@@ -628,8 +639,8 @@ type Task<C extends Channel = Channel> = {
   handlingHistory?: TaskHandlingHistory;
 } & TaskCompletion & (
   C extends "voice"
-    ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting; media?: TaskMediaState }
-    : { consultation?: never; lead?: never; assisting?: never; media?: never }
+    ? { onCall?: OnCall[]; lead?: TaskLead; assisting?: TaskAssisting; media?: TaskMediaState }
+    : { onCall?: never; lead?: never; assisting?: never; media?: never }
 );
 
 type AcceptanceMode =
@@ -682,16 +693,17 @@ type VoiceTaskCommand =
   | { type: "hold" }
   | { type: "resume" }
   | { type: "disconnect" }
-  | { type: "callback" }
-  | { type: "transfer"; destination: string; action?: never }
-  | { type: "transfer"; action: "consult"; destination: string }
+  | { type: "callback"; dialId: DialId }
+  | { type: "transfer"; dialId: DialId; destination: string; action?: never }
+  | { type: "transfer"; action: "consult"; dialId: DialId; destination: string }
   | { type: "transfer"; action: "complete" }
   | { type: "transfer"; action: "cancel" }
   | { type: "lead"; action: "request"; note?: string }
   | { type: "lead"; action: "cancel" }
   | { type: "lead"; action: "take-over" }
   | { type: "lead"; action: "leave" }
-  | { type: "conference"; participant: string; action: "add" | "remove" }
+  | { type: "conference"; action: "add"; dialId: DialId; destination: string }
+  | { type: "conference"; action: "remove"; destination: string }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);
 
@@ -720,6 +732,7 @@ type TaskCommandRequest<C extends Channel = Channel> = {
 
 type TaskCommandResult =
   | { status: "applied" }
+  | { status: "dialling"; dialId: DialId }
   | { status: "failed"; failure: ProtocolFailure };
 ```
 
@@ -967,6 +980,7 @@ type ProviderEvent =
   | { type: "task-media-started"; taskId: TaskId }
   | { type: "task-media-ended"; taskId: TaskId }
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; destination?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
   | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId }
@@ -1296,11 +1310,12 @@ already committed stops an agent who is already stopped. A command whose second 
 cost — a dial places a second call — is not made safe by anyone, which is why it is never repeated
 without a person deciding to.
 
-An agent dials. The provider places the call and the answer is lost. Omni shows the dial as
-unknown, not failed. Within a moment the provider offers the resulting call through `task-offered`
-and the agent is on it; had nothing been placed, nothing arrives and the agent dials again. What
-Omni must not do is dial again on the agent's behalf — the one outcome worse than a lost answer is
-two phones ringing at the customer.
+An agent dials. The provider places the call and the `dialling` answer is lost. Omni shows the dial
+as unknown, not failed. Within a moment the provider offers the resulting call through
+`task-offered` and reports the dial's `dial-outcome` under the `dialId` Omni sent, and the agent is
+on it; had nothing been placed, nothing arrives and the agent dials again. What Omni must not do is
+dial again on the agent's behalf — the one outcome worse than a lost answer is two phones ringing
+at the customer.
 
 An agent presses Hold while the provider is reconnecting. Nothing is queued at either end: the
 adapter answers `failed` with `omni.unavailable`, Omni shows the refusal, and the agent presses
@@ -1377,6 +1392,7 @@ export default defineAdapter({
     idleCapabilities: {
       dial: { destinations: "any-number" },
     },
+    dialOutcomes: ["answered", "no-answer"],
   },
   createAuthenticationSession: context => createAcmeAuthentication(context),
   connect: context => createConnection(context),
@@ -1401,6 +1417,7 @@ compile time.
 | `phaseLabels` | Optional static adapter-defined display names for canonical `TaskPhase` values. They cannot vary at runtime. |
 | `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
+| `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that transfer, conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome**. |
 | `runningStepReports` | The provider takes running reports of a host-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the host sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The host records what it performs**. |
 
 ### Authentication methods
@@ -1471,9 +1488,9 @@ aggregated from every provider, but a `contacts-only` dialpad offers only the en
 contributed. Any other reading lets a second provider put destinations into a directory the first
 restricted precisely so it could control what was dialled.
 
-A declared dial capability requires `Connection.dial()`. Omni sends the original
-destination and whether it came from a `contact` or `manual` entry. With `contacts-only`, Omni must
-never send `source: "manual"`.
+A declared dial capability requires `Connection.dial()` and a `dialOutcomes` declaration, since a
+dialpad dials. Omni sends the destination as the agent selected or typed it, under a `dialId` of
+its own minting, and the provider holds it to the declared `destinations`.
 
 #### Personal Browser (`personalBrowser`)
 
@@ -1898,7 +1915,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `setCapacity(capacity)` | Always. Nothing may be allocated until a capacity is stated, so there is no connection that does not receive it. |
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability**. |
 | `describeUsers(ids)` | The adapter publishes any `UserId`: on `ImposedBreak.by`, a roster, or `handlingHistory[].by`. |
-| `dial(request)` | The manifest declares `idleCapabilities.dial`. |
+| `dial(request)` | The manifest declares `idleCapabilities.dial`, and with it `dialOutcomes`. |
 | `requestBreak(request)` | The login declares `capabilities.breaks`. |
 | `commitBreak()` | The login declares `capabilities.breaks`. Commit and cancel are not optional halves of it. |
 | `cancelBreak()` | The login declares `capabilities.breaks`. |
@@ -2112,7 +2129,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `handlingHistory` | The call record: `steps` — the ordered handling history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `handleSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **How a task has been handled**. |
-| `consultation` | Voice only. Present while the agent is consulting a transfer destination: who is being consulted, and since when where the provider records it. Its presence is what makes `transfer` `complete` and `cancel` issuable. `label` is a name for the destination -- a person, a queue -- not a phrase; the host supplies the verb. See **Consult transfer**. |
+| `onCall` | Voice only. Who is on the call right now, as the provider states it, replaced whole with the task: `party` is the customer, `agent` a person by user id, `consulted` and `conferenced` somebody a dial brought in -- with the `destination` dialled, the `dialId` where a host placed it, and `held: true` on anyone parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `lead` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Consulting a lead**. |
 | `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead` `take-over` and `leave` issuable. See **Consulting a lead**. |
 
@@ -2315,8 +2332,15 @@ duration is the `held` entry's `seconds`, and a desk that restarts its counter o
 counting the wrong thing.
 
 `muted` is there because Omni performs the mute rather than the provider — see **Where a command
-executes** — so without a step the one participant that keeps the task's record would have no
+executes** — so without a step the provider, which alone keeps the task's record, would have no
 account of a period the agent could not be heard.
+
+**A step that dialled says which dial and where.** `transferred`, `conferenced` and `unanswered`
+each end a dial, so the entry carries the `destination` it went to and, where a host placed it, the
+`dialId` the host minted; no other step dialled, and either field on one is refused
+(`task.handlingHistory.dialId.unexpected`). This is how a dial made before a transfer is placeable
+by whoever holds the task now: a `dial-outcome` naming a `dialId` the host never minted is looked
+up in the record, not discarded.
 
 Four rules a provider has to keep:
 
@@ -2390,6 +2414,12 @@ a running one it was never asked for (`handlingReport.running.unexpected`). What
 did ask for them forwards upstream, and how often, is its own business. The step appears in
 `handlingHistory` when the *provider* publishes it: Omni never writes the record itself.
 `recordStep` is required of a connection whose tasks declare `mute`, and answers `recorded`.
+
+**A host-performed leg still open when the task's media ends, or the task ends, is ended by the
+host at that instant** — `ended: true`, `seconds` to the end, the same `at` — since a provider
+left to close it would be guessing at a host-performed duration. Both ends are read off one clock,
+the host's, and a leg shorter than a second is reported as the second it was, never as the nought
+the record refuses.
 
 ### Browser capability
 
@@ -2528,7 +2558,7 @@ const taskCapabilities = {
 | `blindTransfer` | Secondary menu item: Blind transfer | Omni may transfer the caller directly to a destination. |
 | `consultTransfer` | Secondary menu item: Consult transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Consult transfer**. |
 | `consultLead` | Secondary menu item: Consult lead | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.lead`. See **Consulting a lead**. |
-| `conference` | Secondary button: Conference | Omni may add or remove participants from the active call. |
+| `conference` | Secondary button: Conference | Omni may dial a destination into the active call, and drop a `conferenced` entry from it. |
 | `recording` | Overflow menu item: Recording | Omni may expose start, pause, resume, and stop recording controls. |
 | `dispositions` | Primary button: Complete | Omni may request task disposal with a provider disposition and notes. |
 
@@ -2577,7 +2607,7 @@ capabilities: {
 | Field | Contract |
 | --- | --- |
 | `destinations` | Directory Omni renders, with unique `id` values. |
-| `address` | The value Omni sends as `TaskCommand.transfer.destination` or `conference.participant`. |
+| `address` | The value Omni sends as `destination` on a `transfer` or a `conference` command. |
 | `kind` | Where the contact is going. See below. |
 | `allowManualEntry` | Whether the agent may type a destination that is not in the directory. A directory with no destinations must allow manual entry, or the control has nothing to offer. |
 
@@ -2601,9 +2631,10 @@ from `blindTransfer` (a hand-over with nobody consulted) and from `conference` (
 call): a queue may offer any of the three without the others, and each is declared on its own.
 
 ```ts
-// 1. Consult. The provider parks the customer and calls the destination; the task reports
-//    `paused` and carries `consultation` while the call to the destination stands.
-{ type: "transfer", action: "consult", destination: "+14155550111" }
+// 1. Consult. A dial: the provider parks the customer and calls the destination, answers
+//    `dialling`, and the task reports `paused` with the destination `consulted` on `onCall`
+//    while the call to it stands.
+{ type: "transfer", action: "consult", dialId: "dial-7f2", destination: "+14155550111" }
 
 // 2a. Hand the customer to the consulted destination and leave.
 { type: "transfer", action: "complete" }
@@ -2613,21 +2644,25 @@ call): a queue may offer any of the three without the others, and each is declar
 ```
 
 `consult` is gated by the `consultTransfer` capability and takes a destination exactly as a blind
-transfer does, from the same kind of directory. While the consultation stands the task carries
-`consultation`, and that presence is what makes `complete` and `cancel` issuable -- they name no
-destination because there is exactly one they could mean. A consultation that could be started
-but not finished would strand the customer and the destination both, which is why all three are
-commands and a provider that offers `consultTransfer` implements all three.
+transfer does, from the same kind of directory. It is a dial, so it carries the host's `dialId`
+and is answered `dialling`, and its `dial-outcome` says whether the destination was reached. While
+the destination is on the line the task carries a `consulted` entry on `onCall`, and that presence
+is what makes `complete` and `cancel` issuable -- they name no destination because there is exactly
+one they could mean, which is why a task carries at most one `consulted` entry
+(`task.onCall.consulted.single`). A consultation that could be started but not finished would
+strand the customer and the destination both, which is why all three are commands and a provider
+that offers `consultTransfer` implements all three.
 
 `applied` on `complete` says the provider is bridging the customer to the destination and
 dropping the agent's leg. What follows is what follows any transfer: the agent's media ends and
 the provider reports `task-media-ended`, any wrap allowance runs, and the task ends with a
 `transferred` outcome naming the destination. `applied` on `cancel` says the destination is
-dropped; the task returns to `in-progress` with `consultation` gone. Omni waits for the
+dropped; the task returns to `in-progress` with the `consulted` entry gone. Omni waits for the
 provider's report of both, as it does for every command.
 
-A destination that does not answer is a consultation that ended: the provider clears
-`consultation`, returns the task to `in-progress`, and the agent is back with the customer.
+A destination that does not answer is a dial that ended: the provider reports its `dial-outcome`,
+returns the task to `in-progress` with no `consulted` entry, and the agent is back with the
+customer.
 
 ### Chat capabilities
 
@@ -2690,14 +2725,101 @@ Custom capabilities must not redefine the meaning of a standard channel capabili
 Starts one outbound call from the idle dialpad. It is present only when the voice provider
 declares `dial`.
 
+- `dialId` is the host's identity for this dial, minted before the request leaves.
 - `destination` is the original number selected or entered by the agent.
 - The provider holds `destination` to its declared `destinations`: under `contacts-only`, a
   number that is not one of its contacts answers `failed` with `omni.destination-not-permitted`.
-- `dialled` confirms that outbound call creation completed.
+- `dialling` says the request was accepted and the call is being placed, and restates the
+  `dialId`. It says nothing about whether anyone will answer.
 - `failed` contains a `ProtocolFailure` and confirms no call was placed.
 
-The resulting call is offered through the normal `task-offered` event. A successful dial result
-does not manufacture a task inside Omni.
+The resulting call is offered through the normal `task-offered` event, and how the dial ended
+arrives on `dial-outcome` under the same `dialId`. A `dialling` result does not manufacture a task
+inside Omni.
+
+## Every dial has an outcome
+
+Four commands place a call: `dial` from the idle dialpad, a blind or consult `transfer`, a
+`conference` `add`, and `callback`. Each is accepted or refused at once, and each then ends later
+and apart from its answer -- the destination picks up, is busy, or never does -- and a dial placed
+late in a call routinely outlives the call. Nothing in between is reported: the wire says
+`dialling`, then says how it ended, once.
+
+**The host mints the identity.** Every command that dials carries a `dialId` the host made, unique
+across the installation, and it travels four ways so no leg is a lookup:
+
+```ts
+declare const connection: Connection<"voice">;
+declare const taskId: TaskId;
+
+// 1. Out, minted by the host.
+const result = await connection.execute({ taskId, command: { type: "conference", action: "add", dialId: "dial-7f2", destination: "+14155550111" } });
+
+// 2. Back on the result, restated, so the host compares and confirms.
+expect(result).toEqual({ status: "dialling", dialId: "dial-7f2" });
+
+// 3. On the outcome, however late, against the task it belonged to.
+const outcome: ProviderEvent<"voice"> = { type: "dial-outcome", dialId: "dial-7f2", taskId, destination: "+14155550111", outcome: "no-answer", reason: "No route to destination" };
+
+// 4. In the record, so a dial made before a transfer is placeable by whoever holds the task now.
+const step: TaskHandlingStep = { step: "unanswered", at: "2026-08-21T09:15:30Z", by: "A-12", dialId: "dial-7f2", destination: "+14155550111" };
+```
+
+The identity is a correlation handle between host and provider and **is never shown to the
+agent**. A host holding several tasks places an outcome by the `dialId` it minted; one it did not
+mint -- a dial made by the previous agent before a transfer -- it finds on the task's `onCall` or in
+its `handlingHistory`, which is why the steps that dial carry it. The `dialId` is not a retry key:
+Omni never repeats a dial, and a command still carries no key for that purpose.
+
+**`dialling` is the answer to a dial, and `applied` is not.** A command that dials answers
+`{ status: "dialling", dialId }`, restating the host's identity (`result.dialId`,
+`result.dialId.mismatch`); `applied` from such a command, or `dialling` from one that dialled
+nothing, is refused (`result.status`). `validateResult(result, method, path, dialId)` takes the
+`dialId` the host sent for that reason.
+
+**The outcome is stated, once, either way.** A `dial-outcome` names the `dialId`, the task where
+there was one, the destination where the provider knows it, and how the dial ended -- from a closed
+set: `answered`, `busy`, `no-answer`, `unreachable`, `rejected`. `answered` is stated rather than
+read off somebody appearing on the call, because a host that infers success cannot tell "reached"
+from "still ringing". `reason` is the switch's own words, optional, and shown to the agent
+attributed to the switch rather than to Omni. The task named may already have ended, and the
+harness places the outcome all the same (`TaskStream`, `stream.dialOutcome.unknown`,
+`stream.dialOutcome.duplicate`); an agent who moved on still learns nobody was reached.
+
+**A provider says which outcomes it can tell apart.** No switch distinguishes all five, and a
+provider that cannot tell busy from unreachable must not pick one. The manifest declares
+`dialOutcomes`, and a `dial-outcome` carries only a declared member
+(`event.dialOutcome.undeclared`). The list includes `answered`, or the provider could never state a
+success (`manifest.dialOutcomes.answered`), and at least one other member, or it could never state
+a failure (`manifest.dialOutcomes.failure`). A provider that dials at all declares it: an idle
+dialpad requires it (`manifest.dialOutcomes.required`), and a task that declares `callback`,
+`blindTransfer`, `consultTransfer` or `conference` under a manifest without it is refused
+(`task.capability.dialOutcomes.required`). Off voice nothing dials, and the field is a compile
+error there.
+
+**Who is on the call is stated on the task.** `Task.onCall` lists everyone the task's audio joins
+right now, replaced whole with the task like every other field, and present when the provider
+knows the room:
+
+```ts
+const onCall: OnCall[] = [
+  { role: "party", since: "2026-08-21T09:12:00Z" },
+  { role: "agent", userId: "A-12", since: "2026-08-21T09:12:04Z" },
+  { role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", held: true, since: "2026-08-21T09:15:30Z" },
+];
+```
+
+`party` is the customer and `agent` a person by user id; neither was dialled from anywhere, so
+neither carries a destination. `consulted` and `conferenced` were, so both carry the `destination`
+and, where a host's dial brought them, its `dialId`; a person the platform added itself carries
+none. `held: true` is presence as claim. A snapshot establishes state, so a host that attaches
+after a transfer reads the room from here rather than inferring it from a sequence of outcomes it
+never saw. A `conference` `remove` names the `destination` of the `conferenced` entry to drop.
+
+The desk shows a dial as placed on `dialling`, never as reached; shows the person in the room when
+they appear on `onCall`; and shows the outcome, with the switch's reason, against the call it
+belonged to -- with no retry, since a wrong number is not worth redialling and the decision is the
+agent's.
 
 ## Breaks
 
@@ -2948,36 +3070,36 @@ Omni offers the aggregate Break control only when every provider currently holdi
 declares `capabilities.breaks` at login. If one cannot be stopped, offering a global break would
 knowingly permit partial availability.
 
-Omni coordinates one attempt as follows:
+Omni coordinates one break attempt as follows:
 
-1. Freeze the participant set to every connected provider from which the agent can currently
-   receive work. A provider joining during the attempt is given no capacity until it finishes.
-   A provider whose authentication is `expired` is not one the agent can receive work from and is
-   not a participant: nothing is asked of it, the break proceeds without it, and when the login
-   is restored it is reconciled from its snapshot as a set-aside provider is, with no capacity
-   until then. `refreshing` keeps a provider in — its identity and capabilities remain available
-   and work continues. `assertBreakParticipants` holds a host to this set.
+1. Freeze the providers the attempt asks: every connected provider from which the agent can
+   currently receive work. A provider joining during the attempt is given no capacity until it
+   finishes. A provider whose authentication is `expired` is not one the agent can receive work
+   from and is not asked: nothing is asked of it, the break proceeds without it, and when the
+   login is restored it is reconciled from its snapshot as a set-aside provider is, with no
+   capacity until then. `refreshing` keeps a provider in — its identity and capabilities remain
+   available and work continues. `assertBreakAttemptProviders` holds a host to this set.
 2. Enter `requesting-break`. Keep the agent's normal capacity in place throughout this phase.
-3. Send one `requestBreak` to every participant. A provider reports `awaiting-decision` or
+3. Send one `requestBreak` to every asked provider. A provider reports `awaiting-decision` or
    `granted`; neither state stops work. A denial transitions directly to `not-requested` and
    causes Omni to take the cancel path.
-4. If every participant reports `granted`, durably choose commit, enter `committing-break`,
-   and send `commitBreak()` to every participant. A provider then stops offering new work
+4. If every asked provider reports `granted`, durably choose commit, enter `committing-break`,
+   and send `commitBreak()` to each of them. A provider then stops offering new work
    and reports `starting-after-task` or `in-effect`. The **commit bound** — ten seconds from the
-   decision, tunable per deployment — decides who is kept: a participant that has not applied the
+   decision, tunable per deployment — decides who is kept: a provider that has not applied the
    commit by then, still `granted` or unreachable, is set aside as unreconciled and the break
-   begins without it. `in-effect` decides `on-break`: Omni enters it once every kept participant
-   reports `in-effect`. A kept participant reporting `starting-after-task` has applied the commit
+   begins without it. `in-effect` decides `on-break`: Omni enters it once every kept provider
+   reports `in-effect`. A kept provider reporting `starting-after-task` has applied the commit
    and is finishing a task; the bound is on delivery, not on that task. Omni shows the break as
    settled and beginning when the task ends, and offers no cancel, because the commit is durable.
-5. If any participant fails or denies the request, cannot be reconciled within the bounded
+5. If any asked provider fails or denies the request, cannot be reconciled within the bounded
    decision timeout, or the agent cancels before commit, durably choose cancel and enter
-   `cancelling-break`. Send `cancelBreak()` to every participant still reporting
+   `cancelling-break`. Send `cancelBreak()` to every provider still reporting
    `awaiting-decision` or `granted`. Work continues during cancellation because no stop was
-   committed. Return to `working` only after no participant retains either state.
+   committed. Return to `working` only after no provider retains either state.
 
-Commit and cancel are mutually exclusive decisions for one attempt. Once Omni chooses commit it
-never rolls that attempt back: it is reconciled by snapshot until every participant is stopped.
+Commit and cancel are mutually exclusive decisions for one break attempt. Once Omni chooses commit
+it never rolls that attempt back: it is reconciled by snapshot until every asked provider is stopped.
 A provider that reports `granted` must therefore preserve the request across reconnects and must
 honour a later commit or cancel. This
 durable promise prevents a provider from failing the commit after another provider has already
@@ -2986,7 +3108,7 @@ stopped the agent.
 #### Why the commit phase is bounded and the decision is not
 
 Waiting for unanimity forever is the one way this algorithm can strand an agent. The commit is
-durable and cannot be rolled back, so a participant that crashes, has its authentication revoked,
+durable and cannot be rolled back, so a provider that crashes, has its authentication revoked,
 or is uninstalled between granting and committing would hold Omni in `committing-break` with no
 exit: the providers that did commit have already stopped the agent, and the agent is neither
 working nor on a break.
@@ -2996,7 +3118,7 @@ on one platform while another keeps routing work to them — and **a provider Om
 routing nothing.** Setting it aside therefore costs none of the property it was protecting. Waiting
 for it costs the agent their break.
 
-Setting a participant aside is not a rollback and not a cancel. The commit stands and the
+Setting a provider aside is not a rollback and not a cancel. The commit stands and the
 obligation stands: until that provider is stopped it has not stopped. When it returns it emits a
 snapshot before anything else, and the snapshot decides:
 
@@ -3011,7 +3133,7 @@ snapshot before anything else, and the snapshot decides:
 The provider must not offer work in the meantime, and the commit is what stops it; Omni gives it
 no capacity until it is reconciled.
 
-**If the agent has already ended the break elsewhere, the attempt is over** and the returning
+**If the agent has already ended the break elsewhere, the break attempt is over** and the returning
 provider is reconciled to that instead: still `granted` gets `cancelBreak()`, because committing
 would stop an agent who is working again; `starting-after-task` or `in-effect` gets `endBreak()`.
 Never rolling back is about a break that is still on, not one the agent has finished.
@@ -3020,7 +3142,7 @@ Omni may tell the agent which platforms the break has not yet reached, as it alr
 break cannot be paired across every provider.
 
 The decision phase needs no such bound, because nothing has stopped. Work continues throughout
-`requesting-break`, so a participant that never answers costs the agent a wait rather than their
+`requesting-break`, so a provider that never answers costs the agent a wait rather than their
 availability, and the existing decision timeout resolves it by cancelling — which is safe precisely
 because no stop was ever committed.
 
@@ -3436,7 +3558,7 @@ declared:
 | `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. |
 | `callback` | The `callback` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | `transfer` with `action: "consult"` | The `consultTransfer` capability. Blind `transfer` is gated by `blindTransfer`; the two are declared and offered separately. |
-| `transfer` with `action: "complete"` or `"cancel"` | A consultation in progress -- `Task.consultation` present. Without one there is nothing to complete or cancel, and a provider that receives either answers `failed`. |
+| `transfer` with `action: "complete"` or `"cancel"` | A consultation in progress -- a `consulted` entry on `Task.onCall`. Without one there is nothing to complete or cancel, and a provider that receives either answers `failed`. |
 | `lead` with `action: "request"` or `"cancel"` | The `consultLead` capability. `cancel` needs a request standing -- `Task.lead` with status `requested`. |
 | `lead` with `action: "take-over"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |
 | Everything else | Its own named capability. |
@@ -3627,11 +3749,11 @@ from `in-effect` or `starting-after-task` to a grant or a request, or from `gran
 `exerciseAdapter` holds the stream to that from the connect snapshot on;
 `assertBreakFollowsItsRequests` holds any sequence.
 
-For a multi-provider attempt, "every provider" is the participant set frozen when the attempt
-entered `requesting-break`. Omni commits only after every participant reports `granted` —
+For a multi-provider break attempt, "every provider" is the set of providers frozen when the
+attempt entered `requesting-break`. Omni commits only after every asked provider reports `granted` —
 that one is unconditional, because nothing has stopped yet and waiting costs only time. It enters
-`on-break` once every kept participant reports `in-effect`; the commit bound decides who is kept,
-setting aside a participant that has not applied the commit rather than holding a break that has
+`on-break` once every kept provider reports `in-effect`; the commit bound decides who is kept,
+setting aside a provider that has not applied the commit rather than holding a break that has
 already begun elsewhere. Otherwise it follows the two-phase rules under **Coordinating a
 multi-provider break**.
 
@@ -3687,6 +3809,15 @@ A successful `complete` or `transfer` command does not clear the task. Omni wait
 The `task-media-ended` event and the `completing` phase are likewise non-terminal. A replacement
 snapshot that no longer contains the task also clears it. Repeated `task-ended` delivery with the
 same envelope ID is harmless.
+
+### `dial-outcome`
+
+How a dial the host placed ended, once, either way, named by the `dialId` the host sent: `answered`,
+or one of the declared ways of not reaching the destination, with the switch's `reason` where it
+gave one. `taskId` names the task the dial was on, where there was one, and that task may already
+have ended. Omni shows it to the agent against the call it belonged to and does nothing else: no
+audio moves, since the provider bridges the leg on its side, and no dial is repeated. See **Every
+dial has an outcome**.
 
 ### `announcement`
 
@@ -3874,7 +4005,7 @@ cannot be established from TypeScript structure alone.
 | `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for a host that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |
 | `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a placed break arriving in effect with `imposed`. The harness applies the same rules after the connect snapshot. |
 | `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-started` and `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what follows the media ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no media satisfies it by never testing it — pair it with the assertion that the media end is present. |
-| `assertBreakParticipants(candidates, participants)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
+| `assertBreakAttemptProviders(candidates, asked)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `in-effect` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
 | `assertWrapTimeout(task, mediaEndedAt, deadline, toleranceMs?)` | The wrap deadline equals media end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |

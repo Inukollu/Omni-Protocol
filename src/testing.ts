@@ -48,7 +48,7 @@ const STATE_SUBJECTS = [
   "task.browsers",
   "task.attributes",
   "task.handlingHistory",
-  "task.consultation",
+  "task.onCall",
   "task.lead",
   "task.assisting",
   "task.media",
@@ -69,7 +69,7 @@ const STATE_SUBJECTS = [
 // `ProviderEvent` without a row here, or a row it lacks, is a compile error.
 const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
-  "task-media-started": true, "task-media-ended": true, "task-ended": true, announcement: true, "queue-summary": true, diagnostic: true,
+  "task-media-started": true, "task-media-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
   "team-updated": true, "contacts-updated": true, "calendar-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
@@ -89,7 +89,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (some(value.browsers)) seen.add("task.browsers");
   if (some(value.attributes)) seen.add("task.attributes");
   if (isRecord(value.handlingHistory) && some(value.handlingHistory.steps)) seen.add("task.handlingHistory");
-  if (value.consultation !== undefined) seen.add("task.consultation");
+  if (some(value.onCall)) seen.add("task.onCall");
   if (value.lead !== undefined) seen.add("task.lead");
   if (value.assisting !== undefined) seen.add("task.assisting");
   if (value.media !== undefined) seen.add("task.media");
@@ -650,6 +650,26 @@ const WORK_BEGUN = new Set(["in-progress", "paused", "completing"]);
 /** What a stream has said about the tasks it carries, and the rules across events. */
 export class TaskStream {
   private readonly tasks = new Map<string, { phase: string; media: string }>();
+  // Every dial the stream can place an outcome against: one the host said it placed, or one a
+  // task carried on `onCall` or in its record -- which is how a dial made before a transfer is known
+  // to whoever holds the task now. `ended` once its outcome arrived, since an outcome comes once.
+  private readonly dials = new Map<string, "placed" | "ended">();
+
+  /** The host placed a dial: its outcome, whenever it arrives, is one the stream expects. */
+  dialled(dialId: string): void {
+    if (!this.dials.has(dialId)) this.dials.set(dialId, "placed");
+  }
+
+  private noteDials(task: unknown): void {
+    if (!isRecord(task)) return;
+    const entries = [
+      ...(Array.isArray(task.onCall) ? task.onCall : []),
+      ...(isRecord(task.handlingHistory) && Array.isArray(task.handlingHistory.steps) ? task.handlingHistory.steps : []),
+    ];
+    for (const entry of entries) {
+      if (isRecord(entry) && typeof entry.dialId === "string") this.dialled(entry.dialId);
+    }
+  }
 
   private static stated(task: unknown): { phase: string; media: string } {
     const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
@@ -662,6 +682,7 @@ export class TaskStream {
     if (!isRecord(snapshot) || !Array.isArray(snapshot.tasks)) return;
     for (const task of snapshot.tasks) {
       if (isRecord(task) && typeof task.id === "string") this.tasks.set(task.id, TaskStream.stated(task));
+      this.noteDials(task);
     }
   }
 
@@ -682,6 +703,7 @@ export class TaskStream {
         if (id === undefined) break;
         if (known !== undefined) refuse("stream.taskOffered.duplicate", `${at}.task.id`, `${id} is already on the stream; an offer introduces a task once`);
         this.tasks.set(id, TaskStream.stated(event.task));
+        this.noteDials(event.task);
         break;
       case "task-updated":
         if (id === undefined) break;
@@ -707,6 +729,7 @@ export class TaskStream {
           }
           this.tasks.set(id, next);
         }
+        this.noteDials(event.task);
         break;
       case "task-media-started":
         if (id === undefined) break;
@@ -744,6 +767,20 @@ export class TaskStream {
         if (known === undefined) refuse("stream.taskEnded.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
         this.tasks.delete(id);
         break;
+      case "dial-outcome": {
+        // An outcome ends a dial somebody placed, once. The task it names may already have ended;
+        // a dial placed late routinely outlives its call, which is why the dial has its own identity.
+        if (typeof event.dialId !== "string") break;
+        const dial = this.dials.get(event.dialId);
+        if (dial === undefined) {
+          refuse("stream.dialOutcome.unknown", `${at}.dialId`,
+            `${event.dialId} is not a dial the host placed or a task carried: an outcome ends a dial somebody made`);
+        } else if (dial === "ended") {
+          refuse("stream.dialOutcome.duplicate", `${at}.dialId`, `${event.dialId} already has its outcome; a dial ends once`);
+        }
+        this.dials.set(event.dialId, "ended");
+        break;
+      }
       default:
         break;
     }
@@ -835,7 +872,7 @@ export function stillHost(report: HostReport = { online: true }, guarantees: Hos
   return { guarantees, report: () => report, subscribe: () => () => undefined };
 }
 
-/** One provider as the host sees it when freezing a break attempt's participant set. */
+/** One provider as the host sees it when freezing the providers a break attempt asks. */
 export interface BreakCandidate {
   id: string;
   authentication: AuthenticationState["status"];
@@ -847,25 +884,25 @@ const usableLogin = (status: AuthenticationState["status"]): boolean =>
   status === "authenticated" || status === "refreshing";
 
 /**
- * The participant set of a break attempt is every connected provider from which the agent can
- * currently receive work. A provider whose login is not usable -- `expired` above all -- is not
- * one, whatever else is true of it: nothing can be asked of it, and a host that waits on it
- * stalls the break for everyone. A usable provider holding capacity is one, and cannot be left
- * out. `refreshing` is usable: identity and capabilities remain available and work continues.
+ * A break attempt asks every connected provider from which the agent can currently receive work.
+ * A provider whose login is not usable -- `expired` above all -- is not asked, whatever else is
+ * true of it: nothing can be asked of it, and a host that waits on it stalls the break for
+ * everyone. A usable provider holding capacity is asked, and cannot be left out. `refreshing` is
+ * usable: identity and capabilities remain available and work continues.
  */
-export function assertBreakParticipants(candidates: readonly BreakCandidate[], participants: readonly string[]): void {
-  const chosen = new Set(participants);
-  for (const id of participants) {
+export function assertBreakAttemptProviders(candidates: readonly BreakCandidate[], asked: readonly string[]): void {
+  const chosen = new Set(asked);
+  for (const id of asked) {
     if (!candidates.some(candidate => candidate.id === id)) throw new Error(`${id} is not a provider the host knows`);
   }
   for (const candidate of candidates) {
     const expected = usableLogin(candidate.authentication) && candidate.holdsCapacity;
     if (expected && !chosen.has(candidate.id)) {
-      throw new Error(`${candidate.id} can give the agent work and must be a participant`);
+      throw new Error(`${candidate.id} can give the agent work and must be asked`);
     }
     if (!expected && chosen.has(candidate.id)) {
       const why = usableLogin(candidate.authentication) ? "holds no capacity" : `is ${candidate.authentication}`;
-      throw new Error(`${candidate.id} ${why} and is not a participant: nothing can be asked of it`);
+      throw new Error(`${candidate.id} ${why} and is not asked: nothing can be asked of it`);
     }
   }
 }
