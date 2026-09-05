@@ -176,6 +176,16 @@ export const voiceDialOutcomes: Manifest<"voice">["dialOutcomes"] = ["answered",
 // @ts-expect-error Chat dials nothing and declares no dial outcomes.
 export const chatDialOutcomes: Manifest<"chat">["dialOutcomes"] = ["answered", "no-answer"];
 
+// Preview: the record is on the agent's screen; they press Call, which dials. Voice only.
+export const previewTask = { ...emailTask, id: "call-13", channel: "voice", capabilities: {}, phase: "preview", previewEndsAt: "2026-08-21T09:02:00Z", atDeadline: "calls" } satisfies Task<"voice">;
+export const pressCall: TaskCommand<"voice"> = { type: "call", dialId: "dial-6" };
+// @ts-expect-error Pressing Call dials, and every dial carries the host's dialId.
+export const unplacedCall: TaskCommand<"voice"> = { type: "call" };
+// @ts-expect-error renamed away: the agent presses Call; the old two-word command is gone.
+export const startCall: TaskCommand<"voice"> = { type: "start-call" };
+// @ts-expect-error The deadline does one of two things.
+export const undecidedDeadline: Task<"voice">["atDeadline"] = "waits";
+
 // Monitoring: the lead's own task while they listen, voice only, in one of three modes.
 export const monitoringLeadTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, monitoring: { memberId: "A-1", taskId: "call-42", mode: "whisper", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
 // @ts-expect-error Email has no call to listen to.

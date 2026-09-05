@@ -45,7 +45,7 @@ transport, a task, a break and a call each have a word of their own:
 
 | Word | Belongs to | Values |
 | --- | --- | --- |
-| `phase` | A task | `pending`, `confirmed`, `preparing`, `in-progress`, `paused`, `completing` |
+| `phase` | A task | `pending`, `confirmed`, `preview`, `in-progress`, `paused`, `completing` |
 | `media` | A task's audio | `started`, `ended` |
 | `transport` | A connection | `connecting`, `active`, `error` |
 | `status` | An authentication session | `signed-out`, `authenticating`, `authenticated`, `refreshing`, `expired` |
@@ -542,7 +542,7 @@ default — see **Choosing an isolation scheme**.
 type TaskPhase =
   | "pending"
   | "confirmed"
-  | "preparing"
+  | "preview"
   | "in-progress"
   | "paused"
   | "completing";
@@ -647,6 +647,8 @@ type Task<C extends Channel = Channel> = {
   party?: Contact;
   phase: TaskPhase;
   acceptance?: AcceptanceMode;
+  previewEndsAt?: IsoTimestamp;
+  atDeadline?: PreviewDeadline;
   reference?: string;
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingHistory;
@@ -655,6 +657,8 @@ type Task<C extends Channel = Channel> = {
     ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
     : { onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never }
 );
+
+type PreviewDeadline = "calls" | "expires";
 
 type AcceptanceMode =
   | "no-preference"
@@ -665,7 +669,7 @@ type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
   | { type: "transferred"; destination?: string }
   | { type: "cancelled"; reason?: string }
-  | { type: "expired"; phase: "pending" | "confirmed" | "preparing" }
+  | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
   | { type: "left" }
   | { type: "failed"; failure: ProtocolFailure };
 ```
@@ -677,7 +681,7 @@ const TASK_COMMAND_NAMES = {
   voice: [
     "answer",
     "decline",
-    "start-call",
+    "call",
     "mute",
     "hold",
     "resume",
@@ -701,7 +705,7 @@ type DispositionPayload = { disposition?: string; notes?: string };
 type VoiceTaskCommand =
   | { type: "answer" }
   | { type: "decline" }
-  | { type: "start-call" }
+  | { type: "call"; dialId: DialId }
   | { type: "mute"; muted: boolean }
   | { type: "hold" }
   | { type: "resume" }
@@ -997,7 +1001,6 @@ type ProviderEvent =
       type: "task-offered";
       task: Task;
       allocationExpiresAt?: IsoTimestamp;
-      preparationEndsAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task }
   | { type: "task-media-started"; taskId: TaskId }
@@ -1163,7 +1166,7 @@ const DEFAULT_TASK_PHASE_LABELS = {
   voice: {
     pending: "Offered",
     confirmed: "Accepted",
-    preparing: "Preview",
+    preview: "Preview",
     "in-progress": "On Call",
     paused: "On Hold",
     completing: "After Call Work",
@@ -1171,7 +1174,7 @@ const DEFAULT_TASK_PHASE_LABELS = {
   chat: {
     pending: "Incoming Chat",
     confirmed: "Accepted",
-    preparing: "Preparing",
+    preview: "Preview",
     "in-progress": "In Chat",
     paused: "Paused",
     completing: "Wrap-up",
@@ -1179,7 +1182,7 @@ const DEFAULT_TASK_PHASE_LABELS = {
   email: {
     pending: "Assigned",
     confirmed: "Accepted",
-    preparing: "Reviewing",
+    preview: "Preview",
     "in-progress": "Working",
     paused: "Paused",
     completing: "Completing",
@@ -1283,7 +1286,7 @@ only where the corresponding capability is declared; an absent capability means 
 there is no separate permission flag.
 
 The commands every task has are authorized by other fields the provider declared — a task that was
-offered can be accepted, one in `preparing` can be started, one whose `completionMode` is
+offered can be accepted, one in `preview` can be called, one whose `completionMode` is
 `agent-command` can be completed. Nothing is issuable that the provider did not publish; only
 which field says so varies. See **Which commands need a capability**.
 
@@ -2092,7 +2095,6 @@ const allocation = {
   type: "task-offered",
   task: { ...task, phase: "pending", acceptance: "consent" },
   allocationExpiresAt: "2026-08-25T10:41:07.000Z",
-  preparationEndsAt: "2026-08-25T10:40:37.000Z",
 } satisfies Extract<ProviderEvent, { type: "task-offered" }>;
 ```
 
@@ -2114,10 +2116,8 @@ down and stops offering **Accept** once it passes. **Omit it unless the provider
 A provider that reports only elapsed ring time after the fact cannot say when an offer is due
 to end, and a computed value would have Omni withdraw **Accept** from a task still pending.
 
-`preparationEndsAt` is the time available for the agent to review the task context before acting.
-Omni presents the deadline with the allocation so a preview-based dialer can show how long remains
-before the agent must start the contact. Reaching the timestamp does not imply a transition; the
-provider reports what happens next through an event.
+A preview's deadline is not on the offer. It travels on the task, as `previewEndsAt` with
+`atDeadline`, so a snapshot carries it too -- see **Preview: the agent presses Call**.
 
 A provider may withdraw a pending task by emitting `task-ended` with a `cancelled` outcome.
 
@@ -2151,9 +2151,11 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `capabilities` | Controls and workspace features available for this specific task. |
 | `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
 | `party` | The person or entity on the other end of this task, as a `Contact`: often a name and one address; a withheld caller ID may leave nothing to send at all. Optional. The party is who the task is *with*; `contacts` is the directory. |
-| `phase` | Current canonical task phase: `pending`, `confirmed`, `preparing`, `in-progress`, `paused`, or `completing`. |
+| `phase` | Current canonical task phase: `pending`, `confirmed`, `preview`, `in-progress`, `paused`, or `completing`. `preview` is voice only. |
 | `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. |
 | `acceptance` | How this offer is accepted — `no-preference`, `consent`, or `automatic` — stated on the pending task so a reconnect snapshot says it too. Required while `pending` when `autoAcceptTasks` was `true`, forbidden when it was `false`, and absent past `pending`. See **Acceptance modes**. |
+| `previewEndsAt` | Voice only, in `preview`: when the system stops waiting for the agent to press Call. Absent, the agent has as long as they need. Always with `atDeadline`. See **Preview: the agent presses Call**. |
+| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` places the call itself, `expires` takes the record back and the task ends `expired`. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
@@ -2192,9 +2194,11 @@ The canonical task transitions are:
 | --- | --- | --- |
 | No task | Provider allocates a task | `pending` |
 | `pending` | Task is accepted | `confirmed` |
-| `confirmed` | Preparation begins | `preparing` |
-| `confirmed` | Work begins without preparation | `in-progress` |
-| `preparing` | Agent starts the contact | `in-progress` |
+| `confirmed` | The customer's record is put in front of the agent before any call goes out (voice) | `preview` |
+| `confirmed` | Work begins | `in-progress` |
+| `preview` | Agent presses Call (`call`) and the customer answers, or the deadline `calls` and they answer | `in-progress` |
+| `preview` | The call goes out and nobody answers | `completing` |
+| `preview` | The deadline `expires` | Removed by `task-ended` with `expired` outcome |
 | `pending` | Provider withdraws the allocation | Removed by `task-ended` with `cancelled` outcome |
 | No task | Snapshot reports work already underway | `in-progress` |
 | `in-progress` | Provider or agent pauses the task | `paused` |
@@ -2207,8 +2211,46 @@ The canonical task transitions are:
 
 Allocation, acceptance, and progress are distinct. Acceptance follows `autoAcceptTasks` and the
 task's `acceptance`, moving the task from `pending` to `confirmed`. The provider reports
-subsequent transitions to `preparing` or `in-progress`; Omni does not infer them from the acceptance
+subsequent transitions to `preview` or `in-progress`; Omni does not infer them from the acceptance
 command.
+
+#### Preview: the agent presses Call
+
+An outbound campaign that lets the agent see who they are about to call is a **preview**: the
+record arrives as a task, the task sits in `preview` with the party on it, and no call has gone
+out. The agent reads and presses Call. That is the whole phase, and it exists on voice alone --
+chat and email have no call to place, and their reading is ordinary work in `in-progress`.
+
+```ts
+const previewed = {
+  channel: "voice",
+  capabilities: {},
+  phase: "preview",
+  party: { name: "Maya Rao", number: "+919876543210" },
+  previewEndsAt: "2026-08-25T10:40:37.000Z",
+  atDeadline: "calls",
+} satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "party" | "previewEndsAt" | "atDeadline">;
+
+// The agent presses Call. It is a dial like any other.
+const pressed: TaskCommand<"voice"> = { type: "call", dialId: "dial-7f2" };
+```
+
+**Call is a dial.** It carries the host's `dialId`, is answered `dialling`, and ends in exactly one
+`dial-outcome`; the phase is its gate and there is no capability, since a record put in front of an
+agent is there to be called. On `answered` the task is `in-progress` and its media follows on
+`task-media-started`. On any other outcome the task goes to `completing`, so the agent records the
+no-answer as the disposition it is -- in a campaign that is the commonest outcome there is, and it
+is work, not a cancellation. A `preview` task therefore needs a manifest that says how a dial ends
+(`task.preview.dialOutcomes.required`).
+
+**The deadline says what the system will do.** A provider that will not wait forever states
+`previewEndsAt`, and with it `atDeadline`: `calls` means the system places the call itself when the
+time runs out, which is progressive dialling; `expires` means the record is taken back and the task
+ends with an `expired` outcome naming `preview`. The two travel together
+(`task.preview.atDeadline.required`, `task.preview.previewEndsAt.required`), only while the task is in
+`preview` (`task.preview.deadline.unexpected`), and Omni's countdown reads "calling in 12s" or
+"expires in 12s" from the provider's word. With neither, the agent has as long as they need.
+Reaching the instant is not itself a transition: the provider reports what it did, as an event.
 
 **A task is never its audio.** A voice task is the allocation: the call is offered when it is
 routed to the agent and accepted as its `acceptance` dictates, and its presence and phase follow
@@ -3707,7 +3749,7 @@ declared:
 | --- | --- |
 | `answer`, `accept` | Nothing. A task that was offered can be accepted, or offering it meant nothing. |
 | `decline` | The `decline` capability on any channel, **and** Omni provisioning permitting it. One word for refusing an offer, whatever the channel. |
-| `start-call` | The `preparing` phase. It starts the contact a preview gave the agent time to read, so the phase is the gate and there is no capability. |
+| `call` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
 | `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | `transfer` with `action: "warm"` | The `warmTransfer` capability. `action: "cold"` is gated by `coldTransfer`; the two are declared and offered separately. |
@@ -3785,7 +3827,7 @@ They are published as `OMNI_FAILURE_CODES`.
 #### Provider instants are read against a provider clock
 
 Every deadline in this contract is a provider instant that Omni counts down: `allocationExpiresAt`,
-`preparationEndsAt`, and the wrap deadline of `task-media-ended` plus `wrapAllowance` where
+`previewEndsAt`, and the wrap deadline of `task-media-ended` plus `wrapAllowance` where
 one is stated.
 Comparing those against the host clock is wrong by whatever the two machines disagree by, and the
 damaging direction is early — **Accept** withdrawn from an offer still ringing, a wrap timer

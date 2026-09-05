@@ -44,6 +44,7 @@ import {
   type DialOutcome,
   type OnCallRole,
   type OnCallStage,
+  type PreviewDeadline,
   type MonitorMode,
   type DispositionRules,
   type HandlingStep,
@@ -97,7 +98,7 @@ const membersOf = <U extends string>(members: Record<U, true>): readonly U[] =>
 const CHANNELS = membersOf<Channel>({ voice: true, chat: true, email: true });
 const TRANSPORT_RECOVERIES = membersOf<TransportRecovery>({ reconnect: true, reauthenticate: true });
 const TASK_PHASES = membersOf<TaskPhase>({
-  pending: true, confirmed: true, preparing: true, "in-progress": true, paused: true, completing: true,
+  pending: true, confirmed: true, preview: true, "in-progress": true, paused: true, completing: true,
 });
 const COMPLETION_MODES = membersOf<CompletionMode>({ "agent-command": true, "provider-automatic": true });
 const ACCEPTANCE_MODES = membersOf<AcceptanceMode>({
@@ -140,14 +141,15 @@ const SESSION_CAPABILITIES = membersOf<keyof UserCapabilities>({ breaks: true, t
 const MEMBER_BREAKS = membersOf<Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">>({
   "awaiting-decision": true, granted: true, "starting-after-task": true,
 });
-const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending" | "confirmed" | "preparing">>({
-  pending: true, confirmed: true, preparing: true,
+const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending" | "confirmed" | "preview">>({
+  pending: true, confirmed: true, preview: true,
 });
+const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, expires: true });
 const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, monitorControl: true });
 const MONITOR_MODES = membersOf<MonitorMode>({ monitor: true, whisper: true, barge: true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
 const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
-  pending: true, confirmed: true, preparing: true,
+  pending: true, confirmed: true, preview: true,
 });
 
 const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATION_SCHEMES);
@@ -981,7 +983,29 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   into.require(isTaskId(task.id), "task.id", `${path}.id`, "a task needs a non-empty id");
   into.filled(task.title, "task.title", `${path}.title`, "a task needs a title");
   into.filled(task.taskType, "task.taskType", `${path}.taskType`, "a task needs a task type");
-  into.oneOf(task.phase, TASK_PHASES, "task.phase", `${path}.phase`);
+  if (into.oneOf(task.phase, TASK_PHASES, "task.phase", `${path}.phase`) && task.phase === "preview") {
+    // A preview is a record waiting for the agent to press Call: only voice has a call to place,
+    // and pressing Call is a dial, so the manifest has to have said how a dial ends.
+    into.require(context.channel === "voice", "task.phase.channel", `${path}.phase`, `a ${context.channel} task has no call to preview`);
+    into.require(context.dialOutcomesDeclared !== false, "task.preview.dialOutcomes.required", `${path}.phase`,
+      "a preview ends in the agent pressing Call, which dials, and the manifest declares no dialOutcomes to say how a dial ends");
+  }
+  // The deadline and what happens at it travel together, and only while the record is being previewed.
+  if (task.previewEndsAt !== undefined || task.atDeadline !== undefined) {
+    into.require(task.phase === "preview", "task.preview.deadline.unexpected", `${path}.previewEndsAt`,
+      "previewEndsAt and atDeadline belong to a task in preview; past it there is nothing to wait for");
+    if (task.previewEndsAt === undefined) {
+      into.add("task.preview.previewEndsAt.required", `${path}.previewEndsAt`, "atDeadline says what happens at a deadline, so there has to be one");
+    } else {
+      into.timestamp(task.previewEndsAt, "task.preview.previewEndsAt", `${path}.previewEndsAt`);
+    }
+    if (task.atDeadline === undefined) {
+      into.add("task.preview.atDeadline.required", `${path}.atDeadline`,
+        "a preview with a deadline says what the system does at it: calls, or expires -- an agent counting down has to know which");
+    } else {
+      into.oneOf(task.atDeadline, PREVIEW_DEADLINES, "task.preview.atDeadline", `${path}.atDeadline`);
+    }
+  }
   // Acceptance is the offer's word, carried on the pending task so a snapshot can say it: it
   // travels exactly when Omni said tasks may be auto-accepted, and only while the task is pending.
   if (task.acceptance !== undefined) {
@@ -1558,9 +1582,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
         into.require((OFFERABLE_PHASES as readonly string[]).includes(event.task.phase), "event.taskOffered.phase", `${at}.task.phase`,
           `task-offered introduces a task as ${OFFERABLE_PHASES.join(", ")}, never as ${event.task.phase}`);
       }
-      for (const field of ["allocationExpiresAt", "preparationEndsAt"] as const) {
-        if (event[field] !== undefined) into.timestamp(event[field], `event.taskOffered.${field}`, `${at}.${field}`);
-      }
+      if (event.allocationExpiresAt !== undefined) into.timestamp(event.allocationExpiresAt, "event.taskOffered.allocationExpiresAt", `${at}.allocationExpiresAt`);
       break;
     case "task-updated":
       validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest) }, `${at}.task`, into);
