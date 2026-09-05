@@ -484,8 +484,8 @@ type TaskCapabilities<C extends Channel = Channel> =
         recording?: Lockable<true>;
       }
     : C extends "chat"
-      ? SharedTaskCapabilities & { reject?: Lockable<true>; hold?: Lockable<true> }
-      : SharedTaskCapabilities & { reject?: Lockable<true> };
+      ? SharedTaskCapabilities & { decline?: Lockable<true>; hold?: Lockable<true> }
+      : SharedTaskCapabilities & { decline?: Lockable<true> };
 ```
 
 The channel arms are why `Task<"email">` rejects `hold` at compile time rather than at runtime.
@@ -678,8 +678,8 @@ const TASK_COMMAND_NAMES = {
     "recording",
     "complete",
   ],
-  chat: ["accept", "reject", "pause", "resume", "complete"],
-  email: ["accept", "reject", "complete"],
+  chat: ["accept", "decline", "pause", "resume", "complete"],
+  email: ["accept", "decline", "complete"],
 } as const;
 
 type TaskCommandName<C extends keyof typeof TASK_COMMAND_NAMES> =
@@ -711,14 +711,14 @@ type VoiceTaskCommand =
 
 type ChatTaskCommand =
   | { type: "accept" }
-  | { type: "reject" }
+  | { type: "decline" }
   | { type: "pause" }
   | { type: "resume" }
   | ({ type: "complete" } & DispositionPayload);
 
 type EmailTaskCommand =
   | { type: "accept" }
-  | { type: "reject" }
+  | { type: "decline" }
   | ({ type: "complete" } & DispositionPayload);
 
 type CustomTaskCommand = { type: "custom"; name: string; [key: string]: unknown };
@@ -2561,7 +2561,7 @@ const taskCapabilities = {
 
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
-| `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when provisioning also permits rejection. |
+| `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when provisioning also permits declining. |
 | `mute` | Primary toggle: Mute | Omni may mute and unmute the agent's outbound audio. |
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
 | `agentDisconnect` | Primary button: Disconnect | Omni may disconnect real-time media without disposing the task. |
@@ -2679,7 +2679,7 @@ customer.
 
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
-| `reject` | Pending-task button: Reject | The provider can reject a pending chat offer. Omni shows it only when provisioning also permits rejection. |
+| `decline` | Pending-task button: Decline | The provider can decline a pending chat offer. Omni shows it only when provisioning also permits declining. |
 | `hold` | Primary toggle: Hold | Omni may pause and resume agent handling of the chat. |
 | `dispositions` | Primary button: Complete | Omni may request task disposal with a provider disposition and notes. |
 
@@ -2687,7 +2687,7 @@ customer.
 
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
-| `reject` | Pending-task button: Reject | The provider can reject a pending email offer. Omni shows it only when provisioning also permits rejection. |
+| `decline` | Pending-task button: Decline | The provider can decline a pending email offer. Omni shows it only when provisioning also permits declining. |
 | `dispositions` | Primary button: Complete | Omni may request task disposal with a provider disposition and notes. |
 
 ### Custom capabilities
@@ -3613,7 +3613,7 @@ declared:
 | Command | What makes it available |
 | --- | --- |
 | `answer`, `accept` | Nothing. A task that was offered can be accepted, or offering it meant nothing. |
-| `decline`, `reject` | The channel's decline or reject capability, **and** Omni provisioning permitting rejection. |
+| `decline` | The `decline` capability on any channel, **and** Omni provisioning permitting it. One word for refusing an offer, whatever the channel. |
 | `start-call` | The `preparing` phase. It starts the contact a preview gave the agent time to read, so the phase is the gate and there is no capability. |
 | `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |

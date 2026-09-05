@@ -155,8 +155,8 @@ const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
     browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
     agentDisconnect: true, connectBack: true, blindTransfer: true, consultTransfer: true, leadAssist: true, conference: true, recording: true,
   }),
-  chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, reject: true, hold: true }),
-  email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, reject: true }),
+  chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, decline: true, hold: true }),
+  email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, decline: true }),
 };
 
 // The published list and the type's keys are the same set, or one of them is wrong.
