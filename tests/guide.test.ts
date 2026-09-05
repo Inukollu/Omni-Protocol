@@ -77,7 +77,7 @@ function pieces(span: string): string[] {
 }
 
 /** Names an example uses without declaring them: stand-ins for the adapter's own code. */
-const PLACEHOLDERS = new Set(["adapter", "context", "createAcmeAuthentication", "createConnection", "execute", "executeTeamConsult", "expect"]);
+const PLACEHOLDERS = new Set(["adapter", "context", "createAcmeAuthentication", "createConnection", "execute", "executeTeamLeadAssist", "expect"]);
 
 // The fenced blocks: a complete example is compiled by guide-examples.test.ts; a fragment -- a
 // lone property, a bare literal, a signature -- is not, so its property keys and type names are

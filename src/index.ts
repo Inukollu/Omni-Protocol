@@ -229,8 +229,8 @@ export interface TeamCapabilities {
    * `omni.capability-not-enabled`. Requires `executeTeamBreak`.
    */
   breakControl?: true;
-  /** This lead may join a member's call on request. Requires `executeTeamConsult`. */
-  consultControl?: true;
+  /** This lead may join a member's call on request. Requires `executeTeamLeadAssist`. */
+  leadAssistControl?: true;
   /** This lead sets the team's policy per capability -- on, off, or the agent's -- within what the queue allows. Requires `executeTeamPolicy`. */
   policyControl?: true;
 }
@@ -482,8 +482,8 @@ export type TaskCapabilities<C extends Channel = Channel> =
         blindTransfer?: Lockable<true | DestinationDirectory>;
         /** Park the customer and call a destination first; then `complete` or `cancel`. */
         consultTransfer?: Lockable<true | DestinationDirectory>;
-        /** Ask a lead to join this call, with a note. The lead's decision arrives on `Task.lead`. */
-        consultLead?: Lockable<true>;
+        /** Ask a lead to join this call, with a note. The lead's decision arrives on `Task.leadAssist`. */
+        leadAssist?: Lockable<true>;
         conference?: Lockable<true | DestinationDirectory>;
         recording?: Lockable<true>;
       }
@@ -669,7 +669,7 @@ export type OnCall = { since: IsoTimestamp; held?: true } & (
  * The agent's request for a lead, from asking until the lead leaves or the request ends.
  * `requested` while nobody has joined; `joined`, with `leadId`, once somebody has.
  */
-export interface TaskLead {
+export interface TaskLeadAssist {
   stage: "requested" | "joined";
   leadId?: UserId;
   note?: string;
@@ -678,7 +678,7 @@ export interface TaskLead {
 
 /**
  * On the lead's own task for a call they joined: which member asked, with their note. Its
- * presence is what makes `lead` `take-over` and `leave` issuable.
+ * presence is what makes `lead-assist` `take-over` and `leave` issuable.
  */
 export interface TaskAssisting {
   memberId: UserId;
@@ -756,8 +756,8 @@ export type Task<C extends Channel = Channel> = {
 } & TaskCompletion
   // Who is on the call, a lead on it, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
   & (C extends "voice"
-    ? { onCall?: OnCall[]; lead?: TaskLead; assisting?: TaskAssisting; media?: TaskMediaState }
-    : { onCall?: never; lead?: never; assisting?: never; media?: never });
+    ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; media?: TaskMediaState }
+    : { onCall?: never; leadAssist?: never; assisting?: never; media?: never });
 
 /**
  * What the provider wants of Omni's acceptance policy for one offer. Present only where Omni was
@@ -786,7 +786,7 @@ export type TaskOutcome =
 
 export const TASK_COMMAND_NAMES = {
   voice: ["answer", "decline", "start-call", "mute", "hold", "resume", "disconnect",
-          "callback", "transfer", "lead", "conference", "recording", "complete"],
+          "callback", "transfer", "lead-assist", "conference", "recording", "complete"],
   chat: ["accept", "reject", "pause", "resume", "complete"],
   email: ["accept", "reject", "complete"],
 } as const;
@@ -817,14 +817,14 @@ export type VoiceTaskCommand =
   | { type: "transfer"; action: "complete" }
   /** Drop the consulted destination and return to the customer. Needs a `consulted` entry on `Task.onCall`. */
   | { type: "transfer"; action: "cancel" }
-  /** Ask a lead to join, with a note. Gated by `consultLead`. */
-  | { type: "lead"; action: "request"; note?: string }
-  /** Withdraw a standing request. Needs `Task.lead` with status `requested`. */
-  | { type: "lead"; action: "cancel" }
+  /** Ask a lead to join, with a note. Gated by `leadAssist`. */
+  | { type: "lead-assist"; action: "request"; note?: string }
+  /** Withdraw a standing request. Needs `Task.leadAssist` with status `requested`. */
+  | { type: "lead-assist"; action: "cancel" }
   /** The lead keeps the customer; the agent's task ends `transferred`. Needs `Task.assisting`. */
-  | { type: "lead"; action: "take-over" }
+  | { type: "lead-assist"; action: "take-over" }
   /** The lead drops; the agent continues. The lead's task ends `left`. Needs `Task.assisting`. */
-  | { type: "lead"; action: "leave" }
+  | { type: "lead-assist"; action: "leave" }
   /** Dial `destination` into the call. Gated by `conference`. */
   | { type: "conference"; action: "add"; dialId: DialId; destination: string }
   /** Drop the `conferenced` entry on `Task.onCall` with this destination; while it still rings, this calls the dial off. */
@@ -1014,7 +1014,7 @@ export interface LeadRequest {
  */
 export interface TeamRoster {
   members: TeamMember[];
-  /** Omitted when the login lacks `team.consultControl`; `[]` when nobody is asking. */
+  /** Omitted when the login lacks `team.leadAssistControl`; `[]` when nobody is asking. */
   requests?: LeadRequest[];
   /** The team's policy per capability, as it stands. Present exactly when the login declares `team.policyControl`. */
   policies?: TeamPolicies;
@@ -1044,12 +1044,12 @@ export interface TeamPolicyCommandRequest {
   command: TeamPolicyCommand;
 }
 
-export type TeamConsultCommand =
+export type TeamLeadAssistCommand =
   | { type: "join"; requestId: string }
   | { type: "decline"; requestId: string; reason?: string };
 
-export interface TeamConsultCommandRequest {
-  command: TeamConsultCommand;
+export interface TeamLeadAssistCommandRequest {
+  command: TeamLeadAssistCommand;
 }
 
 export type TeamBreakCommand =
@@ -1281,8 +1281,8 @@ export interface Connection<C extends Channel = Channel> {
 
   /** Required when the login declares `capabilities.team.breakControl`. */
   executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
-  /** Required when the login declares `capabilities.team.consultControl`. */
-  executeTeamConsult?(request: TeamConsultCommandRequest): Promise<TeamCommandResult>;
+  /** Required when the login declares `capabilities.team.leadAssistControl`. */
+  executeTeamLeadAssist?(request: TeamLeadAssistCommandRequest): Promise<TeamCommandResult>;
   /** Required when the login declares `capabilities.team.policyControl`. */
   executeTeamPolicy?(request: TeamPolicyCommandRequest): Promise<TeamCommandResult>;
   /** Required of every voice adapter: all voice audio lands in Omni. */
@@ -1395,7 +1395,7 @@ export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): bool
   return a.breaks === b.breaks &&
     (a.team === undefined) === (b.team === undefined) &&
     a.team?.breakControl === b.team?.breakControl &&
-    a.team?.consultControl === b.team?.consultControl;
+    a.team?.leadAssistControl === b.team?.leadAssistControl;
 }
 
 /**

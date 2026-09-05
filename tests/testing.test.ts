@@ -83,8 +83,8 @@ describe("assertCapabilityWithdrawal", () => {
     expect(() => assertCapabilityWithdrawal([lead, demoted], withRoster, manifest)).toThrow(/team\.unentitled/);
   });
 
-  it("holds requests to a withdrawn consultControl, and a snapshot to withdrawn breaks", () => {
-    const consulting = { ...lead, capabilities: { team: { consultControl: true as const } } } satisfies AuthenticationState;
+  it("holds requests to a withdrawn leadAssistControl, and a snapshot to withdrawn breaks", () => {
+    const consulting = { ...lead, capabilities: { team: { leadAssistControl: true as const } } } satisfies AuthenticationState;
     const watching = { ...lead, capabilities: { team: {} } } satisfies AuthenticationState;
     const members = [{ id: "A-2", availability: "on-task" as const }];
     const asking: Snapshot<"voice"> = { ...bare, team: { members, requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] } };
@@ -635,7 +635,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         cancelBreak: async () => ({ status: "cancelled" }),
         endBreak: async () => ({ status: "ended" }),
         executeTeamBreak: async () => ({ status: "applied" }),
-        executeTeamConsult: async () => ({ status: "applied" }),
+        executeTeamLeadAssist: async () => ({ status: "applied" }),
         setPreference: async () => ({ status: "applied" }),
         recordStep: async () => ({ status: "recorded" }),
         executeTeamPolicy: async () => ({ status: "applied" }),
@@ -680,11 +680,11 @@ describe("exerciseAdapter", () => {
     // The rich task carries browsers, history, a disposition policy, transfer destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
-      "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.onCall", "task.lead", "task.assisting",
+      "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.onCall", "task.leadAssist", "task.assisting",
       "task.media", "task.acceptance", "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
       "contacts", "scheduledActivities", "team.policies",
     ]);
@@ -694,15 +694,15 @@ describe("exerciseAdapter", () => {
       break: { approval: "in-effect", mayAsk: true, reasons: [{ id: "lunch", label: "Lunch" }], imposed: { by: "M-1", endsAutomatically: false } },
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
-    expect(state(await run({ capabilities: { team: { consultControl: true } }, snapshot: reached })))
-      .toEqual(["task.attributes", "task.onCall", "task.lead", "task.assisting", "task.acceptance", "task.locked", "team.policies"]);
+    expect(state(await run({ capabilities: { team: { leadAssistControl: true } }, snapshot: reached })))
+      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.acceptance", "task.locked", "team.policies"]);
     const later: ProviderEventEnvelope<"voice"> = {
       id: "evt-team", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } },
     };
     const rosterOnly = { ...conformingSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
     const withEvent = await run({ capabilities: { team: {} }, snapshot: rosterOnly, emit: listener => listener(later) });
-    expect(state(withEvent)).toEqual(["task.attributes", "task.onCall", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
+    expect(state(withEvent)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
     expect(events(withEvent)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
   });
 
@@ -837,11 +837,11 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ capabilities: watching, snapshot: leadSnapshot, connection: { executeTeamBreak: undefined } })).not.toContain("connection.executeTeamBreak.required");
   });
 
-  it("executeTeamConsult(), when the login declares team.consultControl", async () => {
-    const consulting = { team: { consultControl: true as const } };
+  it("executeTeamLeadAssist(), when the login declares team.leadAssistControl", async () => {
+    const consulting = { team: { leadAssistControl: true as const } };
     const watching = { team: {} };
-    expect(await rules({ capabilities: consulting, snapshot: leadSnapshot, connection: { executeTeamConsult: undefined } })).toContain("connection.executeTeamConsult.required");
-    expect(await rules({ capabilities: watching, snapshot: leadSnapshot, connection: { executeTeamConsult: undefined } })).not.toContain("connection.executeTeamConsult.required");
+    expect(await rules({ capabilities: consulting, snapshot: leadSnapshot, connection: { executeTeamLeadAssist: undefined } })).toContain("connection.executeTeamLeadAssist.required");
+    expect(await rules({ capabilities: watching, snapshot: leadSnapshot, connection: { executeTeamLeadAssist: undefined } })).not.toContain("connection.executeTeamLeadAssist.required");
   });
 
   it("validates every authentication state the session publishes during the run", async () => {
@@ -903,12 +903,12 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(result.login).toMatchObject({ capabilities: { breaks: true } });
   });
 
-  it("requests follow the login's consultControl both ways", async () => {
+  it("requests follow the login's leadAssistControl both ways", async () => {
     const members = [{ id: "A-2", availability: "on-task" as const }];
     const request = { id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" };
     const asking = { ...minimalSnapshot, team: { members, requests: [request] } } satisfies Snapshot<"voice">;
     const silent = { ...minimalSnapshot, team: { members } } satisfies Snapshot<"voice">;
-    const may = { team: { consultControl: true as const } };
+    const may = { team: { leadAssistControl: true as const } };
     const mayNot = { team: {} };
     const plain = { manifest: plainManifest };
     expect(await rules({ ...plain, capabilities: may, snapshot: asking })).toEqual([]);
@@ -1089,7 +1089,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   it("describeUsers(), when a UserId arrives on an event or on a task's lead or assisting", async () => {
     const at = "2026-08-21T09:05:00Z";
     const bare = { ...minimalSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, handlingHistory: { steps: [] } }] } satisfies Snapshot<"voice">;
-    const joined = { ...bare, tasks: [{ ...bare.tasks[0]!, capabilities: { ...bare.tasks[0]!.capabilities, consultLead: true }, lead: { stage: "joined", leadId: "L-9", since: at } }] } satisfies Snapshot<"voice">;
+    const joined = { ...bare, tasks: [{ ...bare.tasks[0]!, capabilities: { ...bare.tasks[0]!.capabilities, leadAssist: true }, leadAssist: { stage: "joined", leadId: "L-9", since: at } }] } satisfies Snapshot<"voice">;
     const assisting = { ...bare, tasks: [{ ...bare.tasks[0]!, assisting: { memberId: "A-1", since: at } }] } satisfies Snapshot<"voice">;
     expect(await rules({ manifest: plainManifest, snapshot: bare, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
     expect(await rules({ manifest: plainManifest, snapshot: joined, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
@@ -1152,7 +1152,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       snapshot: minimalSnapshot,
       connection: {
         describeUsers: undefined, dial: undefined, requestBreak: undefined, commitBreak: undefined,
-        cancelBreak: undefined, endBreak: undefined, executeTeamBreak: undefined, executeTeamConsult: undefined, openMedia: undefined,
+        cancelBreak: undefined, endBreak: undefined, executeTeamBreak: undefined, executeTeamLeadAssist: undefined, openMedia: undefined,
       },
     });
     expect(found).toEqual([]);
