@@ -1443,7 +1443,28 @@ describe("monitoring a call", () => {
     expect(check({ assisting: { memberId: "A-1", since } })).toEqual([]);
     const listening = (id: string) => task({ id, capabilities: {}, monitoring });
     expect(rules(validateSnapshot(snapshot({ tasks: [listening("m-1")] }), manifest()))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [listening("m-1"), listening("m-2")] }), manifest()))).toEqual(["snapshot.monitoring.single"]);
+    // Two monitored calls break two rules: one at a time, and a lead's only task.
+    expect(rules(validateSnapshot(snapshot({ tasks: [listening("m-1"), listening("m-2")] }), manifest()))).toEqual(["snapshot.monitoring.single", "snapshot.monitoring.alone", "snapshot.monitoring.alone"]);
+  });
+
+  it("lets a lead listen only with no task of their own, and on a working break, never a rest", () => {
+    const monitoring = { memberId: "A-1", taskId: "call-42", mode: "monitor", since };
+    const listening = task({ id: "m-1", capabilities: {}, monitoring });
+    const own = task({ id: "call-7" });
+    expect(rules(validateSnapshot(snapshot({ tasks: [listening] }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [listening, own] }), manifest()))).toEqual(["snapshot.monitoring.alone"]);
+    // The control: two tasks of the lead's own are ordinary.
+    expect(rules(validateSnapshot(snapshot({ tasks: [own, task({ id: "call-8" })] }), manifest()))).toEqual([]);
+    const onBreak = (kind: string | undefined, tasks: unknown[]) => rules(validateSnapshot(snapshot({
+      break: { approval: "in-effect", mayAsk: true, reasons: [{ id: "b", label: "Break", ...(kind === undefined ? {} : { kind }) }], activeReasonId: "b" },
+      tasks,
+    }), manifest()));
+    for (const kind of ["coaching", "administrative", "training"]) expect(onBreak(kind, [listening])).toEqual([]);
+    for (const kind of ["meal", "rest", "short-break", "personal", "other"]) expect(onBreak(kind, [listening])).toEqual(["snapshot.monitoring.break"]);
+    expect(onBreak(undefined, [listening])).toEqual(["snapshot.monitoring.break"]);
+    // The rule it is an exception to still holds for the lead's own work.
+    expect(onBreak("coaching", [own])).toEqual(["break.in-effect.tasks"]);
+    expect(onBreak("coaching", [])).toEqual([]);
   });
 
   it("answers the monitor method as every team method answers", () => {

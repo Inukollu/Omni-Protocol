@@ -703,7 +703,9 @@ export interface TaskAssisting {
 /**
  * On the lead's own task while they listen to a member's call: whose call, which call, and how the
  * lead is heard, restated on every change of mode. Nothing of it reaches the member's task. There
- * is no take-over here; a lead who wants the call uses lead assist.
+ * is no take-over here; a lead who wants the call uses lead assist. It is the lead's only task:
+ * a lead listens while holding no work of their own, idle or on a break of a kind in
+ * `MONITORING_BREAK_KINDS`.
  */
 export interface TaskMonitoring {
   memberId: UserId;
@@ -947,6 +949,15 @@ export const BREAK_KINDS = [
  * problem one level up. `other` matches nothing, including another provider's `other`.
  */
 export type BreakKind = (typeof BREAK_KINDS)[number];
+
+/**
+ * The breaks during which a lead may listen to a member's call: work of another sort, not rest.
+ * A monitoring task is the one task a break in effect may hold, and only on one of these.
+ */
+export const MONITORING_BREAK_KINDS = ["coaching", "administrative", "training"] as const satisfies readonly BreakKind[];
+
+export const breakKindAllowsMonitoring = (kind: BreakKind | undefined): boolean =>
+  kind !== undefined && (MONITORING_BREAK_KINDS as readonly BreakKind[]).includes(kind);
 
 export interface BreakReason {
   id: string;

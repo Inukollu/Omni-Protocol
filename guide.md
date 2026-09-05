@@ -2933,7 +2933,7 @@ rendering one as the other tells an agent to wait for somebody who is never comi
 | `awaiting-decision` | A person has to decide. The agent is waiting on somebody. |
 | `granted` | A person decided yes. Omni may now tell this provider to stop the agent; until it does, work continues normally, and this says nothing about why Omni has not. |
 | `starting-after-task` | Omni has told the provider to stop; the break begins when the current task ends. No new work arrives meanwhile, and nobody needs to act. |
-| `in-effect` | The agent is on the break now. It holds no task: a break begins when the work ends, so a snapshot reporting `in-effect` beside a task is refused as `break.in-effect.tasks`. |
+| `in-effect` | The agent is on the break now. It holds no task: a break begins when the work ends, so a snapshot reporting `in-effect` beside a task is refused as `break.in-effect.tasks`. The one exception is a lead's monitoring task during a `coaching`, `administrative` or `training` break -- see **Monitoring a call**. |
 
 A denial is a decision, not a standing approval state. The provider transitions the request directly
 to `not-requested`; Omni returns the agent to idle and never asks again on their behalf. They saw the
@@ -3465,10 +3465,19 @@ executeTeamMonitor({ command: { type: "leave" } })
 provider bridges the lead's leg into the member's call in the mode stated. `monitoring.mode` is
 the state, restated on every change, and a `whisper` or `barge` the login's list does not include
 is answered `failed`. **A lead listens to one call at a time** (`snapshot.monitoring.single`), and
-a task is a joined call or a monitored one, never both (`task.monitoring.assisting`). A lead on a
-break does not listen, for the reason they do not join: a break is a state in which the agent is
-not working. The member's call ending ends the lead's task as it ends the member's, with `left`,
-since the lead was never handling it.
+a task is a joined call or a monitored one, never both (`task.monitoring.assisting`). The member's
+call ending ends the lead's task as it ends the member's, with `left`, since the lead was never
+handling it.
+
+**A lead listens only while holding no work of their own.** A monitoring task is the lead's only
+task, and a snapshot carrying one beside any other is refused (`snapshot.monitoring.alone`); Omni
+offers Monitor to a lead with no task. That includes a lead on a break -- unlike joining, which a
+break forbids -- but only a break that is work of another sort: `coaching`, `administrative` or
+`training`, the kinds in `MONITORING_BREAK_KINDS`, and never a meal or a rest. A break in effect
+otherwise holds no task; the monitoring task is its one exception, and a snapshot carrying one
+during a break whose active reason is of any other kind, or of no stated kind, is refused
+(`snapshot.monitoring.break`). The kind decides, not the reason's name: a centre that wants leads
+listening during a break declares that break `coaching`, `administrative` or `training`.
 
 **Nothing reaches the member.** The member's task carries no trace of a monitoring lead in any
 mode: not on `onCall`, not in the record. Whether a whisper is announced to the agent is the

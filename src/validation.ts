@@ -13,6 +13,7 @@
 import {
   ALLOWED_BROWSER_URL_SCHEMES,
   BREAK_KINDS,
+  MONITORING_BREAK_KINDS,
   BROWSER_ISOLATION_SCHEMES,
   HANDLING_STEPS_THAT_DIAL,
   IDLE_CAPABILITIES,
@@ -1342,12 +1343,32 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     });
   }
 
+  // A lead listens while holding no work of their own: a monitoring task is the only task.
+  if (Array.isArray(snapshot.tasks) && snapshot.tasks.length > 1) {
+    snapshot.tasks.forEach((task: unknown, index: number) => {
+      if (isPlainObject(task) && task.monitoring !== undefined) {
+        into.add("snapshot.monitoring.alone", `${path}.tasks[${index}].monitoring`, "a lead listens only while holding no task of their own");
+      }
+    });
+  }
   // A break in effect begins when the work ends, so it holds no task. A snapshot reporting both
-  // describes a state the agent cannot be in, whichever half is stale.
+  // describes a state the agent cannot be in, whichever half is stale. The one exception is a
+  // lead listening to a call during a break that is work of another sort -- coaching,
+  // administrative, training -- and on no other.
   if (isPlainObject(snapshot.break) && snapshot.break.approval === "in-effect"
     && Array.isArray(snapshot.tasks) && snapshot.tasks.length > 0) {
-    into.add("break.in-effect.tasks", `${path}.tasks`,
-      "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task");
+    const listening = snapshot.tasks.every((task: unknown) => isPlainObject(task) && task.monitoring !== undefined);
+    if (!listening) {
+      into.add("break.in-effect.tasks", `${path}.tasks`,
+        "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task");
+    } else {
+      const state = snapshot.break;
+      const reasons = Array.isArray(state.reasons) ? state.reasons : [];
+      const active = reasons.find((reason: unknown) => isPlainObject(reason) && reason.id === state.activeReasonId);
+      const kind = isPlainObject(active) ? active.kind : undefined;
+      into.require(typeof kind === "string" && (MONITORING_BREAK_KINDS as readonly string[]).includes(kind), "snapshot.monitoring.break", `${path}.tasks`,
+        `a lead listens during a ${MONITORING_BREAK_KINDS.join(", ")} break and no other; the active reason is ${kind === undefined ? "unstated" : String(kind)}`);
+    }
   }
 
   // Presence is the permission, and it cuts both ways: data a provider never declared a
