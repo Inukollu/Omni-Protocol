@@ -644,21 +644,25 @@ export type TaskCompletion =
 
 export type OnCallRole = "party" | "agent" | "consulted" | "conferenced";
 
+/** Where a dialled entry stands: `ringing` until its dial is answered, `joined` after. */
+export type OnCallStage = "ringing" | "joined";
+
 export const ON_CALL_ROLES = ["party", "agent", "consulted", "conferenced"] as const satisfies readonly OnCallRole[];
 
 /**
  * Somebody on the call, or being brought onto it, as the provider states it: who, since when, and
  * whether they are held aside. `party` is the customer; `agent` a person, by user id; `consulted`
  * and `conferenced` someone a dial is bringing in -- listed from the moment the dial is placed, so
- * the agent can call it off while it rings -- carrying the dial when a host placed it and the
- * address either way. Whether they answered is the `dial-outcome`'s to say. `label` names a
- * destination -- a person, a queue -- not a phrase. At most one `party` and one `consulted`: the
- * consult commands name neither because there is exactly one.
+ * the agent can call it off while it rings -- carrying the dial when a host placed it, the address
+ * either way, and the `stage` it has reached: `ringing` until the dial is answered, `joined` after,
+ * stated so a snapshot says who is present without anyone having seen the outcome. Nobody ringing is
+ * held. `label` names a destination -- a person, a queue -- not a phrase. At most one `party` and
+ * one `consulted`: the consult commands name neither because there is exactly one.
  */
 export type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party" }
   | { role: "agent"; userId: UserId }
-  | { role: "consulted" | "conferenced"; destination: string; dialId?: DialId; label?: string }
+  | { role: "consulted" | "conferenced"; destination: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );
 
 /**

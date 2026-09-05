@@ -42,6 +42,7 @@ import {
   type DialDestinations,
   type DialOutcome,
   type OnCallRole,
+  type OnCallStage,
   type DispositionRules,
   type HandlingStep,
   type IdleCapabilities,
@@ -127,6 +128,7 @@ const DIAL_OUTCOMES = membersOf<DialOutcome>({ answered: true, busy: true, "no-a
 /** The outcomes that name a cause. `unexplained` is declarable only beside one of these. */
 const EXPLAINED_FAILURES: readonly DialOutcome[] = ["busy", "no-answer", "unreachable", "rejected", "cancelled"];
 const ON_CALL_ROLES = membersOf<OnCallRole>({ party: true, agent: true, consulted: true, conferenced: true });
+const ON_CALL_STAGES = membersOf<OnCallStage>({ ringing: true, joined: true });
 /** The task capabilities under which a command dials, and so need the manifest to say how a dial ends. */
 const DIALLING_CAPABILITIES = ["callback", "blindTransfer", "consultTransfer", "conference"] as const;
 const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
@@ -883,10 +885,15 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
     }
     if (role === "consulted" || role === "conferenced") {
       into.filled(entry.destination, "task.onCall.destination", `${at}.destination`, `a ${role} entry names the destination that was dialled`);
+      // Stated, so a snapshot says who is present without anyone having seen the dial's outcome.
+      if (into.oneOf(entry.stage, ON_CALL_STAGES, "task.onCall.stage", `${at}.stage`)) {
+        into.require(!(entry.stage === "ringing" && entry.held === true), "task.onCall.held.ringing", `${at}.held`,
+          "nobody ringing is held; held belongs to somebody who has joined");
+      }
       if (entry.dialId !== undefined) into.filled(entry.dialId, "task.onCall.dialId", `${at}.dialId`, "dialId must not be empty when present");
       if (entry.label !== undefined) into.filled(entry.label, "task.onCall.label", `${at}.label`, "a label must not be empty when present");
     } else {
-      for (const field of ["destination", "dialId", "label"] as const) {
+      for (const field of ["destination", "dialId", "label", "stage"] as const) {
         into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
           `a ${role} was dialled from nowhere; ${field} belongs on consulted or conferenced`);
       }

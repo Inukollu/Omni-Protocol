@@ -1211,9 +1211,9 @@ describe("consult transfer", () => {
   });
 
   it("carries the consulted destination on the call, on voice and nowhere else", () => {
-    const consulted = { role: "consulted", destination: "+14155550111", label: "Tier 2", dialId: "dial-3", since: "2026-08-21T09:05:00Z" };
+    const consulted = { role: "consulted", destination: "+14155550111", label: "Tier 2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" };
     expect(rules(validateTask(task({ onCall: [consulted] }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ onCall: [{ role: "consulted", destination: "+14155550111", since: "2026-08-21T09:05:00Z" }] }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ onCall: [{ role: "consulted", destination: "+14155550111", stage: "joined", since: "2026-08-21T09:05:00Z" }] }), voice))).toEqual([]);
     expect(rules(validateTask(task({ onCall: [{ ...consulted, destination: "" }] }), voice))).toEqual(["task.onCall.destination"]);
     expect(rules(validateTask(task({ onCall: [{ ...consulted, since: "yesterday" }] }), voice))).toEqual(["task.onCall.since"]);
     expect(rules(validateTask(task({ onCall: consulted }), voice))).toEqual(["task.onCall.shape"]);
@@ -1231,7 +1231,7 @@ describe("who is on the call", () => {
   const onCall = (entries: unknown) => rules(validateTask(task({ onCall: entries }), voice));
   const party = { role: "party", since };
   const agent = { role: "agent", userId: "A-1", since };
-  const conferenced = { role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", label: "Tier 2", since };
+  const conferenced = { role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", label: "Tier 2", stage: "joined", since };
 
   it("states each role with what that role needs, and refuses what another role would carry", () => {
     expect(onCall([party, agent, conferenced])).toEqual([]);
@@ -1250,6 +1250,14 @@ describe("who is on the call", () => {
     expect(onCall([{ ...conferenced, dialId: "" }])).toEqual(["task.onCall.dialId"]);
     expect(onCall([{ ...conferenced, label: "" }])).toEqual(["task.onCall.label"]);
     expect(onCall([party, party])).toEqual(["task.onCall.party.single"]);
+    // A dialled entry says where it stands, and nobody ringing is held.
+    expect(onCall([{ ...conferenced, stage: "ringing" }])).toEqual([]);
+    expect(onCall([{ ...conferenced, stage: undefined }])).toEqual(["task.onCall.stage"]);
+    expect(onCall([{ ...conferenced, stage: "answered" }])).toEqual(["task.onCall.stage"]);
+    expect(onCall([{ ...conferenced, stage: "ringing", held: true }])).toEqual(["task.onCall.held.ringing"]);
+    expect(onCall([{ ...conferenced, stage: "joined", held: true }])).toEqual([]);
+    expect(onCall([{ ...party, stage: "joined" }])).toEqual(["task.onCall.stage.unexpected"]);
+    expect(onCall([{ ...agent, stage: "ringing" }])).toEqual(["task.onCall.stage.unexpected"]);
     // Two conferenced people are ordinary; the singular rules are party and consulted.
     expect(onCall([conferenced, { ...conferenced, destination: "+14155550199", dialId: "dial-3c9" }])).toEqual([]);
   });

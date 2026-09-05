@@ -149,9 +149,11 @@ export const aimlessTransfer: TaskCommand<"voice"> = { type: "transfer" };
 // @ts-expect-error Completing a consultation names no destination: there is exactly one already.
 export const overdeterminedCompletion: TaskCommand<"voice"> = { type: "transfer", action: "complete", destination: "+14155550111" };
 // Who is on the call is voice-only, like the commands that bring people onto it.
-export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { consultTransfer: true }, phase: "paused", onCall: [{ role: "consulted", destination: "+14155550111", dialId: "dial-3", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
+export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { consultTransfer: true }, phase: "paused", onCall: [{ role: "consulted", destination: "+14155550111", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
+// @ts-expect-error A dialled entry says where it stands: ringing or joined.
+export const unstagedConsulted: OnCall = { role: "consulted", destination: "+14155550111", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error Email has nobody on a call.
-export const consultingEmailTask: Task<"email"> = { ...emailTask, id: "email-6", onCall: [{ role: "consulted", destination: "+14155550111", since: "2026-08-21T09:05:00Z" }] };
+export const consultingEmailTask: Task<"email"> = { ...emailTask, id: "email-6", onCall: [{ role: "consulted", destination: "+14155550111", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
 // @ts-expect-error A party was dialled from nowhere and names no destination.
 export const misplacedParty: OnCall = { role: "party", destination: "+14155550111", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error An agent on the call is named by user id, not by a destination.
