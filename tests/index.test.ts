@@ -280,13 +280,13 @@ describe("every dial has an outcome", () => {
   it("names the dial a command places, and none for a command that dials nothing", () => {
     expect(commandDialId({ type: "connect-back", dialId: "dial-1" })).toBe("dial-1");
     expect(commandDialId({ type: "call", dialId: "dial-5" })).toBe("dial-5");
-    expect(commandDialId({ type: "transfer", action: "cold", dialId: "dial-2", destination: "+14155550111" })).toBe("dial-2");
-    expect(commandDialId({ type: "transfer", action: "warm", dialId: "dial-3", destination: "+14155550111" })).toBe("dial-3");
-    expect(commandDialId({ type: "conference", action: "add", dialId: "dial-4", destination: "+14155550111" })).toBe("dial-4");
+    expect(commandDialId({ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" })).toBe("dial-2");
+    expect(commandDialId({ type: "transfer", action: "warm", dialId: "dial-3", destinationId: "tier2" })).toBe("dial-3");
+    expect(commandDialId({ type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" })).toBe("dial-4");
     // The control: the consult steps, a remove, and a hold dial nowhere.
     expect(commandDialId({ type: "transfer", action: "complete" })).toBeUndefined();
     expect(commandDialId({ type: "transfer", action: "cancel" })).toBeUndefined();
-    expect(commandDialId({ type: "conference", action: "remove", destination: "+14155550111" })).toBeUndefined();
+    expect(commandDialId({ type: "conference", action: "remove", destinationId: "tier2" })).toBeUndefined();
     expect(commandDialId({ type: "hold" })).toBeUndefined();
   });
 

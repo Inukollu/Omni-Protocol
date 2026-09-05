@@ -447,13 +447,10 @@ type DispositionRules = {
 type Destination = {
   id: string;
   label: string;
-  address: string;
-  kind: "queue" | "external";
 };
 
 type DestinationDirectory = {
-  destinations?: Destination[];
-  allowManualEntry: boolean;
+  destinations: Destination[];
 };
 
 type CustomCapability = {
@@ -481,10 +478,10 @@ type TaskCapabilities<C extends Channel = Channel> =
         hold?: Lockable<true>;
         agentDisconnect?: Lockable<true>;
         connectBack?: Lockable<true>;
-        coldTransfer?: Lockable<true | DestinationDirectory>;
-        warmTransfer?: Lockable<true | DestinationDirectory>;
+        coldTransfer?: Lockable<DestinationDirectory>;
+        warmTransfer?: Lockable<DestinationDirectory>;
         leadAssist?: Lockable<true>;
-        conference?: Lockable<true | DestinationDirectory>;
+        conference?: Lockable<DestinationDirectory>;
         recording?: Lockable<true>;
       }
     : C extends "chat"
@@ -582,7 +579,7 @@ type TaskHandlingStep = {
   step: HandlingStep;
   at: IsoTimestamp;
   dialId?: DialId;
-  destination?: string;
+  destinationId?: string;
   seconds?: DurationSeconds;
   by?: UserId;
 };
@@ -598,7 +595,7 @@ type OnCallStage = "ringing" | "joined";
 type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party" }
   | { role: "agent"; userId: UserId }
-  | { role: "consulted" | "conferenced"; destination: string; stage: OnCallStage; dialId?: DialId; label?: string }
+  | { role: "consulted" | "conferenced"; destinationId: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );
 
 type TaskLeadAssist = {
@@ -667,7 +664,7 @@ type AcceptanceMode =
 
 type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
-  | { type: "transferred"; destination?: string }
+  | { type: "transferred"; destinationId?: string }
   | { type: "cancelled"; reason?: string }
   | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
   | { type: "left" }
@@ -711,16 +708,16 @@ type VoiceTaskCommand =
   | { type: "resume" }
   | { type: "disconnect" }
   | { type: "connect-back"; dialId: DialId }
-  | { type: "transfer"; action: "cold"; dialId: DialId; destination: string }
-  | { type: "transfer"; action: "warm"; dialId: DialId; destination: string }
+  | { type: "transfer"; action: "cold"; dialId: DialId; destinationId: string }
+  | { type: "transfer"; action: "warm"; dialId: DialId; destinationId: string }
   | { type: "transfer"; action: "complete" }
   | { type: "transfer"; action: "cancel" }
   | { type: "lead-assist"; action: "request"; note?: string }
   | { type: "lead-assist"; action: "cancel" }
   | { type: "lead-assist"; action: "take-over" }
   | { type: "lead-assist"; action: "leave" }
-  | { type: "conference"; action: "add"; dialId: DialId; destination: string }
-  | { type: "conference"; action: "remove"; destination: string }
+  | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
+  | { type: "conference"; action: "remove"; destinationId: string }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);
 
@@ -1006,7 +1003,7 @@ type ProviderEvent =
   | { type: "task-media-started"; taskId: TaskId }
   | { type: "task-media-ended"; taskId: TaskId }
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
-  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; destination?: string; reason?: string }
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; destinationId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
   | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId }
@@ -2161,7 +2158,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `handlingHistory` | The call record: `steps` — the ordered handling history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `handleSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **How a task has been handled**. |
-| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destination` dialled, the `dialId` where a host placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
+| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where a host placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `leadAssist` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Lead assist**. |
 | `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead-assist` `take-over` and `leave` issuable. See **Lead assist**. |
 | `monitoring` | Voice only, on the lead's own task while they listen to a member's call: whose call, which call, and the `mode` they are heard in, restated on every change. Never on the member's task, and never together with `assisting`. See **Monitoring a call**. |
@@ -2414,7 +2411,7 @@ executes** — so without a step the provider, which alone keeps the task's reco
 account of a period the agent could not be heard.
 
 **A step that dialled says which dial and where.** `transferred`, `conferenced` and `unanswered`
-each end a dial, so the entry carries the `destination` it went to and, where a host placed it, the
+each end a dial, so the entry carries the `destinationId` it went to and, where a host placed it, the
 `dialId` the host minted; no other step dialled, and either field on one is refused
 (`task.handlingHistory.dialId.unexpected`). This is how a dial made before a transfer is placeable
 by whoever holds the task now: a `dial-outcome` naming a `dialId` the host never minted is looked
@@ -2674,9 +2671,9 @@ the provider published none.
 ```ts
 capabilities: {
   coldTransfer: {
-    allowManualEntry: false,
     destinations: [
-      { id: "tier2", label: "Tier 2 support", address: "+14155550111", kind: "queue" },
+      { id: "tier2", label: "Tier 2 support" },
+      { id: "main-menu", label: "Back to the main menu" },
     ],
   },
 }
@@ -2684,28 +2681,23 @@ capabilities: {
 
 | Field | Contract |
 | --- | --- |
-| `destinations` | Directory Omni renders, with unique `id` values. |
-| `address` | The value Omni sends as `destination` on a `transfer` or a `conference` command. |
-| `kind` | Where the contact is going. See below. |
-| `allowManualEntry` | Whether the agent may type a destination that is not in the directory. A directory with no destinations must allow manual entry, or the control has nothing to offer. |
+| `destinations` | The items the control offers, at least one, with unique `id` values. Each is a button or a menu item on the desk. |
+| `id` | What Omni sends as `destinationId` on a `transfer` or `conference` command, and what the provider executes. |
+| `label` | What the agent reads. |
 
-`kind` says who receives the contact and whether this provider still holds it afterwards:
-
-| Kind | What it means |
-| --- | --- |
-| `queue` | A routing point on this provider. Whoever is next takes it, nobody is named, and the provider keeps the contact. |
-| `external` | An address outside this provider — another platform, a PSTN number, a partner's line. The contact leaves, and the provider generally stops being able to report on it. |
+**The protocol does not say what an item does.** A queue, an IVR menu, an outside line, a
+skill group -- that is the queue's configuration and the provider's business. The agent sees a
+list of labels, picks one, and Omni sends its `id`; the provider executes whatever the item is. No
+kind travels, nothing is typed, and a control with an empty directory has nothing to offer and is
+refused (`task.destinations.offer`). A control declared as bare `true` is refused for the same
+reason (`task.destinations.shape`): once nothing is typed, the directory is the control.
 
 **An agent never transfers to a named agent**, warm or cold. A contact that needs another pair of
-hands goes back to a queue, and who takes it next is the queue's decision: routing by skill,
-availability and fairness is what the queue is for, and a hand-off to a chosen colleague bypasses
-all three. A platform whose directory names people publishes them as queues of one if it must, and
-the desk shows no agent picker. The one way a named person ends up with an agent's call is a lead
-taking it over through lead assist, which is the lead's act, not a transfer the agent chose.
-
-A destination the agent types is not in the directory and has no `kind`. Omni treats it as
-`external` unless the provider says otherwise in its response, because that is the assumption that
-does not overstate what the provider can still see.
+hands goes back to a queue or a menu the queue configured, and who takes it next is the queue's
+decision: routing by skill, availability and fairness is what the queue is for, and a hand-off to a
+chosen colleague bypasses all three. The desk shows no agent picker and no dial pad on a transfer.
+The one way a named person ends up with an agent's call is a lead taking it over through lead
+assist, which is the lead's act, not a transfer the agent chose.
 
 #### Warm transfer
 
@@ -2719,7 +2711,7 @@ offer any of the three without the others, and each is declared on its own.
 // 1. Warm. A dial: the provider parks the customer and calls the destination, answers
 //    `dialling`, and the task reports `paused` with the destination `consulted` on `onCall`
 //    while the call to it stands.
-{ type: "transfer", action: "warm", dialId: "dial-7f2", destination: "+14155550111" }
+{ type: "transfer", action: "warm", dialId: "dial-7f2", destinationId: "tier2" }
 
 // 2a. Hand the customer to the consulted destination and leave.
 { type: "transfer", action: "complete" }
@@ -2728,7 +2720,7 @@ offer any of the three without the others, and each is declared on its own.
 { type: "transfer", action: "cancel" }
 ```
 
-`warm` is gated by the `warmTransfer` capability and takes a destination exactly as a cold
+`warm` is gated by the `warmTransfer` capability and names a directory item exactly as a cold
 transfer does, from the same kind of directory. It is a dial, so it carries the host's `dialId`
 and is answered `dialling`, and its `dial-outcome` says whether the destination was reached. While
 the destination is on the line the task carries a `consulted` entry on `onCall`, and that presence
@@ -2838,16 +2830,16 @@ declare const connection: Connection<"voice">;
 declare const taskId: TaskId;
 
 // 1. Out, minted by the host.
-const result = await connection.execute({ taskId, command: { type: "conference", action: "add", dialId: "dial-7f2", destination: "+14155550111" } });
+const result = await connection.execute({ taskId, command: { type: "conference", action: "add", dialId: "dial-7f2", destinationId: "tier2" } });
 
 // 2. Back on the result, restated, so the host compares and confirms.
 expect(result).toEqual({ status: "dialling", dialId: "dial-7f2" });
 
 // 3. On the outcome, however late, against the task it belonged to.
-const outcome: ProviderEvent<"voice"> = { type: "dial-outcome", dialId: "dial-7f2", taskId, destination: "+14155550111", outcome: "no-answer", reason: "No route to destination" };
+const outcome: ProviderEvent<"voice"> = { type: "dial-outcome", dialId: "dial-7f2", taskId, destinationId: "tier2", outcome: "no-answer", reason: "No route to destination" };
 
 // 4. In the record, so a dial made before a transfer is placeable by whoever holds the task now.
-const step: TaskHandlingStep = { step: "unanswered", at: "2026-08-21T09:15:30Z", by: "A-12", dialId: "dial-7f2", destination: "+14155550111" };
+const step: TaskHandlingStep = { step: "unanswered", at: "2026-08-21T09:15:30Z", by: "A-12", dialId: "dial-7f2", destinationId: "tier2" };
 ```
 
 The identity is a correlation handle between host and provider and **is never shown to the
@@ -2863,7 +2855,7 @@ nothing, is refused (`result.status`). `validateResult(result, method, path, dia
 `dialId` the host sent for that reason.
 
 **The outcome is stated, once, either way.** A `dial-outcome` names the `dialId`, the task where
-there was one, the destination where the provider knows it, and how the dial ended -- from a closed
+there was one, the directory item it went to where there was one, and how the dial ended -- from a closed
 set: `answered`, `busy`, `no-answer`, `unreachable`, `rejected`, `cancelled`, `unexplained`.
 `answered` is stated rather than read off somebody appearing on the call, because a host that infers
 success cannot tell "reached" from "still ringing". `cancelled` is the dialler calling the dial off
@@ -2916,15 +2908,15 @@ knows the room:
 const onCall: OnCall[] = [
   { role: "party", since: "2026-08-21T09:12:00Z" },
   { role: "agent", userId: "A-12", since: "2026-08-21T09:12:04Z" },
-  { role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", stage: "joined", held: true, since: "2026-08-21T09:15:30Z" },
-  { role: "conferenced", destination: "+14155550199", dialId: "dial-3c9", stage: "ringing", since: "2026-08-21T09:16:02Z" },
+  { role: "conferenced", destinationId: "tier2", dialId: "dial-7f2", stage: "joined", held: true, since: "2026-08-21T09:15:30Z" },
+  { role: "conferenced", destinationId: "main-menu", dialId: "dial-3c9", stage: "ringing", since: "2026-08-21T09:16:02Z" },
 ];
 ```
 
 `party` is the customer and `agent` a person by user id; neither was dialled from anywhere, so
-neither carries a destination. `consulted` and `conferenced` were, so both carry the `destination`
-and, where a host's dial brought them, its `dialId`; a person the platform added itself carries
-none. `held: true` is presence as claim. A snapshot establishes state, so a host that attaches
+neither carries a destination. `consulted` and `conferenced` were, so both carry the
+`destinationId` of the directory item and, where a host's dial brought them, its `dialId`; a person
+the platform added itself carries none. `held: true` is presence as claim. A snapshot establishes state, so a host that attaches
 after a transfer reads the room from here rather than inferring it from a sequence of outcomes it
 never saw.
 
@@ -2933,7 +2925,7 @@ what makes `transfer` `cancel` issuable and what `conference` `remove` names, an
 agent cannot call off while it rings is a parked customer with no way back -- which is the very case
 `cancelled` exists for. Consult and conference behave alike here: the `consulted` or `conferenced`
 entry appears with its `dialId` when the dial is placed, and a `conference` `remove` naming a
-still-ringing `destination` calls that dial off, with `cancelled` as its outcome.
+still-ringing `destinationId` calls that dial off, with `cancelled` as its outcome.
 
 **The entry says where it stands.** A dialled entry carries `stage`: `ringing` until its dial is
 answered, `joined` after. The `dial-outcome` is the transition and the stage is the state, the same
@@ -3812,7 +3804,7 @@ react rather than only display the message:
 | `omni.not-authenticated` | The provider session is no longer usable. The adapter has published `expired` at or before this answer — the state is what Omni surfaces reauthentication from; the code says why this action failed, and is never the only signal. |
 | `omni.capability-not-enabled` | The action targets a capability this task, manifest, or login did not declare — including a lead command from a login whose `capabilities` no longer carry it. |
 | `omni.task-not-found` | The provider-local task id is unknown, typically after the task already ended. |
-| `omni.destination-not-permitted` | The dial or transfer destination violates the provider's policy. |
+| `omni.destination-not-permitted` | The dialled number, or the `destinationId` named, is not one the provider offers this agent. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
 | `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `transport-status` is not `active`. |
 | `omni.break-already-committed` | Cancellation lost the commit/cancel race; Omni must finish commit recovery. |

@@ -447,20 +447,19 @@ export interface DispositionRules {
   codes?: DispositionCode[];
 }
 
+/**
+ * One item the queue configured for the agent to send a contact to: a button or a menu item. The
+ * protocol does not say what it does -- a queue, a menu, a line -- the provider executes it when a
+ * command names its `id`. Never a named agent: who takes a contact next is the queue's decision.
+ */
 export interface Destination {
   id: string;
   label: string;
-  address: string;
-  /**
-   * Where the contact goes: back to a queue on this provider, or to an address outside it. Never
-   * to a named agent -- who takes a contact next is the queue's decision, not an agent's.
-   */
-  kind: "queue" | "external";
 }
 
+/** The items a transfer or conference control offers. Nothing is typed; the agent picks one. */
 export interface DestinationDirectory {
-  destinations?: Destination[];
-  allowManualEntry: boolean;
+  destinations: Destination[];
 }
 
 export interface CustomCapability {
@@ -496,12 +495,12 @@ export type TaskCapabilities<C extends Channel = Channel> =
         agentDisconnect?: Lockable<true>;
         /** Connect back to the party while `completing`, whoever placed the call; the task returns to `in-progress`. */
         connectBack?: Lockable<true>;
-        coldTransfer?: Lockable<true | DestinationDirectory>;
+        coldTransfer?: Lockable<DestinationDirectory>;
         /** Park the customer and call a destination first; then `complete` or `cancel`. */
-        warmTransfer?: Lockable<true | DestinationDirectory>;
+        warmTransfer?: Lockable<DestinationDirectory>;
         /** Ask a lead to join this call, with a note. The lead's decision arrives on `Task.leadAssist`. */
         leadAssist?: Lockable<true>;
-        conference?: Lockable<true | DestinationDirectory>;
+        conference?: Lockable<DestinationDirectory>;
         recording?: Lockable<true>;
       }
     : C extends "chat"
@@ -636,10 +635,10 @@ export interface TaskHandlingStep {
   at: IsoTimestamp;
   /**
    * On a step that dialled -- `transferred`, `conferenced`, `unanswered` -- the host's identity for
-   * that dial when a host placed it, and the address it went to. Neither belongs on any other step.
+   * that dial when a host placed it, and the directory item it went to. Neither belongs on any other step.
    */
   dialId?: DialId;
-  destination?: string;
+  destinationId?: string;
   /**
    * Reported, never derived. An entry may be written while its leg is still running, so there is
    * no end to subtract from -- and omitted is the honest report of that, where nought would
@@ -685,7 +684,7 @@ export const ON_CALL_ROLES = ["party", "agent", "consulted", "conferenced"] as c
 export type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party" }
   | { role: "agent"; userId: UserId }
-  | { role: "consulted" | "conferenced"; destination: string; stage: OnCallStage; dialId?: DialId; label?: string }
+  | { role: "consulted" | "conferenced"; destinationId: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );
 
 /**
@@ -816,7 +815,7 @@ export type AcceptanceMode =
 
 export type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
-  | { type: "transferred"; destination?: string }
+  | { type: "transferred"; destinationId?: string }
   | { type: "cancelled"; reason?: string }
   /** Only the phases in which somebody is still being waited on can expire. */
   | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
@@ -854,10 +853,10 @@ export type VoiceTaskCommand =
   | { type: "disconnect" }
   /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
   | { type: "connect-back"; dialId: DialId }
-  /** Cold: hand the customer to `destination` with nobody spoken to first. Gated by `coldTransfer`. */
-  | { type: "transfer"; action: "cold"; dialId: DialId; destination: string }
-  /** Warm: park the customer and call `destination` first. Gated by `warmTransfer`. */
-  | { type: "transfer"; action: "warm"; dialId: DialId; destination: string }
+  /** Cold: hand the customer to the directory item `destinationId` with nobody spoken to first. Gated by `coldTransfer`. */
+  | { type: "transfer"; action: "cold"; dialId: DialId; destinationId: string }
+  /** Warm: park the customer and call the directory item `destinationId` first. Gated by `warmTransfer`. */
+  | { type: "transfer"; action: "warm"; dialId: DialId; destinationId: string }
   /** Hand the customer to the consulted destination and leave. Needs a `consulted` entry on `Task.onCall`. */
   | { type: "transfer"; action: "complete" }
   /** Drop the consulted destination and return to the customer. Needs a `consulted` entry on `Task.onCall`. */
@@ -870,10 +869,10 @@ export type VoiceTaskCommand =
   | { type: "lead-assist"; action: "take-over" }
   /** The lead drops; the agent continues. The lead's task ends `left`. Needs `Task.assisting`. */
   | { type: "lead-assist"; action: "leave" }
-  /** Dial `destination` into the call. Gated by `conference`. */
-  | { type: "conference"; action: "add"; dialId: DialId; destination: string }
-  /** Drop the `conferenced` entry on `Task.onCall` with this destination; while it still rings, this calls the dial off. */
-  | { type: "conference"; action: "remove"; destination: string }
+  /** Dial the directory item `destinationId` into the call. Gated by `conference`. */
+  | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
+  /** Drop the `conferenced` entry on `Task.onCall` with this `destinationId`; while it still rings, this calls the dial off. */
+  | { type: "conference"; action: "remove"; destinationId: string }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);
 
@@ -1286,7 +1285,7 @@ export type ProviderEvent<C extends Channel = Channel> =
    * from what the agent is looking at, and that task may already have ended: a dial placed late
    * routinely outlives its call. `reason` is the switch's own words, shown to the agent as such.
    */
-  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; destination?: string; reason?: string }
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; destinationId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
   | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId }
@@ -1431,7 +1430,7 @@ export const HANDLING_STEPS_WITH_A_PERSON = [
   "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered",
 ] as const satisfies readonly HandlingStep[];
 
-/** The steps a dial writes, and so the only ones that carry a `dialId` and a `destination`. */
+/** The steps a dial writes, and so the only ones that carry a `dialId` and a `destinationId`. */
 export const HANDLING_STEPS_THAT_DIAL = ["transferred", "conferenced", "unanswered"] as const satisfies readonly HandlingStep[];
 
 export const handlingStepDials = (step: HandlingStep): boolean =>

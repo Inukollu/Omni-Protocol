@@ -39,7 +39,6 @@ import {
   type CompletionMode,
   type TransportStatus,
   type CustomCapability,
-  type Destination,
   type DialDestinations,
   type DialOutcome,
   type OnCallRole,
@@ -118,7 +117,6 @@ const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
 const HANDLING_STEPS = membersOf<HandlingStep>({
   queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
 });
-const DESTINATION_KINDS = membersOf<Destination["kind"]>({ queue: true, external: true });
 const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
 const CUSTOM_UI_PLACEMENTS = membersOf<CustomCapability["ui"]["placement"]>({ primary: true, secondary: true, overflow: true });
 const NOTES_RULES = membersOf<NonNullable<DispositionRules["notes"]>>({ required: true, optional: true, none: true });
@@ -528,21 +526,17 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
 // ---------------------------------------------------------------------------
 
 function validateDestinationDirectory(value: unknown, path: string, into: Collector): void {
-  if (value === true) return;
   if (!isPlainObject(value)) {
-    into.add("task.destinations.shape", path, "must be true or a destination directory");
+    into.add("task.destinations.shape", path, "a transfer or conference control carries the directory it offers: { destinations: [...] }");
     return;
   }
-  into.require(typeof value.allowManualEntry === "boolean", "task.destinations.allowManualEntry",
-    `${path}.allowManualEntry`, "a directory must say whether manual entry is allowed");
-  // A directory with nothing in it and no typing is a control with nothing to offer.
-  if (value.allowManualEntry === false && !(Array.isArray(value.destinations) && value.destinations.length > 0)) {
-    into.add("task.destinations.offer", path, "a directory with no destinations must allow manual entry, or the control has nothing to offer");
-  }
-  if (value.destinations === undefined) return;
   if (!Array.isArray(value.destinations)) {
-    into.add("task.destinations.list", `${path}.destinations`, "destinations must be an array when present");
+    into.add("task.destinations.list", `${path}.destinations`, "destinations must be an array");
     return;
+  }
+  // Nothing is typed, so a directory with nothing in it is a control with nothing to offer.
+  if (value.destinations.length === 0) {
+    into.add("task.destinations.offer", path, "a directory offers at least one item; with none, omit the capability");
   }
   const seen = new Set<string>();
   value.destinations.forEach((destination: unknown, index: number) => {
@@ -556,8 +550,6 @@ function validateDestinationDirectory(value: unknown, path: string, into: Collec
       seen.add(destination.id as string);
     }
     into.filled(destination.label, "task.destination.label", `${at}.label`, "a destination needs a label");
-    into.filled(destination.address, "task.destination.address", `${at}.address`, "a destination needs an address");
-    into.oneOf(destination.kind, DESTINATION_KINDS, "task.destination.kind", `${at}.kind`);
   });
 }
 
@@ -836,7 +828,7 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
     }
     // A step that dialled says where to and, when a host placed it, which dial; no other step dialled.
     const dialled = typeof entry.step === "string" && (HANDLING_STEPS_THAT_DIAL as readonly string[]).includes(entry.step);
-    for (const field of ["dialId", "destination"] as const) {
+    for (const field of ["dialId", "destinationId"] as const) {
       if (entry[field] === undefined) continue;
       if (into.filled(entry[field], `task.handlingHistory.${field}`, `${at}.${field}`, `${field} must not be empty when present`)) {
         into.require(dialled, `task.handlingHistory.${field}.unexpected`, `${at}.${field}`,
@@ -889,7 +881,7 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
       into.require(entry.userId === undefined, "task.onCall.userId.unexpected", `${at}.userId`, `a ${role} is not named by a user id`);
     }
     if (role === "consulted" || role === "conferenced") {
-      into.filled(entry.destination, "task.onCall.destination", `${at}.destination`, `a ${role} entry names the destination that was dialled`);
+      into.filled(entry.destinationId, "task.onCall.destinationId", `${at}.destinationId`, `a ${role} entry names the directory item that was dialled`);
       // Stated, so a snapshot says who is present without anyone having seen the dial's outcome.
       if (into.oneOf(entry.stage, ON_CALL_STAGES, "task.onCall.stage", `${at}.stage`)) {
         into.require(!(entry.stage === "ringing" && entry.held === true), "task.onCall.held.ringing", `${at}.held`,
@@ -898,7 +890,7 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
       if (entry.dialId !== undefined) into.filled(entry.dialId, "task.onCall.dialId", `${at}.dialId`, "dialId must not be empty when present");
       if (entry.label !== undefined) into.filled(entry.label, "task.onCall.label", `${at}.label`, "a label must not be empty when present");
     } else {
-      for (const field of ["destination", "dialId", "label", "stage"] as const) {
+      for (const field of ["destinationId", "dialId", "label", "stage"] as const) {
         into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
           `a ${role} was dialled from nowhere; ${field} belongs on consulted or conferenced`);
       }
@@ -1462,9 +1454,9 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
       into.oneOf(value.by, COMPLETED_BY, "event.taskEnded.outcome.completed", `${path}.by`);
       break;
     case "transferred":
-      if (value.destination !== undefined) {
-        into.filled(value.destination, "event.taskEnded.outcome.transferred", `${path}.destination`,
-          "a destination must not be empty when present");
+      if (value.destinationId !== undefined) {
+        into.filled(value.destinationId, "event.taskEnded.outcome.transferred", `${path}.destinationId`,
+          "a destinationId must not be empty when present");
       }
       break;
     case "cancelled":
@@ -1606,7 +1598,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
           `the manifest does not declare ${String(event.outcome)} among its dialOutcomes`);
       }
       if (event.taskId !== undefined) into.require(isTaskId(event.taskId), "event.dialOutcome.taskId", `${at}.taskId`, "taskId must be a task id when present");
-      if (event.destination !== undefined) into.filled(event.destination, "event.dialOutcome.destination", `${at}.destination`, "a destination must not be empty when present");
+      if (event.destinationId !== undefined) into.filled(event.destinationId, "event.dialOutcome.destinationId", `${at}.destinationId`, "a destinationId must not be empty when present");
       if (event.reason !== undefined) into.filled(event.reason, "event.dialOutcome.reason", `${at}.reason`, "a reason must not be empty when present");
       break;
     }

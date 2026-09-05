@@ -273,8 +273,8 @@ describe("TaskStream places a dial outcome", () => {
   });
 
   it("knows a dial from the record or from who is on the call, which is how a dial made before a transfer is placed", () => {
-    const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destination: "+14155550111", dialId: "dial-3c9", stage: "joined", since: at }],
-      handlingHistory: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", destination: "+14155550199" }] } };
+    const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-3c9", stage: "joined", since: at }],
+      handlingHistory: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", destinationId: "tier3" }] } };
     const s = new TaskStream();
     s.seed({ tasks: [inherited] });
     expect(rulesOf(s.apply(outcome("dial-3c9")))).toEqual([]);
@@ -282,14 +282,14 @@ describe("TaskStream places a dial outcome", () => {
     // The control: the same stream, a dial neither carried.
     expect(rulesOf(s.apply(outcome("dial-000", "e3")))).toEqual(["stream.dialOutcome.unknown"]);
     // And a dial arriving on an offer or an update counts the same way.
-    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, id: "call-99", phase: "pending", acceptance: "consent", onCall: [{ role: "consulted", destination: "+1415", dialId: "dial-off", stage: "ringing", since: at }] } } };
+    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, id: "call-99", phase: "pending", acceptance: "consent", onCall: [{ role: "consulted", destinationId: "tier2", dialId: "dial-off", stage: "ringing", since: at }] } } };
     expect(rulesOf(s.apply(offered))).toEqual([]);
     expect(rulesOf(s.apply(outcome("dial-off", "e5")))).toEqual([]);
   });
 
   it("lets an update restate a joined entry after its answered outcome, and refuses one that joins it alone", () => {
-    const ringing: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", stage: "ringing", since: at }] };
-    const joined: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", stage: "joined", since: at }] };
+    const ringing: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-7f2", stage: "ringing", since: at }] };
+    const joined: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-7f2", stage: "joined", since: at }] };
     const update = (task: Task<"voice">, id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task } });
     // The outcome is the transition and the stage the state: outcome first, then the room restated.
     const s = new TaskStream();
@@ -535,7 +535,7 @@ const conformingSnapshot = {
       hold: true,
       mute: true,
       dispositions: { required: true, notes: "optional", codes: [{ id: "resolved", label: "Resolved" }, { id: "callback", label: "Callback needed" }] },
-      coldTransfer: { allowManualEntry: true, destinations: [{ id: "tier2", label: "Tier 2", address: "+14155550111", kind: "queue" }] },
+      coldTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] },
       custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } }],
     },
     phase: "in-progress",

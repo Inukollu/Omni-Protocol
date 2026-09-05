@@ -140,34 +140,34 @@ export const chatConnectBackCapability: Task<"chat">["capabilities"] = { connect
 export const emailConnectBack: TaskCommand<"email"> = { type: "connect-back", dialId: "dial-1" };
 
 // A transfer is cold or warm with a destination, or one of the two steps that finish a warm one.
-export const coldTransfer: TaskCommand<"voice"> = { type: "transfer", action: "cold", dialId: "dial-2", destination: "+14155550111" };
+export const coldTransfer: TaskCommand<"voice"> = { type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" };
 // @ts-expect-error renamed away: a transfer says whether it is cold or warm; an arm with no action is gone.
-export const actionlessTransfer: TaskCommand<"voice"> = { type: "transfer", dialId: "dial-2", destination: "+14155550111" };
-export const consult: TaskCommand<"voice"> = { type: "transfer", action: "warm", dialId: "dial-3", destination: "+14155550111" };
+export const actionlessTransfer: TaskCommand<"voice"> = { type: "transfer", dialId: "dial-2", destinationId: "tier2" };
+export const consult: TaskCommand<"voice"> = { type: "transfer", action: "warm", dialId: "dial-3", destinationId: "tier2" };
 // @ts-expect-error A transfer dials its destination, so it carries the host's dialId.
-export const unplacedTransfer: TaskCommand<"voice"> = { type: "transfer", destination: "+14155550111" };
+export const unplacedTransfer: TaskCommand<"voice"> = { type: "transfer", destinationId: "tier2" };
 export const completeConsultation: TaskCommand<"voice"> = { type: "transfer", action: "complete" };
 export const cancelConsultation: TaskCommand<"voice"> = { type: "transfer", action: "cancel" };
 // @ts-expect-error A transfer says where the customer goes, or which consult step it is.
 export const aimlessTransfer: TaskCommand<"voice"> = { type: "transfer" };
 // @ts-expect-error Completing a consultation names no destination: there is exactly one already.
-export const overdeterminedCompletion: TaskCommand<"voice"> = { type: "transfer", action: "complete", destination: "+14155550111" };
+export const overdeterminedCompletion: TaskCommand<"voice"> = { type: "transfer", action: "complete", destinationId: "tier2" };
 // Who is on the call is voice-only, like the commands that bring people onto it.
-export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { warmTransfer: true }, phase: "paused", onCall: [{ role: "consulted", destination: "+14155550111", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
+export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { warmTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } }, phase: "paused", onCall: [{ role: "consulted", destinationId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
 // @ts-expect-error A dialled entry says where it stands: ringing or joined.
-export const unstagedConsulted: OnCall = { role: "consulted", destination: "+14155550111", since: "2026-08-21T09:05:00Z" };
+export const unstagedConsulted: OnCall = { role: "consulted", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error Email has nobody on a call.
-export const consultingEmailTask: Task<"email"> = { ...emailTask, id: "email-6", onCall: [{ role: "consulted", destination: "+14155550111", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
+export const consultingEmailTask: Task<"email"> = { ...emailTask, id: "email-6", onCall: [{ role: "consulted", destinationId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
 // @ts-expect-error A party was dialled from nowhere and names no destination.
-export const misplacedParty: OnCall = { role: "party", destination: "+14155550111", since: "2026-08-21T09:05:00Z" };
+export const misplacedParty: OnCall = { role: "party", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error An agent on the call is named by user id, not by a destination.
-export const misplacedAgent: OnCall = { role: "agent", destination: "+14155550111", since: "2026-08-21T09:05:00Z" };
+export const misplacedAgent: OnCall = { role: "agent", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
 
 // A conference add dials and carries the host's dialId; a remove names who leaves, by destination.
-export const addToConference: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", destination: "+14155550111" };
-export const removeFromConference: TaskCommand<"voice"> = { type: "conference", action: "remove", destination: "+14155550111" };
+export const addToConference: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" };
+export const removeFromConference: TaskCommand<"voice"> = { type: "conference", action: "remove", destinationId: "tier2" };
 // @ts-expect-error A conference add is a dial, so it carries the host's dialId.
-export const unplacedConferenceAdd: TaskCommand<"voice"> = { type: "conference", action: "add", destination: "+14155550111" };
+export const unplacedConferenceAdd: TaskCommand<"voice"> = { type: "conference", action: "add", destinationId: "tier2" };
 // @ts-expect-error renamed away: the address a conference dials is its destination, as on every other dial.
 export const conferenceParticipant: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", participant: "+14155550111" };
 
