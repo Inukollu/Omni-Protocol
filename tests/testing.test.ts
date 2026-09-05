@@ -273,7 +273,7 @@ describe("TaskStream places a dial outcome", () => {
   });
 
   it("knows a dial from the record or from who is on the call, which is how a dial made before a transfer is placed", () => {
-    const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destination: "+14155550111", dialId: "dial-3c9", since: at }],
+    const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destination: "+14155550111", dialId: "dial-3c9", stage: "joined", since: at }],
       handlingHistory: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", destination: "+14155550199" }] } };
     const s = new TaskStream();
     s.seed({ tasks: [inherited] });
@@ -282,7 +282,7 @@ describe("TaskStream places a dial outcome", () => {
     // The control: the same stream, a dial neither carried.
     expect(rulesOf(s.apply(outcome("dial-000", "e3")))).toEqual(["stream.dialOutcome.unknown"]);
     // And a dial arriving on an offer or an update counts the same way.
-    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, id: "call-99", phase: "pending", acceptance: "consent", onCall: [{ role: "consulted", destination: "+1415", dialId: "dial-off", since: at }] } } };
+    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, id: "call-99", phase: "pending", acceptance: "consent", onCall: [{ role: "consulted", destination: "+1415", dialId: "dial-off", stage: "ringing", since: at }] } } };
     expect(rulesOf(s.apply(offered))).toEqual([]);
     expect(rulesOf(s.apply(outcome("dial-off", "e5")))).toEqual([]);
   });

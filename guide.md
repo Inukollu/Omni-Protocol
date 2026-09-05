@@ -589,10 +589,12 @@ type TaskCompletion =
 
 type OnCallRole = "party" | "agent" | "consulted" | "conferenced";
 
+type OnCallStage = "ringing" | "joined";
+
 type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party" }
   | { role: "agent"; userId: UserId }
-  | { role: "consulted" | "conferenced"; destination: string; dialId?: DialId; label?: string }
+  | { role: "consulted" | "conferenced"; destination: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );
 
 type TaskLead = {
@@ -2133,7 +2135,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `handlingHistory` | The call record: `steps` — the ordered handling history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `handleSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **How a task has been handled**. |
-| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destination` dialled, the `dialId` where a host placed it, and `held: true` on anyone parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
+| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destination` dialled, the `dialId` where a host placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `lead` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Consulting a lead**. |
 | `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead` `take-over` and `leave` issuable. See **Consulting a lead**. |
 
@@ -2832,7 +2834,8 @@ knows the room:
 const onCall: OnCall[] = [
   { role: "party", since: "2026-08-21T09:12:00Z" },
   { role: "agent", userId: "A-12", since: "2026-08-21T09:12:04Z" },
-  { role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", held: true, since: "2026-08-21T09:15:30Z" },
+  { role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", stage: "joined", held: true, since: "2026-08-21T09:15:30Z" },
+  { role: "conferenced", destination: "+14155550199", dialId: "dial-3c9", stage: "ringing", since: "2026-08-21T09:16:02Z" },
 ];
 ```
 
@@ -2847,9 +2850,17 @@ never saw.
 what makes `transfer` `cancel` issuable and what `conference` `remove` names, and a destination the
 agent cannot call off while it rings is a parked customer with no way back -- which is the very case
 `cancelled` exists for. Consult and conference behave alike here: the `consulted` or `conferenced`
-entry appears with its `dialId` when the dial is placed, whether it has answered is the
-`dial-outcome`'s to say, and a `conference` `remove` naming a still-ringing `destination` calls that
-dial off, with `cancelled` as its outcome. A consult destination that never answers is a dial that
+entry appears with its `dialId` when the dial is placed, and a `conference` `remove` naming a
+still-ringing `destination` calls that dial off, with `cancelled` as its outcome.
+
+**The entry says where it stands.** A dialled entry carries `stage`: `ringing` until its dial is
+answered, `joined` after. The `dial-outcome` is the transition and the stage is the state, the same
+pairing as `task-media-started` and `media`: an `answered` outcome and the task restated with the
+entry `joined` say one thing twice, and any other outcome removes the entry. It is stated rather
+than left to whoever placed the dial because that knowledge lives in one process: after a reload,
+on a second session, or on a supervisor's screen the snapshot is the only source, and a room that
+cannot tell ringing from joined says it contains someone who may never arrive. Nobody ringing is
+held (`task.onCall.held.ringing`). A consult destination that never answers is a dial that
 ended: the provider returns the task to `in-progress` with no `consulted` entry, as **Consult
 transfer** states, so the customer is never left parked by a conforming provider.
 
