@@ -1358,11 +1358,8 @@ export const handlingStepDials = (step: HandlingStep): boolean =>
   (HANDLING_STEPS_THAT_DIAL as readonly HandlingStep[]).includes(step);
 
 // Pinned both ways: a step added to `HandlingStep` has to be placed here, and a step listed here
-// has to exist there. `satisfies` covers the second; this covers the first.
-type Assert<T extends true> = T;
-type _EveryStepButQueuedIsListed = Assert<
-  [Exclude<HandlingStep, "queued">] extends [(typeof HANDLING_STEPS_WITH_A_PERSON)[number]] ? true : false
->;
+// has to exist there. `satisfies` on the list covers the second; this statement covers the first.
+true satisfies [Exclude<HandlingStep, "queued">] extends [(typeof HANDLING_STEPS_WITH_A_PERSON)[number]] ? true : false;
 
 /** Whether an absent `by` means "could not attribute" rather than "nobody was involved". */
 export function handlingStepExpectsAPerson(step: HandlingStep): boolean {

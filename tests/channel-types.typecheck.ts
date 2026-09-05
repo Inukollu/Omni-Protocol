@@ -9,7 +9,6 @@ import {
   type OpenMediaRequest,
   type Manifest,
   type ProviderEvent,
-  type HandlingReport,
   type Host,
   type DispositionRules,
   type HostAudioInput,

@@ -22,7 +22,7 @@ const sources = [
 const vocabulary = new Set<string>();
 for (const name of sources) {
   const lines = readFileSync(name, "utf8").split("\n");
-  const text = lines.filter((line, index) => !(lines[index - 1] ?? "").includes("@ts-expect-error")).join("\n");
+  const text = lines.filter((_line, index) => !(lines[index - 1] ?? "").includes("@ts-expect-error")).join("\n");
   for (const word of text.match(/[A-Za-z_$][A-Za-z0-9_$-]*/g) ?? []) vocabulary.add(word);
   for (const literal of text.match(/"([^"\\\n]|\\.)*"|'([^'\\\n]|\\.)*'|`([^`\\]|\\.)*`/g) ?? []) vocabulary.add(literal.slice(1, -1));
 }

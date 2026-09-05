@@ -28,7 +28,6 @@ import {
   type HandlingStep,
   type ProviderEvent,
   type TaskBrowser,
-  type TaskCommandRequest,
   type TaskPhase,
 } from "../src/index.js";
 import { exerciseAdapter, stillHost } from "../src/testing.js";

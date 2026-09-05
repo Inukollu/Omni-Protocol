@@ -156,12 +156,9 @@ const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
 };
 
 // The published list and the type's keys are the same set, or one of them is wrong.
-type Assert<T extends true> = T;
-type _IdleCapabilitiesMatchTheType = Assert<
-  [keyof IdleCapabilities<"voice">] extends [IdleCapability]
-    ? ([IdleCapability] extends [keyof IdleCapabilities<"voice">] ? true : false)
-    : false
->;
+true satisfies [keyof IdleCapabilities<"voice">] extends [IdleCapability]
+  ? ([IdleCapability] extends [keyof IdleCapabilities<"voice">] ? true : false)
+  : false;
 
 /** Idle capabilities each channel may declare. Only voice may dial, and runtime has to say so too. */
 const IDLE_CAPABILITIES_BY_CHANNEL: Readonly<Record<Channel, readonly string[]>> = {
