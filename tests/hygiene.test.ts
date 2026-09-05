@@ -23,7 +23,8 @@ describe("a public repo says less", () => {
       "consultLead", "consultControl", "executeTeamConsult", "TeamConsultCommand", "TaskLead;", "TaskLead,", "TaskLead }", "TaskLead>",
       "type: \"lead\"", "task.lead.", "\"task.lead\"", "Task.lead`", "Consulting a lead",
       "type: \"callback\"", "callback?:", "callback: true", "`callback`", "Calling back during completion",
-      "type: \"reject\"", "reject?:", "reject: true", "\"accept\", \"reject\""];
+      "type: \"reject\"", "reject?:", "reject: true", "\"accept\", \"reject\"",
+      "blindTransfer", "consultTransfer", "action: \"consult\"", "action?: never", "Consult transfer", "Blind transfer"];
     // A line under @ts-expect-error, or under a "renamed away" note, is a refusal kept on purpose, not vocabulary.
     const marked = (line: string) => line.includes("@ts-expect-error") || line.includes("renamed away:");
     const refusals = (text: string) => { const lines = text.split("\n"); return lines.filter((_, index) => !marked(lines[index - 1] ?? "")).join("\n"); };

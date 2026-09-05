@@ -279,8 +279,8 @@ describe("monitoring during a break", () => {
 describe("every dial has an outcome", () => {
   it("names the dial a command places, and none for a command that dials nothing", () => {
     expect(commandDialId({ type: "connect-back", dialId: "dial-1" })).toBe("dial-1");
-    expect(commandDialId({ type: "transfer", dialId: "dial-2", destination: "+14155550111" })).toBe("dial-2");
-    expect(commandDialId({ type: "transfer", action: "consult", dialId: "dial-3", destination: "+14155550111" })).toBe("dial-3");
+    expect(commandDialId({ type: "transfer", action: "cold", dialId: "dial-2", destination: "+14155550111" })).toBe("dial-2");
+    expect(commandDialId({ type: "transfer", action: "warm", dialId: "dial-3", destination: "+14155550111" })).toBe("dial-3");
     expect(commandDialId({ type: "conference", action: "add", dialId: "dial-4", destination: "+14155550111" })).toBe("dial-4");
     // The control: the consult steps, a remove, and a hold dial nowhere.
     expect(commandDialId({ type: "transfer", action: "complete" })).toBeUndefined();
