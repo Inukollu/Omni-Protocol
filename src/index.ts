@@ -231,9 +231,23 @@ export interface TeamCapabilities {
   breakControl?: true;
   /** This lead may join a member's call on request. Requires `executeTeamLeadAssist`. */
   leadAssistControl?: true;
+  /**
+   * This lead may listen to a member's call unasked, in these modes and no others. Whisper and
+   * barge begin from a monitor, so the list always includes `monitor`. Nothing of it reaches the
+   * member's task. Requires `executeTeamMonitor`.
+   */
+  monitorControl?: MonitorMode[];
   /** This lead sets the team's policy per capability -- on, off, or the agent's -- within what the queue allows. Requires `executeTeamPolicy`. */
   policyControl?: true;
 }
+
+/**
+ * How a lead listening to a member's call is heard: `monitor` hears both sides in silence,
+ * `whisper` is heard by the agent alone, `barge` by everyone on the call.
+ */
+export type MonitorMode = "monitor" | "whisper" | "barge";
+
+export const MONITOR_MODES = ["monitor", "whisper", "barge"] as const satisfies readonly MonitorMode[];
 
 /**
  * What this login may do, beyond any one task. It travels with the identity because it is part
@@ -687,6 +701,18 @@ export interface TaskAssisting {
 }
 
 /**
+ * On the lead's own task while they listen to a member's call: whose call, which call, and how the
+ * lead is heard, restated on every change of mode. Nothing of it reaches the member's task. There
+ * is no take-over here; a lead who wants the call uses lead assist.
+ */
+export interface TaskMonitoring {
+  memberId: UserId;
+  taskId: TaskId;
+  mode: MonitorMode;
+  since: IsoTimestamp;
+}
+
+/**
  * A level of the organisation's structure, by the id its manifest declares -- or one of the four
  * a typical organisation has, `DEFAULT_LEVELS`, when the manifest declares no ladder. The protocol
  * never describes the chain: which levels a person passes through is the structure's to know.
@@ -754,10 +780,10 @@ export type Task<C extends Channel = Channel> = {
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingHistory;
 } & TaskCompletion
-  // Who is on the call, a lead on it, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
+  // Who is on the call, a lead on it or listening to it, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
   & (C extends "voice"
-    ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; media?: TaskMediaState }
-    : { onCall?: never; leadAssist?: never; assisting?: never; media?: never });
+    ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
+    : { onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never });
 
 /**
  * What the provider wants of Omni's acceptance policy for one offer. Present only where Omni was
@@ -1052,6 +1078,21 @@ export interface TeamLeadAssistCommandRequest {
   command: TeamLeadAssistCommand;
 }
 
+/**
+ * A lead listening to a member's call. `monitor` starts one, silent, on a member from the roster;
+ * `whisper` and `barge` change how the standing one is heard; `leave` ends it. One member at a
+ * time, and only the modes the login's `monitorControl` lists.
+ */
+export type TeamMonitorCommand =
+  | { type: "monitor"; memberId: UserId }
+  | { type: "whisper" }
+  | { type: "barge" }
+  | { type: "leave" };
+
+export interface TeamMonitorCommandRequest {
+  command: TeamMonitorCommand;
+}
+
 export type TeamBreakCommand =
   | { type: "decide"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "policy"; policy: "ask" | "auto-approve" | "suspended" }
@@ -1283,6 +1324,8 @@ export interface Connection<C extends Channel = Channel> {
   executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
   /** Required when the login declares `capabilities.team.leadAssistControl`. */
   executeTeamLeadAssist?(request: TeamLeadAssistCommandRequest): Promise<TeamCommandResult>;
+  /** Required when the login declares `capabilities.team.monitorControl`. */
+  executeTeamMonitor?(request: TeamMonitorCommandRequest): Promise<TeamCommandResult>;
   /** Required when the login declares `capabilities.team.policyControl`. */
   executeTeamPolicy?(request: TeamPolicyCommandRequest): Promise<TeamCommandResult>;
   /** Required of every voice adapter: all voice audio lands in Omni. */
@@ -1392,10 +1435,13 @@ export interface BrowserSessionKeyInput {
  * not the thing being compared. Key order does not matter, and `team: {}` is not `team` absent.
  */
 export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): boolean {
+  const modes = (team: TeamCapabilities | undefined): string | undefined =>
+    team?.monitorControl === undefined ? undefined : [...team.monitorControl].sort().join(",");
   return a.breaks === b.breaks &&
     (a.team === undefined) === (b.team === undefined) &&
     a.team?.breakControl === b.team?.breakControl &&
-    a.team?.leadAssistControl === b.team?.leadAssistControl;
+    a.team?.leadAssistControl === b.team?.leadAssistControl &&
+    modes(a.team) === modes(b.team);
 }
 
 /**

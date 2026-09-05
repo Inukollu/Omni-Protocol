@@ -1407,6 +1407,53 @@ describe("consulting a lead", () => {
   });
 });
 
+describe("monitoring a call", () => {
+  const voice = { channel: "voice" };
+  const since = "2026-08-21T09:04:00Z";
+  const user = { id: "L-9", displayName: "Lead" };
+  const login = (team: Record<string, unknown>) =>
+    rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { team }, expiresAt: "2026-08-21T12:00:00Z" }));
+
+  it("lists the modes a lead may listen in, and always monitor among them", () => {
+    expect(login({ monitorControl: ["monitor"] })).toEqual([]);
+    expect(login({ monitorControl: ["monitor", "whisper", "barge"] })).toEqual([]);
+    expect(login({ monitorControl: ["monitor", "whisper"] })).toEqual([]);
+    expect(login({ monitorControl: true })).toEqual(["authentication.capability.team.monitorControl.shape"]);
+    expect(login({ monitorControl: [] })).toEqual(["authentication.capability.team.monitorControl.shape"]);
+    expect(login({ monitorControl: ["monitor", "listen"] })).toEqual(["authentication.capability.team.monitorControl.mode"]);
+    expect(login({ monitorControl: ["monitor", "whisper", "whisper"] })).toEqual(["authentication.capability.team.monitorControl.unique"]);
+    // Whisper and barge begin from a monitor.
+    expect(login({ monitorControl: ["whisper", "barge"] })).toEqual(["authentication.capability.team.monitorControl.monitor"]);
+    // The control: the other team controls are still declared by presence.
+    expect(login({ leadAssistControl: true })).toEqual([]);
+    expect(login({ leadAssistControl: ["monitor"] })).toEqual(["authentication.capability.value"]);
+  });
+
+  it("carries the monitored call on the lead's own voice task, one at a time, and never beside a joined one", () => {
+    const monitoring = { memberId: "A-1", taskId: "call-42", mode: "monitor", since };
+    const check = (over: Record<string, unknown>, context: { channel: string } = voice) => rules(validateTask(task({ capabilities: {}, ...over }), context));
+    for (const mode of ["monitor", "whisper", "barge"]) expect(check({ monitoring: { ...monitoring, mode } })).toEqual([]);
+    expect(check({ monitoring: { ...monitoring, mode: "listen" } })).toEqual(["task.monitoring.mode"]);
+    expect(check({ monitoring: { ...monitoring, memberId: "" } })).toEqual(["task.monitoring.memberId"]);
+    expect(check({ monitoring: { ...monitoring, taskId: "" } })).toEqual(["task.monitoring.taskId"]);
+    expect(check({ monitoring: { ...monitoring, since: "now" } })).toEqual(["task.monitoring.since"]);
+    expect(check({ monitoring: "A-1" })).toEqual(["task.monitoring.shape"]);
+    expect(check({ channel: "chat", monitoring }, { channel: "chat" })).toEqual(["task.monitoring.channel"]);
+    expect(check({ monitoring, assisting: { memberId: "A-1", since } })).toEqual(["task.monitoring.assisting"]);
+    expect(check({ assisting: { memberId: "A-1", since } })).toEqual([]);
+    const listening = (id: string) => task({ id, capabilities: {}, monitoring });
+    expect(rules(validateSnapshot(snapshot({ tasks: [listening("m-1")] }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [listening("m-1"), listening("m-2")] }), manifest()))).toEqual(["snapshot.monitoring.single"]);
+  });
+
+  it("answers the monitor method as every team method answers", () => {
+    const failure = { code: "omni.capability-not-enabled", message: "Barge is not this lead's", retryable: false };
+    expect(rules(validateResult({ status: "applied" }, "executeTeamMonitor"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure }, "executeTeamMonitor"))).toEqual([]);
+    expect(rules(validateResult({ status: "listening" }, "executeTeamMonitor"))).toEqual(["result.status"]);
+  });
+});
+
 describe("protocol-version interoperability", () => {
   it("is checked on the manifest, as the guide's validator table promises", () => {
     // An adapter that speaks only a version this package does not is one Omni must refuse...

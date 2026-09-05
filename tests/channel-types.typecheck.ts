@@ -25,6 +25,8 @@ import {
   type TaskBrowser,
   type TaskCommand,
   type OnCall,
+  type TeamMonitorCommand,
+  type TeamCapabilities,
 } from "../src/index.js";
 
 export const voiceManifest = {
@@ -171,6 +173,18 @@ export const conferenceParticipant: TaskCommand<"voice"> = { type: "conference",
 export const voiceDialOutcomes: Manifest<"voice">["dialOutcomes"] = ["answered", "no-answer"];
 // @ts-expect-error Chat dials nothing and declares no dial outcomes.
 export const chatDialOutcomes: Manifest<"chat">["dialOutcomes"] = ["answered", "no-answer"];
+
+// Monitoring: the lead's own task while they listen, voice only, in one of three modes.
+export const monitoringLeadTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, monitoring: { memberId: "A-1", taskId: "call-42", mode: "whisper", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
+// @ts-expect-error Email has no call to listen to.
+export const monitoringEmailTask: Task<"email"> = { ...emailTask, id: "email-7", monitoring: { memberId: "A-1", taskId: "call-42", mode: "monitor", since: "2026-08-21T09:04:00Z" } };
+export const startMonitor: TeamMonitorCommand = { type: "monitor", memberId: "A-1" };
+export const whisper: TeamMonitorCommand = { type: "whisper" };
+// @ts-expect-error There is no take-over in monitoring; a lead who wants the call uses lead assist.
+export const monitorTakeOver: TeamMonitorCommand = { type: "take-over" };
+export const listeningLead: TeamCapabilities = { monitorControl: ["monitor", "whisper"] };
+// @ts-expect-error The modes are the three call-centre words.
+export const eavesdropper: TeamCapabilities = { monitorControl: ["listen"] };
 
 // Lead assist: the agent asks and withdraws; the lead takes over or leaves. Voice only.
 export const askLead: TaskCommand<"voice"> = { type: "lead-assist", action: "request", note: "Refund dispute" };

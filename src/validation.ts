@@ -43,6 +43,7 @@ import {
   type DialOutcome,
   type OnCallRole,
   type OnCallStage,
+  type MonitorMode,
   type DispositionRules,
   type HandlingStep,
   type IdleCapabilities,
@@ -141,7 +142,8 @@ const MEMBER_BREAKS = membersOf<Extract<BreakApproval, "awaiting-decision" | "gr
 const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending" | "confirmed" | "preparing">>({
   pending: true, confirmed: true, preparing: true,
 });
-const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true });
+const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, monitorControl: true });
+const MONITOR_MODES = membersOf<MonitorMode>({ monitor: true, whisper: true, barge: true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
 const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
   pending: true, confirmed: true, preparing: true,
@@ -939,6 +941,20 @@ function validateAssisting(value: unknown, channel: string, path: string, into: 
   into.timestamp(value.since, "task.assisting.since", `${path}.since`);
 }
 
+/** The lead's own task while they listen: whose call, which call, and how they are heard. Voice only. */
+function validateMonitoring(value: unknown, channel: string, path: string, into: Collector): void {
+  if (value === undefined) return;
+  if (!into.require(channel === "voice", "task.monitoring.channel", path, `a ${channel} task has no call to listen to`)) return;
+  if (!isPlainObject(value)) {
+    into.add("task.monitoring.shape", path, "monitoring must be an object when present");
+    return;
+  }
+  into.require(isUserId(value.memberId), "task.monitoring.memberId", `${path}.memberId`, "a monitored call names the member on it");
+  into.require(isTaskId(value.taskId), "task.monitoring.taskId", `${path}.taskId`, "a monitored call names the member's task");
+  into.oneOf(value.mode, MONITOR_MODES, "task.monitoring.mode", `${path}.mode`);
+  into.timestamp(value.since, "task.monitoring.since", `${path}.since`);
+}
+
 export interface TaskValidationContext {
   /** The provider's channel, from its manifest. A task must agree with it. */
   channel: string;
@@ -1007,6 +1023,11 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateTaskMedia(task.media, context.channel, `${path}.media`, into);
   validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
   validateAssisting(task.assisting, context.channel, `${path}.assisting`, into);
+  validateMonitoring(task.monitoring, context.channel, `${path}.monitoring`, into);
+  // A lead's task is one thing: a call they joined on request, or a call they listen to unasked.
+  if (task.assisting !== undefined && task.monitoring !== undefined) {
+    into.add("task.monitoring.assisting", `${path}.monitoring`, "a task is a joined call or a monitored one, never both");
+  }
 
   const capabilities = task.capabilities;
   if (!isPlainObject(capabilities)) {
@@ -1302,12 +1323,17 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   } else {
     const seen = new Set<string>();
     let assisting: number | undefined;
+    let monitoring: number | undefined;
     snapshot.tasks.forEach((task: unknown, index: number) => {
       validateTaskInto(task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest) }, `${path}.tasks[${index}]`, into);
-      // A lead assists one call at a time.
+      // A lead assists one call at a time, and listens to one at a time.
       if (isPlainObject(task) && task.assisting !== undefined) {
         if (assisting !== undefined) into.add("snapshot.assisting.single", `${path}.tasks[${index}].assisting`, "a lead assists one call at a time");
         assisting = index;
+      }
+      if (isPlainObject(task) && task.monitoring !== undefined) {
+        if (monitoring !== undefined) into.add("snapshot.monitoring.single", `${path}.tasks[${index}].monitoring`, "a lead listens to one call at a time");
+        monitoring = index;
       }
       if (isPlainObject(task) && isTaskId(task.id)) {
         if (seen.has(task.id as string)) into.add("task.id.unique", `${path}.tasks[${index}].id`, `duplicate task id: ${task.id}`);
@@ -1801,6 +1827,7 @@ export type ResultMethod =
   | "endBreak"
   | "executeTeamBreak"
   | "executeTeamLeadAssist"
+  | "executeTeamMonitor"
   | "openMedia"
   | "setPreference"
   | "recordStep"
@@ -1818,6 +1845,7 @@ const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string }
   endBreak: { success: "ended", failure: "failed" },
   executeTeamBreak: { success: "applied", failure: "failed" },
   executeTeamLeadAssist: { success: "applied", failure: "failed" },
+  executeTeamMonitor: { success: "applied", failure: "failed" },
   openMedia: { success: "opened", failure: "unavailable" },
   setPreference: { success: "applied", failure: "failed" },
   recordStep: { success: "recorded", failure: "failed" },
@@ -1908,6 +1936,10 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
         if (on === undefined) continue;
         if (!into.require((TEAM_CAPABILITIES as readonly string[]).includes(control), "authentication.capability.team.unknown",
           `${path}.team.${control}`, `unsupported team capability: ${control}`)) continue;
+        if (control === "monitorControl") {
+          validateMonitorControl(on, `${path}.team.monitorControl`, into);
+          continue;
+        }
         into.require(on === true, "authentication.capability.value", `${path}.team.${control}`,
           `${control} is declared by presence: send true or omit it`);
       }
@@ -1916,6 +1948,25 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
     into.require(declared === true, "authentication.capability.value", `${path}.${name}`,
       `${name} is declared by presence: send true or omit it`);
   }
+}
+
+/**
+ * The modes a lead may listen in, as a list: whisper and barge begin from a monitor, so a list
+ * without `monitor` names modes the lead could never reach.
+ */
+function validateMonitorControl(value: unknown, path: string, into: Collector): void {
+  if (!Array.isArray(value) || value.length === 0) {
+    into.add("authentication.capability.team.monitorControl.shape", path,
+      "monitorControl lists the modes this lead may listen in: a non-empty array, or omitted for a lead who may not");
+    return;
+  }
+  value.forEach((mode: unknown, index: number) => {
+    if (into.oneOf(mode, MONITOR_MODES, "authentication.capability.team.monitorControl.mode", `${path}[${index}]`) && value.indexOf(mode) !== index) {
+      into.add("authentication.capability.team.monitorControl.unique", `${path}[${index}]`, `duplicate monitor mode: ${String(mode)}`);
+    }
+  });
+  into.require(value.includes("monitor"), "authentication.capability.team.monitorControl.monitor", path,
+    "whisper and barge begin from a monitor: a lead who may listen in any mode may monitor");
 }
 
 /** What a login is validated against beyond its own shape. */

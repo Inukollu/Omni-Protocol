@@ -680,11 +680,11 @@ describe("exerciseAdapter", () => {
     // The rich task carries browsers, history, a disposition policy, transfer destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.monitoring", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
-      "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.onCall", "task.leadAssist", "task.assisting",
+      "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.onCall", "task.leadAssist", "task.assisting", "task.monitoring",
       "task.media", "task.acceptance", "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
       "contacts", "scheduledActivities", "team.policies",
     ]);
@@ -695,14 +695,14 @@ describe("exerciseAdapter", () => {
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { leadAssistControl: true } }, snapshot: reached })))
-      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.acceptance", "task.locked", "team.policies"]);
+      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.monitoring", "task.acceptance", "task.locked", "team.policies"]);
     const later: ProviderEventEnvelope<"voice"> = {
       id: "evt-team", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } },
     };
     const rosterOnly = { ...conformingSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
     const withEvent = await run({ capabilities: { team: {} }, snapshot: rosterOnly, emit: listener => listener(later) });
-    expect(state(withEvent)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
+    expect(state(withEvent)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.monitoring", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
     expect(events(withEvent)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
   });
 
@@ -835,6 +835,14 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const watching = { team: {} };
     expect(await rules({ capabilities: deciding, snapshot: leadSnapshot, connection: { executeTeamBreak: undefined } })).toContain("connection.executeTeamBreak.required");
     expect(await rules({ capabilities: watching, snapshot: leadSnapshot, connection: { executeTeamBreak: undefined } })).not.toContain("connection.executeTeamBreak.required");
+  });
+
+  it("executeTeamMonitor(), when the login declares team.monitorControl", async () => {
+    const listening = { team: { monitorControl: ["monitor", "whisper"] as ("monitor" | "whisper")[] } };
+    expect(await rules({ capabilities: listening, snapshot: leadSnapshot, connection: { executeTeamMonitor: undefined } })).toContain("connection.executeTeamMonitor.required");
+    expect(await rules({ capabilities: listening, snapshot: leadSnapshot, connection: { executeTeamMonitor: async () => ({ status: "applied" }) } })).toEqual([]);
+    // The control: a lead who may not listen owes no method.
+    expect(await rules({ capabilities: { team: {} }, snapshot: leadSnapshot, connection: { executeTeamMonitor: undefined } })).not.toContain("connection.executeTeamMonitor.required");
   });
 
   it("executeTeamLeadAssist(), when the login declares team.leadAssistControl", async () => {

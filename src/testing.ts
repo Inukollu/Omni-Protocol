@@ -51,6 +51,7 @@ const STATE_SUBJECTS = [
   "task.onCall",
   "task.leadAssist",
   "task.assisting",
+  "task.monitoring",
   "task.media",
   "task.acceptance",
   "task.dispositions",
@@ -92,6 +93,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (some(value.onCall)) seen.add("task.onCall");
   if (value.leadAssist !== undefined) seen.add("task.leadAssist");
   if (value.assisting !== undefined) seen.add("task.assisting");
+  if (value.monitoring !== undefined) seen.add("task.monitoring");
   if (value.media !== undefined) seen.add("task.media");
   if (value.acceptance !== undefined) seen.add("task.acceptance");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
@@ -263,6 +265,7 @@ export async function exerciseAdapter<C extends Channel>(
       }
       if (capabilities.team?.breakControl === true) requireMethod(on, "executeTeamBreak", "the login declares capabilities.team.breakControl");
       if (capabilities.team?.leadAssistControl === true) requireMethod(on, "executeTeamLeadAssist", "the login declares capabilities.team.leadAssistControl");
+      if (capabilities.team?.monitorControl !== undefined) requireMethod(on, "executeTeamMonitor", "the login declares capabilities.team.monitorControl");
       if (capabilities.team?.policyControl === true) requireMethod(on, "executeTeamPolicy", "the login declares capabilities.team.policyControl");
       if (some(capabilities.preferences)) requireMethod(on, "setPreference", "the login declares capabilities.preferences");
     };
@@ -415,7 +418,8 @@ const taskNamesUsers = (task: unknown): boolean =>
   isRecord(task) && (
     (isRecord(task.handlingHistory) && Array.isArray(task.handlingHistory.steps) && task.handlingHistory.steps.some(step => isRecord(step) && step.by !== undefined)) ||
     (isRecord(task.leadAssist) && task.leadAssist.leadId !== undefined) ||
-    isRecord(task.assisting));
+    isRecord(task.assisting) ||
+    isRecord(task.monitoring));
 
 /** Mute is the leg the host performs, so a task that allows it obliges the provider to take the record. */
 const taskDeclaresMute = (task: unknown): boolean =>
@@ -538,7 +542,8 @@ export function assertCapabilityWithdrawal(
     (before.breaks === true && after.breaks !== true) ||
     (before.team !== undefined && after.team === undefined) ||
     (before.team?.breakControl === true && after.team?.breakControl !== true) ||
-    (before.team?.leadAssistControl === true && after.team?.leadAssistControl !== true);
+    (before.team?.leadAssistControl === true && after.team?.leadAssistControl !== true) ||
+    (before.team?.monitorControl !== undefined && after.team?.monitorControl === undefined);
   if (!withdrawn) {
     throw new Error("Capability withdrawal must end with at least one capability the first login declared withdrawn");
   }
