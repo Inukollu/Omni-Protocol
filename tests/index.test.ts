@@ -62,7 +62,7 @@ describe("Omni protocol", () => {
   });
 
   it("names every phase for every channel, so no task is ever unlabelled", () => {
-    const phases: TaskPhase[] = ["pending", "confirmed", "preparing", "in-progress", "paused", "completing"];
+    const phases: TaskPhase[] = ["pending", "confirmed", "preview", "in-progress", "paused", "completing"];
     for (const channel of ["voice", "chat", "email"] as const) {
       expect(Object.keys(DEFAULT_TASK_PHASE_LABELS[channel]).sort()).toEqual([...phases].sort());
       for (const label of Object.values(DEFAULT_TASK_PHASE_LABELS[channel])) expect(label.trim()).not.toBe("");
@@ -279,6 +279,7 @@ describe("monitoring during a break", () => {
 describe("every dial has an outcome", () => {
   it("names the dial a command places, and none for a command that dials nothing", () => {
     expect(commandDialId({ type: "connect-back", dialId: "dial-1" })).toBe("dial-1");
+    expect(commandDialId({ type: "call", dialId: "dial-5" })).toBe("dial-5");
     expect(commandDialId({ type: "transfer", action: "cold", dialId: "dial-2", destination: "+14155550111" })).toBe("dial-2");
     expect(commandDialId({ type: "transfer", action: "warm", dialId: "dial-3", destination: "+14155550111" })).toBe("dial-3");
     expect(commandDialId({ type: "conference", action: "add", dialId: "dial-4", destination: "+14155550111" })).toBe("dial-4");

@@ -917,7 +917,9 @@ describe("the other direction, everywhere", () => {
     const offer = (over: Record<string, unknown>, context: Record<string, unknown> = {}) =>
       rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending", acceptance: "consent", ...over }) }), manifest(), "event", context));
     expect(offer({})).toEqual([]);
-    for (const phase of ["confirmed", "preparing"]) expect(offer({ phase, acceptance: undefined })).toEqual([]);
+    expect(offer({ phase: "confirmed", acceptance: undefined })).toEqual([]);
+    // A preview may be offered too, under a manifest that says how the Call it leads to ends.
+    expect(rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ capabilities: {}, phase: "preview" }) }), manifest({ dialOutcomes: ["answered", "no-answer"] })))).toEqual([]);
     for (const phase of ["in-progress", "paused", "completing"]) expect(offer({ phase, acceptance: undefined })).toEqual(["event.taskOffered.phase"]);
     expect(offer({}, { autoAcceptTasks: true })).toEqual([]);
     expect(offer({ acceptance: undefined }, { autoAcceptTasks: true })).toEqual(["task.acceptance.required"]);
@@ -1013,9 +1015,8 @@ describe("rules that had no test", () => {
   it("event timestamps, outcomes, and status messages", () => {
     const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
     const offer = { type: "task-offered", task: task({ phase: "pending", acceptance: "consent" }) };
-    expect(check({ ...offer, allocationExpiresAt: "2026-08-21T09:01:00Z", preparationEndsAt: "2026-08-21T09:02:00Z" })).toEqual([]);
+    expect(check({ ...offer, allocationExpiresAt: "2026-08-21T09:01:00Z" })).toEqual([]);
     expect(check({ ...offer, allocationExpiresAt: "soon" })).toEqual(["event.taskOffered.allocationExpiresAt"]);
-    expect(check({ ...offer, preparationEndsAt: "soon" })).toEqual(["event.taskOffered.preparationEndsAt"]);
     const ended = (outcome: unknown) => check({ type: "task-ended", taskId: "call-42", outcome });
     expect(ended({ type: "transferred", destination: "+14155550111" })).toEqual([]);
     expect(ended({ type: "transferred", destination: "" })).toEqual(["event.taskEnded.outcome.transferred"]);
@@ -1404,6 +1405,36 @@ describe("consulting a lead", () => {
     const ended = (outcome: unknown) => envelope({ type: "task-ended", taskId: "call-42", outcome });
     expect(rules(validateEventEnvelope(ended({ type: "left" }), manifest()))).toEqual([]);
     expect(rules(validateEventEnvelope(ended({ type: "vanished" }), manifest()))).toContain("event.taskEnded.outcome.type");
+  });
+});
+
+describe("preview: the agent presses Call", () => {
+  const voice = { channel: "voice" };
+  const at = "2026-08-21T09:02:00Z";
+  const preview = (over: Record<string, unknown> = {}) => task({ capabilities: {}, phase: "preview", ...over });
+
+  it("is a voice phase, and a dial the manifest must have an outcome for", () => {
+    expect(rules(validateTask(preview(), voice))).toEqual([]);
+    for (const channel of ["chat", "email"]) {
+      expect(rules(validateTask(preview({ channel }), { channel }))).toEqual(["task.phase.channel"]);
+    }
+    const dialling = manifest({ dialOutcomes: ["answered", "no-answer"] });
+    expect(rules(validateSnapshot(snapshot({ tasks: [preview()] }), dialling))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [preview()] }), manifest()))).toEqual(["task.preview.dialOutcomes.required"]);
+    // The control: the same manifest carries a confirmed task without complaint.
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: {}, phase: "confirmed" })] }), manifest()))).toEqual([]);
+  });
+
+  it("carries the deadline and what happens at it together, and only while previewing", () => {
+    expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "calls" }), voice))).toEqual([]);
+    expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "expires" }), voice))).toEqual([]);
+    expect(rules(validateTask(preview({ previewEndsAt: at }), voice))).toEqual(["task.preview.atDeadline.required"]);
+    expect(rules(validateTask(preview({ atDeadline: "calls" }), voice))).toEqual(["task.preview.previewEndsAt.required"]);
+    expect(rules(validateTask(preview({ previewEndsAt: "soon", atDeadline: "calls" }), voice))).toEqual(["task.preview.previewEndsAt"]);
+    expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "dials" }), voice))).toEqual(["task.preview.atDeadline"]);
+    expect(rules(validateTask(task({ phase: "in-progress", previewEndsAt: at, atDeadline: "calls" }), voice))).toEqual(["task.preview.deadline.unexpected"]);
+    // No deadline at all: the agent has as long as they need.
+    expect(rules(validateTask(preview(), voice))).toEqual([]);
   });
 });
 

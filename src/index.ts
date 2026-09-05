@@ -572,12 +572,18 @@ export type TaskPhase =
   | "pending"
   /** Accepted, and not yet started. */
   | "confirmed"
-  /** Being made ready -- a preview the agent reads before the work begins. */
-  | "preparing"
+  /**
+   * Voice only: the customer's record is on the agent's screen and no call has gone out. The agent
+   * presses Call, or `previewEndsAt` arrives and `atDeadline` says what the system does instead.
+   */
+  | "preview"
   | "in-progress"
   | "paused"
   /** The work is over and the agent is finishing up. */
   | "completing";
+
+/** What the system does when a preview's deadline passes with no Call pressed. */
+export type PreviewDeadline = "calls" | "expires";
 
 /** Who ends the task: the agent issuing `complete`, or the provider deciding it is over. */
 export type CompletionMode = "agent-command" | "provider-automatic";
@@ -777,6 +783,13 @@ export type Task<C extends Channel = Channel> = {
    * (`autoAcceptTasks: true`), forbidden when it said not, and absent past `pending`.
    */
   acceptance?: AcceptanceMode;
+  /**
+   * In `preview` only, and together: when the system stops waiting for the agent to press Call,
+   * and what it does then -- `calls` places the call itself, `expires` takes the record back and
+   * the task ends `expired`. Absent, the agent has as long as they need.
+   */
+  previewEndsAt?: IsoTimestamp;
+  atDeadline?: PreviewDeadline;
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
   attributes?: TaskAttribute[];
@@ -803,7 +816,7 @@ export type TaskOutcome =
   | { type: "transferred"; destination?: string }
   | { type: "cancelled"; reason?: string }
   /** Only the phases in which somebody is still being waited on can expire. */
-  | { type: "expired"; phase: "pending" | "confirmed" | "preparing" }
+  | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
   /** This agent left a call that continues without them: a lead who joined and dropped. */
   | { type: "left" }
   | { type: "failed"; failure: ProtocolFailure };
@@ -813,7 +826,7 @@ export type TaskOutcome =
 // ---------------------------------------------------------------------------
 
 export const TASK_COMMAND_NAMES = {
-  voice: ["answer", "decline", "start-call", "mute", "hold", "resume", "disconnect",
+  voice: ["answer", "decline", "call", "mute", "hold", "resume", "disconnect",
           "connect-back", "transfer", "lead-assist", "conference", "recording", "complete"],
   chat: ["accept", "decline", "pause", "resume", "complete"],
   email: ["accept", "decline", "complete"],
@@ -830,7 +843,8 @@ export interface DispositionPayload {
 export type VoiceTaskCommand =
   | { type: "answer" }
   | { type: "decline" }
-  | { type: "start-call" }
+  /** In `preview`: place the call to the party whose record the agent has read. A dial, gated by the phase alone. */
+  | { type: "call"; dialId: DialId }
   | { type: "mute"; muted: boolean }
   | { type: "hold" }
   | { type: "resume" }
@@ -905,7 +919,7 @@ export type TaskCommandResult =
 
 /** The dial a command places, by the host's identity for it; `undefined` for a command that dials nothing. */
 export function commandDialId(command: TaskCommand): DialId | undefined {
-  if (command.type === "connect-back") return command.dialId;
+  if (command.type === "connect-back" || command.type === "call") return command.dialId;
   if (command.type === "transfer" && (command.action === "cold" || command.action === "warm")) return command.dialId;
   if (command.type === "conference" && command.action === "add") return command.dialId;
   return undefined;
@@ -1257,7 +1271,6 @@ export type ProviderEvent<C extends Channel = Channel> =
       type: "task-offered";
       task: Task<C>;
       allocationExpiresAt?: IsoTimestamp;
-      preparationEndsAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task<C> }
   | { type: "task-media-started"; taskId: TaskId }
@@ -1367,15 +1380,15 @@ export function defineAdapter<C extends Channel, A extends Adapter<C>>(adapter: 
 
 export const DEFAULT_TASK_PHASE_LABELS = {
   voice: {
-    pending: "Offered", confirmed: "Accepted", preparing: "Preview",
+    pending: "Offered", confirmed: "Accepted", preview: "Preview",
     "in-progress": "On Call", paused: "On Hold", completing: "After Call Work",
   },
   chat: {
-    pending: "Incoming Chat", confirmed: "Accepted", preparing: "Preparing",
+    pending: "Incoming Chat", confirmed: "Accepted", preview: "Preview",
     "in-progress": "In Chat", paused: "Paused", completing: "Wrap-up",
   },
   email: {
-    pending: "Assigned", confirmed: "Accepted", preparing: "Reviewing",
+    pending: "Assigned", confirmed: "Accepted", preview: "Preview",
     "in-progress": "Working", paused: "Paused", completing: "Completing",
   },
 } as const satisfies Readonly<Record<Channel, Readonly<Record<TaskPhase, string>>>>;
