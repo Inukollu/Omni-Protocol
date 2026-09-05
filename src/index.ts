@@ -120,12 +120,13 @@ export interface DialCapability {
 
 /**
  * How a dial ended, as the switch distinguishes it. `answered` is the one success; the rest are
- * the ways a destination was not reached. A manifest declares which of these its platform can
- * tell apart (`dialOutcomes`), and a `dial-outcome` carries only a declared one.
+ * the ways a destination was not reached -- `cancelled` because the dialler called it off before
+ * anyone answered, not because the destination failed to. A manifest declares which of these its
+ * platform can tell apart (`dialOutcomes`), and a `dial-outcome` carries only a declared one.
  */
-export type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected";
+export type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected" | "cancelled";
 
-export const DIAL_OUTCOMES = ["answered", "busy", "no-answer", "unreachable", "rejected"] as const satisfies readonly DialOutcome[];
+export const DIAL_OUTCOMES = ["answered", "busy", "no-answer", "unreachable", "rejected", "cancelled"] as const satisfies readonly DialOutcome[];
 
 /** Every idle capability a provider may declare. Only voice may `dial`; the channel arm says so. */
 export const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;
@@ -1204,9 +1205,10 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
   /**
    * How a dial the host placed ended, once, either way -- `answered` is stated, never read off
-   * somebody appearing on the call. `taskId` where the dial was on a task, and that task may
-   * already have ended: a dial placed late routinely outlives its call. `reason` is the switch's
-   * own words, shown to the agent as such.
+   * somebody appearing on the call, and says what happened to the dial; who is on the call is
+   * `Task.onCall`. `taskId` is the task the dial was placed on, resolved from the dial and never
+   * from what the agent is looking at, and that task may already have ended: a dial placed late
+   * routinely outlives its call. `reason` is the switch's own words, shown to the agent as such.
    */
   | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; destination?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }

@@ -123,7 +123,7 @@ const ACCESS_APPLIES_TO = membersOf<NonNullable<PersonalBrowserCapability["acces
   "initial-url": true, "all-navigation": true,
 });
 const DIAL_DESTINATION_POLICIES = membersOf<DialDestinations>({ "contacts-only": true, "any-number": true });
-const DIAL_OUTCOMES = membersOf<DialOutcome>({ answered: true, busy: true, "no-answer": true, unreachable: true, rejected: true });
+const DIAL_OUTCOMES = membersOf<DialOutcome>({ answered: true, busy: true, "no-answer": true, unreachable: true, rejected: true, cancelled: true });
 const ON_CALL_ROLES = membersOf<OnCallRole>({ party: true, agent: true, consulted: true, conferenced: true });
 /** The task capabilities under which a command dials, and so need the manifest to say how a dial ends. */
 const DIALLING_CAPABILITIES = ["callback", "blindTransfer", "consultTransfer", "conference"] as const;
