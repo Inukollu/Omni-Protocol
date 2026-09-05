@@ -2789,10 +2789,13 @@ set: `answered`, `busy`, `no-answer`, `unreachable`, `rejected`, `cancelled`, `u
 `answered` is stated rather than read off somebody appearing on the call, because a host that infers
 success cannot tell "reached" from "still ringing". `cancelled` is the dialler calling the dial off
 before anyone answered -- the agent hanging up while a consult still rings -- which is not a
-`no-answer` the destination never gave. `unexplained` is the switch dropping the call and giving no
-cause: a statement about the switch, sent instead of the nearest cause it did not give. `reason` is
-the switch's own words, optional, and shown to the agent attributed to the switch rather than to
-Omni.
+`no-answer` the destination never gave. `unexplained` is the switch dropping the call with no cause among
+those named here: a statement about the switch, sent instead of the nearest cause it did not give.
+`reason` is the switch's own words, optional, and shown to the agent attributed to the switch rather
+than to Omni. The two are different things and may travel together: a switch can say "could not
+create dialog" in words and still name no cause a code would carry, so `unexplained` with a
+`reason` is a dial the switch described but did not classify, and a desk renders the words without
+inventing the class.
 
 **`taskId` is the task the dial was placed on**, resolved from the dial's own identity and never from
 whatever task the agent is looking at when the outcome arrives. That task may already have ended,
