@@ -768,7 +768,7 @@ describe("validateResult", () => {
     const pairs = [
       ["execute", "applied"], ["setCapacity", "applied"], ["requestBreak", "requested"],
       ["commitBreak", "committed"], ["cancelBreak", "cancelled"], ["endBreak", "ended"],
-      ["executeTeamBreak", "applied"], ["executeTeamConsult", "applied"],
+      ["executeTeamBreak", "applied"], ["executeTeamLeadAssist", "applied"],
     ] as const;
     for (const [method, status] of pairs) {
       expect(rules(validateResult({ status }, method))).toEqual([]);
@@ -1087,7 +1087,7 @@ describe("validateAuthenticationState", () => {
     expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {}, expiresAt: "2026-08-21T10:00:00Z" })).toEqual([]);
     expect(validateAuthenticationState({ status: "refreshing", identity: user, capabilities: {} })).toEqual([]);
     expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { breaks: true, team: {} } })).toEqual([]);
-    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { breaks: true, team: { breakControl: true, consultControl: true } } })).toEqual([]);
+    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { breaks: true, team: { breakControl: true, leadAssistControl: true } } })).toEqual([]);
     expect(validateAuthenticationState({ status: "expired" })).toEqual([]);
     expect(validateAuthenticationState({ status: "expired", identity: user })).toEqual([]);
   });
@@ -1350,23 +1350,23 @@ describe("every dial has an outcome", () => {
 describe("consulting a lead", () => {
   const voice = { channel: "voice" };
   it("is its own voice capability", () => {
-    expect(rules(validateTask(task({ capabilities: { consultLead: true } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ capabilities: { consultLead: false } }), voice))).toContain("task.capability.value");
+    expect(rules(validateTask(task({ capabilities: { leadAssist: true } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { leadAssist: false } }), voice))).toContain("task.capability.value");
     for (const channel of ["chat", "email"]) {
-      expect(rules(validateTask(task({ channel, capabilities: { consultLead: true } }), { channel }))).toContain("task.capability.channel");
+      expect(rules(validateTask(task({ channel, capabilities: { leadAssist: true } }), { channel }))).toContain("task.capability.channel");
     }
   });
 
   it("carries the request on the agent's task: requested names nobody, joined names the lead", () => {
     const since = "2026-08-21T09:04:00Z";
-    expect(rules(validateTask(task({ lead: { stage: "requested", note: "Refund dispute", since } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ lead: { stage: "joined", leadId: "L-9", since } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ lead: { stage: "joined", since } }), voice))).toContain("task.lead.leadId");
-    expect(rules(validateTask(task({ lead: { stage: "requested", leadId: "L-9", since } }), voice))).toContain("task.lead.leadId.unexpected");
-    expect(rules(validateTask(task({ lead: { stage: "declined", since } }), voice))).toContain("task.lead.stage");
-    expect(rules(validateTask(task({ lead: { stage: "requested" } }), voice))).toContain("task.lead.since");
-    expect(rules(validateTask(task({ channel: "chat", capabilities: {}, lead: { stage: "requested", since } }), { channel: "chat" })))
-      .toContain("task.lead.channel");
+    expect(rules(validateTask(task({ leadAssist: { stage: "requested", note: "Refund dispute", since } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ leadAssist: { stage: "joined", leadId: "L-9", since } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ leadAssist: { stage: "joined", since } }), voice))).toContain("task.leadAssist.leadId");
+    expect(rules(validateTask(task({ leadAssist: { stage: "requested", leadId: "L-9", since } }), voice))).toContain("task.leadAssist.leadId.unexpected");
+    expect(rules(validateTask(task({ leadAssist: { stage: "declined", since } }), voice))).toContain("task.leadAssist.stage");
+    expect(rules(validateTask(task({ leadAssist: { stage: "requested" } }), voice))).toContain("task.leadAssist.since");
+    expect(rules(validateTask(task({ channel: "chat", capabilities: {}, leadAssist: { stage: "requested", since } }), { channel: "chat" })))
+      .toContain("task.leadAssist.channel");
   });
 
   it("carries the joined call on the lead's task", () => {
@@ -1381,7 +1381,7 @@ describe("consulting a lead", () => {
   it("puts requests on the roster only where the login may act on them", () => {
     const request = { id: "req-7", memberId: "A-1", taskId: "call-42", note: "Refund dispute", since: "2026-08-21T09:04:00Z" };
     const members = [{ id: "A-1", availability: "on-task" }];
-    const may = { capabilities: { team: { consultControl: true as const } } };
+    const may = { capabilities: { team: { leadAssistControl: true as const } } };
     const mayNot = { capabilities: { team: {} } };
     expect(rules(validateTeamRoster({ members, requests: [request] }, "team", may))).toEqual([]);
     expect(rules(validateTeamRoster({ members, requests: [] }, "team", may))).toEqual([]);

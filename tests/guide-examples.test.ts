@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 // identifier test.
 
 /** Names an example uses without declaring them: stand-ins for the adapter's own code. Kept equal to the list in guide.test.ts. */
-const PLACEHOLDERS = new Set(["adapter", "context", "createAcmeAuthentication", "createConnection", "execute", "executeTeamConsult", "expect"]);
+const PLACEHOLDERS = new Set(["adapter", "context", "createAcmeAuthentication", "createConnection", "execute", "executeTeamLeadAssist", "expect"]);
 
 const root = join(__dirname, "..");
 const guide = readFileSync(join(root, "guide.md"), "utf8");

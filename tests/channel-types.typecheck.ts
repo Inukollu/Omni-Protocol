@@ -172,14 +172,14 @@ export const voiceDialOutcomes: Manifest<"voice">["dialOutcomes"] = ["answered",
 // @ts-expect-error Chat dials nothing and declares no dial outcomes.
 export const chatDialOutcomes: Manifest<"chat">["dialOutcomes"] = ["answered", "no-answer"];
 
-// Consulting a lead: the agent asks and withdraws; the lead takes over or leaves. Voice only.
-export const askLead: TaskCommand<"voice"> = { type: "lead", action: "request", note: "Refund dispute" };
-export const withdrawLead: TaskCommand<"voice"> = { type: "lead", action: "cancel" };
-export const leadTakesOver: TaskCommand<"voice"> = { type: "lead", action: "take-over" };
-export const leadLeaves: TaskCommand<"voice"> = { type: "lead", action: "leave" };
+// Lead assist: the agent asks and withdraws; the lead takes over or leaves. Voice only.
+export const askLead: TaskCommand<"voice"> = { type: "lead-assist", action: "request", note: "Refund dispute" };
+export const withdrawLead: TaskCommand<"voice"> = { type: "lead-assist", action: "cancel" };
+export const leadTakesOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over" };
+export const leadLeaves: TaskCommand<"voice"> = { type: "lead-assist", action: "leave" };
 // @ts-expect-error A chat has no call for a lead to join.
-export const chatAskLead: TaskCommand<"chat"> = { type: "lead", action: "request" };
-export const leadRequestedTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: { consultLead: true }, lead: { stage: "requested", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
+export const chatAskLead: TaskCommand<"chat"> = { type: "lead-assist", action: "request" };
+export const leadRequestedTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: { leadAssist: true }, leadAssist: { stage: "requested", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
 export const leadsOwnTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: {}, assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } } satisfies Task<"voice">;
 export const liveAudioTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, media: "started" } satisfies Task<"voice">;
 export const audiolessEmailTask = { ...emailTask, id: "email-9",
@@ -258,7 +258,7 @@ export const emailAssisting: Task<"email"> = { ...emailTask, id: "email-7", assi
 
 // What the login may do travels with the identity, and nowhere else.
 const asha = { id: "1042", displayName: "Asha Rao" };
-export const leadLogin: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, team: { breakControl: true, consultControl: true } } };
+export const leadLogin: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, team: { breakControl: true, leadAssistControl: true } } };
 export const plainLogin: AuthenticationState = { status: "refreshing", identity: asha, capabilities: {} };
 // @ts-expect-error A usable login says what it may do, {} included.
 export const silentLogin: AuthenticationState = { status: "authenticated", identity: asha };

@@ -202,7 +202,7 @@ describe("sameCapabilities", () => {
     expect(sameCapabilities({ team: {} }, {})).toBe(false);
     expect(sameCapabilities({ breaks: true }, {})).toBe(false);
     expect(sameCapabilities({ team: { breakControl: true } }, { team: {} })).toBe(false);
-    expect(sameCapabilities({ team: { consultControl: true } }, { team: { breakControl: true } })).toBe(false);
+    expect(sameCapabilities({ team: { leadAssistControl: true } }, { team: { breakControl: true } })).toBe(false);
   });
 });
 

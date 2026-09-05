@@ -49,7 +49,7 @@ const STATE_SUBJECTS = [
   "task.attributes",
   "task.handlingHistory",
   "task.onCall",
-  "task.lead",
+  "task.leadAssist",
   "task.assisting",
   "task.media",
   "task.acceptance",
@@ -90,7 +90,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (some(value.attributes)) seen.add("task.attributes");
   if (isRecord(value.handlingHistory) && some(value.handlingHistory.steps)) seen.add("task.handlingHistory");
   if (some(value.onCall)) seen.add("task.onCall");
-  if (value.lead !== undefined) seen.add("task.lead");
+  if (value.leadAssist !== undefined) seen.add("task.leadAssist");
   if (value.assisting !== undefined) seen.add("task.assisting");
   if (value.media !== undefined) seen.add("task.media");
   if (value.acceptance !== undefined) seen.add("task.acceptance");
@@ -262,7 +262,7 @@ export async function exerciseAdapter<C extends Channel>(
         }
       }
       if (capabilities.team?.breakControl === true) requireMethod(on, "executeTeamBreak", "the login declares capabilities.team.breakControl");
-      if (capabilities.team?.consultControl === true) requireMethod(on, "executeTeamConsult", "the login declares capabilities.team.consultControl");
+      if (capabilities.team?.leadAssistControl === true) requireMethod(on, "executeTeamLeadAssist", "the login declares capabilities.team.leadAssistControl");
       if (capabilities.team?.policyControl === true) requireMethod(on, "executeTeamPolicy", "the login declares capabilities.team.policyControl");
       if (some(capabilities.preferences)) requireMethod(on, "setPreference", "the login declares capabilities.preferences");
     };
@@ -414,7 +414,7 @@ const teamNamesUsers = (team: unknown): boolean =>
 const taskNamesUsers = (task: unknown): boolean =>
   isRecord(task) && (
     (isRecord(task.handlingHistory) && Array.isArray(task.handlingHistory.steps) && task.handlingHistory.steps.some(step => isRecord(step) && step.by !== undefined)) ||
-    (isRecord(task.lead) && task.lead.leadId !== undefined) ||
+    (isRecord(task.leadAssist) && task.leadAssist.leadId !== undefined) ||
     isRecord(task.assisting));
 
 /** Mute is the leg the host performs, so a task that allows it obliges the provider to take the record. */
@@ -538,7 +538,7 @@ export function assertCapabilityWithdrawal(
     (before.breaks === true && after.breaks !== true) ||
     (before.team !== undefined && after.team === undefined) ||
     (before.team?.breakControl === true && after.team?.breakControl !== true) ||
-    (before.team?.consultControl === true && after.team?.consultControl !== true);
+    (before.team?.leadAssistControl === true && after.team?.leadAssistControl !== true);
   if (!withdrawn) {
     throw new Error("Capability withdrawal must end with at least one capability the first login declared withdrawn");
   }

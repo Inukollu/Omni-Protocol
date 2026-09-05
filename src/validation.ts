@@ -53,7 +53,7 @@ import {
   type UserCapabilities,
   type TeamCapabilities,
   type TaskCapabilities,
-  type TaskLead,
+  type TaskLeadAssist,
   type TaskOutcome,
   type TaskPhase,
   type TeamMemberAvailability,
@@ -141,7 +141,7 @@ const MEMBER_BREAKS = membersOf<Extract<BreakApproval, "awaiting-decision" | "gr
 const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending" | "confirmed" | "preparing">>({
   pending: true, confirmed: true, preparing: true,
 });
-const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, consultControl: true, policyControl: true });
+const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
 const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
   pending: true, confirmed: true, preparing: true,
@@ -153,7 +153,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
     browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
-    agentDisconnect: true, callback: true, blindTransfer: true, consultTransfer: true, consultLead: true, conference: true, recording: true,
+    agentDisconnect: true, callback: true, blindTransfer: true, consultTransfer: true, leadAssist: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, reject: true, hold: true }),
   email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, reject: true }),
@@ -904,26 +904,26 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
     "one consultation at a time: transfer complete and cancel name no destination because there is exactly one");
 }
 
-const LEAD_STAGES = membersOf<TaskLead["stage"]>({ requested: true, joined: true });
+const LEAD_STAGES = membersOf<TaskLeadAssist["stage"]>({ requested: true, joined: true });
 
 /** The agent's request for a lead. Voice only; `joined` names the lead, `requested` cannot. */
-function validateLead(value: unknown, channel: string, path: string, into: Collector): void {
+function validateLeadAssist(value: unknown, channel: string, path: string, into: Collector): void {
   if (value === undefined) return;
-  if (!into.require(channel === "voice", "task.lead.channel", path, `a ${channel} task cannot carry a lead request`)) return;
+  if (!into.require(channel === "voice", "task.leadAssist.channel", path, `a ${channel} task cannot carry a lead request`)) return;
   if (!isPlainObject(value)) {
-    into.add("task.lead.shape", path, "lead must be an object when present");
+    into.add("task.leadAssist.shape", path, "lead must be an object when present");
     return;
   }
-  if (into.oneOf(value.stage, LEAD_STAGES, "task.lead.stage", `${path}.stage`)) {
+  if (into.oneOf(value.stage, LEAD_STAGES, "task.leadAssist.stage", `${path}.stage`)) {
     if (value.stage === "joined") {
-      into.require(isUserId(value.leadId), "task.lead.leadId", `${path}.leadId`, "a joined lead is named by their user id");
+      into.require(isUserId(value.leadId), "task.leadAssist.leadId", `${path}.leadId`, "a joined lead is named by their user id");
     } else {
-      into.require(value.leadId === undefined, "task.lead.leadId.unexpected", `${path}.leadId`,
+      into.require(value.leadId === undefined, "task.leadAssist.leadId.unexpected", `${path}.leadId`,
         "nobody has joined a requested lead, so there is no lead to name");
     }
   }
-  if (value.note !== undefined) into.filled(value.note, "task.lead.note", `${path}.note`, "a note must not be empty when present");
-  into.timestamp(value.since, "task.lead.since", `${path}.since`);
+  if (value.note !== undefined) into.filled(value.note, "task.leadAssist.note", `${path}.note`, "a note must not be empty when present");
+  into.timestamp(value.since, "task.leadAssist.since", `${path}.since`);
 }
 
 /** The lead's own task for a call they joined. Voice only. */
@@ -1005,7 +1005,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into);
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
   validateTaskMedia(task.media, context.channel, `${path}.media`, into);
-  validateLead(task.lead, context.channel, `${path}.lead`, into);
+  validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
   validateAssisting(task.assisting, context.channel, `${path}.assisting`, into);
 
   const capabilities = task.capabilities;
@@ -1164,7 +1164,7 @@ export interface ReaderContext {
   self?: UserId;
   /**
    * The login's `AuthenticationState.capabilities`. The login is the permission: a lead's
-   * snapshot carries a roster, nobody else's does, and `requests` need `team.consultControl`.
+   * snapshot carries a roster, nobody else's does, and `requests` need `team.leadAssistControl`.
    */
   capabilities?: UserCapabilities;
   /** The level ids in force. Filled from the manifest by `validateSnapshot` and `validateEventEnvelope`; the defaults otherwise. */
@@ -1206,16 +1206,16 @@ function validateTeamRosterInto(roster: unknown, path: string, context: ReaderCo
   if (roster.requests === undefined) {
     // `[]` says nobody is asking; omission says the lead may not be asked. A login that may be
     // asked therefore always carries the list.
-    if (context.capabilities?.team?.consultControl === true) {
+    if (context.capabilities?.team?.leadAssistControl === true) {
       into.add("team.requests.required", `${path}.requests`,
-        "the login declares team.consultControl, so the roster carries requests: [] when nobody is asking");
+        "the login declares team.leadAssistControl, so the roster carries requests: [] when nobody is asking");
     }
   } else {
     // Requests are what a lead acts on, so a lead who may not act has no business receiving them.
     // Whether they may is on the login, so the check needs the login in hand.
     if (context.capabilities !== undefined) {
-      into.require(context.capabilities.team?.consultControl === true, "team.requests.capability", `${path}.requests`,
-        "requests require team.consultControl on the login: a lead who may not join has nothing to decide");
+      into.require(context.capabilities.team?.leadAssistControl === true, "team.requests.capability", `${path}.requests`,
+        "requests require team.leadAssistControl on the login: a lead who may not join has nothing to decide");
     }
     if (!Array.isArray(roster.requests)) {
       into.add("team.requests.shape", `${path}.requests`, "requests must be an array when present");
@@ -1800,7 +1800,7 @@ export type ResultMethod =
   | "cancelBreak"
   | "endBreak"
   | "executeTeamBreak"
-  | "executeTeamConsult"
+  | "executeTeamLeadAssist"
   | "openMedia"
   | "setPreference"
   | "recordStep"
@@ -1817,7 +1817,7 @@ const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string }
   cancelBreak: { success: "cancelled", failure: "failed" },
   endBreak: { success: "ended", failure: "failed" },
   executeTeamBreak: { success: "applied", failure: "failed" },
-  executeTeamConsult: { success: "applied", failure: "failed" },
+  executeTeamLeadAssist: { success: "applied", failure: "failed" },
   openMedia: { success: "opened", failure: "unavailable" },
   setPreference: { success: "applied", failure: "failed" },
   recordStep: { success: "recorded", failure: "failed" },
