@@ -165,7 +165,7 @@ type DialDestinations = "contacts-only" | "any-number";
 
 type DialCapability = { destinations: DialDestinations };
 
-type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected";
+type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected" | "cancelled";
 
 type IdleCapabilities<C extends Channel = Channel> = {
   personalBrowser?: PersonalBrowserCapability;
@@ -2779,12 +2779,23 @@ nothing, is refused (`result.status`). `validateResult(result, method, path, dia
 
 **The outcome is stated, once, either way.** A `dial-outcome` names the `dialId`, the task where
 there was one, the destination where the provider knows it, and how the dial ended -- from a closed
-set: `answered`, `busy`, `no-answer`, `unreachable`, `rejected`. `answered` is stated rather than
-read off somebody appearing on the call, because a host that infers success cannot tell "reached"
-from "still ringing". `reason` is the switch's own words, optional, and shown to the agent
-attributed to the switch rather than to Omni. The task named may already have ended, and the
-harness places the outcome all the same (`TaskStream`, `stream.dialOutcome.unknown`,
-`stream.dialOutcome.duplicate`); an agent who moved on still learns nobody was reached.
+set: `answered`, `busy`, `no-answer`, `unreachable`, `rejected`, `cancelled`. `answered` is stated
+rather than read off somebody appearing on the call, because a host that infers success cannot tell
+"reached" from "still ringing". `cancelled` is the dialler calling the dial off before anyone
+answered -- the agent hanging up while a consult still rings -- which is not a `no-answer` the
+destination never gave. `reason` is the switch's own words, optional, and shown to the agent
+attributed to the switch rather than to Omni.
+
+**`taskId` is the task the dial was placed on**, resolved from the dial's own identity and never from
+whatever task the agent is looking at when the outcome arrives. That task may already have ended,
+and the harness places the outcome all the same (`TaskStream`, `stream.dialOutcome.unknown`,
+`stream.dialOutcome.duplicate`); an agent who moved on still learns nobody was reached, against the
+call it belonged to and never against the next one.
+
+**`answered` says what happened to the dial; `onCall` says who is in the room.** They are two
+claims, and both are true at once when a leg answers and never joins. A desk shows `answered` as the
+dial's conclusion and says "on the call" only when the person appears on `Task.onCall`; the obvious
+reading of `answered` -- that they are on the line -- is the one it does not make.
 
 **A provider says which outcomes it can tell apart.** No switch distinguishes all five, and a
 provider that cannot tell busy from unreachable must not pick one. The manifest declares
