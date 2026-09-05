@@ -14,6 +14,7 @@ import {
   ALLOWED_BROWSER_URL_SCHEMES,
   BREAK_KINDS,
   BROWSER_ISOLATION_SCHEMES,
+  HANDLING_STEPS_THAT_DIAL,
   IDLE_CAPABILITIES,
   OMNI_FAILURE_CODES,
   OMNI_SUPPORTED_PROTOCOL_VERSIONS,
@@ -39,6 +40,8 @@ import {
   type CustomCapability,
   type Destination,
   type DialDestinations,
+  type DialOutcome,
+  type OnCallRole,
   type DispositionRules,
   type HandlingStep,
   type IdleCapabilities,
@@ -120,6 +123,10 @@ const ACCESS_APPLIES_TO = membersOf<NonNullable<PersonalBrowserCapability["acces
   "initial-url": true, "all-navigation": true,
 });
 const DIAL_DESTINATION_POLICIES = membersOf<DialDestinations>({ "contacts-only": true, "any-number": true });
+const DIAL_OUTCOMES = membersOf<DialOutcome>({ answered: true, busy: true, "no-answer": true, unreachable: true, rejected: true });
+const ON_CALL_ROLES = membersOf<OnCallRole>({ party: true, agent: true, consulted: true, conferenced: true });
+/** The task capabilities under which a command dials, and so need the manifest to say how a dial ends. */
+const DIALLING_CAPABILITIES = ["callback", "blindTransfer", "consultTransfer", "conference"] as const;
 const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
   reconnected: true, "provider-requested": true,
 });
@@ -356,6 +363,41 @@ function validateIdleCapabilities(value: unknown, channel: string, path: string,
   }
 }
 
+/**
+ * A provider that dials says how a dial can end, both ways: `answered`, or the desk cannot tell
+ * reached from still ringing, and at least one way of not reaching, or it can never say failed.
+ * Off voice nothing dials, and the idle dialpad is a dial, so declaring it is declaring this.
+ */
+function validateDialOutcomes(manifest: Record<string, unknown>, path: string, into: Collector): void {
+  const declared = manifest.dialOutcomes;
+  const dials = isPlainObject(manifest.idleCapabilities) && manifest.idleCapabilities.dial !== undefined;
+  if (declared === undefined) {
+    into.require(!dials, "manifest.dialOutcomes.required", path,
+      "a manifest that declares dial says how a dial ends: dialOutcomes with answered and at least one way of not reaching");
+    return;
+  }
+  if (!into.require(manifest.channel === "voice", "manifest.dialOutcomes.channel", path,
+    `a ${String(manifest.channel)} provider dials nothing and declares no dial outcomes`)) return;
+  if (!Array.isArray(declared) || declared.length === 0) {
+    into.add("manifest.dialOutcomes.shape", path, "dialOutcomes is a non-empty array of the outcomes the platform distinguishes");
+    return;
+  }
+  declared.forEach((outcome: unknown, index: number) => {
+    if (into.oneOf(outcome, DIAL_OUTCOMES, "manifest.dialOutcome", `${path}[${index}]`) && declared.indexOf(outcome) !== index) {
+      into.add("manifest.dialOutcome.unique", `${path}[${index}]`, `duplicate dial outcome: ${String(outcome)}`);
+    }
+  });
+  into.require(declared.includes("answered"), "manifest.dialOutcomes.answered", path,
+    "a dial that reached its destination is stated, never inferred: dialOutcomes includes answered");
+  into.require(declared.some((outcome: unknown) => outcome !== "answered"), "manifest.dialOutcomes.failure", path,
+    "a provider that can only say answered can never say a destination was not reached: declare at least one other outcome");
+}
+
+/** Whether a manifest says how a dial ends, and so may publish tasks that dial. `undefined` where there is no manifest to ask. */
+function manifestDials(manifest: unknown): boolean | undefined {
+  return isPlainObject(manifest) ? Array.isArray(manifest.dialOutcomes) : undefined;
+}
+
 export function validateManifest(manifest: unknown, path = "manifest"): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(manifest)) {
@@ -399,6 +441,7 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
   }
 
   if (channelValid) validateIdleCapabilities(manifest.idleCapabilities, manifest.channel as string, `${path}.idleCapabilities`, into);
+  validateDialOutcomes(manifest, `${path}.dialOutcomes`, into);
 
   if (manifest.phaseLabels !== undefined) {
     if (!isPlainObject(manifest.phaseLabels)) {
@@ -778,6 +821,15 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
       into.require(entry.step !== "queued", "task.handlingHistory.by.unexpected", `${at}.by`,
         "a queued step names nobody");
     }
+    // A step that dialled says where to and, when a host placed it, which dial; no other step dialled.
+    const dialled = typeof entry.step === "string" && (HANDLING_STEPS_THAT_DIAL as readonly string[]).includes(entry.step);
+    for (const field of ["dialId", "destination"] as const) {
+      if (entry[field] === undefined) continue;
+      if (into.filled(entry[field], `task.handlingHistory.${field}`, `${at}.${field}`, `${field} must not be empty when present`)) {
+        into.require(dialled, `task.handlingHistory.${field}.unexpected`, `${at}.${field}`,
+          `${String(entry.step)} dialled nothing; ${field} belongs on transferred, conferenced, or unanswered`);
+      }
+    }
   });
 }
 
@@ -792,20 +844,51 @@ function validateTaskMedia(value: unknown, channel: string, path: string, into: 
   into.oneOf(value, TASK_MEDIA_STATES, "task.media", path);
 }
 
-function validateConsultation(value: unknown, channel: string, path: string, into: Collector): void {
+/**
+ * Who is on the call, as the provider states it. Voice only. Each entry is a role with what that
+ * role needs and nothing another role would: a party or an agent dialled nowhere, so neither
+ * carries a destination; somebody consulted or conferenced came from one, so both do.
+ */
+function validateOnCall(value: unknown, channel: string, path: string, into: Collector): void {
   if (value === undefined) return;
-  if (!into.require(channel === "voice", "task.consultation.channel", path,
-    `a ${channel} task cannot carry a consultation`)) return;
-  if (!isPlainObject(value)) {
-    into.add("task.consultation.shape", path, "a consultation must be an object when present");
+  if (!into.require(channel === "voice", "task.onCall.channel", path, `a ${channel} task has nobody on a call`)) return;
+  if (!Array.isArray(value)) {
+    into.add("task.onCall.shape", path, "onCall is an array of who is on the call, when the provider knows");
     return;
   }
-  into.filled(value.destination, "task.consultation.destination", `${path}.destination`,
-    "a consultation names the destination being consulted");
-  if (value.label !== undefined) {
-    into.filled(value.label, "task.consultation.label", `${path}.label`, "a label must not be empty when present");
-  }
-  if (value.since !== undefined) into.timestamp(value.since, "task.consultation.since", `${path}.since`);
+  const counted = { party: 0, consulted: 0 };
+  value.forEach((entry: unknown, index: number) => {
+    const at = `${path}[${index}]`;
+    if (!isPlainObject(entry)) {
+      into.add("task.onCall.entry", at, "each entry on the call must be an object");
+      return;
+    }
+    if (!into.oneOf(entry.role, ON_CALL_ROLES, "task.onCall.role", `${at}.role`)) return;
+    const role = entry.role as OnCallRole;
+    into.timestamp(entry.since, "task.onCall.since", `${at}.since`);
+    if (entry.held !== undefined) {
+      into.require(entry.held === true, "task.onCall.held", `${at}.held`, "held is stated by presence: send true or omit it");
+    }
+    if (role === "party" || role === "consulted") counted[role] += 1;
+    if (role === "agent") {
+      into.require(isUserId(entry.userId), "task.onCall.userId", `${at}.userId`, "an agent on the call is named by their user id");
+    } else {
+      into.require(entry.userId === undefined, "task.onCall.userId.unexpected", `${at}.userId`, `a ${role} is not named by a user id`);
+    }
+    if (role === "consulted" || role === "conferenced") {
+      into.filled(entry.destination, "task.onCall.destination", `${at}.destination`, `a ${role} entry names the destination that was dialled`);
+      if (entry.dialId !== undefined) into.filled(entry.dialId, "task.onCall.dialId", `${at}.dialId`, "dialId must not be empty when present");
+      if (entry.label !== undefined) into.filled(entry.label, "task.onCall.label", `${at}.label`, "a label must not be empty when present");
+    } else {
+      for (const field of ["destination", "dialId", "label"] as const) {
+        into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
+          `a ${role} was dialled from nowhere; ${field} belongs on consulted or conferenced`);
+      }
+    }
+  });
+  into.require(counted.party <= 1, "task.onCall.party.single", path, "a call has one party; a second is somebody else's role");
+  into.require(counted.consulted <= 1, "task.onCall.consulted.single", path,
+    "one consultation at a time: transfer complete and cancel name no destination because there is exactly one");
 }
 
 const LEAD_STAGES = membersOf<TaskLead["stage"]>({ requested: true, joined: true });
@@ -850,6 +933,8 @@ export interface TaskValidationContext {
   levels?: readonly string[];
   /** `ConnectContext.autoAcceptTasks` as sent, absent meaning `true`: whether a pending task states its `acceptance`. */
   autoAcceptTasks?: boolean;
+  /** Whether the manifest declares `dialOutcomes`. A task that may dial needs it to; absent, the question is not asked. */
+  dialOutcomesDeclared?: boolean;
 }
 
 export function validateTask(task: unknown, context: TaskValidationContext, path = "task"): ProtocolViolation[] {
@@ -905,7 +990,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into);
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into);
-  validateConsultation(task.consultation, context.channel, `${path}.consultation`, into);
+  validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
   validateTaskMedia(task.media, context.channel, `${path}.media`, into);
   validateLead(task.lead, context.channel, `${path}.lead`, into);
   validateAssisting(task.assisting, context.channel, `${path}.assisting`, into);
@@ -929,6 +1014,11 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     if (declared === undefined) continue;
     if (!into.require(allowed.includes(name), "task.capability.channel", `${path}.capabilities.${name}`,
       `a ${context.channel} task may not declare ${name}`)) continue;
+    // A control that dials needs the manifest to have said how a dial ends, or its outcome has no words.
+    if ((DIALLING_CAPABILITIES as readonly string[]).includes(name) && context.dialOutcomesDeclared === false) {
+      into.add("task.capability.dialOutcomes.required", `${path}.capabilities.${name}`,
+        `${name} dials, and the manifest declares no dialOutcomes to say how a dial ends`);
+    }
     // A control the queue could allow may stand locked in its place, saying whose. What the
     // queue provides -- browsers, dispositions, custom controls -- is content, not a control.
     if (isLocked(declared)) {
@@ -1200,7 +1290,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     const seen = new Set<string>();
     let assisting: number | undefined;
     snapshot.tasks.forEach((task: unknown, index: number) => {
-      validateTaskInto(task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks }, `${path}.tasks[${index}]`, into);
+      validateTaskInto(task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest) }, `${path}.tasks[${index}]`, into);
       // A lead assists one call at a time.
       if (isPlainObject(task) && task.assisting !== undefined) {
         if (assisting !== undefined) into.add("snapshot.assisting.single", `${path}.tasks[${index}].assisting`, "a lead assists one call at a time");
@@ -1402,7 +1492,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       validateBreakState(event.break, `${at}.break`, into);
       break;
     case "task-offered":
-      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks }, `${at}.task`, into);
+      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest) }, `${at}.task`, into);
       // An offer introduces work that is not yet under way; work in progress arrives only on a snapshot.
       if (isPlainObject(event.task) && typeof event.task.phase === "string") {
         into.require((OFFERABLE_PHASES as readonly string[]).includes(event.task.phase), "event.taskOffered.phase", `${at}.task.phase`,
@@ -1413,7 +1503,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       }
       break;
     case "task-updated":
-      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks }, `${at}.task`, into);
+      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest) }, `${at}.task`, into);
       break;
     case "task-media-started":
       into.require(isTaskId(event.taskId), "event.taskMediaStarted.taskId", `${at}.taskId`, "a task id is required");
@@ -1425,6 +1515,19 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       into.require(isTaskId(event.taskId), "event.taskEnded.taskId", `${at}.taskId`, "a task id is required");
       validateTaskOutcome(event.outcome, `${at}.outcome`, into);
       break;
+    case "dial-outcome": {
+      into.filled(event.dialId, "event.dialOutcome.dialId", `${at}.dialId`, "an outcome names the dial it ends, by the host's dialId");
+      // Only a distinction the manifest declared: an undeclared word is a guess dressed as a code.
+      const declared = isPlainObject(manifest) && Array.isArray(manifest.dialOutcomes) ? manifest.dialOutcomes : undefined;
+      if (into.oneOf(event.outcome, DIAL_OUTCOMES, "event.dialOutcome.outcome", `${at}.outcome`)) {
+        into.require(declared !== undefined && declared.includes(event.outcome), "event.dialOutcome.undeclared", `${at}.outcome`,
+          `the manifest does not declare ${String(event.outcome)} among its dialOutcomes`);
+      }
+      if (event.taskId !== undefined) into.require(isTaskId(event.taskId), "event.dialOutcome.taskId", `${at}.taskId`, "taskId must be a task id when present");
+      if (event.destination !== undefined) into.filled(event.destination, "event.dialOutcome.destination", `${at}.destination`, "a destination must not be empty when present");
+      if (event.reason !== undefined) into.filled(event.reason, "event.dialOutcome.reason", `${at}.reason`, "a reason must not be empty when present");
+      break;
+    }
     case "announcement":
       into.filled(event.text, "event.announcement.text", `${at}.text`, "an announcement needs text");
       into.timestamp(event.announcedAt, "event.announcement.announcedAt", `${at}.announcedAt`);
@@ -1694,7 +1797,7 @@ export type ResultMethod =
 // failure. A method added to `Connection` without a row here is a compile error at the call site.
 const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string }> = {
   execute: { success: "applied", failure: "failed" },
-  dial: { success: "dialled", failure: "failed" },
+  dial: { success: "dialling", failure: "failed" },
   setCapacity: { success: "applied", failure: "failed" },
   requestBreak: { success: "requested", failure: "failed" },
   commitBreak: { success: "committed", failure: "failed" },
@@ -1714,9 +1817,12 @@ const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string }
  * shows the agent what it says. A status the method does not answer, a failure status without a
  * failure, a success carrying one, or an `omni.` code the contract lacks are each refused.
  */
-export function validateResult(result: unknown, method: ResultMethod, path = "result"): ProtocolViolation[] {
+export function validateResult(result: unknown, method: ResultMethod, path = "result", dialId?: string): ProtocolViolation[] {
   const into = new Collector();
-  const statuses = RESULT_STATUSES[method];
+  // A command that dials -- `dial`, or `execute` with a command carrying a `dialId` -- answers
+  // `dialling` and restates the host's identity, so the host compares and confirms.
+  const dials = method === "dial" || (method === "execute" && dialId !== undefined);
+  const statuses = dials ? { success: "dialling", failure: RESULT_STATUSES[method].failure } : RESULT_STATUSES[method];
   if (!isPlainObject(result)) {
     into.add("result.shape", path, `${method} must answer an object`);
     return into.violations;
@@ -1726,6 +1832,14 @@ export function validateResult(result: unknown, method: ResultMethod, path = "re
       `${statuses.success} carries no failure`);
     if (method === "openMedia") {
       into.require(isPlainObject(result.session), "result.session", `${path}.session`, "opened carries the media session");
+    }
+    if (dials) {
+      if (into.filled(result.dialId, "result.dialId", `${path}.dialId`, "dialling restates the dialId the host sent") && dialId !== undefined) {
+        into.require(result.dialId === dialId, "result.dialId.mismatch", `${path}.dialId`,
+          `the host dialled ${dialId} and the provider answered for ${String(result.dialId)}`);
+      }
+    } else {
+      into.require(result.dialId === undefined, "result.dialId.unexpected", `${path}.dialId`, `${statuses.success} dialled nothing and names no dial`);
     }
   } else if (result.status === statuses.failure) {
     if (result.failure === undefined) {

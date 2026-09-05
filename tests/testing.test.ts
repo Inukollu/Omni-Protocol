@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakApproval, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
-import { assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakParticipants, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost } from "../src/testing.js";
+import { assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const voiceTask = {
   id: "call-42",
@@ -256,20 +256,61 @@ describe("assertMediaFollowsTheTask", () => {
   });
 });
 
-describe("assertBreakParticipants", () => {
+describe("TaskStream places a dial outcome", () => {
+  const at = "2026-08-21T09:00:00Z";
+  const stream = () => { const s = new TaskStream(); s.seed({ tasks: [] }); return s; };
+  const outcome = (dialId: string, id = "e1"): ProviderEventEnvelope<"voice"> =>
+    ({ id, loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId, outcome: "answered", taskId: voiceTask.id } });
+  const rulesOf = (violations: { rule: string }[]) => violations.map(v => v.rule);
+
+  it("accepts an outcome for a dial the host placed, once, and refuses one for a dial nobody made", () => {
+    const s = stream();
+    s.dialled("dial-7f2");
+    expect(rulesOf(s.apply(outcome("dial-7f2")))).toEqual([]);
+    // Once: a dial ends one way, and a second outcome is a second claim about the same dial.
+    expect(rulesOf(s.apply(outcome("dial-7f2", "e2")))).toEqual(["stream.dialOutcome.duplicate"]);
+    expect(rulesOf(stream().apply(outcome("dial-9")))).toEqual(["stream.dialOutcome.unknown"]);
+  });
+
+  it("knows a dial from the record or from who is on the call, which is how a dial made before a transfer is placed", () => {
+    const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destination: "+14155550111", dialId: "dial-3c9", since: at }],
+      handlingHistory: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", destination: "+14155550199" }] } };
+    const s = new TaskStream();
+    s.seed({ tasks: [inherited] });
+    expect(rulesOf(s.apply(outcome("dial-3c9")))).toEqual([]);
+    expect(rulesOf(s.apply(outcome("dial-1a0", "e2")))).toEqual([]);
+    // The control: the same stream, a dial neither carried.
+    expect(rulesOf(s.apply(outcome("dial-000", "e3")))).toEqual(["stream.dialOutcome.unknown"]);
+    // And a dial arriving on an offer or an update counts the same way.
+    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, id: "call-99", phase: "pending", acceptance: "consent", onCall: [{ role: "consulted", destination: "+1415", dialId: "dial-off", since: at }] } } };
+    expect(rulesOf(s.apply(offered))).toEqual([]);
+    expect(rulesOf(s.apply(outcome("dial-off", "e5")))).toEqual([]);
+  });
+
+  it("places an outcome against a task that has already ended", () => {
+    // A dial launched late routinely outlives its call, and an agent who moved on still learns nobody was reached.
+    const s = new TaskStream();
+    s.seed({ tasks: [voiceTask] });
+    s.dialled("dial-late");
+    expect(rulesOf(s.apply({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-ended", taskId: voiceTask.id, outcome: { type: "completed", by: "agent" } } }))).toEqual([]);
+    expect(rulesOf(s.apply(outcome("dial-late", "e2")))).toEqual([]);
+  });
+});
+
+describe("assertBreakAttemptProviders", () => {
   const voice = { id: "voice", authentication: "authenticated", holdsCapacity: true } as const;
   const chat = { id: "chat", authentication: "refreshing", holdsCapacity: true } as const;
   const email = { id: "email", authentication: "expired", holdsCapacity: true } as const;
   const idle = { id: "idle", authentication: "authenticated", holdsCapacity: false } as const;
 
   it("keeps a usable provider holding capacity in, refreshing included, and leaves an expired one out", () => {
-    expect(() => assertBreakParticipants([voice, chat, email, idle], ["voice", "chat"])).not.toThrow();
+    expect(() => assertBreakAttemptProviders([voice, chat, email, idle], ["voice", "chat"])).not.toThrow();
     // The stall: waiting on a provider whose login is dead.
-    expect(() => assertBreakParticipants([voice, chat, email, idle], ["voice", "chat", "email"])).toThrow(/email is expired and is not a participant/);
+    expect(() => assertBreakAttemptProviders([voice, chat, email, idle], ["voice", "chat", "email"])).toThrow(/email is expired and is not asked/);
     // And the other way: a provider that can give work cannot be skipped.
-    expect(() => assertBreakParticipants([voice, chat, email, idle], ["voice"])).toThrow(/chat can give the agent work/);
-    expect(() => assertBreakParticipants([voice, chat, email, idle], ["voice", "chat", "idle"])).toThrow(/idle holds no capacity/);
-    expect(() => assertBreakParticipants([voice], ["voice", "ghost"])).toThrow(/ghost is not a provider/);
+    expect(() => assertBreakAttemptProviders([voice, chat, email, idle], ["voice"])).toThrow(/chat can give the agent work/);
+    expect(() => assertBreakAttemptProviders([voice, chat, email, idle], ["voice", "chat", "idle"])).toThrow(/idle holds no capacity/);
+    expect(() => assertBreakAttemptProviders([voice], ["voice", "ghost"])).toThrow(/ghost is not a provider/);
   });
 });
 
@@ -453,6 +494,7 @@ const conformingManifest = {
     calendar: true,
     personalBrowser: { access: { mode: "block-all", allowList: ["https://*.example.com/*"], blockList: [] } },
   },
+  dialOutcomes: ["answered", "no-answer"],
 } satisfies Manifest<"voice">;
 
 // Declares breaks and publishes a UserId, so the conforming connection below has to carry the
@@ -565,7 +607,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         execute: async () => ({ status: "applied" }),
         disconnect,
         describeUsers: async ids => ids.map(id => ({ id, displayName: `User ${id}` })),
-        dial: async () => ({ status: "dialled" }),
+        dial: async ({ dialId }) => ({ status: "dialling", dialId }),
         requestBreak: async () => ({ status: "requested" }),
         commitBreak: async () => ({ status: "committed" }),
         cancelBreak: async () => ({ status: "cancelled" }),
@@ -610,17 +652,17 @@ describe("exerciseAdapter", () => {
     const events = (subjects: readonly ContractSubject[]) => subjects.filter(subject => subject.startsWith("event."));
     const everyEvent: ContractSubject[] = [
       "event.snapshot", "event.transport-status", "event.break-state", "event.task-offered", "event.task-updated",
-      "event.task-media-started", "event.task-media-ended", "event.task-ended", "event.announcement", "event.queue-summary",
+      "event.task-media-started", "event.task-media-ended", "event.task-ended", "event.dial-outcome", "event.announcement", "event.queue-summary",
       "event.diagnostic", "event.team-updated", "event.contacts-updated", "event.calendar-updated",
     ];
     // The rich task carries browsers, history, a disposition policy, transfer destinations and a
-    // custom control, but no attributes and is neither consulting, asking for a lead, nor assisting.
+    // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
-      "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.consultation", "task.lead", "task.assisting",
+      "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.onCall", "task.lead", "task.assisting",
       "task.media", "task.acceptance", "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
       "contacts", "scheduledActivities", "team.policies",
     ]);
@@ -631,14 +673,14 @@ describe("exerciseAdapter", () => {
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { consultControl: true } }, snapshot: reached })))
-      .toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "team.policies"]);
+      .toEqual(["task.attributes", "task.onCall", "task.lead", "task.assisting", "task.acceptance", "task.locked", "team.policies"]);
     const later: ProviderEventEnvelope<"voice"> = {
       id: "evt-team", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } },
     };
     const rosterOnly = { ...conformingSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
     const withEvent = await run({ capabilities: { team: {} }, snapshot: rosterOnly, emit: listener => listener(later) });
-    expect(state(withEvent)).toEqual(["task.attributes", "task.consultation", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
+    expect(state(withEvent)).toEqual(["task.attributes", "task.onCall", "task.lead", "task.assisting", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
     expect(events(withEvent)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
   });
 
@@ -740,7 +782,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   // Every case pairs the refusal with its control: the same adapter with the declaration
   // withdrawn is clean, so a missing method is reported because of the declaration and not
   // because the check fires for everyone.
-  const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
+  const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
   const chatSnapshot = { ...minimalSnapshot, contacts: [] } satisfies Snapshot<"chat">;
 
   it("dial(), when the manifest declares dial", async () => {
@@ -957,7 +999,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("gives a voice connection a host with audio and no other, and refuses an adapter that never asked", async () => {
-    const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
+    const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
     const chatSnapshot = { ...minimalSnapshot, contacts: [] } satisfies Snapshot<"chat">;
     const run = async (overrides: AdapterOverrides, host: Host) =>
       (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, host }, { collectOnly: true })).violations.map(violation => violation.rule);
@@ -1081,7 +1123,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("nothing optional of an adapter that declares nothing optional", async () => {
-    const bare = { ...conformingManifest, id: "acme-chat", channel: "chat", idleCapabilities: undefined } satisfies Manifest<"chat">;
+    const bare = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, idleCapabilities: undefined } satisfies Manifest<"chat">;
     const found = await rules({
       manifest: bare,
       capabilities: {},

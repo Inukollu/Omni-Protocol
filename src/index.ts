@@ -50,6 +50,13 @@ export type UserId = string;
 /** A non-empty, opaque task identifier unique within one provider. Scope it with `taskKey()`. */
 export type TaskId = string;
 
+/**
+ * The host's identity for one dial, minted before the command leaves and unique across the
+ * installation. A dial is the one command whose outcome arrives later and apart, so the provider
+ * names this on the outcome and the host has already placed it. Never shown to the agent.
+ */
+export type DialId = string;
+
 /** A non-negative whole number of seconds. */
 export type DurationSeconds = number;
 
@@ -111,6 +118,15 @@ export interface DialCapability {
   destinations: DialDestinations;
 }
 
+/**
+ * How a dial ended, as the switch distinguishes it. `answered` is the one success; the rest are
+ * the ways a destination was not reached. A manifest declares which of these its platform can
+ * tell apart (`dialOutcomes`), and a `dial-outcome` carries only a declared one.
+ */
+export type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected";
+
+export const DIAL_OUTCOMES = ["answered", "busy", "no-answer", "unreachable", "rejected"] as const satisfies readonly DialOutcome[];
+
 /** Every idle capability a provider may declare. Only voice may `dial`; the channel arm says so. */
 export const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;
 
@@ -158,6 +174,12 @@ export interface Manifest<C extends Channel = Channel> {
   taskTypePresentation?: Record<string, TaskTypePresentation>;
   /** The organisation's whole ladder, stated outright, `person` included. Omitted for the typical four, `DEFAULT_LEVELS`. */
   orgLevels?: LevelDeclaration[];
+  /**
+   * The outcomes this platform distinguishes when a dial ends, `answered` and at least one way of
+   * not reaching the destination. Required of a provider that dials at all -- an idle dialpad, or
+   * a task that may transfer, conference, or call back -- and forbidden off voice, where nothing dials.
+   */
+  dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   /**
    * The provider takes running reports of a host-performed step -- `recordStep` with `seconds`
    * so far and no `ended`. Absent, the host sends exactly two reports per leg, when it began and
@@ -587,6 +609,12 @@ export interface TaskHandlingStep {
   step: HandlingStep;
   at: IsoTimestamp;
   /**
+   * On a step that dialled -- `transferred`, `conferenced`, `unanswered` -- the host's identity for
+   * that dial when a host placed it, and the address it went to. Neither belongs on any other step.
+   */
+  dialId?: DialId;
+  destination?: string;
+  /**
    * Reported, never derived. An entry may be written while its leg is still running, so there is
    * no end to subtract from -- and omitted is the honest report of that, where nought would
    * claim it took no time.
@@ -611,16 +639,22 @@ export type TaskCompletion =
   | { completionMode: "agent-command"; wrapAllowance?: DurationSeconds }
   | { completionMode: "provider-automatic"; wrapAllowance: DurationSeconds };
 
+export type OnCallRole = "party" | "agent" | "consulted" | "conferenced";
+
+export const ON_CALL_ROLES = ["party", "agent", "consulted", "conferenced"] as const satisfies readonly OnCallRole[];
+
 /**
- * A consultation in progress on a task: who is being consulted, and since when where the provider
- * records it. Present between `transfer` `consult` and whichever of `complete` or `cancel`
- * follows; its presence is what makes those two issuable.
+ * Somebody on the call right now, as the provider states it: who, since when, and whether they
+ * are held aside. `party` is the customer; `agent` a person, by user id; `consulted` and
+ * `conferenced` someone a dial brought in, carrying the dial when a host placed it and the address
+ * either way. `label` names a destination -- a person, a queue -- not a phrase. At most one
+ * `party` and one `consulted`: the consult commands name neither because there is exactly one.
  */
-export interface TaskConsultation {
-  destination: string;
-  label?: string;
-  since?: IsoTimestamp;
-}
+export type OnCall = { since: IsoTimestamp; held?: true } & (
+  | { role: "party" }
+  | { role: "agent"; userId: UserId }
+  | { role: "consulted" | "conferenced"; destination: string; dialId?: DialId; label?: string }
+);
 
 /**
  * The agent's request for a lead, from asking until the lead leaves or the request ends.
@@ -711,10 +745,10 @@ export type Task<C extends Channel = Channel> = {
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingHistory;
 } & TaskCompletion
-  // Consulting, a lead on the call, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
+  // Who is on the call, a lead on it, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
   & (C extends "voice"
-    ? { consultation?: TaskConsultation; lead?: TaskLead; assisting?: TaskAssisting; media?: TaskMediaState }
-    : { consultation?: never; lead?: never; assisting?: never; media?: never });
+    ? { onCall?: OnCall[]; lead?: TaskLead; assisting?: TaskAssisting; media?: TaskMediaState }
+    : { onCall?: never; lead?: never; assisting?: never; media?: never });
 
 /**
  * What the provider wants of Omni's acceptance policy for one offer. Present only where Omni was
@@ -764,15 +798,15 @@ export type VoiceTaskCommand =
   | { type: "hold" }
   | { type: "resume" }
   | { type: "disconnect" }
-  /** Issuable only in `completing`, under the `callback` capability. Carries no destination. */
-  | { type: "callback" }
+  /** Issuable only in `completing`, under the `callback` capability. Dials the party's own number, so it names none. */
+  | { type: "callback"; dialId: DialId }
   /** Blind: hand the customer to `destination` with nobody consulted. Gated by `blindTransfer`. */
-  | { type: "transfer"; destination: string; action?: never }
+  | { type: "transfer"; dialId: DialId; destination: string; action?: never }
   /** Park the customer and call `destination` first. Gated by `consultTransfer`. */
-  | { type: "transfer"; action: "consult"; destination: string }
-  /** Hand the customer to the consulted destination and leave. Needs `Task.consultation`. */
+  | { type: "transfer"; action: "consult"; dialId: DialId; destination: string }
+  /** Hand the customer to the consulted destination and leave. Needs a `consulted` entry on `Task.onCall`. */
   | { type: "transfer"; action: "complete" }
-  /** Drop the consulted destination and return to the customer. Needs `Task.consultation`. */
+  /** Drop the consulted destination and return to the customer. Needs a `consulted` entry on `Task.onCall`. */
   | { type: "transfer"; action: "cancel" }
   /** Ask a lead to join, with a note. Gated by `consultLead`. */
   | { type: "lead"; action: "request"; note?: string }
@@ -782,7 +816,10 @@ export type VoiceTaskCommand =
   | { type: "lead"; action: "take-over" }
   /** The lead drops; the agent continues. The lead's task ends `left`. Needs `Task.assisting`. */
   | { type: "lead"; action: "leave" }
-  | { type: "conference"; participant: string; action: "add" | "remove" }
+  /** Dial `destination` into the call. Gated by `conference`. */
+  | { type: "conference"; action: "add"; dialId: DialId; destination: string }
+  /** Drop the `conferenced` entry on `Task.onCall` with this destination. */
+  | { type: "conference"; action: "remove"; destination: string }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);
 
@@ -816,21 +853,35 @@ export interface TaskCommandRequest<C extends Channel = Channel> {
 /**
  * `applied` rather than a verb per command: the command travels in the request, so
  * `execute({ command: { type: "hold" } })` returning `applied` already says the hold applied.
+ * A command that dials answers `dialling` instead, restating the host's `dialId`: accepted, the
+ * call being placed, and the outcome still to come on `dial-outcome`.
  *
  * A promise that rejects with no result means *unknown*, not `failed`. Omni does not retry --
  * no adapter on the agent's PC can make a repeat safe -- and the next snapshot shows what the
- * provider did. A command therefore carries no key of Omni's making.
+ * provider did. A command therefore carries no retry key of Omni's making; a `dialId` is not
+ * one, it is how an outcome arriving later is placed.
  */
 export type TaskCommandResult =
   | { status: "applied" }
+  | { status: "dialling"; dialId: DialId }
   | { status: "failed"; failure: ProtocolFailure };
 
+/** The dial a command places, by the host's identity for it; `undefined` for a command that dials nothing. */
+export function commandDialId(command: TaskCommand): DialId | undefined {
+  if (command.type === "callback") return command.dialId;
+  if (command.type === "transfer" && (command.action === undefined || command.action === "consult")) return command.dialId;
+  if (command.type === "conference" && command.action === "add") return command.dialId;
+  return undefined;
+}
+
 export interface DialRequest {
+  dialId: DialId;
   destination: string;
 }
 
+/** `dialling` says accepted and being placed, nothing more; the outcome arrives on `dial-outcome`. */
 export type DialResult =
-  | { status: "dialled" }
+  | { status: "dialling"; dialId: DialId }
   | { status: "failed"; failure: ProtocolFailure };
 
 // ---------------------------------------------------------------------------
@@ -1151,6 +1202,13 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "task-media-started"; taskId: TaskId }
   | { type: "task-media-ended"; taskId: TaskId }
   | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
+  /**
+   * How a dial the host placed ended, once, either way -- `answered` is stated, never read off
+   * somebody appearing on the call. `taskId` where the dial was on a task, and that task may
+   * already have ended: a dial placed late routinely outlives its call. `reason` is the switch's
+   * own words, shown to the agent as such.
+   */
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; destination?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
   | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId }
@@ -1292,6 +1350,12 @@ export const userKey = (providerId: string, userId: UserId): string =>
 export const HANDLING_STEPS_WITH_A_PERSON = [
   "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered",
 ] as const satisfies readonly HandlingStep[];
+
+/** The steps a dial writes, and so the only ones that carry a `dialId` and a `destination`. */
+export const HANDLING_STEPS_THAT_DIAL = ["transferred", "conferenced", "unanswered"] as const satisfies readonly HandlingStep[];
+
+export const handlingStepDials = (step: HandlingStep): boolean =>
+  (HANDLING_STEPS_THAT_DIAL as readonly HandlingStep[]).includes(step);
 
 // Pinned both ways: a step added to `HandlingStep` has to be placed here, and a step listed here
 // has to exist there. `satisfies` covers the second; this covers the first.

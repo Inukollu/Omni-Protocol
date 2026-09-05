@@ -4,8 +4,12 @@ import {
   BROWSER_ISOLATION_SCHEMES,
   DEFAULT_TASK_PHASE_LABELS,
   DEFAULT_TASK_TYPE_PRESENTATION,
+  DIAL_OUTCOMES,
+  HANDLING_STEPS_THAT_DIAL,
   HANDLING_STEPS_WITH_A_PERSON,
   IDLE_CAPABILITIES,
+  commandDialId,
+  handlingStepDials,
   IDLE_CAPABILITY_UI,
   OMNI_FAILURE_CODES,
   OMNI_PROTOCOL_VERSION,
@@ -245,7 +249,7 @@ describe("browserSessionKey", () => {
 });
 
 describe("handlingStepExpectsAPerson", () => {
-  it("says which steps have a participant, so an absent agent can be read correctly", () => {
+  it("says which steps have a person, so an absent agent can be read correctly", () => {
     // queued is the only step nobody takes part in: an absent agent there is not a gap.
     expect(handlingStepExpectsAPerson("queued")).toBe(false);
     // The control that matters: every other step does expect one, so an absent agent on any
@@ -255,5 +259,26 @@ describe("handlingStepExpectsAPerson", () => {
       expect(handlingStepExpectsAPerson(step)).toBe(true);
     }
     expect(HANDLING_STEPS_WITH_A_PERSON).toEqual(everyStep.filter(step => step !== "queued"));
+  });
+});
+
+describe("every dial has an outcome", () => {
+  it("names the dial a command places, and none for a command that dials nothing", () => {
+    expect(commandDialId({ type: "callback", dialId: "dial-1" })).toBe("dial-1");
+    expect(commandDialId({ type: "transfer", dialId: "dial-2", destination: "+14155550111" })).toBe("dial-2");
+    expect(commandDialId({ type: "transfer", action: "consult", dialId: "dial-3", destination: "+14155550111" })).toBe("dial-3");
+    expect(commandDialId({ type: "conference", action: "add", dialId: "dial-4", destination: "+14155550111" })).toBe("dial-4");
+    // The control: the consult steps, a remove, and a hold dial nowhere.
+    expect(commandDialId({ type: "transfer", action: "complete" })).toBeUndefined();
+    expect(commandDialId({ type: "transfer", action: "cancel" })).toBeUndefined();
+    expect(commandDialId({ type: "conference", action: "remove", destination: "+14155550111" })).toBeUndefined();
+    expect(commandDialId({ type: "hold" })).toBeUndefined();
+  });
+
+  it("closes the set of outcomes, and says which record steps a dial writes", () => {
+    expect(DIAL_OUTCOMES).toEqual(["answered", "busy", "no-answer", "unreachable", "rejected"]);
+    expect(HANDLING_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);
+    for (const step of HANDLING_STEPS_THAT_DIAL) expect(handlingStepDials(step)).toBe(true);
+    for (const step of ["queued", "offered", "answered", "held", "muted"] as const) expect(handlingStepDials(step)).toBe(false);
   });
 });
