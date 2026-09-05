@@ -2859,7 +2859,9 @@ still-ringing `destination` calls that dial off, with `cancelled` as its outcome
 **The entry says where it stands.** A dialled entry carries `stage`: `ringing` until its dial is
 answered, `joined` after. The `dial-outcome` is the transition and the stage is the state, the same
 pairing as `task-media-started` and `media`: an `answered` outcome and the task restated with the
-entry `joined` say one thing twice, and any other outcome removes the entry. It is stated rather
+entry `joined` say one thing twice, and any other outcome removes the entry. The outcome comes
+first: a `task-updated` that itself moves an entry from `ringing` to `joined` before an `answered`
+outcome for its dial is refused (`stream.taskUpdated.stage`), as an update that moves `media` is. It is stated rather
 than left to whoever placed the dial because that knowledge lives in one process: after a reload,
 on a second session, or on a supervisor's screen the snapshot is the only source, and a room that
 cannot tell ringing from joined says it contains someone who may never arrive. Nobody ringing is

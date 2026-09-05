@@ -649,11 +649,11 @@ const WORK_BEGUN = new Set(["in-progress", "paused", "completing"]);
 
 /** What a stream has said about the tasks it carries, and the rules across events. */
 export class TaskStream {
-  private readonly tasks = new Map<string, { phase: string; media: string }>();
+  private readonly tasks = new Map<string, { phase: string; media: string; stages: Map<string, string> }>();
   // Every dial the stream can place an outcome against: one the host said it placed, or one a
   // task carried on `onCall` or in its record -- which is how a dial made before a transfer is known
-  // to whoever holds the task now. `ended` once its outcome arrived, since an outcome comes once.
-  private readonly dials = new Map<string, "placed" | "ended">();
+  // to whoever holds the task now. `answered` or `ended` once its outcome arrived, since it comes once.
+  private readonly dials = new Map<string, "placed" | "answered" | "ended">();
 
   /** The host placed a dial: its outcome, whenever it arrives, is one the stream expects. */
   dialled(dialId: string): void {
@@ -671,9 +671,17 @@ export class TaskStream {
     }
   }
 
-  private static stated(task: unknown): { phase: string; media: string } {
+  private static stated(task: unknown): { phase: string; media: string; stages: Map<string, string> } {
     const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
-    return { phase: String(isRecord(task) ? task.phase : undefined), media };
+    // The stage of every dialled entry the room names by its dial, so an update can be held to the
+    // outcome that moves it.
+    const stages = new Map<string, string>();
+    if (isRecord(task) && Array.isArray(task.onCall)) {
+      for (const entry of task.onCall) {
+        if (isRecord(entry) && typeof entry.dialId === "string" && typeof entry.stage === "string") stages.set(entry.dialId, entry.stage);
+      }
+    }
+    return { phase: String(isRecord(task) ? task.phase : undefined), media, stages };
   }
 
   /** Replaces what is known with a snapshot's tasks, as a snapshot replaces Omni's state. */
@@ -727,6 +735,15 @@ export class TaskStream {
             refuse("stream.taskUpdated.media", `${at}.task.media`,
               `a task-updated re-states media, it does not move it: ${id} held ${known.media} and the update says ${next.media}; audio arrives on task-media-started and ends on task-media-ended`);
           }
+          // The same pairing for a dialled entry: the dial-outcome is the transition, the stage is
+          // the state, and the outcome comes first. An update that joins an entry on its own is
+          // moving what only an answered outcome moves.
+          for (const [dialId, stage] of next.stages) {
+            if (stage === "joined" && known.stages.get(dialId) === "ringing" && this.dials.get(dialId) !== "answered") {
+              refuse("stream.taskUpdated.stage", `${at}.task.onCall`,
+                `a task-updated re-states a stage, it does not move it: ${dialId} was ringing and the update says joined before any answered dial-outcome for it`);
+            }
+          }
           this.tasks.set(id, next);
         }
         this.noteDials(event.task);
@@ -775,10 +792,10 @@ export class TaskStream {
         if (dial === undefined) {
           refuse("stream.dialOutcome.unknown", `${at}.dialId`,
             `${event.dialId} is not a dial the host placed or a task carried: an outcome ends a dial somebody made`);
-        } else if (dial === "ended") {
+        } else if (dial !== "placed") {
           refuse("stream.dialOutcome.duplicate", `${at}.dialId`, `${event.dialId} already has its outcome; a dial ends once`);
         }
-        this.dials.set(event.dialId, "ended");
+        this.dials.set(event.dialId, event.outcome === "answered" ? "answered" : "ended");
         break;
       }
       default:
