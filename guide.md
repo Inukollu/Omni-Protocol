@@ -36,6 +36,7 @@ are used precisely throughout and mean nothing looser here.
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, roster. |
 | **Dial** | One outbound call the host asks a provider to place — from the idle dialpad, a transfer, a conference add, or a connect-back. Identified by the host's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
+| **Monitor** | A lead listening to a member's call unasked, from the roster: `monitor` in silence, `whisper` heard by the agent alone, `barge` heard by everyone. Nothing of it reaches the member's task, and there is no take-over in it. See **Monitoring a call**. |
 | **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in from the moment their dial is placed. |
 
 Six words describe *what state a thing is in*, and they are not interchangeable: each belongs to
@@ -229,9 +230,12 @@ type AuthenticationContext = {
   log?: (entry: unknown) => void;
 };
 
+type MonitorMode = "monitor" | "whisper" | "barge";
+
 type TeamCapabilities = {
   breakControl?: true;
   leadAssistControl?: true;
+  monitorControl?: MonitorMode[];
   policyControl?: true;
 };
 
@@ -610,6 +614,13 @@ type TaskAssisting = {
   since: IsoTimestamp;
 };
 
+type TaskMonitoring = {
+  memberId: UserId;
+  taskId: TaskId;
+  mode: MonitorMode;
+  since: IsoTimestamp;
+};
+
 type Level = string;
 
 type LevelDeclaration = {
@@ -641,8 +652,8 @@ type Task<C extends Channel = Channel> = {
   handlingHistory?: TaskHandlingHistory;
 } & TaskCompletion & (
   C extends "voice"
-    ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; media?: TaskMediaState }
-    : { onCall?: never; leadAssist?: never; assisting?: never; media?: never }
+    ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
+    : { onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never }
 );
 
 type AcceptanceMode =
@@ -928,6 +939,16 @@ type TeamLeadAssistCommandRequest = {
   command: TeamLeadAssistCommand;
 };
 
+type TeamMonitorCommand =
+  | { type: "monitor"; memberId: UserId }
+  | { type: "whisper" }
+  | { type: "barge" }
+  | { type: "leave" };
+
+type TeamMonitorCommandRequest = {
+  command: TeamMonitorCommand;
+};
+
 type TeamCommandResult =
   | { status: "applied" }
   | { status: "failed"; failure: ProtocolFailure };
@@ -1022,6 +1043,7 @@ type Connection<C extends Channel = Channel> = {
 
   executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
   executeTeamLeadAssist?(request: TeamLeadAssistCommandRequest): Promise<TeamCommandResult>;
+  executeTeamMonitor?(request: TeamMonitorCommandRequest): Promise<TeamCommandResult>;
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
   recordStep?(report: HandlingReport): Promise<HandlingReportResult>;
@@ -1732,6 +1754,7 @@ them from what arrives later.
 | `team` | This login leads a team. The provider publishes a `TeamRoster` to it on every snapshot — `[]` when nobody is in it — and to nobody else. |
 | `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — place, release, decide, set policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-decision`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
 | `team.leadAssistControl` | This lead may join a member's call on request. Requires `executeTeamLeadAssist`. |
+| `team.monitorControl` | This lead may listen to a member's call unasked, in the listed modes and no others: `monitor`, `whisper`, `barge`. The list always includes `monitor`, since the other two begin from one. Requires `executeTeamMonitor`. See **Monitoring a call**. |
 | `team.policyControl` | This lead sets the team's policy per capability — on, off, or the person's — within what the queue allows. Requires `executeTeamPolicy`; the roster carries `policies`. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
@@ -1928,6 +1951,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `endBreak()` | The login declares `capabilities.breaks`. |
 | `executeTeamBreak(command)` | The login declares `capabilities.team.breakControl`. |
 | `executeTeamLeadAssist(command)` | The login declares `capabilities.team.leadAssistControl`. |
+| `executeTeamMonitor(command)` | The login declares `capabilities.team.monitorControl`. |
 | `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
 | `recordStep(report)` | A task declares `mute`: the host performs that leg, and the provider's record has to have somewhere to take it. See **The host records what it performs**. |
 | `executeTeamPolicy(command)` | The login declares `capabilities.team.policyControl`. |
@@ -2138,6 +2162,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destination` dialled, the `dialId` where a host placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `leadAssist` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Lead assist**. |
 | `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead-assist` `take-over` and `leave` issuable. See **Lead assist**. |
+| `monitoring` | Voice only, on the lead's own task while they listen to a member's call: whose call, which call, and the `mode` they are heard in, restated on every change. Never on the member's task, and never together with `assisting`. See **Monitoring a call**. |
 
 `TaskAttribute` entries carry typed detail alongside the task:
 
@@ -3399,6 +3424,64 @@ const leadAssistCapable = {
 
 Lead and member alike are `UserId`s of this provider, so an adapter publishing them implements
 `describeUsers()`; names never travel on a task or a roster.
+
+### Monitoring a call
+
+A lead may listen to a member's call without being asked -- to coach, to check quality, to step in
+when it goes wrong. This is not lead assist: nobody requested it, the member's task says nothing
+about it, and there is no take-over in it. A lead who wants the call itself uses lead assist. The
+three modes are the call centre's own words:
+
+| Mode | Who hears the lead |
+| --- | --- |
+| `monitor` | Nobody. The lead hears both sides in silence. |
+| `whisper` | The agent alone. The customer hears nothing. |
+| `barge` | Everyone on the call. |
+
+The login says which modes this lead has, as a list on `team.monitorControl`, and it always
+includes `monitor`, because whisper and barge begin from one
+(`authentication.capability.team.monitorControl.monitor`). A centre that lets every lead listen but
+reserves barging declares `["monitor", "whisper"]`, and Omni offers no Barge to that lead. The
+declaration requires `executeTeamMonitor`, gated exactly as `executeTeamLeadAssist` is by
+`team.leadAssistControl`.
+
+```ts
+// 1. The lead picks a member from the roster and starts silent.
+executeTeamMonitor({ command: { type: "monitor", memberId: "A-1" } })
+
+// 2. The lead's own task arrives -- task-offered with `automatic`, as a joined call does -- and
+//    carries `monitoring`; the task id is the lead's, the member's call is named inside it.
+//    monitoring: { memberId: "A-1", taskId: "call-42", mode: "monitor", since }
+
+// 3. The lead changes how they are heard; the provider restates the task with the new mode.
+executeTeamMonitor({ command: { type: "whisper" } })
+executeTeamMonitor({ command: { type: "barge" } })
+
+// 4. The lead leaves; their task ends with `{ type: "left" }`. The member's call goes on.
+executeTeamMonitor({ command: { type: "leave" } })
+```
+
+**The lead's task is what gives them audio**: Omni opens media on it as on any voice task, and the
+provider bridges the lead's leg into the member's call in the mode stated. `monitoring.mode` is
+the state, restated on every change, and a `whisper` or `barge` the login's list does not include
+is answered `failed`. **A lead listens to one call at a time** (`snapshot.monitoring.single`), and
+a task is a joined call or a monitored one, never both (`task.monitoring.assisting`). A lead on a
+break does not listen, for the reason they do not join: a break is a state in which the agent is
+not working. The member's call ending ends the lead's task as it ends the member's, with `left`,
+since the lead was never handling it.
+
+**Nothing reaches the member.** The member's task carries no trace of a monitoring lead in any
+mode: not on `onCall`, not in the record. Whether a whisper is announced to the agent is the
+platform's business and travels on the audio, not on this wire.
+
+```ts
+const monitoringLead = {
+  channel: "voice",
+  capabilities: {},
+  phase: "in-progress",
+  monitoring: { memberId: "A-1", taskId: "call-42", mode: "whisper", since: "2026-08-21T09:04:00Z" },
+} satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "monitoring">;
+```
 
 ### A member waiting for a break
 

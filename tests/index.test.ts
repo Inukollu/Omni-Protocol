@@ -203,6 +203,10 @@ describe("sameCapabilities", () => {
     expect(sameCapabilities({ breaks: true }, {})).toBe(false);
     expect(sameCapabilities({ team: { breakControl: true } }, { team: {} })).toBe(false);
     expect(sameCapabilities({ team: { leadAssistControl: true } }, { team: { breakControl: true } })).toBe(false);
+    // The monitor modes are a set: order is not a difference, a missing mode is.
+    expect(sameCapabilities({ team: { monitorControl: ["monitor", "whisper"] } }, { team: { monitorControl: ["whisper", "monitor"] } })).toBe(true);
+    expect(sameCapabilities({ team: { monitorControl: ["monitor", "whisper"] } }, { team: { monitorControl: ["monitor"] } })).toBe(false);
+    expect(sameCapabilities({ team: { monitorControl: ["monitor"] } }, { team: {} })).toBe(false);
   });
 });
 
