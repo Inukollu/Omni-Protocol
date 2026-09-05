@@ -165,7 +165,7 @@ type DialDestinations = "contacts-only" | "any-number";
 
 type DialCapability = { destinations: DialDestinations };
 
-type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected" | "cancelled";
+type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected" | "cancelled" | "unexplained";
 
 type IdleCapabilities<C extends Channel = Channel> = {
   personalBrowser?: PersonalBrowserCapability;
@@ -2783,18 +2783,26 @@ nothing, is refused (`result.status`). `validateResult(result, method, path, dia
 
 **The outcome is stated, once, either way.** A `dial-outcome` names the `dialId`, the task where
 there was one, the destination where the provider knows it, and how the dial ended -- from a closed
-set: `answered`, `busy`, `no-answer`, `unreachable`, `rejected`, `cancelled`. `answered` is stated
-rather than read off somebody appearing on the call, because a host that infers success cannot tell
-"reached" from "still ringing". `cancelled` is the dialler calling the dial off before anyone
-answered -- the agent hanging up while a consult still rings -- which is not a `no-answer` the
-destination never gave. `reason` is the switch's own words, optional, and shown to the agent
-attributed to the switch rather than to Omni.
+set: `answered`, `busy`, `no-answer`, `unreachable`, `rejected`, `cancelled`, `unexplained`.
+`answered` is stated rather than read off somebody appearing on the call, because a host that infers
+success cannot tell "reached" from "still ringing". `cancelled` is the dialler calling the dial off
+before anyone answered -- the agent hanging up while a consult still rings -- which is not a
+`no-answer` the destination never gave. `unexplained` is the switch dropping the call and giving no
+cause: a statement about the switch, sent instead of the nearest cause it did not give. `reason` is
+the switch's own words, optional, and shown to the agent attributed to the switch rather than to
+Omni.
 
 **`taskId` is the task the dial was placed on**, resolved from the dial's own identity and never from
 whatever task the agent is looking at when the outcome arrives. That task may already have ended,
 and the harness places the outcome all the same (`TaskStream`, `stream.dialOutcome.unknown`,
 `stream.dialOutcome.duplicate`); an agent who moved on still learns nobody was reached, against the
 call it belonged to and never against the next one.
+
+The stream knows a dial from three places: `TaskStream.dialled(dialId)`, which a host calls when it
+places one; an entry on a task's `onCall`; and a step in its `handlingHistory`. Since a dialled entry
+is listed from placement, `dialled()` is load-bearing only for a dial that never has an entry -- a
+blind transfer, a callback, an idle dialpad call -- or whose entry has already left the room; an
+outcome for a dial nobody placed and no task mentions is what `stream.dialOutcome.unknown` refuses.
 
 **`answered` says what happened to the dial; `onCall` says who is in the room.** They are two
 claims, and both are true at once when a leg answers and never joins. A desk shows `answered` as the
@@ -2806,7 +2814,11 @@ provider that cannot tell busy from unreachable must not pick one. The manifest 
 `dialOutcomes`, and a `dial-outcome` carries only a declared member
 (`event.dialOutcome.undeclared`). The list includes `answered`, or the provider could never state a
 success (`manifest.dialOutcomes.answered`), and at least one other member, or it could never state
-a failure (`manifest.dialOutcomes.failure`). A provider that dials at all declares it: an idle
+a failure (`manifest.dialOutcomes.failure`). `unexplained` is declarable only beside a cause the
+provider does report -- `busy`, `no-answer`, `unreachable`, `rejected` or `cancelled`
+(`manifest.dialOutcomes.unexplained.alone`): a provider that reports causes may honestly say the
+switch gave none, while one that reports none would be sending the generic failure this set exists
+to refuse. A provider that dials at all declares it: an idle
 dialpad requires it (`manifest.dialOutcomes.required`), and a task that declares `callback`,
 `blindTransfer`, `consultTransfer` or `conference` under a manifest without it is refused
 (`task.capability.dialOutcomes.required`). Off voice nothing dials, and the field is a compile

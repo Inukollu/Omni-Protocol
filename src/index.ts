@@ -121,12 +121,14 @@ export interface DialCapability {
 /**
  * How a dial ended, as the switch distinguishes it. `answered` is the one success; the rest are
  * the ways a destination was not reached -- `cancelled` because the dialler called it off before
- * anyone answered, not because the destination failed to. A manifest declares which of these its
- * platform can tell apart (`dialOutcomes`), and a `dial-outcome` carries only a declared one.
+ * anyone answered, not because the destination failed to, and `unexplained` because the switch
+ * dropped the call and gave no cause, a statement about the switch rather than a shrug from the
+ * adapter. A manifest declares which of these its platform can tell apart (`dialOutcomes`), and a
+ * `dial-outcome` carries only a declared one.
  */
-export type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected" | "cancelled";
+export type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected" | "cancelled" | "unexplained";
 
-export const DIAL_OUTCOMES = ["answered", "busy", "no-answer", "unreachable", "rejected", "cancelled"] as const satisfies readonly DialOutcome[];
+export const DIAL_OUTCOMES = ["answered", "busy", "no-answer", "unreachable", "rejected", "cancelled", "unexplained"] as const satisfies readonly DialOutcome[];
 
 /** Every idle capability a provider may declare. Only voice may `dial`; the channel arm says so. */
 export const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;

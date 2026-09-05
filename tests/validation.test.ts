@@ -1261,7 +1261,10 @@ describe("every dial has an outcome", () => {
 
   it("takes a manifest's word for which outcomes it distinguishes, both ways", () => {
     const m = (over: Record<string, unknown>) => rules(validateManifest(manifest(over)));
-    expect(m({ dialOutcomes: ["answered", "busy", "no-answer", "unreachable", "rejected", "cancelled"] })).toEqual([]);
+    expect(m({ dialOutcomes: ["answered", "busy", "no-answer", "unreachable", "rejected", "cancelled", "unexplained"] })).toEqual([]);
+    // "The switch gave no cause" is a claim only a provider that reports causes can make.
+    expect(m({ dialOutcomes: ["answered", "no-answer", "unexplained"] })).toEqual([]);
+    expect(m({ dialOutcomes: ["answered", "unexplained"] })).toEqual(["manifest.dialOutcomes.unexplained.alone"]);
     expect(m({ dialOutcomes: ["answered", "no-answer"] })).toEqual([]);
     expect(m({ dialOutcomes: [] })).toEqual(["manifest.dialOutcomes.shape"]);
     expect(m({ dialOutcomes: "answered" })).toEqual(["manifest.dialOutcomes.shape"]);
@@ -1298,6 +1301,7 @@ describe("every dial has an outcome", () => {
     expect(check({ ...answered, outcome: "no-answer", reason: "No route to destination" })).toEqual([]);
     // A dial called off before anyone answered is its own outcome, not a no-answer the destination never gave.
     expect(check({ ...answered, outcome: "cancelled" }, manifest({ dialOutcomes: ["answered", "cancelled"] }))).toEqual([]);
+    expect(check({ ...answered, outcome: "unexplained", reason: "Cause 0" }, manifest({ dialOutcomes: ["answered", "busy", "unexplained"] }))).toEqual([]);
     expect(check({ ...answered, dialId: "" })).toEqual(["event.dialOutcome.dialId"]);
     expect(check({ ...answered, outcome: "ringing" })).toEqual(["event.dialOutcome.outcome"]);
     // A distinction the manifest did not declare is a guess dressed as a code.

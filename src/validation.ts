@@ -123,7 +123,9 @@ const ACCESS_APPLIES_TO = membersOf<NonNullable<PersonalBrowserCapability["acces
   "initial-url": true, "all-navigation": true,
 });
 const DIAL_DESTINATION_POLICIES = membersOf<DialDestinations>({ "contacts-only": true, "any-number": true });
-const DIAL_OUTCOMES = membersOf<DialOutcome>({ answered: true, busy: true, "no-answer": true, unreachable: true, rejected: true, cancelled: true });
+const DIAL_OUTCOMES = membersOf<DialOutcome>({ answered: true, busy: true, "no-answer": true, unreachable: true, rejected: true, cancelled: true, unexplained: true });
+/** The outcomes that name a cause. `unexplained` is declarable only beside one of these. */
+const EXPLAINED_FAILURES: readonly DialOutcome[] = ["busy", "no-answer", "unreachable", "rejected", "cancelled"];
 const ON_CALL_ROLES = membersOf<OnCallRole>({ party: true, agent: true, consulted: true, conferenced: true });
 /** The task capabilities under which a command dials, and so need the manifest to say how a dial ends. */
 const DIALLING_CAPABILITIES = ["callback", "blindTransfer", "consultTransfer", "conference"] as const;
@@ -388,6 +390,13 @@ function validateDialOutcomes(manifest: Record<string, unknown>, path: string, i
     "a dial that reached its destination is stated, never inferred: dialOutcomes includes answered");
   into.require(declared.some((outcome: unknown) => outcome !== "answered"), "manifest.dialOutcomes.failure", path,
     "a provider that can only say answered can never say a destination was not reached: declare at least one other outcome");
+  // "The switch gave no cause" is honest only from a provider that reports the cause when there is
+  // one; declared alone it is the generic failure every unsure provider would send.
+  if (declared.includes("unexplained")) {
+    into.require(declared.some((outcome: unknown) => (EXPLAINED_FAILURES as readonly unknown[]).includes(outcome)),
+      "manifest.dialOutcomes.unexplained.alone", path,
+      "unexplained says the switch gave no cause, which is a claim only a provider that reports causes can make: declare at least one of busy, no-answer, unreachable, rejected, cancelled beside it");
+  }
 }
 
 /** Whether a manifest says how a dial ends, and so may publish tasks that dial. `undefined` where there is no manifest to ask. */
