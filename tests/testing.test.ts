@@ -287,6 +287,28 @@ describe("TaskStream places a dial outcome", () => {
     expect(rulesOf(s.apply(outcome("dial-off", "e5")))).toEqual([]);
   });
 
+  it("lets an update restate a joined entry after its answered outcome, and refuses one that joins it alone", () => {
+    const ringing: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", stage: "ringing", since: at }] };
+    const joined: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destination: "+14155550111", dialId: "dial-7f2", stage: "joined", since: at }] };
+    const update = (task: Task<"voice">, id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task } });
+    // The outcome is the transition and the stage the state: outcome first, then the room restated.
+    const s = new TaskStream();
+    s.seed({ tasks: [ringing] });
+    expect(rulesOf(s.apply(outcome("dial-7f2")))).toEqual([]);
+    expect(rulesOf(s.apply(update(joined, "e2")))).toEqual([]);
+    // Alone, the update is moving what only an answered outcome moves.
+    const alone = new TaskStream();
+    alone.seed({ tasks: [ringing] });
+    expect(rulesOf(alone.apply(update(joined, "e2")))).toEqual(["stream.taskUpdated.stage"]);
+    // And a busy outcome does not join anyone either.
+    const busy = new TaskStream();
+    busy.seed({ tasks: [ringing] });
+    expect(rulesOf(busy.apply({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId: "dial-7f2", outcome: "busy", taskId: voiceTask.id } }))).toEqual([]);
+    expect(rulesOf(busy.apply(update(joined, "e2")))).toEqual(["stream.taskUpdated.stage"]);
+    // Restating ringing, or a joined entry that was already joined, moves nothing.
+    expect(rulesOf(alone.apply(update(ringing, "e3")))).toEqual([]);
+  });
+
   it("places an outcome against a task that has already ended", () => {
     // A dial launched late routinely outlives its call, and an agent who moved on still learns nobody was reached.
     const s = new TaskStream();
