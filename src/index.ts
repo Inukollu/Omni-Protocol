@@ -451,8 +451,11 @@ export interface Destination {
   id: string;
   label: string;
   address: string;
-  /** `agent` here is a routing target, not the person signed in. */
-  kind: "queue" | "agent" | "external";
+  /**
+   * Where the contact goes: back to a queue on this provider, or to an address outside it. Never
+   * to a named agent -- who takes a contact next is the queue's decision, not an agent's.
+   */
+  kind: "queue" | "external";
 }
 
 export interface DestinationDirectory {

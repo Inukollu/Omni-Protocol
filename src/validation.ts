@@ -118,7 +118,7 @@ const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
 const HANDLING_STEPS = membersOf<HandlingStep>({
   queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
 });
-const DESTINATION_KINDS = membersOf<Destination["kind"]>({ queue: true, agent: true, external: true });
+const DESTINATION_KINDS = membersOf<Destination["kind"]>({ queue: true, external: true });
 const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
 const CUSTOM_UI_PLACEMENTS = membersOf<CustomCapability["ui"]["placement"]>({ primary: true, secondary: true, overflow: true });
 const NOTES_RULES = membersOf<NonNullable<DispositionRules["notes"]>>({ required: true, optional: true, none: true });

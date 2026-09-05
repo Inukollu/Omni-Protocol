@@ -824,6 +824,10 @@ describe("the other direction, everywhere", () => {
     expect(directory({})).toEqual(["task.destinations.offer"]);
     expect(directory({ destinations: [] })).toEqual(["task.destinations.offer"]);
     expect(directory({ destinations: [tier2, tier2] })).toEqual(["task.destination.unique"]);
+    // A transfer goes back to a queue or outside, never to a named agent.
+    expect(directory({ destinations: [{ ...tier2, kind: "external" }] })).toEqual([]);
+    // renamed away: the agent kind is gone; who takes a contact next is the queue's decision.
+    expect(directory({ destinations: [{ ...tier2, kind: "agent" }] })).toEqual(["task.destination.kind"]);
   });
 
   it("gives a required disposition policy a code to collect", () => {

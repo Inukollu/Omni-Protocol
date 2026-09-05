@@ -448,7 +448,7 @@ type Destination = {
   id: string;
   label: string;
   address: string;
-  kind: "queue" | "agent" | "external";
+  kind: "queue" | "external";
 };
 
 type DestinationDirectory = {
@@ -2694,8 +2694,14 @@ capabilities: {
 | Kind | What it means |
 | --- | --- |
 | `queue` | A routing point on this provider. Whoever is next takes it, nobody is named, and the provider keeps the contact. |
-| `agent` | One named person on this provider. The provider keeps the contact and knows who has it. |
 | `external` | An address outside this provider — another platform, a PSTN number, a partner's line. The contact leaves, and the provider generally stops being able to report on it. |
+
+**An agent never transfers to a named agent**, warm or cold. A contact that needs another pair of
+hands goes back to a queue, and who takes it next is the queue's decision: routing by skill,
+availability and fairness is what the queue is for, and a hand-off to a chosen colleague bypasses
+all three. A platform whose directory names people publishes them as queues of one if it must, and
+the desk shows no agent picker. The one way a named person ends up with an agent's call is a lead
+taking it over through lead assist, which is the lead's act, not a transfer the agent chose.
 
 A destination the agent types is not in the directory and has no `kind`. Omni treats it as
 `external` unless the provider says otherwise in its response, because that is the assumption that
