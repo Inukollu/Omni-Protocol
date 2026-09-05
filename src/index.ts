@@ -488,8 +488,8 @@ export type TaskCapabilities<C extends Channel = Channel> =
         recording?: Lockable<true>;
       }
     : C extends "chat"
-      ? SharedTaskCapabilities & { reject?: Lockable<true>; hold?: Lockable<true> }
-      : SharedTaskCapabilities & { reject?: Lockable<true> };
+      ? SharedTaskCapabilities & { decline?: Lockable<true>; hold?: Lockable<true> }
+      : SharedTaskCapabilities & { decline?: Lockable<true> };
 
 // ---------------------------------------------------------------------------
 // Task workspace.
@@ -787,8 +787,8 @@ export type TaskOutcome =
 export const TASK_COMMAND_NAMES = {
   voice: ["answer", "decline", "start-call", "mute", "hold", "resume", "disconnect",
           "connect-back", "transfer", "lead-assist", "conference", "recording", "complete"],
-  chat: ["accept", "reject", "pause", "resume", "complete"],
-  email: ["accept", "reject", "complete"],
+  chat: ["accept", "decline", "pause", "resume", "complete"],
+  email: ["accept", "decline", "complete"],
 } as const;
 
 export type TaskCommandName<C extends keyof typeof TASK_COMMAND_NAMES> =
@@ -834,14 +834,14 @@ export type VoiceTaskCommand =
 
 export type ChatTaskCommand =
   | { type: "accept" }
-  | { type: "reject" }
+  | { type: "decline" }
   | { type: "pause" }
   | { type: "resume" }
   | ({ type: "complete" } & DispositionPayload);
 
 export type EmailTaskCommand =
   | { type: "accept" }
-  | { type: "reject" }
+  | { type: "decline" }
   | ({ type: "complete" } & DispositionPayload);
 
 export interface CustomTaskCommand {

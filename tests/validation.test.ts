@@ -282,7 +282,7 @@ describe("validateTask", () => {
     // cannot work.
     expect(rules(validateTask(task({ channel: "email", capabilities: { mute: true } }), { channel: "email" })))
       .toContain("task.capability.channel");
-    expect(rules(validateTask(task({ channel: "email", capabilities: { reject: true } }), { channel: "email" }))).toEqual([]);
+    expect(rules(validateTask(task({ channel: "email", capabilities: { decline: true } }), { channel: "email" }))).toEqual([]);
   });
 
   it("ties browser reuse to an isolation scheme in both directions", () => {
