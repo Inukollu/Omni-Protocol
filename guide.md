@@ -20,7 +20,7 @@ are used precisely throughout and mean nothing looser here.
 | **Host** | Omni, named that way where the contrast with a provider is the point — *the host carries the audio*, *host-side input*. |
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
-| **Agent** | The person signed in and taking work. Not to be confused with a transfer destination whose `kind` is `agent`, which is a routing target. |
+| **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; a transfer never names one, since a contact goes back to a queue. |
 | **Lead** | An agent whose login declares `capabilities.team`. The provider publishes a `TeamRoster` to them and to nobody else: **the login is the permission**. |
 | **Provisioning** | Omni-side policy about this agent, configured outside the protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and provisioning disagree, the stricter wins. |
 | **Task** | One unit of assigned work — a call, a chat, a mail. |
