@@ -132,7 +132,7 @@ const EXPLAINED_FAILURES: readonly DialOutcome[] = ["busy", "no-answer", "unreac
 const ON_CALL_ROLES = membersOf<OnCallRole>({ party: true, agent: true, consulted: true, conferenced: true });
 const ON_CALL_STAGES = membersOf<OnCallStage>({ ringing: true, joined: true });
 /** The task capabilities under which a command dials, and so need the manifest to say how a dial ends. */
-const DIALLING_CAPABILITIES = ["connectBack", "blindTransfer", "consultTransfer", "conference"] as const;
+const DIALLING_CAPABILITIES = ["connectBack", "coldTransfer", "warmTransfer", "conference"] as const;
 const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
   reconnected: true, "provider-requested": true,
 });
@@ -156,7 +156,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
     browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
-    agentDisconnect: true, connectBack: true, blindTransfer: true, consultTransfer: true, leadAssist: true, conference: true, recording: true,
+    agentDisconnect: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, decline: true, hold: true }),
   email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, decline: true }),
@@ -1066,8 +1066,8 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     switch (name) {
       case "dispositions": validateDispositions(declared, `${path}.capabilities.dispositions`, into); break;
       case "custom": validateCustomCapabilities(declared, `${path}.capabilities.custom`, into); break;
-      case "blindTransfer":
-      case "consultTransfer":
+      case "coldTransfer":
+      case "warmTransfer":
       case "conference": validateDestinationDirectory(declared, `${path}.capabilities.${name}`, into); break;
       default:
         // Presence is the permission: the flag capabilities carry no payload, so anything but

@@ -35,7 +35,7 @@ are used precisely throughout and mean nothing looser here.
 | **Event** | One completed transaction reported after a snapshot established the baseline. |
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, roster. |
-| **Dial** | One outbound call the host asks a provider to place — from the idle dialpad, a transfer, a conference add, or a connect-back. Identified by the host's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
+| **Dial** | One outbound call the host asks a provider to place — from the idle dialpad, a cold or warm transfer, a conference add, or a connect-back. Identified by the host's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
 | **Monitor** | A lead listening to a member's call unasked, from the roster: `monitor` in silence, `whisper` heard by the agent alone, `barge` heard by everyone. Nothing of it reaches the member's task, and there is no take-over in it. See **Monitoring a call**. |
 | **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in from the moment their dial is placed. |
 
@@ -481,8 +481,8 @@ type TaskCapabilities<C extends Channel = Channel> =
         hold?: Lockable<true>;
         agentDisconnect?: Lockable<true>;
         connectBack?: Lockable<true>;
-        blindTransfer?: Lockable<true | DestinationDirectory>;
-        consultTransfer?: Lockable<true | DestinationDirectory>;
+        coldTransfer?: Lockable<true | DestinationDirectory>;
+        warmTransfer?: Lockable<true | DestinationDirectory>;
         leadAssist?: Lockable<true>;
         conference?: Lockable<true | DestinationDirectory>;
         recording?: Lockable<true>;
@@ -707,8 +707,8 @@ type VoiceTaskCommand =
   | { type: "resume" }
   | { type: "disconnect" }
   | { type: "connect-back"; dialId: DialId }
-  | { type: "transfer"; dialId: DialId; destination: string; action?: never }
-  | { type: "transfer"; action: "consult"; dialId: DialId; destination: string }
+  | { type: "transfer"; action: "cold"; dialId: DialId; destination: string }
+  | { type: "transfer"; action: "warm"; dialId: DialId; destination: string }
   | { type: "transfer"; action: "complete" }
   | { type: "transfer"; action: "cancel" }
   | { type: "lead-assist"; action: "request"; note?: string }
@@ -2198,9 +2198,9 @@ The canonical task transitions are:
 | `pending` | Provider withdraws the allocation | Removed by `task-ended` with `cancelled` outcome |
 | No task | Snapshot reports work already underway | `in-progress` |
 | `in-progress` | Provider or agent pauses the task | `paused` |
-| `in-progress` | Agent consults a transfer destination (`transfer` `consult`); the customer is parked | `paused` |
+| `in-progress` | Agent starts a warm transfer (`transfer` `warm`); the customer is parked | `paused` |
 | `paused` | Provider or agent resumes the task | `in-progress` |
-| `paused` | Agent cancels a consultation (`transfer` `cancel`) | `in-progress` |
+| `paused` | Agent cancels a warm transfer (`transfer` `cancel`) | `in-progress` |
 | `in-progress` or `paused` | Contact handling ends and follow-up work remains | `completing` |
 | `completing` | Agent connects back to the party (`connect-back`) | `in-progress` |
 | Any phase | Provider emits `task-ended` | Removed |
@@ -2591,8 +2591,8 @@ const taskCapabilities = {
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
 | `agentDisconnect` | Primary button: Disconnect | Omni may disconnect real-time media without disposing the task. |
 | `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance disposes at provider end. See **Connecting back during completion**. |
-| `blindTransfer` | Secondary menu item: Blind transfer | Omni may transfer the caller directly to a destination. |
-| `consultTransfer` | Secondary menu item: Consult transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Consult transfer**. |
+| `coldTransfer` | Secondary menu item: Cold transfer | Omni may hand the customer straight to a destination, with nobody spoken to first. |
+| `warmTransfer` | Secondary menu item: Warm transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Warm transfer**. |
 | `leadAssist` | Secondary menu item: Lead assist | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.leadAssist`. See **Lead assist**. |
 | `conference` | Secondary button: Conference | Omni may dial a destination into the active call, and drop a `conferenced` entry from it -- one still ringing included, which calls the dial off. |
 | `recording` | Overflow menu item: Recording | Omni may expose start, pause, resume, and stop recording controls. |
@@ -2627,11 +2627,11 @@ capabilities: {
 With `dispositions: true` Omni shows a Complete control and sends `complete` with no code, because
 the provider published none.
 
-#### `blindTransfer`, `consultTransfer` and `conference`
+#### `coldTransfer`, `warmTransfer` and `conference`
 
 ```ts
 capabilities: {
-  blindTransfer: {
+  coldTransfer: {
     allowManualEntry: false,
     destinations: [
       { id: "tier2", label: "Tier 2 support", address: "+14155550111", kind: "queue" },
@@ -2659,18 +2659,19 @@ A destination the agent types is not in the directory and has no `kind`. Omni tr
 `external` unless the provider says otherwise in its response, because that is the assumption that
 does not overstate what the provider can still see.
 
-#### Consult transfer
+#### Warm transfer
 
-A consult transfer parks the customer, calls the destination so the agent can speak to it first,
-and then either hands the customer over or returns to them. It is its own capability, distinct
-from `blindTransfer` (a hand-over with nobody consulted) and from `conference` (everybody on one
-call): a queue may offer any of the three without the others, and each is declared on its own.
+A warm transfer parks the customer, calls the destination so the agent can speak to it first, and
+then either hands the customer over or returns to them. Cold and warm are the words agents use;
+telephony says blind and consult. It is its own capability, distinct from `coldTransfer` (a
+hand-over with nobody spoken to first) and from `conference` (everybody on one call): a queue may
+offer any of the three without the others, and each is declared on its own.
 
 ```ts
-// 1. Consult. A dial: the provider parks the customer and calls the destination, answers
+// 1. Warm. A dial: the provider parks the customer and calls the destination, answers
 //    `dialling`, and the task reports `paused` with the destination `consulted` on `onCall`
 //    while the call to it stands.
-{ type: "transfer", action: "consult", dialId: "dial-7f2", destination: "+14155550111" }
+{ type: "transfer", action: "warm", dialId: "dial-7f2", destination: "+14155550111" }
 
 // 2a. Hand the customer to the consulted destination and leave.
 { type: "transfer", action: "complete" }
@@ -2679,7 +2680,7 @@ call): a queue may offer any of the three without the others, and each is declar
 { type: "transfer", action: "cancel" }
 ```
 
-`consult` is gated by the `consultTransfer` capability and takes a destination exactly as a blind
+`warm` is gated by the `warmTransfer` capability and takes a destination exactly as a cold
 transfer does, from the same kind of directory. It is a dial, so it carries the host's `dialId`
 and is answered `dialling`, and its `dial-outcome` says whether the destination was reached. While
 the destination is on the line the task carries a `consulted` entry on `onCall`, and that presence
@@ -2687,7 +2688,7 @@ is what makes `complete` and `cancel` issuable -- they name no destination becau
 one they could mean, which is why a task carries at most one `consulted` entry
 (`task.onCall.consulted.single`). A consultation that could be started but not finished would
 strand the customer and the destination both, which is why all three are commands and a provider
-that offers `consultTransfer` implements all three.
+that offers `warmTransfer` implements all three.
 
 `applied` on `complete` says the provider is bridging the customer to the destination and
 dropping the agent's leg. What follows is what follows any transfer: the agent's media ends and
@@ -2836,7 +2837,7 @@ call it belonged to and never against the next one.
 The stream knows a dial from three places: `TaskStream.dialled(dialId)`, which a host calls when it
 places one; an entry on a task's `onCall`; and a step in its `handlingHistory`. Since a dialled entry
 is listed from placement, `dialled()` is load-bearing only for a dial that never has an entry -- a
-blind transfer, a connect-back, an idle dialpad call -- or whose entry has already left the room; an
+cold transfer, a connect-back, an idle dialpad call -- or whose entry has already left the room; an
 outcome for a dial nobody placed and no task mentions is what `stream.dialOutcome.unknown` refuses.
 
 **`answered` says what happened to the dial; `onCall` says who is in the room.** They are two
@@ -2855,7 +2856,7 @@ provider does report -- `busy`, `no-answer`, `unreachable`, `rejected` or `cance
 switch gave none, while one that reports none would be sending the generic failure this set exists
 to refuse. A provider that dials at all declares it: an idle
 dialpad requires it (`manifest.dialOutcomes.required`), and a task that declares `connectBack`,
-`blindTransfer`, `consultTransfer` or `conference` under a manifest without it is refused
+`coldTransfer`, `warmTransfer` or `conference` under a manifest without it is refused
 (`task.capability.dialOutcomes.required`). Off voice nothing dials, and the field is a compile
 error there.
 
@@ -3709,7 +3710,7 @@ declared:
 | `start-call` | The `preparing` phase. It starts the contact a preview gave the agent time to read, so the phase is the gate and there is no capability. |
 | `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
-| `transfer` with `action: "consult"` | The `consultTransfer` capability. Blind `transfer` is gated by `blindTransfer`; the two are declared and offered separately. |
+| `transfer` with `action: "warm"` | The `warmTransfer` capability. `action: "cold"` is gated by `coldTransfer`; the two are declared and offered separately. |
 | `transfer` with `action: "complete"` or `"cancel"` | A consultation in progress -- a `consulted` entry on `Task.onCall`. Without one there is nothing to complete or cancel, and a provider that receives either answers `failed`. |
 | `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with status `requested`. |
 | `lead-assist` with `action: "take-over"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |

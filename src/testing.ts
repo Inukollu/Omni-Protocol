@@ -98,7 +98,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (value.acceptance !== undefined) seen.add("task.acceptance");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
   if (isRecord(capabilities.dispositions)) seen.add("task.dispositions");
-  for (const directory of ["blindTransfer", "consultTransfer", "conference"]) {
+  for (const directory of ["coldTransfer", "warmTransfer", "conference"]) {
     const declared = capabilities[directory];
     if (isRecord(declared) && some(declared.destinations)) seen.add("task.destinations");
   }

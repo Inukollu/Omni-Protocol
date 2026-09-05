@@ -139,9 +139,11 @@ export const chatConnectBackCapability: Task<"chat">["capabilities"] = { connect
 // @ts-expect-error Email has nobody to connect back to.
 export const emailConnectBack: TaskCommand<"email"> = { type: "connect-back", dialId: "dial-1" };
 
-// A transfer is blind with a destination, or one of the three consult steps; never both at once.
-export const blindTransfer: TaskCommand<"voice"> = { type: "transfer", dialId: "dial-2", destination: "+14155550111" };
-export const consult: TaskCommand<"voice"> = { type: "transfer", action: "consult", dialId: "dial-3", destination: "+14155550111" };
+// A transfer is cold or warm with a destination, or one of the two steps that finish a warm one.
+export const coldTransfer: TaskCommand<"voice"> = { type: "transfer", action: "cold", dialId: "dial-2", destination: "+14155550111" };
+// @ts-expect-error renamed away: a transfer says whether it is cold or warm; an arm with no action is gone.
+export const actionlessTransfer: TaskCommand<"voice"> = { type: "transfer", dialId: "dial-2", destination: "+14155550111" };
+export const consult: TaskCommand<"voice"> = { type: "transfer", action: "warm", dialId: "dial-3", destination: "+14155550111" };
 // @ts-expect-error A transfer dials its destination, so it carries the host's dialId.
 export const unplacedTransfer: TaskCommand<"voice"> = { type: "transfer", destination: "+14155550111" };
 export const completeConsultation: TaskCommand<"voice"> = { type: "transfer", action: "complete" };
@@ -151,7 +153,7 @@ export const aimlessTransfer: TaskCommand<"voice"> = { type: "transfer" };
 // @ts-expect-error Completing a consultation names no destination: there is exactly one already.
 export const overdeterminedCompletion: TaskCommand<"voice"> = { type: "transfer", action: "complete", destination: "+14155550111" };
 // Who is on the call is voice-only, like the commands that bring people onto it.
-export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { consultTransfer: true }, phase: "paused", onCall: [{ role: "consulted", destination: "+14155550111", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
+export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { warmTransfer: true }, phase: "paused", onCall: [{ role: "consulted", destination: "+14155550111", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
 // @ts-expect-error A dialled entry says where it stands: ringing or joined.
 export const unstagedConsulted: OnCall = { role: "consulted", destination: "+14155550111", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error Email has nobody on a call.

@@ -493,9 +493,9 @@ export type TaskCapabilities<C extends Channel = Channel> =
         agentDisconnect?: Lockable<true>;
         /** Connect back to the party while `completing`, whoever placed the call; the task returns to `in-progress`. */
         connectBack?: Lockable<true>;
-        blindTransfer?: Lockable<true | DestinationDirectory>;
+        coldTransfer?: Lockable<true | DestinationDirectory>;
         /** Park the customer and call a destination first; then `complete` or `cancel`. */
-        consultTransfer?: Lockable<true | DestinationDirectory>;
+        warmTransfer?: Lockable<true | DestinationDirectory>;
         /** Ask a lead to join this call, with a note. The lead's decision arrives on `Task.leadAssist`. */
         leadAssist?: Lockable<true>;
         conference?: Lockable<true | DestinationDirectory>;
@@ -837,10 +837,10 @@ export type VoiceTaskCommand =
   | { type: "disconnect" }
   /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
   | { type: "connect-back"; dialId: DialId }
-  /** Blind: hand the customer to `destination` with nobody consulted. Gated by `blindTransfer`. */
-  | { type: "transfer"; dialId: DialId; destination: string; action?: never }
-  /** Park the customer and call `destination` first. Gated by `consultTransfer`. */
-  | { type: "transfer"; action: "consult"; dialId: DialId; destination: string }
+  /** Cold: hand the customer to `destination` with nobody spoken to first. Gated by `coldTransfer`. */
+  | { type: "transfer"; action: "cold"; dialId: DialId; destination: string }
+  /** Warm: park the customer and call `destination` first. Gated by `warmTransfer`. */
+  | { type: "transfer"; action: "warm"; dialId: DialId; destination: string }
   /** Hand the customer to the consulted destination and leave. Needs a `consulted` entry on `Task.onCall`. */
   | { type: "transfer"; action: "complete" }
   /** Drop the consulted destination and return to the customer. Needs a `consulted` entry on `Task.onCall`. */
@@ -906,7 +906,7 @@ export type TaskCommandResult =
 /** The dial a command places, by the host's identity for it; `undefined` for a command that dials nothing. */
 export function commandDialId(command: TaskCommand): DialId | undefined {
   if (command.type === "connect-back") return command.dialId;
-  if (command.type === "transfer" && (command.action === undefined || command.action === "consult")) return command.dialId;
+  if (command.type === "transfer" && (command.action === "cold" || command.action === "warm")) return command.dialId;
   if (command.type === "conference" && command.action === "add") return command.dialId;
   return undefined;
 }

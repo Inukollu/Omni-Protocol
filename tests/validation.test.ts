@@ -161,7 +161,7 @@ describe("validateTask", () => {
   it("lets a control stand locked in its place, naming the level, and never a queue's own content", () => {
     const caps = (capabilities: unknown) => rules(validateTask(task({ capabilities }), { channel: "voice" }));
     expect(caps({ hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" }, recording: { lockedBy: "site" } })).toEqual([]);
-    expect(caps({ blindTransfer: { lockedBy: "org" } })).toEqual([]);
+    expect(caps({ coldTransfer: { lockedBy: "org" } })).toEqual([]);
     expect(caps({ mute: { lockedBy: "person" } })).toEqual(["task.capability.locked.lockedBy.person"]);
     // A level is one of the four defaults when the manifest declares no ladder.
     expect(caps({ mute: { lockedBy: "org" } })).toEqual([]);
@@ -176,8 +176,8 @@ describe("validateTask", () => {
     expect(caps({ mute: { lockedBy: "team", reason: "" } })).toEqual(["task.capability.locked.reason"]);
     expect(caps({ browsers: { lockedBy: "team" } })).toEqual(["task.capability.locked.unexpected"]);
     // lockedBy is the discriminant: a directory carrying it would read as a lock, so it may not.
-    expect(caps({ blindTransfer: { allowManualEntry: true, destinations: [] } })).toEqual([]);
-    expect(caps({ blindTransfer: { lockedBy: "org" } })).toEqual([]);
+    expect(caps({ coldTransfer: { allowManualEntry: true, destinations: [] } })).toEqual([]);
+    expect(caps({ coldTransfer: { lockedBy: "org" } })).toEqual([]);
     // A chat task has no mute to lock; the channel rule speaks first.
     expect(rules(validateTask(task({ channel: "chat", capabilities: { mute: { lockedBy: "team" } } }), { channel: "chat" }))).toEqual(["task.capability.channel"]);
   });
@@ -816,7 +816,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("gives a directory something to offer, and keeps its ids unique", () => {
-    const directory = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { blindTransfer: { allowManualEntry: false, ...over } } }), voice));
+    const directory = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { coldTransfer: { allowManualEntry: false, ...over } } }), voice));
     const tier2 = { id: "t2", label: "Tier 2", address: "+14155550111", kind: "queue" };
     expect(directory({ destinations: [tier2] })).toEqual([]);
     expect(directory({ allowManualEntry: true })).toEqual([]);
@@ -1196,17 +1196,17 @@ describe("connectBack is a voice capability", () => {
   });
 });
 
-describe("consult transfer", () => {
+describe("warm transfer", () => {
   const voice = { channel: "voice" };
   it("is its own capability, declared like the other directories, and voice only", () => {
-    expect(rules(validateTask(task({ capabilities: { consultTransfer: true } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ capabilities: { consultTransfer: { allowManualEntry: false, destinations: [{ id: "t2", label: "Tier 2", address: "+14155550111", kind: "queue" }] } } }), voice))).toEqual([]);
-    // The same directory rules as blindTransfer: a directory with nothing in it must allow typing.
-    expect(rules(validateTask(task({ capabilities: { consultTransfer: { allowManualEntry: true } } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ capabilities: { consultTransfer: { allowManualEntry: false } } }), voice))).toEqual(["task.destinations.offer"]);
-    expect(rules(validateTask(task({ capabilities: { consultTransfer: { destinations: [] } } }), voice))).toContain("task.destinations.allowManualEntry");
+    expect(rules(validateTask(task({ capabilities: { warmTransfer: true } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { warmTransfer: { allowManualEntry: false, destinations: [{ id: "t2", label: "Tier 2", address: "+14155550111", kind: "queue" }] } } }), voice))).toEqual([]);
+    // The same directory rules as coldTransfer: a directory with nothing in it must allow typing.
+    expect(rules(validateTask(task({ capabilities: { warmTransfer: { allowManualEntry: true } } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { warmTransfer: { allowManualEntry: false } } }), voice))).toEqual(["task.destinations.offer"]);
+    expect(rules(validateTask(task({ capabilities: { warmTransfer: { destinations: [] } } }), voice))).toContain("task.destinations.allowManualEntry");
     for (const channel of ["chat", "email"]) {
-      expect(rules(validateTask(task({ channel, capabilities: { consultTransfer: true } }), { channel }))).toContain("task.capability.channel");
+      expect(rules(validateTask(task({ channel, capabilities: { warmTransfer: true } }), { channel }))).toContain("task.capability.channel");
     }
   });
 
@@ -1288,7 +1288,7 @@ describe("every dial has an outcome", () => {
   });
 
   it("requires a task that may dial to come from a manifest that says how a dial ends", () => {
-    for (const name of ["connectBack", "blindTransfer", "consultTransfer", "conference"]) {
+    for (const name of ["connectBack", "coldTransfer", "warmTransfer", "conference"]) {
       const dials = task({ capabilities: { [name]: true } });
       expect(rules(validateSnapshot(snapshot({ tasks: [dials] }), dialling()))).toEqual([]);
       expect(rules(validateSnapshot(snapshot({ tasks: [dials] }), manifest()))).toEqual(["task.capability.dialOutcomes.required"]);
