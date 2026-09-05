@@ -5,6 +5,8 @@ import {
   DEFAULT_TASK_PHASE_LABELS,
   DEFAULT_TASK_TYPE_PRESENTATION,
   DIAL_OUTCOMES,
+  MONITORING_BREAK_KINDS,
+  breakKindAllowsMonitoring,
   HANDLING_STEPS_THAT_DIAL,
   HANDLING_STEPS_WITH_A_PERSON,
   IDLE_CAPABILITIES,
@@ -262,6 +264,15 @@ describe("handlingStepExpectsAPerson", () => {
       expect(handlingStepExpectsAPerson(step)).toBe(true);
     }
     expect(HANDLING_STEPS_WITH_A_PERSON).toEqual(everyStep.filter(step => step !== "queued"));
+  });
+});
+
+describe("monitoring during a break", () => {
+  it("allows the working kinds of break and no other", () => {
+    expect(MONITORING_BREAK_KINDS).toEqual(["coaching", "administrative", "training"]);
+    for (const kind of MONITORING_BREAK_KINDS) expect(breakKindAllowsMonitoring(kind)).toBe(true);
+    for (const kind of ["short-break", "meal", "rest", "meeting", "technical", "personal", "other"] as const) expect(breakKindAllowsMonitoring(kind)).toBe(false);
+    expect(breakKindAllowsMonitoring(undefined)).toBe(false);
   });
 });
 
