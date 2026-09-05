@@ -418,7 +418,7 @@ describe("validateTeamRoster", () => {
     expect(policies({ telepathy: { setting: "on", setBy: "team" } })).toEqual(["team.policy.key"]);
     expect(policies({ mute: "off" })).toEqual(["team.policy.shape"]);
     expect(policies({ mute: { setting: "maybe", setBy: "team" } })).toEqual(["team.policy.setting"]);
-    expect(policies({ callback: { setting: "person", setBy: "team" } })).toEqual(["team.policy.person"]);
+    expect(policies({ connectBack: { setting: "person", setBy: "team" } })).toEqual(["team.policy.person"]);
     expect(policies({ dial: { setting: "person", setBy: "team" } })).toEqual(["team.policy.person"]);
     expect(policies({ mute: { setting: "off" } })).toEqual(["team.policy.setBy"]);
     expect(policies({ mute: { setting: "off", setBy: "person" } })).toEqual(["team.policy.setBy"]);
@@ -1038,7 +1038,7 @@ describe("validateAuthenticationState", () => {
     expect(prefs([{ ...mute, lockedBy: "site", reason: "No mute at this site" }])).toEqual([]);
     expect(prefs(undefined)).toEqual([]);
     expect(prefs([])).toEqual(["authentication.capability.preferences.empty"]);
-    expect(prefs([{ ...mute, id: "callback" }])).toEqual(["preference.id"]);
+    expect(prefs([{ ...mute, id: "connectBack" }])).toEqual(["preference.id"]);
     expect(prefs([{ ...mute, id: "skill:" }])).toEqual(["preference.id"]);
     expect(prefs([mute, mute])).toEqual(["preference.unique"]);
     expect(prefs([{ id: "mute", enabled: true, setBy: "team" }])).toEqual(["preference.label"]);
@@ -1185,14 +1185,14 @@ describe("the wrap allowance follows the completion mode", () => {
   });
 });
 
-describe("callback is a voice capability", () => {
+describe("connectBack is a voice capability", () => {
   it("is accepted on voice and refused on every other channel, like the rest of the voice arm", () => {
-    expect(rules(validateTask(task({ capabilities: { callback: true } }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { connectBack: true } }), { channel: "voice" }))).toEqual([]);
     for (const channel of ["chat", "email"]) {
-      expect(rules(validateTask(task({ channel, capabilities: { callback: true } }), { channel }))).toContain("task.capability.channel");
+      expect(rules(validateTask(task({ channel, capabilities: { connectBack: true } }), { channel }))).toContain("task.capability.channel");
     }
     // Presence is the permission: the flag carries no payload.
-    expect(rules(validateTask(task({ capabilities: { callback: false } }), { channel: "voice" }))).toContain("task.capability.value");
+    expect(rules(validateTask(task({ capabilities: { connectBack: false } }), { channel: "voice" }))).toContain("task.capability.value");
   });
 });
 
@@ -1288,7 +1288,7 @@ describe("every dial has an outcome", () => {
   });
 
   it("requires a task that may dial to come from a manifest that says how a dial ends", () => {
-    for (const name of ["callback", "blindTransfer", "consultTransfer", "conference"]) {
+    for (const name of ["connectBack", "blindTransfer", "consultTransfer", "conference"]) {
       const dials = task({ capabilities: { [name]: true } });
       expect(rules(validateSnapshot(snapshot({ tasks: [dials] }), dialling()))).toEqual([]);
       expect(rules(validateSnapshot(snapshot({ tasks: [dials] }), manifest()))).toEqual(["task.capability.dialOutcomes.required"]);

@@ -130,7 +130,7 @@ const EXPLAINED_FAILURES: readonly DialOutcome[] = ["busy", "no-answer", "unreac
 const ON_CALL_ROLES = membersOf<OnCallRole>({ party: true, agent: true, consulted: true, conferenced: true });
 const ON_CALL_STAGES = membersOf<OnCallStage>({ ringing: true, joined: true });
 /** The task capabilities under which a command dials, and so need the manifest to say how a dial ends. */
-const DIALLING_CAPABILITIES = ["callback", "blindTransfer", "consultTransfer", "conference"] as const;
+const DIALLING_CAPABILITIES = ["connectBack", "blindTransfer", "consultTransfer", "conference"] as const;
 const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
   reconnected: true, "provider-requested": true,
 });
@@ -153,7 +153,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
     browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
-    agentDisconnect: true, callback: true, blindTransfer: true, consultTransfer: true, leadAssist: true, conference: true, recording: true,
+    agentDisconnect: true, connectBack: true, blindTransfer: true, consultTransfer: true, leadAssist: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, reject: true, hold: true }),
   email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, reject: true }),

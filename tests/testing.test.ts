@@ -221,7 +221,7 @@ describe("assertMediaFollowsTheTask", () => {
 
   it("accepts a call offered, started, made ready, whose media ends, completing, then ending", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), ended]))).toEqual([]);
-    // A snapshot may carry the task in with its media ready; a callback puts media back and it ends again.
+    // A snapshot may carry the task in with its media ready; connecting back puts media back and it ends again.
     expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), updated("in-progress", "e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [{ ...call("in-progress"), media: "started" }], taskCount: 1 }))).toEqual([]);
   });
 
