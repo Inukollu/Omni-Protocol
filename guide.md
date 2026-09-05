@@ -35,7 +35,7 @@ are used precisely throughout and mean nothing looser here.
 | **Event** | One completed transaction reported after a snapshot established the baseline. |
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, roster. |
-| **Dial** | One outbound call the host asks a provider to place — from the idle dialpad, a transfer, a conference add, or a callback. Identified by the host's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
+| **Dial** | One outbound call the host asks a provider to place — from the idle dialpad, a transfer, a conference add, or a connect-back. Identified by the host's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
 | **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in from the moment their dial is placed. |
 
 Six words describe *what state a thing is in*, and they are not interchangeable: each belongs to
@@ -476,7 +476,7 @@ type TaskCapabilities<C extends Channel = Channel> =
         mute?: Lockable<true>;
         hold?: Lockable<true>;
         agentDisconnect?: Lockable<true>;
-        callback?: Lockable<true>;
+        connectBack?: Lockable<true>;
         blindTransfer?: Lockable<true | DestinationDirectory>;
         consultTransfer?: Lockable<true | DestinationDirectory>;
         leadAssist?: Lockable<true>;
@@ -671,7 +671,7 @@ const TASK_COMMAND_NAMES = {
     "hold",
     "resume",
     "disconnect",
-    "callback",
+    "connect-back",
     "transfer",
     "lead-assist",
     "conference",
@@ -695,7 +695,7 @@ type VoiceTaskCommand =
   | { type: "hold" }
   | { type: "resume" }
   | { type: "disconnect" }
-  | { type: "callback"; dialId: DialId }
+  | { type: "connect-back"; dialId: DialId }
   | { type: "transfer"; dialId: DialId; destination: string; action?: never }
   | { type: "transfer"; action: "consult"; dialId: DialId; destination: string }
   | { type: "transfer"; action: "complete" }
@@ -741,7 +741,7 @@ type TaskCommandResult =
 ### Who decides what an agent may do
 
 An agent desk has two managers, not one. **The queue** — a process, a work type — is owned by a
-process manager and **allows** a set of capabilities: hold, mute, callback, new call, conference,
+process manager and **allows** a set of capabilities: hold, mute, connect back, new call, conference,
 whether the number is visible, the actions it offers, the skills it needs. **The people** are
 managed through the organisation's structure — a team, a location, the organisation itself, in
 whatever combination the structure defines for a person — and **decide** per capability within
@@ -788,7 +788,7 @@ controls — is content, and is never locked.
 **A lead sets the team's policy from their roster.** A login that declares
 `capabilities.team.policyControl` may `executeTeamPolicy({ type: "set", capability, setting })`
 with `on`, `off`, or `person`, for any task control, `dial`, or a skill — and only `hold`, `mute`
-and skills may be `person`; callback and new call are the team's, on or off, within what the queue
+and skills may be `person`; connect back and new call are the team's, on or off, within what the queue
 allows. The roster carries `policies` for such a login: every policy as it stands, who set it, and
 `lockedBy` where a level above the team made it theirs to keep, which the lead sees and cannot
 change — `executeTeamPolicy` on it answers `failed` with `omni.capability-not-enabled`.
@@ -2177,7 +2177,7 @@ The canonical task transitions are:
 | `paused` | Provider or agent resumes the task | `in-progress` |
 | `paused` | Agent cancels a consultation (`transfer` `cancel`) | `in-progress` |
 | `in-progress` or `paused` | Contact handling ends and follow-up work remains | `completing` |
-| `completing` | Agent calls the party back (`callback`) | `in-progress` |
+| `completing` | Agent connects back to the party (`connect-back`) | `in-progress` |
 | Any phase | Provider emits `task-ended` | Removed |
 
 Allocation, acceptance, and progress are distinct. Acceptance follows `autoAcceptTasks` and the
@@ -2188,7 +2188,7 @@ command.
 **A task is never its audio.** A voice task is the allocation: the call is offered when it is
 routed to the agent and accepted as its `acceptance` dictates, and its presence and phase follow
 the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
-consult, a conference leg joining or leaving, a transfer, a callback — the media follows
+consult, a conference leg joining or leaving, a transfer, a connect-back — the media follows
 separately, arriving on `task-media-started`, attaching through `openMedia` and ending with
 `task-media-ended`. Omni does not ring,
 bridge, or hold a line. How the phone rings, whether it rings at all, and where legs join and leave
@@ -2197,7 +2197,7 @@ phase it is in.
 
 The line runs between the provider's word and Omni's own senses. `task-media-ended` is the
 provider's report that primary handling ended — a fact about the work, which is why the completion
-allowance starts on it and the callback control appears on it — and Omni follows that report as it
+allowance starts on it and the Connect back control appears on it — and Omni follows that report as it
 follows any other. What Omni never does is derive a task's state from its own media session: a
 stream that drops, a track that ends, a transport that disconnects, a microphone that fails, an
 endpoint re-registering change nothing about the task until the provider says so. Structurally:
@@ -2253,39 +2253,44 @@ and the agent takes as long as the work needs. Moving the task to `completing` l
 deadline is not an alternative on a media channel: the clock starts at a real event, and delaying
 that event would falsify the phase and everything timed from it.
 
-#### Calling back during completion
+#### Connecting back during completion
 
-A task that declares `callback` lets the agent reach the party again while the task is
-`completing` -- to finish what the call left unfinished, on the same task rather than a new one.
-Omni issues `{ type: "callback" }`; it is issuable only in `completing`, and only where the
-capability is declared. The provider knows who the party is; the command carries no destination.
+A task that declares `connectBack` lets the agent connect back to the party while the task is
+`completing` -- to finish what the call left unfinished, on the same task rather than a new one,
+whoever placed the call in the first place. Most such calls came in, so this is not a redial: the
+agent rings a party who rang them. Omni issues `{ type: "connect-back", dialId }`; it is issuable
+only in `completing`, and only where the capability is declared. The provider knows who the party
+is; the command carries no destination, and it is a dial like any other, so it carries the host's
+`dialId`, is answered `dialling`, and ends in one `dial-outcome`.
 
-On `applied` the provider is placing the call and the task returns to `in-progress`: the agent is
+On `dialling` the provider is placing the call and the task returns to `in-progress`: the agent is
 working again, and the wrap allowance is **discarded, not paused**. From there the call is
 reported as any call is -- `paused`, `in-progress`, and when its media ends, `task-media-ended`
-again, which starts a fresh allowance from that instant. A party who does not answer is a call
-whose media ended: the task returns to `completing` through the same event and the clock starts
-again from there. At no point is an agent dialling against a deadline.
+again, which starts a fresh allowance from that instant. A party who does not answer is a dial
+whose outcome says so and a call whose media ended: the task returns to `completing` through the
+same event and the clock starts again from there. At no point is an agent dialling against a
+deadline.
 
 **The control exists only while there is a window to use it in.** Under `agent-command` the task
 stays `completing` until the agent completes it, so the window is open for as long as they need.
 Under `provider-automatic` the window is the allowance -- and with `wrapAllowance: 0` there
-is none: the provider disposes the task at provider end, and Omni does not offer Call back, whatever
-the task declares. A capability names a control that can be used; on a task with no `completing`
+is none: the provider disposes the task at provider end, and Omni does not offer Connect back,
+whatever the task declares. A capability names a control that can be used; on a task with no `completing`
 window it cannot, and declaring it there changes nothing.
 
 ```ts
-const callbackCapable = {
+const connectBackCapable = {
   channel: "voice",
-  capabilities: { hold: true, callback: true, dispositions: true },
+  capabilities: { hold: true, connectBack: true, dispositions: true },
   phase: "completing",
   completionMode: "provider-automatic",
   wrapAllowance: 30,
 } satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "completionMode" | "wrapAllowance">;
 ```
 
-With ten seconds of the thirty left, the agent presses Call back: `execute({ command: { type:
-"callback" } })` returns `applied`, the task is `in-progress`, and the thirty seconds are gone.
+With ten seconds of the thirty left, the agent presses Connect back: `execute({ command: { type:
+"connect-back", dialId } })` returns `dialling`, the task is `in-progress`, and the thirty seconds
+are gone.
 The second call ends: `task-media-ended`, the task is `completing`, and a new thirty seconds runs
 from that instant.
 
@@ -2560,7 +2565,7 @@ const taskCapabilities = {
 | `mute` | Primary toggle: Mute | Omni may mute and unmute the agent's outbound audio. |
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
 | `agentDisconnect` | Primary button: Disconnect | Omni may disconnect real-time media without disposing the task. |
-| `callback` | Completing-task button: Call back | Omni may have the provider call the task's party back while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance disposes at provider end. See **Calling back during completion**. |
+| `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance disposes at provider end. See **Connecting back during completion**. |
 | `blindTransfer` | Secondary menu item: Blind transfer | Omni may transfer the caller directly to a destination. |
 | `consultTransfer` | Secondary menu item: Consult transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Consult transfer**. |
 | `leadAssist` | Secondary menu item: Lead assist | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.leadAssist`. See **Lead assist**. |
@@ -2746,7 +2751,7 @@ inside Omni.
 ## Every dial has an outcome
 
 Four commands place a call: `dial` from the idle dialpad, a blind or consult `transfer`, a
-`conference` `add`, and `callback`. Each is accepted or refused at once, and each then ends later
+`conference` `add`, and `connect-back`. Each is accepted or refused at once, and each then ends later
 and apart from its answer -- the destination picks up, is busy, or never does -- and a dial placed
 late in a call routinely outlives the call. Nothing in between is reported: the wire says
 `dialling`, then says how it ended, once.
@@ -2806,7 +2811,7 @@ call it belonged to and never against the next one.
 The stream knows a dial from three places: `TaskStream.dialled(dialId)`, which a host calls when it
 places one; an entry on a task's `onCall`; and a step in its `handlingHistory`. Since a dialled entry
 is listed from placement, `dialled()` is load-bearing only for a dial that never has an entry -- a
-blind transfer, a callback, an idle dialpad call -- or whose entry has already left the room; an
+blind transfer, a connect-back, an idle dialpad call -- or whose entry has already left the room; an
 outcome for a dial nobody placed and no task mentions is what `stream.dialOutcome.unknown` refuses.
 
 **`answered` says what happened to the dial; `onCall` says who is in the room.** They are two
@@ -2824,7 +2829,7 @@ provider does report -- `busy`, `no-answer`, `unreachable`, `rejected` or `cance
 (`manifest.dialOutcomes.unexplained.alone`): a provider that reports causes may honestly say the
 switch gave none, while one that reports none would be sending the generic failure this set exists
 to refuse. A provider that dials at all declares it: an idle
-dialpad requires it (`manifest.dialOutcomes.required`), and a task that declares `callback`,
+dialpad requires it (`manifest.dialOutcomes.required`), and a task that declares `connectBack`,
 `blindTransfer`, `consultTransfer` or `conference` under a manifest without it is refused
 (`task.capability.dialOutcomes.required`). Off voice nothing dials, and the field is a compile
 error there.
@@ -3611,7 +3616,7 @@ declared:
 | `decline`, `reject` | The channel's decline or reject capability, **and** Omni provisioning permitting rejection. |
 | `start-call` | The `preparing` phase. It starts the contact a preview gave the agent time to read, so the phase is the gate and there is no capability. |
 | `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. |
-| `callback` | The `callback` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
+| `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | `transfer` with `action: "consult"` | The `consultTransfer` capability. Blind `transfer` is gated by `blindTransfer`; the two are declared and offered separately. |
 | `transfer` with `action: "complete"` or `"cancel"` | A consultation in progress -- a `consulted` entry on `Task.onCall`. Without one there is nothing to complete or cancel, and a provider that receives either answers `failed`. |
 | `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with status `requested`. |

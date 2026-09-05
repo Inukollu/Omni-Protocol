@@ -477,8 +477,8 @@ export type TaskCapabilities<C extends Channel = Channel> =
         mute?: Lockable<true>;
         hold?: Lockable<true>;
         agentDisconnect?: Lockable<true>;
-        /** Reach the party again while `completing`; the task returns to `in-progress`. */
-        callback?: Lockable<true>;
+        /** Connect back to the party while `completing`, whoever placed the call; the task returns to `in-progress`. */
+        connectBack?: Lockable<true>;
         blindTransfer?: Lockable<true | DestinationDirectory>;
         /** Park the customer and call a destination first; then `complete` or `cancel`. */
         consultTransfer?: Lockable<true | DestinationDirectory>;
@@ -786,7 +786,7 @@ export type TaskOutcome =
 
 export const TASK_COMMAND_NAMES = {
   voice: ["answer", "decline", "start-call", "mute", "hold", "resume", "disconnect",
-          "callback", "transfer", "lead-assist", "conference", "recording", "complete"],
+          "connect-back", "transfer", "lead-assist", "conference", "recording", "complete"],
   chat: ["accept", "reject", "pause", "resume", "complete"],
   email: ["accept", "reject", "complete"],
 } as const;
@@ -807,8 +807,8 @@ export type VoiceTaskCommand =
   | { type: "hold" }
   | { type: "resume" }
   | { type: "disconnect" }
-  /** Issuable only in `completing`, under the `callback` capability. Dials the party's own number, so it names none. */
-  | { type: "callback"; dialId: DialId }
+  /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
+  | { type: "connect-back"; dialId: DialId }
   /** Blind: hand the customer to `destination` with nobody consulted. Gated by `blindTransfer`. */
   | { type: "transfer"; dialId: DialId; destination: string; action?: never }
   /** Park the customer and call `destination` first. Gated by `consultTransfer`. */
@@ -877,7 +877,7 @@ export type TaskCommandResult =
 
 /** The dial a command places, by the host's identity for it; `undefined` for a command that dials nothing. */
 export function commandDialId(command: TaskCommand): DialId | undefined {
-  if (command.type === "callback") return command.dialId;
+  if (command.type === "connect-back") return command.dialId;
   if (command.type === "transfer" && (command.action === undefined || command.action === "consult")) return command.dialId;
   if (command.type === "conference" && command.action === "add") return command.dialId;
   return undefined;
@@ -1101,8 +1101,8 @@ export type OpenMediaResult =
 /**
  * What the team may leave to the person: a capability by its own name -- `hold`, `mute` -- or a
  * skill by its provider id. The same key as in `Task.capabilities`, because it is the same
- * capability seen at another level. Callback and new call are never the person's; they are the
- * team's, on or off, within what the queue allows.
+ * capability seen at another level. Connecting back and a new call are never the person's; they
+ * are the team's, on or off, within what the queue allows.
  */
 export type PreferenceId = "hold" | "mute" | `skill:${string}`;
 

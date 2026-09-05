@@ -127,15 +127,15 @@ export const timedProviderAutomaticTask = { ...emailTask, id: "email-4", complet
 // @ts-expect-error provider-automatic completion needs an allowance to act on.
 export const untimedProviderAutomaticTask: Task<"email"> = { ...emailTask, id: "email-5", completionMode: "provider-automatic", wrapAllowance: undefined };
 
-// Calling back belongs to voice: the capability and the command exist on no other channel.
-export const callbackCapableVoiceTask = { ...emailTask, id: "call-9", channel: "voice", capabilities: { callback: true, dispositions: true } } satisfies Task<"voice">;
-export const voiceCallback: TaskCommand<"voice"> = { type: "callback", dialId: "dial-1" };
-// @ts-expect-error A callback dials, and every dial carries the host's dialId.
-export const unplacedCallback: TaskCommand<"voice"> = { type: "callback" };
-// @ts-expect-error Chat has nobody to call back.
-export const chatCallbackCapability: Task<"chat">["capabilities"] = { callback: true };
-// @ts-expect-error Email has nobody to call back.
-export const emailCallback: TaskCommand<"email"> = { type: "callback", dialId: "dial-1" };
+// Connecting back belongs to voice: the capability and the command exist on no other channel.
+export const connectBackCapableVoiceTask = { ...emailTask, id: "call-9", channel: "voice", capabilities: { connectBack: true, dispositions: true } } satisfies Task<"voice">;
+export const voiceConnectBack: TaskCommand<"voice"> = { type: "connect-back", dialId: "dial-1" };
+// @ts-expect-error Connecting back dials, and every dial carries the host's dialId.
+export const unplacedConnectBack: TaskCommand<"voice"> = { type: "connect-back" };
+// @ts-expect-error Chat has nobody to connect back to.
+export const chatConnectBackCapability: Task<"chat">["capabilities"] = { connectBack: true };
+// @ts-expect-error Email has nobody to connect back to.
+export const emailConnectBack: TaskCommand<"email"> = { type: "connect-back", dialId: "dial-1" };
 
 // A transfer is blind with a destination, or one of the three consult steps; never both at once.
 export const blindTransfer: TaskCommand<"voice"> = { type: "transfer", dialId: "dial-2", destination: "+14155550111" };
@@ -287,8 +287,8 @@ export const lockedMute: Task<"voice"> = { ...emailTask, id: "call-12", channel:
 // @ts-expect-error An email task has no mute to lock.
 export const emailLockedMute: Task<"email"> = { ...emailTask, capabilities: { mute: { lockedBy: "team" } } };
 export const skillChoice: AgentPreference = { id: "skill:billing", label: "Billing", enabled: true, setBy: "person" };
-// @ts-expect-error Callback is the team's, never the person's.
-export const callbackChoice: AgentPreference = { id: "callback", label: "Callback", enabled: false, setBy: "team" };
+// @ts-expect-error Connecting back is the team's, never the person's.
+export const connectBackChoice: AgentPreference = { id: "connectBack", label: "Connect back", enabled: false, setBy: "team" };
 export const inheritAgain: SetPreferenceRequest = { id: "mute", inherit: true };
 export const teamMute: TeamPolicy = { setting: "off", setBy: "team" };
 export const siteRecording: TeamPolicy = { setting: "on", setBy: "site", lockedBy: "site" };
