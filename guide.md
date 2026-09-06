@@ -2249,6 +2249,12 @@ ends with an `expired` outcome naming `preview`. The two travel together
 "expires in 12s" from the provider's word. With neither, the agent has as long as they need.
 Reaching the instant is not itself a transition: the provider reports what it did, as an event.
 
+**Drop both fields when the phase moves.** A provider that builds the `in-progress` task by
+spreading the `preview` one carries `previewEndsAt` and `atDeadline` with it, and the host refuses
+the update (`task.preview.deadline.unexpected`) while the provider's own state looks right: the
+desk hears nothing and the provider sees nothing wrong. The task past preview has no deadline to
+wait for, so it carries neither field.
+
 **A task is never its audio.** A voice task is the allocation: the call is offered when it is
 routed to the agent and accepted as its `acceptance` dictates, and its presence and phase follow
 the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
