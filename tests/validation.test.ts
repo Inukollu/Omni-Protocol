@@ -1245,6 +1245,18 @@ describe("who is on the call", () => {
   const agent = { role: "agent", userId: "A-1", since };
   const conferenced = { role: "conferenced", destinationId: "tier2", dialId: "dial-7f2", label: "Tier 2", stage: "joined", since };
 
+  it("empties once the call has ended, even while the task goes on", () => {
+    // The last word about a call must not stay true for ever: a completing task, or one whose media
+    // ended, carries nobody on the call. Empty and absent both say so.
+    const live = [party, agent];
+    expect(rules(validateTask(task({ onCall: live }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: live }), voice))).toEqual(["task.onCall.ended"]);
+    expect(rules(validateTask(task({ media: "ended", onCall: live }), voice))).toEqual(["task.onCall.ended"]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: [] }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing" }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ media: "started", onCall: live }), voice))).toEqual([]);
+  });
+
   it("states each role with what that role needs, and refuses what another role would carry", () => {
     expect(onCall([party, agent, conferenced])).toEqual([]);
     expect(onCall([{ ...party, held: true }, { ...conferenced, held: true }])).toEqual([]);

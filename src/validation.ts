@@ -1082,6 +1082,13 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateTaskAttributes(task.attributes, `${path}.attributes`, into);
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into);
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
+  // The room is who is on the call now, and a task outlives its call by the whole of wrap-up: a
+  // task whose call has ended -- completing, or media ended -- carries nobody, or the last thing the
+  // wire said about the call stays true for ever. Empty and absent both say nobody.
+  if (Array.isArray(task.onCall) && task.onCall.length > 0 && (task.phase === "completing" || task.media === "ended")) {
+    into.add("task.onCall.ended", `${path}.onCall`,
+      `the call has ended (${task.phase === "completing" ? "the task is completing" : "its media ended"}) and onCall still names people on it: the room is who is on the call now, and now nobody is`);
+  }
   validateTaskMedia(task.media, context.channel, `${path}.media`, into);
   validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
   validateAssisting(task.assisting, context.channel, `${path}.assisting`, into);

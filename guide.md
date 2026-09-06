@@ -2994,6 +2994,16 @@ the platform added itself carries none. `held: true` is presence as claim. A sna
 after a transfer reads the room from here rather than inferring it from a sequence of outcomes it
 never saw.
 
+**`onCall` is who is on the call now, and a task outlives its call.** Wrap-up is not an ending:
+the task is alive, the agent is working, and nothing arrives to say the call ended until they
+dispose. So the room must not be the last word about a call that has ended. Once the call is over
+-- the task `completing`, or its `media` ended -- `onCall` is empty or absent, both saying nobody,
+and a task carrying people on a call that has ended is refused (`task.onCall.ended`). A provider
+that publishes the room only on change publishes one last change: the empty room. Two agents were
+once shown on calls for the better part of an hour while callers queued, because the last message
+describing the room live was never followed by one saying it had emptied, and every consumer that
+derived anything from it was wrong in a way that looked like its own bug.
+
 **A dialled entry is listed from the moment the dial is placed, not from the answer.** The entry is
 what makes `transfer` `cancel` issuable and what `conference` `remove` names, and a destination the
 agent cannot call off while it rings is a parked customer with no way back -- which is the very case
