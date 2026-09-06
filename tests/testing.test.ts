@@ -852,6 +852,83 @@ describe("exerciseAdapter", () => {
   });
 });
 
+describe("exerciseAdapter drives one call", () => {
+  const at = "2026-08-21T09:00:00Z";
+  type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
+  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; noEndCall?: boolean }
+  /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
+  const driveable = (script: Script = {}) => {
+    let listener: Listener | undefined;
+    let n = 0;
+    const id = () => `drv-${n += 1}`;
+    const base: Record<string, unknown> = {
+      ...conformingSnapshot.tasks[0]!, id: "call-77", capabilities: { hold: true, ...(script.noEndCall ? {} : { endCall: true }), dispositions: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
+      browsers: [], handlingHistory: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
+    };
+    const t = (over: Record<string, unknown>) => ({ ...base, ...over }) as unknown as Task<"voice">;
+    const emit = (event: ProviderEventEnvelope<"voice">["event"]) => listener?.({ id: id(), loginId: "session-1", occurredAt: at, event });
+    const room = [{ role: "party" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
+    // Nothing is offered until a capacity is stated, which is when a provider may allocate; the
+    // offer lands after the snapshot, as it does in life.
+    const { adapter } = makeAdapter({
+      snapshot: { ...conformingSnapshot, tasks: [], taskCount: 0 },
+      emit: l => { listener = l; },
+      connection: {
+        setCapacity: async () => { emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) }); return { status: "applied" }; },
+        execute: async ({ command }: { command: { type: string } }) => {
+          switch (command.type) {
+            case "answer":
+              emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
+              if (!script.skipMediaStart) emit({ type: "task-media-started", taskId: "call-77" });
+              return { status: "applied" };
+            case "hold":
+              if (script.refuseHold) return { status: "failed", failure: { code: "provider.busy", message: "No hold today", retryable: false } };
+              emit({ type: "task-updated", task: t({ phase: "paused", media: "started", onCall: room }) }); return { status: "applied" };
+            case "resume": emit({ type: "task-updated", task: t({ phase: "in-progress", media: "started", onCall: room }) }); return { status: "applied" };
+            case "end-call":
+              emit({ type: "task-media-ended", taskId: "call-77" });
+              emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
+              return { status: "applied" };
+            case "complete": emit({ type: "task-ended", taskId: "call-77", outcome: { type: "completed", by: "agent" } }); return { status: "applied" };
+            default: return { status: "failed", failure: { code: "omni.capability-not-enabled", message: command.type, retryable: false } };
+          }
+        },
+        openMedia: async () => ({ status: "opened", session: { remoteAudio: {} as MediaStream, setMuted: () => undefined, close: () => undefined } }),
+      },
+    });
+    return adapter;
+  };
+  const drive = async (adapter: Adapter<"voice">) => exerciseAdapter(adapter, context, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+
+  it("takes the first offer through answer, media, hold, resume, end-call and complete, reaching what a static run never does", async () => {
+    const result = await drive(driveable());
+    expect(result.violations).toEqual([]);
+    // The subjects a run without a drive lists as never reached are now reached.
+    for (const subject of ["tasks", "task.onCall", "task.media", "task.acceptance", "task.dispositions", "event.task-offered", "event.task-updated", "event.task-media-started", "event.task-media-ended", "event.task-ended"] as const) {
+      expect(result.notExercised).not.toContain(subject);
+    }
+    // The control: without the drive the same adapter reaches none of the call.
+    const still = await exerciseAdapter(driveable(), context, { collectOnly: true });
+    expect(still.violations).toEqual([]);
+    expect(still.notExercised).toContain("task.media");
+  });
+
+  it("names what the provider owed and never sent, and a refusal of a control the task offered", async () => {
+    expect((await drive(driveable({ skipMediaStart: true }))).violations.map(v => v.rule)).toEqual(["drive.timeout"]);
+    expect((await drive(driveable({ refuseHold: true }))).violations.map(v => v.rule)).toEqual(["drive.command.failed"]);
+  });
+
+  it("reaches the rules about a live call: a room left full after end-call is refused at the boundary", async () => {
+    expect((await drive(driveable({ keepRoomOnEnd: true }))).violations.map(v => v.rule)).toContain("task.onCall.ended");
+  });
+
+  it("stops where the task offers no way on, and says nothing about what it could not reach", async () => {
+    const result = await drive(driveable({ noEndCall: true }));
+    expect(result.violations).toEqual([]);
+    expect(result.notExercised).toContain("event.task-media-ended");
+  });
+});
+
 describe("exerciseAdapter requires each method the declarations call for", () => {
   // Every case pairs the refusal with its control: the same adapter with the declaration
   // withdrawn is clean, so a missing method is reported because of the declaration and not

@@ -4327,6 +4327,26 @@ optional part of a task (`task.browsers`, `task.handlingHistory`, `task.leadAssi
 each event type (`event.task-ended`, …) — and so what a clean `violations` says nothing about.
 Nothing there is a violation: an adapter with no team has nothing to exercise. But a fixture with
 no tasks exercises no task rule, and a pass over it reads as coverage it is not.
+
+**A static run never answers a call.** It states a capacity and disconnects, so everything
+downstream of `answer` -- the room, the stage, media, every phase past `pending`, every dial
+outcome -- stays in `notExercised` for every adapter, and a rule about a live call is enforced only
+in each adopter's own tests. `{ drive: true }` closes that: the exercise takes the first task the
+provider offers through one ordinary lifecycle -- accept it, wait for its media and open it on a
+softphone, hold and resume where the task offers `hold`, end the call where it offers `endCall`,
+complete it with a disposition where the agent completes -- and holds every step to the rules a
+host holds a provider to. Each command is validated against the task as published
+(`drive.command.*`), each answer for its method, a refusal of a control the task offered is a
+violation (`drive.command.failed`), and an event the provider owes and never sends is one too
+(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). The drive stops where the task offers
+no way on and says nothing about what it could not reach. It is off by default because it issues
+commands against whatever platform the adapter is connected to: turn it on against a test backend.
+
+```ts
+const driven = await exerciseAdapter(adapter, context, { collectOnly: true, drive: true });
+expect(driven.violations).toEqual([]);
+assertReached(driven, ["task.onCall", "task.media", "event.task-ended"]);
+```
 `assertReached(result, subjects)` is the paired assertion: it throws naming every subject the run
 never met, so a test that meant to check a roster cannot pass on a fixture that never produced one.
 
