@@ -539,7 +539,8 @@ export type TaskCapabilities<C extends Channel = Channel> =
         decline?: Lockable<true>;
         mute?: Lockable<true>;
         hold?: Lockable<true>;
-        agentDisconnect?: Lockable<true>;
+        /** The agent may end the whole call: everyone leaves and the media ends, the task stays for its wrap-up. */
+        endCall?: Lockable<true>;
         /** Connect back to the party while `completing`, whoever placed the call; the task returns to `in-progress`. */
         connectBack?: Lockable<true>;
         coldTransfer?: Lockable<DestinationDirectory>;
@@ -875,7 +876,7 @@ export type TaskOutcome =
 // ---------------------------------------------------------------------------
 
 export const TASK_COMMAND_NAMES = {
-  voice: ["answer", "decline", "call", "mute", "hold", "resume", "disconnect",
+  voice: ["answer", "decline", "call", "mute", "hold", "resume", "end-call",
           "connect-back", "transfer", "lead-assist", "conference", "recording", "complete"],
   chat: ["accept", "decline", "pause", "resume", "complete"],
   email: ["accept", "decline", "complete"],
@@ -897,7 +898,8 @@ export type VoiceTaskCommand =
   | { type: "mute"; muted: boolean }
   | { type: "hold" }
   | { type: "resume" }
-  | { type: "disconnect" }
+  /** End the whole call: everyone leaves and the task's media ends; the task stays for its wrap-up. Gated by `endCall`. */
+  | { type: "end-call" }
   /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
   | { type: "connect-back"; dialId: DialId }
   /** Cold: hand the customer to the directory item `destinationId` with nobody spoken to first. Gated by `coldTransfer`. */
@@ -918,8 +920,14 @@ export type VoiceTaskCommand =
   | { type: "lead-assist"; action: "leave" }
   /** Dial the directory item `destinationId` into the call. Gated by `conference`. */
   | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
-  /** Drop the `conferenced` entry on `Task.onCall` with this `destinationId`; while it still rings, this calls the dial off. */
-  | { type: "conference"; action: "remove"; destinationId: string }
+  /**
+   * Remove one person from the call, named as `onCall` names them, and the call goes on for the
+   * rest: a `conferenced` entry by its `destinationId`, which while it still rings calls the dial
+   * off, or the `party`, leaving the agent with the colleague. A remove that would leave the agent
+   * alone is `end-call`, and a provider answers it `failed`.
+   */
+  | { type: "conference"; action: "remove"; destinationId: string; party?: never }
+  | { type: "conference"; action: "remove"; party: true; destinationId?: never }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);
 

@@ -167,9 +167,17 @@ export const misplacedParty: OnCall = { role: "party", destinationId: "tier2", s
 // @ts-expect-error An agent on the call is named by user id, not by a destination.
 export const misplacedAgent: OnCall = { role: "agent", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
 
-// A conference add dials and carries the host's dialId; a remove names who leaves, by destination.
+// A conference add dials and carries the host's dialId; a remove names who leaves, as the room names them.
 export const addToConference: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" };
 export const removeFromConference: TaskCommand<"voice"> = { type: "conference", action: "remove", destinationId: "tier2" };
+export const removeTheCustomer: TaskCommand<"voice"> = { type: "conference", action: "remove", party: true };
+// @ts-expect-error A remove names one person: the party, or a directory item, never both.
+export const removeEverybody: TaskCommand<"voice"> = { type: "conference", action: "remove", party: true, destinationId: "tier2" };
+// @ts-expect-error A remove names one person; naming nobody is end-call.
+export const removeNobody: TaskCommand<"voice"> = { type: "conference", action: "remove" };
+export const endTheCall: TaskCommand<"voice"> = { type: "end-call" };
+// @ts-expect-error renamed away: the agent ends the call; disconnect was the engineer's word.
+export const disconnectTheCall: TaskCommand<"voice"> = { type: "disconnect" };
 // @ts-expect-error A conference add is a dial, so it carries the host's dialId.
 export const unplacedConferenceAdd: TaskCommand<"voice"> = { type: "conference", action: "add", destinationId: "tier2" };
 // @ts-expect-error renamed away: the address a conference dials is its destination, as on every other dial.

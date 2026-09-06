@@ -287,6 +287,8 @@ describe("every dial has an outcome", () => {
     expect(commandDialId({ type: "transfer", action: "complete" })).toBeUndefined();
     expect(commandDialId({ type: "transfer", action: "cancel" })).toBeUndefined();
     expect(commandDialId({ type: "conference", action: "remove", destinationId: "tier2" })).toBeUndefined();
+    expect(commandDialId({ type: "conference", action: "remove", party: true })).toBeUndefined();
+    expect(commandDialId({ type: "end-call" })).toBeUndefined();
     expect(commandDialId({ type: "hold" })).toBeUndefined();
   });
 

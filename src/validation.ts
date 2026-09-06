@@ -158,7 +158,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
     browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
-    agentDisconnect: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
+    endCall: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, decline: true, hold: true }),
   email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, decline: true }),
