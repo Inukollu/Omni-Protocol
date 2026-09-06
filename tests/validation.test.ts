@@ -1451,6 +1451,16 @@ describe("validateTaskCommand", () => {
     expect(rules(validateTaskCommand({ type: "complete", disposition: "" }))).toEqual(["command.complete.disposition"]);
   });
 
+  it("holds a command only to a task the wire published, and names a mapped one", () => {
+    // A host that kept only its own mapping of the task has nothing honest to pass: the validator
+    // says so rather than check the command against a task nobody has.
+    expect(cmd({ type: "hold" }, { id: "call-42", phase: "in-progress", hasHold: true })).toEqual(["command.task"]);
+    expect(cmd({ type: "hold" }, { ...voice, capabilities: { hold: "yes" } })).toEqual(["command.task"]);
+    // The control: the published task is checked as before.
+    expect(cmd({ type: "hold" })).toEqual([]);
+    expect(cmd({ type: "hold" }, task({ capabilities: {} }))).toEqual(["command.capability.hold"]);
+  });
+
   it("holds a command to the task's channel, capabilities, phase and state", () => {
     expect(cmd({ type: "end-call" })).toEqual([]);
     expect(cmd({ type: "end-call" }, task({ capabilities: { hold: true } }))).toEqual(["command.capability.endCall"]);

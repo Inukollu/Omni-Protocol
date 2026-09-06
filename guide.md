@@ -3891,7 +3891,9 @@ capability it needs, the phase it belongs to, and the state that has to stand. T
 is the one the provider published, not a host's own mapping of it: a host that keeps only its
 mapped shape has nothing honest to pass, and then checks shape alone, which is still worth doing
 -- it names a command the wire never had -- but is not the table. Keeping the published task
-beside the mapped one is what the full check costs a host; an adapter has it for free.
+beside the mapped one is what the full check costs a host; an adapter has it for free. The
+validator holds a command only to a task that stands: a task handed in that is not one the wire
+published is named (`command.task`) rather than checked against.
 
 Declining or rejecting a pending offer ends it without accepting or completing it. The provider
 confirms the end with `task-ended` and a `cancelled` outcome.
