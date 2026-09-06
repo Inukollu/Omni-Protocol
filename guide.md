@@ -2728,7 +2728,16 @@ the terms arrive, the task is republished under `queue` with the set as it now s
 republish as any other permission that changed while the task was open. The move goes one way.
 Terms once read stay read: a re-read that fails mid-task is not a new fact about the task, so the
 last statement stands and the failure is a `diagnostic`, and a task that was published under
-`queue` or `ungoverned` never returns to `undetermined` (`stream.taskUpdated.capabilitySource`). `exerciseAdapter` treats a
+`queue` or `ungoverned` never returns to `undetermined` (`stream.taskUpdated.capabilitySource`).
+
+What the agent is told differs by source, and only one source tells them anything. Under `queue`
+and `ungoverned` the agent sees controls and nothing about where they came from: both are facts,
+and an agent working a call has no use for the name of the rule behind its buttons. Under
+`undetermined` the agent is told, beside the controls, that these are what the provider will honour
+until the queue's terms arrive, and that the controls may change when they do -- a statement about
+the buttons in front of them now, not about the provider, because that is what changes when the
+republish lands. The two words are close in English and far apart on the desk: `ungoverned` is
+silence, `undetermined` is a notice. `exerciseAdapter` treats a
 task published under `undetermined` as a violation (`capabilitySource.undetermined`), as it treats
 a diagnostic: a conformance run against a platform that cannot say what it permits fails loudly
 rather than passing with a note.
