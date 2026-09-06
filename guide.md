@@ -2680,6 +2680,11 @@ rather than re-deriving anything. This is the same shape as a room left full aft
 -- a field describing the present, carried past the moment it stopped being true -- carried past
 this time not by a spread but by nobody sending the correction. A provider whose platform can
 change a permission mid-task and does not republish is in breach, however conformant its offer was.
+A capability set can shrink as well as grow, and a host that has only ever seen it grow meets a
+control that was there a moment ago and is gone; a command that arrives after its capability was
+withdrawn is refused with a reason, never acted on. The asymmetry decides which direction a
+provider gets right first: a control gained late is a nicety, a control withdrawn and not
+republished is a button that fails when pressed.
 
 **An empty capability set is a statement, not a shrug.** `capabilities: {}` says the platform
 permits nothing on this task. A provider that has not yet learned what the platform permits -- a
