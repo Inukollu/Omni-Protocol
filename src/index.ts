@@ -77,12 +77,12 @@ export interface User {
   id: UserId;
   displayName: string;
   /**
-   * The zone this person's day is reckoned in, as the provider keeps it: sent by the host at
-   * connect, stored on the agent, and republished here so a day-scoped figure -- theirs or a
-   * colleague's a lead is reading -- is bucketed by the right day. Absent means nobody has said,
-   * and nothing is assumed in its place.
+   * The zone this person's day is reckoned in, as the provider keeps it: stated by the host at
+   * authentication, stored on the agent, and carried on every identity and every described user
+   * so a day-scoped figure -- theirs or a colleague's a lead is reading -- is bucketed by the
+   * right day. Never absent: a person whose day nobody can name is not on this wire.
    */
-  timeZone?: TimeZone;
+  timeZone: TimeZone;
 }
 
 /** Key/value detail on a `Contact` or a `ScheduledActivity`. A task's attributes are typed. */
@@ -218,6 +218,12 @@ export interface AuthenticationContext {
   protocolVersion: number;
   /** Omni's identity for this login. The same value arrives later as `ConnectContext.loginId`. */
   loginId: string;
+  /**
+   * The zone the agent's day is reckoned in, as the host's clock has it, stated before any
+   * identity exists so the first `authenticated` state already carries it. The same value arrives
+   * later as `ConnectContext.timeZone`.
+   */
+  timeZone: TimeZone;
   /** Scoped to this provider's manifest id. */
   secrets: SecretStore;
   signal?: AbortSignal;
@@ -403,8 +409,9 @@ export interface ConnectContext {
   /** Omni-side policy: whether the agent's tasks are accepted without asking them. */
   autoAcceptTasks?: boolean;
   /**
-   * The zone the agent's day is reckoned in, as the host's clock has it. The provider stores it on
-   * the agent and republishes it on the identity; a roaming agent corrects it by signing in.
+   * The zone the agent's day is reckoned in, the same value passed as
+   * `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the
+   * identity; a roaming agent corrects it by signing in.
    */
   timeZone: TimeZone;
   /**

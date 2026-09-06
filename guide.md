@@ -140,7 +140,7 @@ type TimeZone = string;
 type User = {
   id: UserId;
   displayName: string;
-  timeZone?: TimeZone;
+  timeZone: TimeZone;
 };
 
 type Attribute = { key: string; value: string };
@@ -228,6 +228,7 @@ type SecretStore = {
 type AuthenticationContext = {
   protocolVersion: number;
   loginId: string;
+  timeZone: TimeZone;
   secrets: SecretStore;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
@@ -1704,6 +1705,7 @@ Creates the provider-scoped authentication session.
 | --- | --- |
 | `protocolVersion` | The negotiated version, fixed for this login. |
 | `loginId` | Omni-generated identity for this login. The same value Omni later passes as `ConnectContext.loginId`, and how an adapter ties a connection back to the session that authenticated it. |
+| `timeZone` | The zone the agent's day is reckoned in, as an IANA name from the host's clock, stated before any identity exists so the first `authenticated` state already carries it. The same value Omni later passes as `ConnectContext.timeZone`. See **The agent's day**. |
 | `secrets` | Omni-provided `SecretStore`, scoped to this provider's manifest id. |
 | `signal` | Optional cancellation signal. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -1851,7 +1853,7 @@ too, by the rule that a command asking for a state answers success when that sta
 failure:
 
 ```ts
-{ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao" }, capabilities: { breaks: true } }
+{ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" }, capabilities: { breaks: true } }
 ```
 
 The `User` it carries is the **root of this provider's user namespace**. Every other person this
@@ -1902,7 +1904,7 @@ Creates one live provider connection for the signed-in agent.
 | `protocolVersion` | Version negotiated before authentication. Fixed for this login. |
 | `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
 | `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login. Treated as `true` when omitted. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
-| `timeZone` | The zone the agent's day is reckoned in, as an IANA name from the host's clock. The provider stores it on the agent and republishes it on the identity. See **The agent's day**. |
+| `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
 | `host` | The host's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The host reports, the adapter decides**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -1915,24 +1917,25 @@ target, an answer streak, a per-queue count for today -- anything bucketed by da
 by somebody's day, and a platform that was never told whose uses its own. An agent in Chennai
 then finds their day rolling at 05:30, and a night shift in Chicago lands in two buckets.
 
-So the host says whose day it is. `ConnectContext.timeZone` is the agent's zone as an IANA name
--- `Asia/Kolkata`, `America/Chicago` -- never an offset, since an offset cannot survive a
-daylight-saving boundary and a day boundary is exactly where that bites (`context.timeZone`). The
-provider **stores it on the agent** and republishes it as `identity.timeZone` on the
-`authenticated` state, and on any `User` it returns from `describeUsers()`, so a lead reading a
-colleague's yesterday sees the colleague's yesterday and a summary is bucketed by the right day
-after a session has ended. A roaming agent corrects it by signing in from where they are. The
-harness holds a provider to the round trip: once connected, the identity carries the zone the host
-sent (`authentication.identity.timeZone.republished`), and a zone that is not an IANA name is
-refused wherever it appears (`authentication.identity.timeZone`). **The round trip is not the
-store.** An adapter that echoes the connect-time zone back onto the identity passes that check
-with nothing kept, and a lead reading a colleague's day would still get UTC. What proves the store
-is a zone the run never sent: a colleague's `User` from `describeUsers()` carrying theirs. A
-provider's own tests are where that is shown, with a second agent whose zone arrived through
-another session. **An absent `timeZone` means nobody has said, and nothing is assumed in its place.** A desk
-does not fill it from the viewer's browser, which gives a different answer per reader for the same
-record, and does not fill it from the provider's clock either; a day-scoped figure for a person
-whose zone is unknown is shown as a figure whose day is unknown, until the zone arrives.
+So the host says whose day it is, and it says so first. `AuthenticationContext.timeZone` is the
+agent's zone as an IANA name -- `Asia/Kolkata`, `America/Chicago` -- never an offset, since an
+offset cannot survive a daylight-saving boundary and a day boundary is exactly where that bites
+(`context.timeZone`). It is stated before any identity exists, and `ConnectContext.timeZone` is the
+same value again. The provider **stores it on the agent** and carries it as `identity.timeZone` on
+every `authenticated` state and on every `User` it returns from `describeUsers()`, so a lead
+reading a colleague's yesterday sees the colleague's yesterday and a summary is bucketed by the
+right day after a session has ended. A roaming agent corrects it by signing in from where they are.
+
+**The zone is never absent.** Time zone awareness is a first-party property of this wire, not a
+field to fill in later: an identity without one is refused (`authentication.identity.timeZone`), and
+so is a zone that is not an IANA name, wherever it appears. Nothing is ever assumed in its place --
+not the viewer's browser, which gives a different answer per reader for the same record, and not the
+provider's clock. The harness holds a provider to the round trip: the identity carries the zone the
+host stated (`authentication.identity.timeZone.republished`). **The round trip is not the store.**
+An adapter that echoes the stated zone back onto the identity passes that check with nothing kept,
+and a lead reading a colleague's day would still get the wrong one. What proves the store is a zone
+the run never sent: a colleague's `User` from `describeUsers()` carrying theirs. A provider's own
+tests are where that is shown, with a second agent whose zone arrived through another session.
 
 ### Who the agent is
 

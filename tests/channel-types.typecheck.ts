@@ -283,7 +283,7 @@ export const plainActive = { type: "transport-status", status: "active",
 export const emailAssisting: Task<"email"> = { ...emailTask, id: "email-7", assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } };
 
 // What the login may do travels with the identity, and nowhere else.
-const asha = { id: "1042", displayName: "Asha Rao" };
+const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
 export const leadLogin: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, team: { breakControl: true, leadAssistControl: true } } };
 export const plainLogin: AuthenticationState = { status: "refreshing", identity: asha, capabilities: {} };
 // @ts-expect-error A usable login says what it may do, {} included.

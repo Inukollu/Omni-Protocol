@@ -1962,10 +1962,9 @@ function validateUser(value: unknown, rule: string, path: string, into: Collecto
   }
   into.require(isUserId(value.id), `${rule}.id`, `${path}.id`, "an identity needs a provider-issued user id");
   into.filled(value.displayName, `${rule}.displayName`, `${path}.displayName`, "an identity needs a display name");
-  if (value.timeZone !== undefined) {
-    into.require(isTimeZone(value.timeZone), `${rule}.timeZone`, `${path}.timeZone`,
-      "timeZone is an IANA name, such as Asia/Kolkata, or omitted until the provider knows it");
-  }
+  // Never absent: the host stated the zone at authentication, before this identity existed.
+  into.require(isTimeZone(value.timeZone), `${rule}.timeZone`, `${path}.timeZone`,
+    "every identity carries the agent's time zone as an IANA name, such as Asia/Kolkata; the host stated it at authentication");
 }
 
 function validateUserCapabilitiesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
