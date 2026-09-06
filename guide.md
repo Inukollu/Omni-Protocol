@@ -2664,6 +2664,44 @@ browser that used it.
 Task capabilities belong to each `Task`. If `hold` is omitted on one task, Omni
 must not show or issue hold for that task even if another task from the same provider supports it.
 
+**A capability is a property of the task, and of nothing the task names.** A provider derives it
+from no other source -- not the queue the task came from, not the login, not its own configuration
+-- because each of those answers a question about this task from somewhere that does not know
+about this task, and a client with two sources and a rule for choosing between them is the shape
+that produces two consumers disagreeing about one fact. The task is the one source, and the
+provider puts on the task what the platform permits for it.
+
+**A permission that changes while the task is open is republished on the task at the moment it
+changes.** An agent on a billing dispute may refund up to their own limit and no further. The
+customer wants more, the agent asks for a lead, and the moment the lead joins the call the task is
+republished with the Refund control the agent could not have a minute ago; when the lead leaves, it
+is republished without it. Nothing about the agent changed -- who is on the call did -- and the
+task said so both times, at the moment it became true. A call moves queues the same way: a caller
+identified as a priority customer is transferred to the priority queue, and the task arrives under
+that queue's terms -- a longer wrap allowance, a discount control the general queue never offered --
+restated on the task at the hand-over, not inferred from the queue it left. A capability stated
+once at offer or answer and never corrected is a fact with a shelf life and no expiry, and a host
+draws a control the provider will now refuse -- or withholds one the agent now has. So the provider republishes
+the task, with its capabilities as they now stand, and a host treats the last statement as current
+rather than re-deriving anything. This is the same shape as a room left full after the call ends
+-- a field describing the present, carried past the moment it stopped being true -- carried past
+this time not by a spread but by nobody sending the correction. A provider whose platform can
+change a permission mid-task and does not republish is in breach, however conformant its offer was.
+A capability set can shrink as well as grow, and a host that has only ever seen it grow meets a
+control that was there a moment ago and is gone; a command that arrives after its capability was
+withdrawn is refused with a reason, never acted on. The asymmetry decides which direction a
+provider gets right first: a control gained late is a nicety, a control withdrawn and not
+republished is a button that fails when pressed. `assertTaskCapabilityWithdrawal` is the test for that
+direction: the task as offered and as republished, and one command that was issuable under the
+first and is refused under the last for want of the capability withdrawn -- and nothing else.
+
+**An empty capability set is a statement, not a shrug.** `capabilities: {}` says the platform
+permits nothing on this task. A provider that has not yet learned what the platform permits -- a
+queue's configuration that has not reached it -- knows nothing of the kind, and must not publish
+the task as if it did: it holds the task until it knows, or reports the gap as a `diagnostic`,
+because "no queue governs this call" is a fact and "the configuration has not arrived" is a fault,
+and a host cannot tell them apart from a value that carries neither.
+
 ```ts
 const taskCapabilities = {
   channel: "voice",
@@ -4401,6 +4439,7 @@ cannot be established from TypeScript structure alone.
 | Helper | Contract checked |
 | --- | --- |
 | `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no roster for a login that no longer leads, no requests for one that may no longer join. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
+| `assertTaskCapabilityWithdrawal(tasks, manifest, command)` | A capability withdrawn by a republish of the task is gone from the task: every task in the sequence is validated, all carry the offer's id, at least one capability the offer declared is absent at the end (a locked control is present, not withdrawn), and `command` is clean against the first task and refused against the last for want of a withdrawn capability and nothing else. Pair it with `assertCommandRefusedAfterWithdrawal` on the provider's answer. |
 | `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. The same assertion serves a command the provider never supported under a capability it declares. |
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |

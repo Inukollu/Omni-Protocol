@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakApproval, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
-import { assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
+import { assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const voiceTask = {
   id: "call-42",
@@ -117,6 +117,48 @@ describe("assertCapabilityWithdrawal", () => {
     const silent = { status: "authenticated", identity: ada } as unknown as AuthenticationState;
     expect(() => assertCapabilityWithdrawal([lead, silent], bare, manifest)).toThrow(/capabilities/);
     expect(() => assertCapabilityWithdrawal([lead, demoted], bare, manifest)).not.toThrow();
+  });
+});
+
+describe("assertTaskCapabilityWithdrawal", () => {
+  const manifest = {
+    id: "acme-voice", displayName: "Acme Voice", channel: "voice",
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials"],
+  } satisfies Manifest<"voice">;
+  const withHold = { ...voiceTask, capabilities: { hold: true, mute: true } } satisfies Task<"voice">;
+  const withoutHold = { ...voiceTask, capabilities: { mute: true } } satisfies Task<"voice">;
+  const hold = { type: "hold" };
+
+  it("accepts a control withdrawn by a republish, refusing the command it governed and nothing else", () => {
+    expect(() => assertTaskCapabilityWithdrawal([withHold, withoutHold], manifest, hold)).not.toThrow();
+    // The control: the same sequence, and a command under a capability that stayed, is not refused.
+    expect(() => assertTaskCapabilityWithdrawal([withHold, withoutHold], manifest, { type: "mute", muted: true })).toThrow(/for want of hold; it was accepted/);
+  });
+
+  it("rejects a sequence that withdraws nothing, and does not count a lock as a withdrawal", () => {
+    expect(() => assertTaskCapabilityWithdrawal([withHold, withHold], manifest, hold)).toThrow(/withdrawn/);
+    const locked = { ...voiceTask, capabilities: { hold: { lockedBy: "team" }, mute: true } } satisfies Task<"voice">;
+    expect(() => assertTaskCapabilityWithdrawal([withHold, locked], manifest, hold)).toThrow(/locked control is present/);
+  });
+
+  it("requires the command to have been issuable before the withdrawal", () => {
+    const neverHeld = { ...voiceTask, capabilities: { mute: true } } satisfies Task<"voice">;
+    expect(() => assertTaskCapabilityWithdrawal([{ ...neverHeld, capabilities: { mute: true, endCall: true } }, neverHeld], manifest, hold)).toThrow(/issuable against the task as offered/);
+  });
+
+  it("refuses a republish that changes more than the withdrawal", () => {
+    const dials = { ...manifest, dialOutcomes: ["answered", "no-answer"] } satisfies Manifest<"voice">;
+    const wrappingUp = { ...voiceTask, phase: "completing", capabilities: { connectBack: true, mute: true } } satisfies Task<"voice">;
+    const backOnTheCall = { ...voiceTask, phase: "in-progress", capabilities: { mute: true } } satisfies Task<"voice">;
+    const connectBack = { type: "connect-back", dialId: "dial-1" };
+    expect(() => assertTaskCapabilityWithdrawal([wrappingUp, backOnTheCall], dials, connectBack)).toThrow(/more than the withdrawal/);
+    expect(() => assertTaskCapabilityWithdrawal([wrappingUp, { ...wrappingUp, capabilities: { mute: true } }], dials, connectBack)).not.toThrow();
+  });
+
+  it("keeps the task, and validates every task on the way", () => {
+    expect(() => assertTaskCapabilityWithdrawal([withHold, { ...withoutHold, id: "call-43" }], manifest, hold)).toThrow(/keep the task/);
+    expect(() => assertTaskCapabilityWithdrawal([withHold, { ...withoutHold, phase: "ringing" } as unknown as Task<"voice">], manifest, hold)).toThrow(/tasks\[1\] must be a task/);
+    expect(() => assertTaskCapabilityWithdrawal([withHold], manifest, hold)).toThrow(/at least one republish/);
   });
 });
 
