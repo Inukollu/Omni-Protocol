@@ -2691,7 +2691,9 @@ A capability set can shrink as well as grow, and a host that has only ever seen 
 control that was there a moment ago and is gone; a command that arrives after its capability was
 withdrawn is refused with a reason, never acted on. The asymmetry decides which direction a
 provider gets right first: a control gained late is a nicety, a control withdrawn and not
-republished is a button that fails when pressed.
+republished is a button that fails when pressed. `assertTaskCapabilityWithdrawal` is the test for that
+direction: the task as offered and as republished, and one command that was issuable under the
+first and is refused under the last for want of the capability withdrawn -- and nothing else.
 
 **An empty capability set is a statement, not a shrug.** `capabilities: {}` says the platform
 permits nothing on this task. A provider that has not yet learned what the platform permits -- a
@@ -4437,6 +4439,7 @@ cannot be established from TypeScript structure alone.
 | Helper | Contract checked |
 | --- | --- |
 | `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no roster for a login that no longer leads, no requests for one that may no longer join. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
+| `assertTaskCapabilityWithdrawal(tasks, manifest, command)` | A capability withdrawn by a republish of the task is gone from the task: every task in the sequence is validated, all carry the offer's id, at least one capability the offer declared is absent at the end (a locked control is present, not withdrawn), and `command` is clean against the first task and refused against the last for want of a withdrawn capability and nothing else. Pair it with `assertCommandRefusedAfterWithdrawal` on the provider's answer. |
 | `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. The same assertion serves a command the provider never supported under a capability it declares. |
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |

@@ -7,6 +7,7 @@ import {
   type ProviderEventEnvelope,
   type Connection,
   type Snapshot,
+  type Task,
   type TaskCompletion,
   type BreakApproval,
   type BrowserSessionKeyInput,
@@ -28,6 +29,7 @@ import {
   validateManifest,
   validateResult,
   validateSnapshot,
+  validateTask,
   validateTimeZone,
   validatePhone,
   validateTaskCommand,
@@ -611,6 +613,59 @@ export function assertCommandRefusedAfterWithdrawal(result: { status: string; fa
   }
   if (result.failure?.code !== "omni.capability-not-enabled") {
     throw new Error(`A command after its capability was withdrawn fails with omni.capability-not-enabled, not ${result.failure?.code}`);
+  }
+}
+
+/**
+ * A task's capabilities are current, not fixed. A provider whose platform withdraws a permission
+ * mid-task republishes the task with the set as it now stands, and a command under the withdrawn
+ * capability is refused from then on. `tasks` is what the provider published for one task, first
+ * to last -- the offer, then each republish -- every one validated against the manifest, all the
+ * same id, with at least one capability offered by the first absent from the last. A locked
+ * control is present without permission, not withdrawn: it is still drawn, so it does not count.
+ * `command` is the command a host issues under a withdrawn capability: it must be clean against
+ * the first task and refused against the last for want of that capability and for nothing else.
+ * That pairing is what proves the refusal comes from the withdrawal rather than from a command
+ * that was never issuable. Pair it with `assertCommandRefusedAfterWithdrawal` on the provider's
+ * answer to the same command.
+ */
+export function assertTaskCapabilityWithdrawal(
+  tasks: readonly Task[],
+  manifest: Manifest,
+  command: Record<string, unknown>,
+): void {
+  const first = tasks[0];
+  const last = tasks.at(-1);
+  if (tasks.length < 2 || first === undefined || last === undefined) {
+    throw new Error("Task capability withdrawal needs the task as offered and at least one republish of it");
+  }
+  const context = {
+    channel: manifest.channel,
+    levels: effectiveLevels(manifest.orgLevels).map(level => level.id),
+    dialOutcomesDeclared: manifest.dialOutcomes !== undefined,
+  };
+  tasks.forEach((task, index) => {
+    assertNoViolations(validateTask(task, context, `tasks[${index}]`), `Task capability withdrawal: tasks[${index}] must be a task the wire could carry`);
+    if (task.id !== first.id) {
+      throw new Error(`Task capability withdrawal must keep the task: tasks[${index}] is ${task.id}, and the offer was ${first.id}`);
+    }
+  });
+  const withdrawn = Object.keys(first.capabilities).filter(name => (last.capabilities as Record<string, unknown>)[name] === undefined);
+  if (withdrawn.length === 0) {
+    throw new Error("Task capability withdrawal must end with at least one capability the offer declared withdrawn; a locked control is present without permission, not withdrawn");
+  }
+  const before = validateTaskCommand(command, first, "command");
+  if (before.length > 0) {
+    throw new Error(`Task capability withdrawal: the command must be issuable against the task as offered, or its later refusal proves nothing (${before.map(v => v.rule).join(", ")})`);
+  }
+  const after = validateTaskCommand(command, last, "command");
+  const forWant = after.filter(v => withdrawn.some(name => v.rule === `command.capability.${name}`));
+  if (forWant.length === 0) {
+    throw new Error(`Task capability withdrawal: the command must be refused against the republished task for want of ${withdrawn.join(" or ")}; it was ${after.length === 0 ? "accepted" : `refused for ${after.map(v => v.rule).join(", ")}`}`);
+  }
+  const other = after.filter(v => !forWant.includes(v));
+  if (other.length > 0) {
+    throw new Error(`Task capability withdrawal: the republished task refuses the command for more than the withdrawal (${other.map(v => v.rule).join(", ")}); change one thing at a time`);
   }
 }
 
