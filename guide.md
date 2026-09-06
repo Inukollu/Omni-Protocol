@@ -26,7 +26,7 @@ are used precisely throughout and mean nothing looser here.
 | **Task** | One unit of assigned work — a call, a chat, a mail. |
 | **Channel** | The kind of work a provider carries: `voice`, `chat`, or `email`. Fixed per provider by its manifest. |
 | **Task type** | The provider's own name for a category of work — a queue, a mailbox folder, a chat source. Free-form, and finer-grained than a channel. |
-| **Capability** | A provider's declaration that a control exists for a task or a session. It says *offer this*, and nothing about who carries it out — that is fixed per command, see **Where a command executes**. |
+| **Capability** | A provider's declaration that a control exists for a task or a session. It says *offer this*; the provider performs it, and the host only offers it — see **Where a command executes**. |
 | **Login** | One authenticated sign-in to one provider, identified by `loginId`. A transport reconnect keeps it; signing in again replaces it, and nothing tied to the old `loginId` survives. |
 | **Transport** | The adapter's connection to its platform: a WebSocket or SignalR connection, required to be persistent and ordered. Which one and how it reconnects are the adapter's business; losing it does not end a login. |
 | **Connection** | The `Connection` object Omni holds for one login: the methods it can call and the events it receives. |
@@ -486,7 +486,7 @@ type TaskCapabilities<C extends Channel = Channel> =
         decline?: Lockable<true>;
         mute?: Lockable<true>;
         hold?: Lockable<true>;
-        agentDisconnect?: Lockable<true>;
+        endCall?: Lockable<true>;
         connectBack?: Lockable<true>;
         coldTransfer?: Lockable<DestinationDirectory>;
         warmTransfer?: Lockable<DestinationDirectory>;
@@ -692,7 +692,7 @@ const TASK_COMMAND_NAMES = {
     "mute",
     "hold",
     "resume",
-    "disconnect",
+    "end-call",
     "connect-back",
     "transfer",
     "lead-assist",
@@ -716,7 +716,7 @@ type VoiceTaskCommand =
   | { type: "mute"; muted: boolean }
   | { type: "hold" }
   | { type: "resume" }
-  | { type: "disconnect" }
+  | { type: "end-call" }
   | { type: "connect-back"; dialId: DialId }
   | { type: "transfer"; action: "cold"; dialId: DialId; destinationId: string }
   | { type: "transfer"; action: "warm"; dialId: DialId; destinationId: string }
@@ -727,7 +727,8 @@ type VoiceTaskCommand =
   | { type: "lead-assist"; action: "take-over" }
   | { type: "lead-assist"; action: "leave" }
   | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
-  | { type: "conference"; action: "remove"; destinationId: string }
+  | { type: "conference"; action: "remove"; destinationId: string; party?: never }
+  | { type: "conference"; action: "remove"; party: true; destinationId?: never }
   | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
   | ({ type: "complete" } & DispositionPayload);
 
@@ -2680,12 +2681,12 @@ const taskCapabilities = {
 | `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when provisioning also permits declining. |
 | `mute` | Primary toggle: Mute | Omni may mute and unmute the agent's outbound audio. |
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
-| `agentDisconnect` | Primary button: Disconnect | Omni may disconnect real-time media without disposing the task. |
+| `endCall` | Primary button: End call | Omni may end the whole call: everyone leaves, the media ends, and the task stays for its wrap-up. See **Ending a call, and removing one person from it**. |
 | `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance disposes at provider end. See **Connecting back during completion**. |
 | `coldTransfer` | Secondary menu item: Cold transfer | Omni may hand the customer straight to a destination, with nobody spoken to first. |
 | `warmTransfer` | Secondary menu item: Warm transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Warm transfer**. |
 | `leadAssist` | Secondary menu item: Lead assist | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.leadAssist`. See **Lead assist**. |
-| `conference` | Secondary button: Conference | Omni may dial a destination into the active call, and drop a `conferenced` entry from it -- one still ringing included, which calls the dial off. |
+| `conference` | Secondary button: Conference | Omni may dial a destination into the active call, and remove one person from it -- a conferenced entry, one still ringing included, which calls the dial off, or the party, leaving the agent with the colleague. See **Ending a call, and removing one person from it**. |
 | `recording` | Overflow menu item: Recording | Omni may expose start, pause, resume, and stop recording controls. |
 | `dispositions` | Primary button: Complete | Omni may request task disposal with a provider disposition and notes. |
 
@@ -2750,6 +2751,27 @@ decision: routing by skill, availability and fairness is what the queue is for, 
 chosen colleague bypasses all three. The desk shows no agent picker and no dial pad on a transfer.
 The one way a named person ends up with an agent's call is a lead taking it over through lead
 assist, which is the lead's act, not a transfer the agent chose.
+
+#### Ending a call, and removing one person from it
+
+A call has everyone on `Task.onCall`, and two commands take people off it, both performed by the
+provider.
+
+```ts
+{ type: "end-call" }                                             // everyone leaves; the media ends; the task stays for its wrap-up
+{ type: "conference", action: "remove", party: true }            // the customer leaves; the agent stays with the colleague
+{ type: "conference", action: "remove", destinationId: "tier2" } // the conferenced person leaves; ringing, this calls the dial off
+```
+
+`end-call` ends the whole conversation for everyone on it, and is gated by `endCall`. The task does
+not end with it: `task-media-ended` follows, any wrap allowance runs, and the agent dispositions
+the call. `conference` `remove` takes one person off, named as the room names them, and the call
+goes on for the rest; it is gated by `conference`, since it only means something with a third
+person on the line. Removing the party leaves the agent with the colleague, a warm hand-over in
+reverse. A remove that would leave the agent alone is not a remove but an `end-call`, and a
+provider answers it `failed`. The consulted destination of a warm transfer is not removed this way:
+`transfer` `cancel` is its own step, which returns the agent to the parked customer, and a remove
+never promises that.
 
 #### Warm transfer
 
@@ -3823,7 +3845,17 @@ already did.
 | Command | The provider's part |
 | --- | --- |
 | `mute` | **Record it, and keep the history.** The microphone is the host's, so Omni has already stopped the audio through `VoiceMediaSession.setMuted()` — no adapter can do that on the host's behalf. The command still arrives because the provider owns the task's record: it holds the current state for supervision, and each change as a `muted` handling step, exactly as it does for `held`. A platform that never hears about it shows a supervisor an agent who sounds absent for no reason, and reports a call with a silence it cannot explain. |
-| Every other command | **Perform it.** `hold`, `transfer`, `conference`, `recording`, `disconnect` and the rest act on the platform's own call leg, its bridge, or its record of the task. Nothing has happened until the provider applies them. |
+| Every other command | **Perform it.** `hold`, `transfer`, `conference`, `end-call`, `recording` and the rest act on the platform's own call leg, its bridge, or its record of the task. Nothing has happened until the provider applies them. |
+
+**The provider performs every action; the host only offers it.** A control drawn on the host is
+an affordance, never the enforcement: the host asks, and the provider does or declines. A provider
+answers `failed` for a command whose capability it did not publish, and that is the provider
+honouring its own declaration, not the host deciding policy -- a host that refuses a command on
+its own reading of a queue's flag has decided something that was never its to decide. What a
+command means on the platform is the provider's to work out: `end-call` ends the conversation, and
+which legs on which bridge that touches is a fact about the switch, never a choice the host makes.
+The one leg the host performs physically is the microphone, and even there the provider owns the
+record.
 
 **A failed `mute` does not unmute the agent.** The agent asked, Omni holds the microphone, and it
 is already done; a failure means only that the provider did not record it, leaving its view stale
@@ -3842,6 +3874,8 @@ declared:
 | Command | What makes it available |
 | --- | --- |
 | `answer`, `accept` | Nothing. A task that was offered can be accepted, or offering it meant nothing. |
+| `end-call` | The `endCall` capability. |
+| `conference` with `action: "remove"` | The `conference` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
 | `decline` | The `decline` capability on any channel, **and** Omni provisioning permitting it. One word for refusing an offer, whatever the channel. |
 | `call` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
 | `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. |
@@ -3851,6 +3885,9 @@ declared:
 | `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with status `requested`. |
 | `lead-assist` with `action: "take-over"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |
 | Everything else | Its own named capability. |
+
+`validateTaskCommand(command, task)` holds a command to this table at runtime, both ways: the
+capability it needs, the phase it belongs to, and the state that has to stand.
 
 Declining or rejecting a pending offer ends it without accepting or completing it. The provider
 confirms the end with `task-ended` and a `cancelled` outcome.
@@ -4204,6 +4241,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
 | `validateHandlingReport(report, path?, manifest?)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
+| `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a transfer's item, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`), and the state that has to stand: a consulted entry, a lead requested, somebody else still on the call (`command.conference.remove.alone`). A host validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
 

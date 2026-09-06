@@ -19,6 +19,7 @@ import {
   IDLE_CAPABILITIES,
   OMNI_FAILURE_CODES,
   OMNI_SUPPORTED_PROTOCOL_VERSIONS,
+  TASK_COMMAND_NAMES,
   negotiateProtocolVersion,
   type AcceptanceMode,
   type AuthenticationMethod,
@@ -158,7 +159,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
     browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
-    agentDisconnect: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
+    endCall: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, decline: true, hold: true }),
   email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, decline: true }),
@@ -1891,6 +1892,169 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
     validateUnavailable(output, "host.audio.output", out, into);
   } else {
     into.add("host.audio.output.status", `${out}.status`, `an output is available or unavailable, not ${String(output.status)}`);
+  }
+  return into.violations;
+}
+
+// ---------------------------------------------------------------------------
+// Commands.
+// ---------------------------------------------------------------------------
+
+const TRANSFER_ACTIONS = ["cold", "warm", "complete", "cancel"] as const;
+const LEAD_ASSIST_ACTIONS = ["request", "cancel", "take-over", "leave"] as const;
+const CONFERENCE_ACTIONS = ["add", "remove"] as const;
+const RECORDING_ACTIONS = ["start", "pause", "resume", "stop"] as const;
+
+/**
+ * What a command needs to be issuable, checked against the task it names: the capability the
+ * guide's table gates it on, the phase it belongs to, and the state that has to stand -- a
+ * consulted entry, a lead requested, somebody else on the call. Without a task only the command's
+ * own shape is checked. A host validates before sending, and an adapter before acting: a command
+ * for a control the task never offered is the host's error, and this names it.
+ */
+export function validateTaskCommand(command: unknown, task?: unknown, path = "command"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(command)) {
+    into.add("command.shape", path, "a command must be an object");
+    return into.violations;
+  }
+  const type = command.type;
+  const channel = isPlainObject(task) && typeof task.channel === "string" && isChannel(task.channel) ? task.channel : undefined;
+  const names: readonly string[] = channel !== undefined
+    ? TASK_COMMAND_NAMES[channel]
+    : [...new Set([...TASK_COMMAND_NAMES.voice, ...TASK_COMMAND_NAMES.chat, ...TASK_COMMAND_NAMES.email])];
+  if (type === "custom") {
+    into.filled(command.name, "command.custom.name", `${path}.name`, "a custom command names the control it presses");
+    return into.violations;
+  }
+  if (!into.require(typeof type === "string" && names.includes(type), "command.type", `${path}.type`,
+    channel === undefined ? `unsupported command: ${String(type)}` : `a ${channel} task has no ${String(type)} command`)) {
+    return into.violations;
+  }
+  const dial = (rule: string) => into.filled(command.dialId, rule, `${path}.dialId`, "a command that dials carries the host's dialId");
+  switch (type) {
+    case "mute":
+      into.require(typeof command.muted === "boolean", "command.mute.muted", `${path}.muted`, "mute says whether the agent is muted");
+      break;
+    case "call":
+      dial("command.call.dialId");
+      break;
+    case "connect-back":
+      dial("command.connectBack.dialId");
+      break;
+    case "transfer":
+      if (into.oneOf(command.action, TRANSFER_ACTIONS, "command.transfer.action", `${path}.action`)) {
+        if (command.action === "cold" || command.action === "warm") {
+          dial("command.transfer.dialId");
+          into.filled(command.destinationId, "command.transfer.destinationId", `${path}.destinationId`, "a transfer names the directory item it goes to");
+        } else {
+          into.require(command.dialId === undefined && command.destinationId === undefined, "command.transfer.unexpected", path,
+            `${String(command.action)} names no destination: there is exactly one it could mean`);
+        }
+      }
+      break;
+    case "lead-assist":
+      into.oneOf(command.action, LEAD_ASSIST_ACTIONS, "command.leadAssist.action", `${path}.action`);
+      if (command.note !== undefined) into.filled(command.note, "command.leadAssist.note", `${path}.note`, "a note must not be empty when present");
+      break;
+    case "conference":
+      if (into.oneOf(command.action, CONFERENCE_ACTIONS, "command.conference.action", `${path}.action`)) {
+        if (command.action === "add") {
+          dial("command.conference.dialId");
+          into.filled(command.destinationId, "command.conference.destinationId", `${path}.destinationId`, "a conference names the directory item it dials in");
+        } else {
+          const party = command.party === true;
+          const item = isFilled(command.destinationId);
+          into.require(party !== item, "command.conference.remove.target", path,
+            "a remove names one person: the party, or a conferenced entry by its destinationId, never both and never neither");
+        }
+      }
+      break;
+    case "recording":
+      into.oneOf(command.action, RECORDING_ACTIONS, "command.recording.action", `${path}.action`);
+      break;
+    case "complete":
+      if (command.disposition !== undefined) into.filled(command.disposition, "command.complete.disposition", `${path}.disposition`, "a disposition must not be empty when present");
+      if (command.notes !== undefined) into.require(typeof command.notes === "string", "command.complete.notes", `${path}.notes`, "notes must be a string when present");
+      break;
+    default:
+      break;
+  }
+  if (!isPlainObject(task)) return into.violations;
+
+  // What the task has to offer or be in for the command to be issuable.
+  const capabilities = isPlainObject(task.capabilities) ? task.capabilities : {};
+  const offered = (name: string): boolean => {
+    const declared = capabilities[name];
+    if (declared === undefined) {
+      into.add(`command.capability.${name}`, path, `${String(type)} needs the ${name} capability, and the task does not offer it`);
+      return false;
+    }
+    if (isLocked(declared)) {
+      into.add("command.capability.locked", path, `${name} stands locked by ${String(declared.lockedBy)}: the control is present without permission`);
+      return false;
+    }
+    return true;
+  };
+  const inPhase = (rule: string, ...phases: string[]) =>
+    into.require(phases.includes(String(task.phase)), rule, path, `${String(type)} belongs to ${phases.join(" or ")}, and the task is ${String(task.phase)}`);
+  const onCall = Array.isArray(task.onCall) ? task.onCall.filter(isPlainObject) : [];
+  switch (type) {
+    case "answer": case "accept": case "decline": case "reject":
+      inPhase("command.phase.pending", "pending");
+      if (type === "decline") offered("decline");
+      break;
+    case "call":
+      inPhase("command.phase.preview", "preview");
+      break;
+    case "mute": offered("mute"); break;
+    case "hold": case "resume": case "pause": offered("hold"); break;
+    case "end-call": offered("endCall"); break;
+    case "recording": offered("recording"); break;
+    case "connect-back":
+      offered("connectBack");
+      inPhase("command.phase.completing", "completing");
+      break;
+    case "transfer":
+      if (command.action === "cold") offered("coldTransfer");
+      else if (command.action === "warm") offered("warmTransfer");
+      else if (command.action === "complete" || command.action === "cancel") {
+        into.require(onCall.some(entry => entry.role === "consulted"), "command.transfer.consulted", path,
+          `${String(command.action)} needs a consulted entry on onCall: without one there is nothing to complete or cancel`);
+      }
+      break;
+    case "lead-assist":
+      if (command.action === "request" || command.action === "cancel") {
+        offered("leadAssist");
+        if (command.action === "cancel") {
+          into.require(isPlainObject(task.leadAssist) && task.leadAssist.stage === "requested", "command.leadAssist.requested", path,
+            "cancel needs a request standing: leadAssist with stage requested");
+        }
+      } else {
+        into.require(task.assisting !== undefined, "command.leadAssist.assisting", path,
+          `${String(command.action)} is the lead's own act on a call they joined: the task carries assisting`);
+      }
+      break;
+    case "conference":
+      if (offered("conference") && command.action === "remove") {
+        const others = onCall.filter(entry => entry.role !== "agent");
+        if (command.party === true) {
+          into.require(others.some(entry => entry.role !== "party"), "command.conference.remove.alone", path,
+            "removing the party would leave the agent alone: that is end-call");
+        } else if (isFilled(command.destinationId)) {
+          into.require(onCall.some(entry => entry.role === "conferenced" && entry.destinationId === command.destinationId), "command.conference.remove.unknown", path,
+            `no conferenced entry on onCall has destinationId ${String(command.destinationId)}`);
+          into.require(others.length > 1, "command.conference.remove.alone", path,
+            "removing the last other person would leave the agent alone: that is end-call");
+        }
+      }
+      break;
+    case "complete":
+      into.require(task.completionMode === "agent-command", "command.complete.mode", path,
+        "complete belongs to agent-command; a provider-automatic task completes itself");
+      break;
+    default:
+      break;
   }
   return into.violations;
 }

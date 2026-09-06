@@ -13,6 +13,7 @@ import {
   validateScheduledActivity,
   validateSnapshot,
   validateTask,
+  validateTaskCommand,
   validateTimeZone,
   validatePhone,
   isTimeZone,
@@ -1415,6 +1416,82 @@ describe("consulting a lead", () => {
     const ended = (outcome: unknown) => envelope({ type: "task-ended", taskId: "call-42", outcome });
     expect(rules(validateEventEnvelope(ended({ type: "left" }), manifest()))).toEqual([]);
     expect(rules(validateEventEnvelope(ended({ type: "vanished" }), manifest()))).toContain("event.taskEnded.outcome.type");
+  });
+});
+
+describe("validateTaskCommand", () => {
+  const voice = task({ capabilities: { mute: true, hold: true, endCall: true, recording: true, conference: { destinations: [{ id: "tier2", label: "Tier 2" }] }, warmTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } } });
+  const since = "2026-08-21T09:05:00Z";
+  const cmd = (command: unknown, on: unknown = voice) => rules(validateTaskCommand(command, on));
+
+  it("checks a command's own shape with or without a task", () => {
+    expect(rules(validateTaskCommand({ type: "hold" }))).toEqual([]);
+    expect(rules(validateTaskCommand("hold"))).toEqual(["command.shape"]);
+    expect(rules(validateTaskCommand({ type: "hang-up" }))).toEqual(["command.type"]);
+    expect(rules(validateTaskCommand({ type: "custom", name: "request-supervisor" }))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "custom", name: "" }))).toEqual(["command.custom.name"]);
+    expect(rules(validateTaskCommand({ type: "mute", muted: true }))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "mute" }))).toEqual(["command.mute.muted"]);
+    expect(rules(validateTaskCommand({ type: "call", dialId: "dial-1" }))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "call" }))).toEqual(["command.call.dialId"]);
+    expect(rules(validateTaskCommand({ type: "connect-back" }))).toEqual(["command.connectBack.dialId"]);
+    expect(rules(validateTaskCommand({ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" }))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "transfer", action: "blind", dialId: "dial-2", destinationId: "tier2" }))).toEqual(["command.transfer.action"]);
+    expect(rules(validateTaskCommand({ type: "transfer", action: "warm", destinationId: "tier2" }))).toEqual(["command.transfer.dialId"]);
+    expect(rules(validateTaskCommand({ type: "transfer", action: "warm", dialId: "dial-2" }))).toEqual(["command.transfer.destinationId"]);
+    expect(rules(validateTaskCommand({ type: "transfer", action: "complete", destinationId: "tier2" }))).toEqual(["command.transfer.unexpected"]);
+    expect(rules(validateTaskCommand({ type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" }))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "conference", action: "add", destinationId: "tier2" }))).toEqual(["command.conference.dialId"]);
+    expect(rules(validateTaskCommand({ type: "conference", action: "remove", party: true }))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "conference", action: "remove", destinationId: "tier2" }))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "conference", action: "remove" }))).toEqual(["command.conference.remove.target"]);
+    expect(rules(validateTaskCommand({ type: "conference", action: "remove", party: true, destinationId: "tier2" }))).toEqual(["command.conference.remove.target"]);
+    expect(rules(validateTaskCommand({ type: "recording", action: "rewind" }))).toEqual(["command.recording.action"]);
+    expect(rules(validateTaskCommand({ type: "lead-assist", action: "join" }))).toEqual(["command.leadAssist.action"]);
+    expect(rules(validateTaskCommand({ type: "complete", disposition: "" }))).toEqual(["command.complete.disposition"]);
+  });
+
+  it("holds a command to the task's channel, capabilities, phase and state", () => {
+    expect(cmd({ type: "end-call" })).toEqual([]);
+    expect(cmd({ type: "end-call" }, task({ capabilities: { hold: true } }))).toEqual(["command.capability.endCall"]);
+    expect(cmd({ type: "end-call" }, task({ capabilities: { endCall: { lockedBy: "team" } } }))).toEqual(["command.capability.locked"]);
+    expect(cmd({ type: "end-call" }, task({ channel: "chat", capabilities: {} }))).toEqual(["command.type"]);
+    expect(cmd({ type: "pause" }, task({ channel: "chat", capabilities: { hold: true } }))).toEqual([]);
+    expect(cmd({ type: "answer" }, task({ phase: "pending" }))).toEqual([]);
+    expect(cmd({ type: "answer" })).toEqual(["command.phase.pending"]);
+    expect(cmd({ type: "call", dialId: "dial-1" }, task({ phase: "preview", capabilities: {} }))).toEqual([]);
+    expect(cmd({ type: "call", dialId: "dial-1" })).toEqual(["command.phase.preview"]);
+    expect(cmd({ type: "connect-back", dialId: "dial-1" }, task({ phase: "completing", capabilities: { connectBack: true } }))).toEqual([]);
+    expect(cmd({ type: "connect-back", dialId: "dial-1" }, task({ phase: "completing", capabilities: {} }))).toEqual(["command.capability.connectBack"]);
+    expect(cmd({ type: "connect-back", dialId: "dial-1" }, task({ capabilities: { connectBack: true } }))).toEqual(["command.phase.completing"]);
+    // A warm transfer's finishing steps need the consulted entry the warm step put on the call.
+    const consulting = task({ capabilities: {}, onCall: [{ role: "party", since }, { role: "consulted", destinationId: "tier2", stage: "joined", since }] });
+    expect(cmd({ type: "transfer", action: "complete" }, consulting)).toEqual([]);
+    expect(cmd({ type: "transfer", action: "cancel" }, task({ capabilities: {} }))).toEqual(["command.transfer.consulted"]);
+    expect(cmd({ type: "transfer", action: "warm", dialId: "dial-2", destinationId: "tier2" })).toEqual([]);
+    expect(cmd({ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" })).toEqual(["command.capability.coldTransfer"]);
+    // Lead assist: the agent's asks need the capability, the lead's acts need the joined call.
+    expect(cmd({ type: "lead-assist", action: "request", note: "Refund" }, task({ capabilities: { leadAssist: true } }))).toEqual([]);
+    expect(cmd({ type: "lead-assist", action: "cancel" }, task({ capabilities: { leadAssist: true } }))).toEqual(["command.leadAssist.requested"]);
+    expect(cmd({ type: "lead-assist", action: "cancel" }, task({ capabilities: { leadAssist: true }, leadAssist: { stage: "requested", since } }))).toEqual([]);
+    expect(cmd({ type: "lead-assist", action: "leave" }, task({ capabilities: {} }))).toEqual(["command.leadAssist.assisting"]);
+    expect(cmd({ type: "lead-assist", action: "take-over" }, task({ capabilities: {}, assisting: { memberId: "A-1", since } }))).toEqual([]);
+    expect(cmd({ type: "complete" })).toEqual([]);
+    expect(cmd({ type: "complete" }, task({ completionMode: "provider-automatic", wrapAllowance: 10 }))).toEqual(["command.complete.mode"]);
+  });
+
+  it("lets a remove take one person off a call with somebody else still on it, never the last", () => {
+    const party = { role: "party", since };
+    const colleague = { role: "conferenced", destinationId: "tier2", stage: "joined", since };
+    const agent = { role: "agent", userId: "A-1", since };
+    const room = (...entries: unknown[]) => ({ ...voice, onCall: entries });
+    expect(cmd({ type: "conference", action: "remove", party: true }, room(party, agent, colleague))).toEqual([]);
+    expect(cmd({ type: "conference", action: "remove", destinationId: "tier2" }, room(party, agent, colleague))).toEqual([]);
+    // The agent would be alone: that is end-call.
+    expect(cmd({ type: "conference", action: "remove", party: true }, room(party, agent))).toEqual(["command.conference.remove.alone"]);
+    expect(cmd({ type: "conference", action: "remove", destinationId: "tier2" }, room(agent, colleague))).toEqual(["command.conference.remove.alone"]);
+    expect(cmd({ type: "conference", action: "remove", destinationId: "tier9" }, room(party, agent, colleague))).toEqual(["command.conference.remove.unknown"]);
+    expect(cmd({ type: "conference", action: "remove", party: true }, { ...task({ capabilities: {} }), onCall: [party, agent, colleague] })).toEqual(["command.capability.conference"]);
   });
 });
 
