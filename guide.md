@@ -1120,6 +1120,7 @@ const OMNI_FAILURE_CODES = [
   "omni.capability-not-enabled",
   "omni.task-not-found",
   "omni.destination-not-permitted",
+  "omni.phone-not-permitted",
   "omni.rate-limited",
   "omni.unavailable",
   "omni.break-already-committed",
@@ -3799,6 +3800,21 @@ that is a telephone. The harness requires no `openMedia` of such an adapter and 
 this wire never asks the agent for it: a host declares `phone` and nothing more. What a platform
 asks on surfaces of its own is its own decision.
 
+**A declared phone the platform does not permit for this agent is a login that cannot be
+established.** The manifest says what the platform can do; the agent's record, kept by an
+administrator, says what this agent is configured for, and the two can disagree with the host's
+declaration -- a softphone declared for an agent whose record says desk phone. Honouring that
+declaration on a switch that allows one registration per endpoint would evict the handset: the
+agent's phone stops ringing and their calls land in a tab, and nobody is told. So the provider
+refuses the login at authentication, with `omni.phone-not-permitted` and a message the host shows
+-- "this agent is configured for a desk phone" -- and refusing is correct, not an override of the
+host. It is a refusal, never a negotiation afterwards and never a quiet substitution, and it is
+never retryable: trying again does not reconfigure the agent, and a host validating the answer
+(`validateAuthenticationResult`) refuses a phone refusal marked otherwise
+(`authentication.failure.phone.retryable`). And **a
+provider never makes a declared phone true by changing the platform's configuration**: the record
+is the administrator's, and a login is not a request to reconfigure an agent.
+
 ### Opening the audio
 
 `openMedia` hands Omni the remote audio for one task. Every adapter whose manifest lists
@@ -3963,6 +3979,7 @@ react rather than only display the message:
 | `omni.not-authenticated` | The provider session is no longer usable. The adapter has published `expired` at or before this answer — the state is what Omni surfaces reauthentication from; the code says why this action failed, and is never the only signal. |
 | `omni.capability-not-enabled` | The action targets a capability this task, manifest, or login did not declare — including a lead command from a login whose `capabilities` no longer carry it. |
 | `omni.task-not-found` | The provider-local task id is unknown, typically after the task already ended. |
+| `omni.phone-not-permitted` | The host declared a `phone` the platform does not permit for this agent -- a softphone for an agent configured for a desk phone, or the reverse. The login is refused at authentication, and the provider never reconfigures the agent to make the declaration true. See **How the agent hears the call**. |
 | `omni.destination-not-permitted` | The dialled number, or the `destinationId` named, is not one the provider offers this agent. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
 | `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `transport-status` is not `active`. |
@@ -4270,6 +4287,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
 | `validateHandlingReport(report, path?, manifest?)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
+| `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
 | `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a transfer's item, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`), and the state that has to stand: a consulted entry, a lead requested, somebody else still on the call (`command.conference.remove.alone`). A host validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
@@ -4358,6 +4376,10 @@ assertReached(driven, ["task.onCall", "task.media", "event.task-ended"]);
 ```
 `assertReached(result, subjects)` is the paired assertion: it throws naming every subject the run
 never met, so a test that meant to check a roster cannot pass on a fixture that never produced one.
+It reads like a guarantee and is a claim the adopter keeps making: it catches an adapter that
+stopped reaching a subject, not a list that stopped asking, so a list can rot to nothing and stay
+green. Keep it honest with a control beside it -- one subject the run genuinely cannot reach,
+asserted to throw -- so the assertion is shown to be looking rather than agreeing.
 
 Three properties of the harness matter to adapter authors:
 

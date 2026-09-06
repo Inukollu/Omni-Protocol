@@ -4,6 +4,8 @@ import {
   assertNoViolations,
   ProtocolConformanceError,
   validateAuthenticationState,
+  validateAuthenticationFailure,
+  validateAuthenticationResult,
   validateContact,
   validateEventEnvelope,
   validateHandlingReport,
@@ -1356,6 +1358,9 @@ describe("every dial has an outcome", () => {
     expect(rules(validateResult({ status: "dialling", dialId: "dial-7f2" }, "execute"))).toEqual(["result.status"]);
     expect(rules(validateResult({ status: "applied", dialId: "dial-7f2" }, "execute"))).toEqual(["result.dialId.unexpected"]);
     expect(rules(validateResult({ status: "failed", failure: { code: "omni.destination-not-permitted", message: "Not in contacts", retryable: false } }, "execute", "result", "dial-7f2"))).toEqual([]);
+    // A phone the platform does not permit for the agent is refused by name, and the name is the contract's.
+    expect(rules(validateResult({ status: "failed", failure: { code: "omni.phone-not-permitted", message: "This agent is configured for a desk phone", retryable: false } }, "execute"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure: { code: "omni.station-mismatch", message: "x", retryable: false } }, "execute"))).toEqual(["failure.code.unknown"]);
   });
 
   it("lets a step that dialled say which dial and where, and no other step", () => {
@@ -1514,6 +1519,32 @@ describe("validateTaskCommand", () => {
     expect(cmd({ type: "conference", action: "remove", destinationId: "tier2" }, room(agent, colleague))).toEqual(["command.conference.remove.alone"]);
     expect(cmd({ type: "conference", action: "remove", destinationId: "tier9" }, room(party, agent, colleague))).toEqual(["command.conference.remove.unknown"]);
     expect(cmd({ type: "conference", action: "remove", party: true }, { ...task({ capabilities: {} }), onCall: [party, agent, colleague] })).toEqual(["command.capability.conference"]);
+  });
+});
+
+describe("an authentication refusal", () => {
+  const refusal = { code: "omni.phone-not-permitted", message: "This agent is configured for a desk phone", retryable: false };
+  it("names the phone the platform does not permit with the contract's code, never retryable", () => {
+    expect(rules(validateAuthenticationFailure(refusal))).toEqual([]);
+    expect(rules(validateAuthenticationFailure({ ...refusal, retryable: true }))).toEqual(["authentication.failure.phone.retryable"]);
+    // The omni namespace is the contract's: an invented code there is refused, a provider's own is not.
+    expect(rules(validateAuthenticationFailure({ ...refusal, code: "omni.station-mismatch" }))).toEqual(["failure.code.unknown"]);
+    expect(rules(validateAuthenticationFailure({ code: "acme.locked-out", message: "Locked", retryable: true, retryAfterMs: 30000 }))).toEqual([]);
+    expect(rules(validateAuthenticationFailure({ code: "acme.locked-out", message: "Locked", retryable: true, retryAfterMs: -1 }))).toEqual(["authentication.failure.retryAfterMs"]);
+    expect(rules(validateAuthenticationFailure({ code: "", message: "Locked", retryable: true }))).toEqual(["authentication.failure.code"]);
+    expect(rules(validateAuthenticationFailure("locked"))).toEqual(["authentication.failure.shape"]);
+  });
+
+  it("holds start and complete to their answers", () => {
+    expect(rules(validateAuthenticationResult({ status: "rejected", failure: refusal }, "start"))).toEqual([]);
+    expect(rules(validateAuthenticationResult({ status: "rejected", failure: refusal }, "complete"))).toEqual([]);
+    expect(rules(validateAuthenticationResult({ status: "rejected", failure: { ...refusal, retryable: true } }, "start"))).toEqual(["authentication.failure.phone.retryable"]);
+    expect(rules(validateAuthenticationResult({ status: "interaction-required", challenge: { flowId: "f1", method: "credentials", fields: [] } }, "start"))).toEqual([]);
+    expect(rules(validateAuthenticationResult({ status: "interaction-required" }, "start"))).toEqual(["authentication.result.challenge"]);
+    expect(rules(validateAuthenticationResult({ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" }, capabilities: {} }, "complete"))).toEqual([]);
+    expect(rules(validateAuthenticationResult({ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao" }, capabilities: {} }, "complete"))).toEqual(["authentication.identity.timeZone"]);
+    expect(rules(validateAuthenticationResult({ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" }, capabilities: {} }, "start"))).toEqual(["authentication.result.status"]);
+    expect(rules(validateAuthenticationResult("ok", "start"))).toEqual(["authentication.result.shape"]);
   });
 });
 

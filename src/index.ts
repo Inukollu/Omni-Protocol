@@ -1366,6 +1366,7 @@ export const OMNI_FAILURE_CODES = [
   "omni.capability-not-enabled",
   "omni.task-not-found",
   "omni.destination-not-permitted",
+  "omni.phone-not-permitted",
   "omni.rate-limited",
   "omni.unavailable",
   "omni.break-already-committed",

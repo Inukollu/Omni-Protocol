@@ -2267,6 +2267,64 @@ export interface LoginValidationContext {
   levels?: readonly string[];
 }
 
+/**
+ * A failure an authentication reports: on a `rejected` start or completion, or on an `expired`
+ * state. A provider names its own codes freely; an `omni.` code is the contract's and has to be one
+ * it lists. `omni.phone-not-permitted` is never retryable: the agent's station is administrator
+ * configuration, and trying again does not reconfigure it.
+ */
+function validateAuthenticationFailureInto(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("authentication.failure.shape", path, "a failure must be an object");
+    return;
+  }
+  if (into.filled(value.code, "authentication.failure.code", `${path}.code`, "a failure needs a code") && (value.code as string).startsWith("omni.")) {
+    into.require((OMNI_FAILURE_CODES as readonly string[]).includes(value.code as string), "failure.code.unknown", `${path}.code`,
+      `${String(value.code)} is not a failure code this contract defines`);
+  }
+  into.filled(value.message, "authentication.failure.message", `${path}.message`, "a failure needs a message");
+  into.require(typeof value.retryable === "boolean", "authentication.failure.retryable", `${path}.retryable`, "a failure must say whether it is retryable");
+  if (value.code === "omni.phone-not-permitted") {
+    into.require(value.retryable === false, "authentication.failure.phone.retryable", `${path}.retryable`,
+      "a phone the platform does not permit for this agent is configuration: trying again does not change it, so the refusal is not retryable");
+  }
+  if (value.retryAfterMs !== undefined) {
+    into.require(typeof value.retryAfterMs === "number" && value.retryAfterMs >= 0, "authentication.failure.retryAfterMs", `${path}.retryAfterMs`,
+      "retryAfterMs must be a non-negative number when present");
+  }
+  if (value.field !== undefined) into.filled(value.field, "authentication.failure.field", `${path}.field`, "field names a declared credentials field when present");
+}
+
+export function validateAuthenticationFailure(failure: unknown, path = "failure"): ProtocolViolation[] {
+  const into = new Collector();
+  validateAuthenticationFailureInto(failure, path, into);
+  return into.violations;
+}
+
+/**
+ * What `start()` or `complete()` answered: a challenge or a rejection from `start`, a login or a
+ * rejection from `complete`. A rejection carries a failure the host can show, and a login is held
+ * to the same rules as any `authenticated` state.
+ */
+export function validateAuthenticationResult(result: unknown, method: "start" | "complete", path = "result", context: LoginValidationContext = {}): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(result)) {
+    into.add("authentication.result.shape", path, `${method} must answer an object`);
+    return into.violations;
+  }
+  if (result.status === "rejected") {
+    validateAuthenticationFailureInto(result.failure, `${path}.failure`, into);
+  } else if (method === "start" && result.status === "interaction-required") {
+    into.require(isPlainObject(result.challenge), "authentication.result.challenge", `${path}.challenge`, "interaction-required carries the challenge to put to the person");
+  } else if (method === "complete" && result.status === "authenticated") {
+    into.violations.push(...validateAuthenticationState(result, path, context));
+  } else {
+    into.add("authentication.result.status", `${path}.status`,
+      `${method} answers ${method === "start" ? "interaction-required" : "authenticated"} or rejected, not ${String(result.status)}`);
+  }
+  return into.violations;
+}
+
 export function validateAuthenticationState(state: unknown, path = "authentication", context: LoginValidationContext = {}): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(state)) {
@@ -2285,14 +2343,7 @@ export function validateAuthenticationState(state: unknown, path = "authenticati
   } else if (state.status === "expired") {
     if (state.identity !== undefined) validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
     if (state.failure !== undefined) {
-      if (!isPlainObject(state.failure)) {
-        into.add("authentication.failure.shape", `${path}.failure`, "a failure must be an object when present");
-      } else {
-        into.filled(state.failure.code, "authentication.failure.code", `${path}.failure.code`, "a failure needs a code");
-        into.filled(state.failure.message, "authentication.failure.message", `${path}.failure.message`, "a failure needs a message");
-        into.require(typeof state.failure.retryable === "boolean", "authentication.failure.retryable",
-          `${path}.failure.retryable`, "a failure must say whether it is retryable");
-      }
+      validateAuthenticationFailureInto(state.failure, `${path}.failure`, into);
     }
   } else {
     into.require(state.identity === undefined, "authentication.identity.unexpected", `${path}.identity`,
