@@ -2676,8 +2676,10 @@ changes.** An agent on a billing dispute may refund up to their own limit and no
 customer wants more, the agent asks for a lead, and the moment the lead joins the call the task is
 republished with the Refund control the agent could not have a minute ago; when the lead leaves, it
 is republished without it. Nothing about the agent changed -- who is on the call did -- and the
-task said so both times, at the moment it became true. A call moving into another queue arrives
-under that queue's terms the same way. A capability stated
+task said so both times, at the moment it became true. A call moves queues the same way: a caller
+identified as a priority customer is transferred to the priority queue, and the task arrives under
+that queue's terms -- a longer wrap allowance, a discount control the general queue never offered --
+restated on the task at the hand-over, not inferred from the queue it left. A capability stated
 once at offer or answer and never corrected is a fact with a shelf life and no expiry, and a host
 draws a control the provider will now refuse -- or withholds one the agent now has. So the provider republishes
 the task, with its capabilities as they now stand, and a host treats the last statement as current
