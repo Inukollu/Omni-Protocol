@@ -1922,9 +1922,14 @@ provider **stores it on the agent** and republishes it as `identity.timeZone` on
 `authenticated` state, and on any `User` it returns from `describeUsers()`, so a lead reading a
 colleague's yesterday sees the colleague's yesterday and a summary is bucketed by the right day
 after a session has ended. A roaming agent corrects it by signing in from where they are. The
-harness holds a provider to it: once connected, the identity carries the zone the host sent
-(`authentication.identity.timeZone.stored`), and a zone that is not an IANA name is refused
-wherever it appears (`authentication.identity.timeZone`).
+harness holds a provider to the round trip: once connected, the identity carries the zone the host
+sent (`authentication.identity.timeZone.republished`), and a zone that is not an IANA name is
+refused wherever it appears (`authentication.identity.timeZone`). **The round trip is not the
+store.** An adapter that echoes the connect-time zone back onto the identity passes that check
+with nothing kept, and a lead reading a colleague's day would still get UTC. What proves the store
+is a zone the run never sent: a colleague's `User` from `describeUsers()` carrying theirs. A
+provider's own tests are where that is shown, with a second agent whose zone arrived through
+another session.
 
 ### Who the agent is
 

@@ -366,13 +366,14 @@ export async function exerciseAdapter<C extends Channel>(
     const capacity = await connection.setCapacity({ count: 1 });
     const malformed = validateResult(capacity, "setCapacity", "connection.setCapacity");
     violations.push(...malformed);
-    // The provider keeps the agent's day: once connected, the identity it publishes carries the
-    // zone the host sent, so a colleague's summary and a lead's view are bucketed by the right day.
+    // The provider republishes the agent's day: once connected, the identity carries the zone the
+    // host sent. That proves the round trip, not the store -- an echo passes it -- and the name
+    // says only what it tests; storage is proved by a colleague's zone arriving from describeUsers().
     if (isTimeZone(context.timeZone) && current().identity.timeZone !== context.timeZone) {
       violations.push({
-        rule: "authentication.identity.timeZone.stored",
+        rule: "authentication.identity.timeZone.republished",
         path: "authentication.identity.timeZone",
-        message: `the host sent ${context.timeZone} at connect and the identity says ${String(current().identity.timeZone)}: the provider stores the agent's time zone and republishes it`,
+        message: `the host sent ${context.timeZone} at connect and the identity says ${String(current().identity.timeZone)}: the provider republishes the agent's time zone on the identity`,
       });
     }
     // A refusal is read only from a result that has the shape of one.

@@ -675,8 +675,8 @@ describe("exerciseAdapter", () => {
     const offset = await exerciseAdapter(makeAdapter({}).adapter, { ...context, timeZone: "+05:30" }, { collectOnly: true });
     expect(offset.violations.map(v => v.rule)).toContain("context.timeZone");
     // A provider that never stored it, or stored somebody else's day, is told so.
-    expect(await rules({ identityTimeZone: false })).toEqual(["authentication.identity.timeZone.stored"]);
-    expect(await rules({ identityTimeZone: "America/Chicago" })).toEqual(["authentication.identity.timeZone.stored"]);
+    expect(await rules({ identityTimeZone: false })).toEqual(["authentication.identity.timeZone.republished"]);
+    expect(await rules({ identityTimeZone: "America/Chicago" })).toEqual(["authentication.identity.timeZone.republished"]);
   });
 
   it("catches a preview task that leaves preview still carrying its deadline, through the full run", async () => {
