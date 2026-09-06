@@ -319,6 +319,19 @@ describe("TaskStream holds terms once read", () => {
     expect(rulesOf(seeded("ungoverned").apply(under("undetermined")))).toEqual(["stream.taskUpdated.capabilitySource"]);
   });
 
+  it("holds a snapshot to the same rule: a resync may not say a task lost the terms it had", () => {
+    const resync = (capabilitySource: Task["capabilitySource"]): ProviderEventEnvelope<"voice"> =>
+      ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [{ ...voiceTask, capabilitySource }], taskCount: 1 } } });
+    expect(rulesOf(seeded("queue").apply(resync("undetermined")))).toEqual(["stream.snapshot.capabilitySource"]);
+    expect(rulesOf(seeded("ungoverned").apply(resync("undetermined")))).toEqual(["stream.snapshot.capabilitySource"]);
+    // The control: terms arriving on a snapshot, or restated by one, are what a snapshot is for.
+    expect(rulesOf(seeded("undetermined").apply(resync("queue")))).toEqual([]);
+    expect(rulesOf(seeded("queue").apply(resync("queue")))).toEqual([]);
+    // And a task the stream never knew arrives under whatever terms it has.
+    const fresh = new TaskStream(); fresh.seed({ tasks: [] });
+    expect(rulesOf(fresh.apply(resync("undetermined")))).toEqual([]);
+  });
+
   it("holds an offer to the same rule once it is on the stream", () => {
     const s = new TaskStream(); s.seed({ tasks: [] });
     const offered: ProviderEventEnvelope<"voice"> = { id: "e0", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...voiceTask, phase: "pending", acceptance: "consent", capabilitySource: "queue" } } };

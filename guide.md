@@ -2728,7 +2728,8 @@ the terms arrive, the task is republished under `queue` with the set as it now s
 republish as any other permission that changed while the task was open. The move goes one way.
 Terms once read stay read: a re-read that fails mid-task is not a new fact about the task, so the
 last statement stands and the failure is a `diagnostic`, and a task that was published under
-`queue` or `ungoverned` never returns to `undetermined` (`stream.taskUpdated.capabilitySource`).
+`queue` or `ungoverned` never returns to `undetermined`, on an update (`stream.taskUpdated.capabilitySource`)
+or on a resync snapshot (`stream.snapshot.capabilitySource`).
 
 What the agent is told differs by source, and only one source tells them anything. Under `queue`
 and `ungoverned` the agent sees controls and nothing about where they came from: both are facts,

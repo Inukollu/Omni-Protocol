@@ -834,6 +834,17 @@ export class TaskStream {
     const known = id === undefined ? undefined : this.tasks.get(id);
     switch (event.type) {
       case "snapshot":
+        // A snapshot replaces what is known, and still may not say a task lost terms it had read.
+        if (isRecord(event.snapshot) && Array.isArray(event.snapshot.tasks)) {
+          event.snapshot.tasks.forEach((task, index) => {
+            if (!isRecord(task) || typeof task.id !== "string") return;
+            const was = this.tasks.get(task.id);
+            if (was !== undefined && (was.source === "queue" || was.source === "ungoverned") && task.capabilitySource === "undetermined") {
+              refuse("stream.snapshot.capabilitySource", `${at}.snapshot.tasks[${index}].capabilitySource`,
+                `${task.id} was published under ${was.source} terms and the snapshot says undetermined: terms once read stay read`);
+            }
+          });
+        }
         this.seed(event.snapshot);
         break;
       case "task-offered":
