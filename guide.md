@@ -2673,7 +2673,9 @@ provider puts on the task what the platform permits for it.
 
 **A permission that changes while the task is open is republished on the task at the moment it
 changes.** An intern may not conference anyone in on their own; once a lead has joined the call,
-they may. A call moving into another queue arrives under that queue's terms. A capability stated
+they may. A salesperson may not commit a discount until the product owner who can has joined, and
+the `custom` control that commits it appears on the task at that moment and not before. A call
+moving into another queue arrives under that queue's terms. A capability stated
 once at offer or answer and never corrected is a fact with a shelf life and no expiry, and a host
 draws a control the provider will now refuse -- or withholds one the agent now has. So the provider republishes
 the task, with its capabilities as they now stand, and a host treats the last statement as current
