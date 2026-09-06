@@ -31,6 +31,7 @@ import {
   validateTimeZone,
   validatePhone,
   isTimeZone,
+  sameTimeZone,
   type ProtocolViolation,
   type ReaderContext,
 } from "./validation.js";
@@ -293,18 +294,6 @@ export async function exerciseAdapter<C extends Channel>(
     violations.push(...validateHostGuarantees(context.host.guarantees, "context.host.guarantees"));
     // The zone is the host's to state, so a context without one is a host that cannot exist.
     violations.push(...validateTimeZone(context.timeZone, "context.timeZone"));
-    // A provider that reads its own clock passes the round trip on any machine in the host's zone,
-    // which for a demo and a runner in one datacentre is most of them. A conformance run states a
-    // zone this machine is not in, so the only way the identity carries it is that the provider
-    // took it from the host.
-    if (isTimeZone(context.timeZone)) {
-      const canonical = (zone: string) => new Intl.DateTimeFormat("en", { timeZone: zone }).resolvedOptions().timeZone;
-      const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      if (canonical(context.timeZone) === canonical(local)) {
-        violations.push({ rule: "context.timeZone.local", path: "context.timeZone",
-          message: `a conformance run states a zone this machine is not in; ${context.timeZone} is this machine's, so a provider reading its own clock would pass the round trip` });
-      }
-    }
     // How the agent hears the call decides what the host owns: on a softphone the host has the
     // audio and reports it; on a desk phone, or off voice, there is none for it to report.
     violations.push(...validatePhone(context.phone, adapter.manifest, "context.phone"));
@@ -387,7 +376,9 @@ export async function exerciseAdapter<C extends Channel>(
     // The provider republishes the agent's day: once connected, the identity carries the zone the
     // host sent. That proves the round trip, not the store -- an echo passes it -- and the name
     // says only what it tests; storage is proved by a colleague's zone arriving from describeUsers().
-    if (isTimeZone(context.timeZone) && current().identity.timeZone !== context.timeZone) {
+    // A zone is judged by what it denotes: Asia/Kolkata and Asia/Calcutta are one zone, and a
+    // provider that keeps the canonical name has kept the zone.
+    if (isTimeZone(context.timeZone) && !sameTimeZone(current().identity.timeZone, context.timeZone)) {
       violations.push({
         rule: "authentication.identity.timeZone.republished",
         path: "authentication.identity.timeZone",

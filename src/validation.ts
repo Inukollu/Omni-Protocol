@@ -1991,6 +1991,13 @@ export function isTimeZone(value: unknown): value is string {
   }
 }
 
+/** Whether two zone names denote one zone: `Asia/Kolkata` and `Asia/Calcutta` do, and a name is judged by what it denotes. */
+export function sameTimeZone(a: unknown, b: unknown): boolean {
+  if (!isTimeZone(a) || !isTimeZone(b)) return false;
+  const canonical = (zone: string) => new Intl.DateTimeFormat("en", { timeZone: zone }).resolvedOptions().timeZone;
+  return a === b || canonical(a) === canonical(b);
+}
+
 /** The zone a host sends at connect: required, and an IANA name. */
 export function validateTimeZone(value: unknown, path = "context.timeZone"): ProtocolViolation[] {
   const into = new Collector();

@@ -16,6 +16,7 @@ import {
   validateTimeZone,
   validatePhone,
   isTimeZone,
+  sameTimeZone,
   validateResult,
   validateTeamRoster,
   type ProtocolViolation,
@@ -1464,6 +1465,10 @@ describe("the agent's day", () => {
     expect(rules(validateTimeZone("UTC+1"))).toEqual(["context.timeZone"]);
     expect(isTimeZone("Asia/Kolkata")).toBe(true);
     expect(isTimeZone("Asia/Nowhere")).toBe(false);
+    // One zone under two names is one zone; two zones are two, whatever their offsets.
+    expect(sameTimeZone("Asia/Kolkata", "Asia/Calcutta")).toBe(true);
+    expect(sameTimeZone("Europe/Berlin", "Europe/Paris")).toBe(false);
+    expect(sameTimeZone("Asia/Kolkata", undefined)).toBe(false);
   });
 });
 
