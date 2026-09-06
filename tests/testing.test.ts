@@ -665,6 +665,21 @@ describe("exerciseAdapter", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("catches a preview task that leaves preview still carrying its deadline, through the full run", async () => {
+    // The natural provider implementation spreads the old task into the new one, and its own
+    // state looks right; only the host's boundary sees the deadline a task past preview cannot have.
+    const previewed = { ...conformingSnapshot.tasks[0]!, id: "call-77", capabilities: {}, browsers: [], phase: "preview" as const, media: undefined, handlingHistory: undefined,
+      previewEndsAt: "2026-08-21T09:02:00Z", atDeadline: "calls" as const };
+    const withPreview = { ...conformingSnapshot, tasks: [previewed], taskCount: 1 } satisfies Snapshot<"voice">;
+    const update = (task: Task<"voice">): ProviderEventEnvelope<"voice"> =>
+      ({ id: "evt-spread", loginId: "session-1", occurredAt: "2026-08-21T09:01:30Z", event: { type: "task-updated", task } });
+    const spread = await rules({ snapshot: withPreview, emit: listener => listener(update({ ...previewed, phase: "in-progress" })) });
+    expect(spread).toEqual(["task.preview.deadline.unexpected"]);
+    // The control: the same move with both fields dropped is exactly what the guide asks for.
+    const dropped = await rules({ snapshot: withPreview, emit: listener => listener(update({ ...previewed, phase: "in-progress", previewEndsAt: undefined, atDeadline: undefined })) });
+    expect(dropped).toEqual([]);
+  });
+
   it("says what the run never reached, so a clean result is read for what it covers", async () => {
     // The rich fixture carries a task, a contact and an activity but no roster, no break reasons,
     // no imposed break, and delivers no event; the bare fixture reaches nothing at all.
