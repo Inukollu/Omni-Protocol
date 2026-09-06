@@ -1981,6 +1981,17 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       break;
   }
   if (!isPlainObject(task)) return into.violations;
+  // The task the command is held to has to be one the wire published. A host's own mapping of it,
+  // handed in for want of the original, is not, and checking a command against it would be
+  // checking against a task nobody has -- so the task is validated first, and a command is held
+  // only to a task that stands.
+  const published = new Collector();
+  validateTaskInto(task, { channel: channel ?? "voice" }, `${path}.task`, published);
+  if (published.violations.length > 0) {
+    into.add("command.task", `${path}.task`,
+      `the task the command is held to is not one the wire published (${published.violations.map(v => v.rule).join(", ")}): pass the task as the provider sent it, or validate the command's shape alone`);
+    return into.violations;
+  }
 
   // What the task has to offer or be in for the command to be issuable.
   const capabilities = isPlainObject(task.capabilities) ? task.capabilities : {};
