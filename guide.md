@@ -4358,6 +4358,10 @@ assertReached(driven, ["task.onCall", "task.media", "event.task-ended"]);
 ```
 `assertReached(result, subjects)` is the paired assertion: it throws naming every subject the run
 never met, so a test that meant to check a roster cannot pass on a fixture that never produced one.
+It reads like a guarantee and is a claim the adopter keeps making: it catches an adapter that
+stopped reaching a subject, not a list that stopped asking, so a list can rot to nothing and stay
+green. Keep it honest with a control beside it -- one subject the run genuinely cannot reach,
+asserted to throw -- so the assertion is shown to be looking rather than agreeing.
 
 Three properties of the harness matter to adapter authors:
 
