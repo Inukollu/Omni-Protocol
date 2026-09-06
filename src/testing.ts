@@ -351,6 +351,7 @@ export async function exerciseAdapter<C extends Channel>(
         violations.push({ rule: "diagnostic.raised", path: "event.diagnostic",
           message: `the provider reported a diagnostic: expected ${String(envelope.event.expected)}; observed ${String(envelope.event.observed)}` });
       }
+      violations.push(...undeterminedTasks(eventTasks(envelope), "event"));
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
       if (eventDeclaresMute(envelope)) requireMethod(live, "recordStep", "a task declares mute, which the host performs and must have somewhere to record");
       // Cross-event rules apply once the stream has a beginning: the connect snapshot.
@@ -366,6 +367,7 @@ export async function exerciseAdapter<C extends Channel>(
     const snapshot = await connection.snapshot() as Snapshot;
     observeSnapshot(snapshot, seen);
     violations.push(...validateSnapshot(snapshot, adapter.manifest, "snapshot", reader()));
+    violations.push(...undeterminedTasks(Array.isArray(snapshot?.tasks) ? snapshot.tasks : [], "snapshot.tasks"));
     stream.seed(snapshot);
     breaks.seed(snapshot);
     seeded = true;
@@ -555,6 +557,27 @@ export function assertAuthenticationRestoreAndExpiry(
   if (refreshingIndex >= 0 && refreshingIndex > expiredIndex) {
     throw new Error("Refreshing state must occur before expiry");
   }
+}
+
+/** The tasks an envelope carries: the one a task event names, or a snapshot event's list. */
+function eventTasks(envelope: unknown): unknown[] {
+  if (!isRecord(envelope) || !isRecord(envelope.event)) return [];
+  const event = envelope.event;
+  if (event.type === "task-offered" || event.type === "task-updated") return [event.task];
+  if (event.type === "snapshot" && isRecord(event.snapshot) && Array.isArray(event.snapshot.tasks)) return event.snapshot.tasks;
+  return [];
+}
+
+/**
+ * A task published under `undetermined` terms is a fact to a host and a failure to a conformance
+ * run, as a diagnostic is: the platform under test could not say what it permits, and a green
+ * result must not paper over it.
+ */
+function undeterminedTasks(tasks: readonly unknown[], path: string): ProtocolViolation[] {
+  return tasks.flatMap((task, index) => isRecord(task) && task.capabilitySource === "undetermined"
+    ? [{ rule: "capabilitySource.undetermined", path: `${path}[${index}].capabilitySource`,
+        message: `task ${String(task.id)} was published under terms the provider could not determine` }]
+    : []);
 }
 
 /**
@@ -755,7 +778,7 @@ const WORK_BEGUN = new Set(["in-progress", "paused", "completing"]);
 
 /** What a stream has said about the tasks it carries, and the rules across events. */
 export class TaskStream {
-  private readonly tasks = new Map<string, { phase: string; media: string; stages: Map<string, string> }>();
+  private readonly tasks = new Map<string, { phase: string; media: string; source: string; stages: Map<string, string> }>();
   // Every dial the stream can place an outcome against: one the host said it placed, or one a
   // task carried on `onCall` or in its record -- which is how a dial made before a transfer is known
   // to whoever holds the task now. `answered` or `ended` once its outcome arrived, since it comes once.
@@ -777,7 +800,7 @@ export class TaskStream {
     }
   }
 
-  private static stated(task: unknown): { phase: string; media: string; stages: Map<string, string> } {
+  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string> } {
     const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
     // The stage of every dialled entry the room names by its dial, so an update can be held to the
     // outcome that moves it.
@@ -787,7 +810,7 @@ export class TaskStream {
         if (isRecord(entry) && typeof entry.dialId === "string" && typeof entry.stage === "string") stages.set(entry.dialId, entry.stage);
       }
     }
-    return { phase: String(isRecord(task) ? task.phase : undefined), media, stages };
+    return { phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages };
   }
 
   /** Replaces what is known with a snapshot's tasks, as a snapshot replaces Omni's state. */
@@ -824,6 +847,13 @@ export class TaskStream {
         if (known === undefined) {
           refuse("stream.taskUpdated.unknown", `${at}.task.id`, `${id} was never offered or carried on a snapshot`);
           break;
+        }
+        // Terms once read stay read. A re-read that fails is not a new fact about the task, so the
+        // last statement stands and the failure is a diagnostic; undetermined is a place a task
+        // starts from, never one it returns to.
+        if ((known.source === "queue" || known.source === "ungoverned") && isRecord(event.task) && event.task.capabilitySource === "undetermined") {
+          refuse("stream.taskUpdated.capabilitySource", `${at}.task.capabilitySource`,
+            `${id} was published under ${known.source} terms and now says undetermined: terms once read stay read, and a re-read that fails is a diagnostic, not a republish`);
         }
         if (known.media === "ended") {
           const phase = isRecord(event.task) ? String(event.task.phase) : "";

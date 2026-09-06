@@ -644,12 +644,15 @@ type Lockable<T> = T | Locked;
 
 type TaskMediaState = "started" | "ended";
 
+type CapabilitySource = "queue" | "ungoverned" | "undetermined";
+
 type Task<C extends Channel = Channel> = {
   id: TaskId;
   title: string;
   channel: C;
   taskType: string;
   capabilities: TaskCapabilities<C>;
+  capabilitySource: CapabilitySource;
   browsers: TaskBrowser[];
   party?: Contact;
   phase: TaskPhase;
@@ -2194,6 +2197,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `channel` | Channel handling this task. It must equal the source provider's manifest channel. |
 | `taskType` | Required provider-defined source or category of work, such as a voice `Queue Name`, `Mailbox Folder`, `Chat Source`, `Support`, `Billing`, or `Returns`. |
 | `capabilities` | Controls and workspace features available for this specific task. |
+| `capabilitySource` | Required. Who chose the capabilities: `queue` when somebody configured these terms, `ungoverned` when nothing handed the work over -- an agent's own outbound -- and `undetermined` when a queue was named and its terms could not be read, in which case `capabilities` is what the provider will honour, not what the platform permits. A host shows `undetermined` where the agent works. See **Task capabilities**. |
 | `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
 | `party` | The person or entity on the other end of this task, as a `Contact`: often a name and one address; a withheld caller ID may leave nothing to send at all. Optional. The party is who the task is *with*; `contacts` is the directory. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preview`, `in-progress`, `paused`, or `completing`. `preview` is voice only. |
@@ -2669,7 +2673,19 @@ from no other source -- not the queue the task came from, not the login, not its
 -- because each of those answers a question about this task from somewhere that does not know
 about this task, and a client with two sources and a rule for choosing between them is the shape
 that produces two consumers disagreeing about one fact. The task is the one source, and the
-provider puts on the task what the platform permits for it.
+provider puts on the task what the platform permits for it -- and says, in `capabilitySource`, who
+chose those terms. `queue` says somebody configured them. `ungoverned` says nothing handed the work
+over: an agent's own outbound call has no queue behind it, and the provider states what it permits
+for such a call. Neither changes where a host reads the capabilities from, which is the task; the
+source is one more published fact about them, and the one that lets a host tell a fact from a fault
+(see below).
+
+**Completing the task is not a capability, and no capability set withholds it.** `complete` is
+governed by `completionMode` alone: under `agent-command` it is always available, whatever the set
+says, and the `dispositions` capability decides only whether a code travels with it. Likewise
+Answer on a pending task and Call on a preview are the phase's controls, not the set's. The
+capability set governs what the agent may do *with* the task; disposing of it is never on the
+list.
 
 **A permission that changes while the task is open is republished on the task at the moment it
 changes.** An agent on a billing dispute may refund up to their own limit and no further. The
@@ -2695,12 +2711,36 @@ republished is a button that fails when pressed. `assertTaskCapabilityWithdrawal
 direction: the task as offered and as republished, and one command that was issuable under the
 first and is refused under the last for want of the capability withdrawn -- and nothing else.
 
-**An empty capability set is a statement, not a shrug.** `capabilities: {}` says the platform
-permits nothing on this task. A provider that has not yet learned what the platform permits -- a
-queue's configuration that has not reached it -- knows nothing of the kind, and must not publish
-the task as if it did: it holds the task until it knows, or reports the gap as a `diagnostic`,
-because "no queue governs this call" is a fact and "the configuration has not arrived" is a fault,
-and a host cannot tell them apart from a value that carries neither.
+**An empty capability set is a statement, not a shrug.** `capabilities: {}` under `queue` or
+`ungoverned` says the platform permits nothing capability-gated on this task, and a host draws
+nothing beyond what the phase and `completionMode` require. A provider that has not yet learned
+what the platform permits -- a queue's configuration that has not reached it -- knows nothing of
+the kind, and must not publish the task as if it did, neither as `{}` nor as every control it has.
+It publishes the task under `capabilitySource: "undetermined"`, with the capabilities it will
+honour until it knows, and a host shows that where the agent works, beside the controls it draws
+from them: "no queue governs this call" is a fact, "the configuration has not arrived" is a fault,
+and the set alone cannot tell them apart, so the provider says which. What a provider honours
+under undetermined terms is its own call -- a floor that would rather an agent briefly hold a
+control the platform might not have granted than lose hold or hang-up mid-call over a slow
+configuration read publishes those -- and the protocol chooses no default set for it. The fault is
+also reported as a `diagnostic` naming the task, one per occurrence, so an operator counts it. When
+the terms arrive, the task is republished under `queue` with the set as it now stands: the same
+republish as any other permission that changed while the task was open. The move goes one way.
+Terms once read stay read: a re-read that fails mid-task is not a new fact about the task, so the
+last statement stands and the failure is a `diagnostic`, and a task that was published under
+`queue` or `ungoverned` never returns to `undetermined` (`stream.taskUpdated.capabilitySource`).
+
+What the agent is told differs by source, and only one source tells them anything. Under `queue`
+and `ungoverned` the agent sees controls and nothing about where they came from: both are facts,
+and an agent working a call has no use for the name of the rule behind its buttons. Under
+`undetermined` the agent is told, beside the controls, that these are what the provider will honour
+until the queue's terms arrive, and that the controls may change when they do -- a statement about
+the buttons in front of them now, not about the provider, because that is what changes when the
+republish lands. The two words are close in English and far apart on the desk: `ungoverned` is
+silence, `undetermined` is a notice. `exerciseAdapter` treats a
+task published under `undetermined` as a violation (`capabilitySource.undetermined`), as it treats
+a diagnostic: a conformance run against a platform that cannot say what it permits fails loudly
+rather than passing with a note.
 
 ```ts
 const taskCapabilities = {
@@ -4247,7 +4287,9 @@ agent works and keeps a count an operator can read, because a healthy workspace 
 console is the silence problem one layer up. One event per occurrence; the host counts, the
 provider does not batch. `exerciseAdapter` treats a diagnostic delivered during a run as a
 violation (`diagnostic.raised`): a conformance run against a platform that is breaking its rules
-fails loudly rather than passing with a note.
+fails loudly rather than passing with a note. A task published under `capabilitySource:
+"undetermined"` is the same kind of fact, stated on the task instead, and fails a run the same way
+(`capabilitySource.undetermined`); see **Task capabilities**.
 
 | Field | Contract |
 | --- | --- |

@@ -815,6 +815,15 @@ export interface Locked {
  */
 export type Lockable<T> = T | Locked;
 
+/**
+ * Who chose a task's capabilities. `undetermined` is a fault the provider states on the task rather
+ * than hides: the platform's terms could not be read, and the set published is what the provider
+ * will honour, not what the platform permits.
+ */
+export type CapabilitySource = "queue" | "ungoverned" | "undetermined";
+
+export const CAPABILITY_SOURCES = ["queue", "ungoverned", "undetermined"] as const satisfies readonly CapabilitySource[];
+
 export type Task<C extends Channel = Channel> = {
   id: TaskId;
   title: string;
@@ -822,6 +831,13 @@ export type Task<C extends Channel = Channel> = {
   /** The provider's own name for a category of work. Finer-grained than a channel. */
   taskType: string;
   capabilities: TaskCapabilities<C>;
+  /**
+   * Where the capabilities came from before the provider put them on the task, so a host can tell
+   * a fact from a fault: `queue` when somebody chose these terms, `ungoverned` when nothing handed
+   * the work over, `undetermined` when a queue was named and its terms could not be read -- the
+   * provider then publishes what it will honour and says so here, where the controls are drawn.
+   */
+  capabilitySource: CapabilitySource;
   browsers: TaskBrowser[];
   /** The person or entity on the other end of this task. Who the task is with; `contacts` on the snapshot is the directory. */
   party?: Contact;

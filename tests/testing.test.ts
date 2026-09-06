@@ -8,6 +8,7 @@ const voiceTask = {
   channel: "voice",
   taskType: "Customer Support",
   capabilities: { hold: true },
+  capabilitySource: "queue",
   phase: "in-progress",
   browsers: [],
   completionMode: "agent-command",
@@ -298,6 +299,35 @@ describe("assertMediaFollowsTheTask", () => {
   });
 });
 
+describe("TaskStream holds terms once read", () => {
+  const at = "2026-08-21T09:00:00Z";
+  const rulesOf = (violations: { rule: string }[]) => violations.map(v => v.rule);
+  const under = (capabilitySource: Task["capabilitySource"], id = "e1"): ProviderEventEnvelope<"voice"> =>
+    ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...voiceTask, capabilitySource } } });
+  const seeded = (capabilitySource: Task["capabilitySource"]) => { const s = new TaskStream(); s.seed({ tasks: [{ ...voiceTask, capabilitySource }] }); return s; };
+
+  it("lets terms arrive, and refuses their loss", () => {
+    // Arriving: the terms were unread and now are read, under either kind of governance.
+    expect(rulesOf(seeded("undetermined").apply(under("queue")))).toEqual([]);
+    expect(rulesOf(seeded("undetermined").apply(under("ungoverned")))).toEqual([]);
+    expect(rulesOf(seeded("undetermined").apply(under("undetermined")))).toEqual([]);
+    // Moving queues, or into one: a fact replacing a fact.
+    expect(rulesOf(seeded("ungoverned").apply(under("queue")))).toEqual([]);
+    expect(rulesOf(seeded("queue").apply(under("queue")))).toEqual([]);
+    // Lost: a task that had its terms cannot say it never did.
+    expect(rulesOf(seeded("queue").apply(under("undetermined")))).toEqual(["stream.taskUpdated.capabilitySource"]);
+    expect(rulesOf(seeded("ungoverned").apply(under("undetermined")))).toEqual(["stream.taskUpdated.capabilitySource"]);
+  });
+
+  it("holds an offer to the same rule once it is on the stream", () => {
+    const s = new TaskStream(); s.seed({ tasks: [] });
+    const offered: ProviderEventEnvelope<"voice"> = { id: "e0", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...voiceTask, phase: "pending", acceptance: "consent", capabilitySource: "queue" } } };
+    expect(rulesOf(s.apply(offered))).toEqual([]);
+    expect(rulesOf(s.apply(under("undetermined", "e1")))).toEqual(["stream.taskUpdated.capabilitySource"]);
+    expect(rulesOf(s.apply(under("queue", "e2")))).toEqual([]);
+  });
+});
+
 describe("TaskStream places a dial outcome", () => {
   const at = "2026-08-21T09:00:00Z";
   const stream = () => { const s = new TaskStream(); s.seed({ tasks: [] }); return s; };
@@ -581,6 +611,7 @@ const conformingSnapshot = {
       coldTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] },
       custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } }],
     },
+    capabilitySource: "queue",
     phase: "in-progress",
     media: "started",
     completionMode: "agent-command",
@@ -727,6 +758,19 @@ describe("exerciseAdapter", () => {
     expect(await on("deskPhone", { manifest: { ...conformingManifest, phones: ["softphone"] } })).toContain("context.phone.unsupported");
     expect(await on("handset")).toContain("context.phone");
     expect(await on(undefined)).toContain("context.phone.required");
+  });
+
+  it("fails a run whose platform could not determine a task's terms, and passes one that states them", async () => {
+    const [carried] = (conformingSnapshot as { tasks: Record<string, unknown>[] }).tasks;
+    const under = (capabilitySource: string) => ({ ...conformingSnapshot, tasks: [{ ...carried, capabilitySource }] });
+    expect(await rules({ snapshot: under("queue") })).toEqual([]);
+    expect(await rules({ snapshot: under("ungoverned") })).toEqual([]);
+    expect(await rules({ snapshot: under("undetermined") })).toEqual(["capabilitySource.undetermined"]);
+    // And on the wire after the snapshot: an offer under undetermined terms is the same fault.
+    const offer = (capabilitySource: string): ProviderEventEnvelope<"voice"> => ({ id: "offer-1", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
+      event: { type: "task-offered", task: { ...voiceTask, id: "call-77", phase: "pending", acceptance: "consent", capabilitySource: capabilitySource as "queue" } } });
+    expect(await rules({ emit: listener => listener(offer("queue")) })).toEqual([]);
+    expect(await rules({ emit: listener => listener(offer("undetermined")) })).toEqual(["capabilitySource.undetermined"]);
   });
 
   it("requires the host to state a time zone, and the provider to keep it on the identity", async () => {
