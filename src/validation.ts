@@ -1934,6 +1934,27 @@ export function validateResult(result: unknown, method: ResultMethod, path = "re
 // Authentication.
 // ---------------------------------------------------------------------------
 
+/** An IANA zone name the runtime knows: `Asia/Kolkata` is one, an offset or a made-up name is not. */
+export function isTimeZone(value: unknown): value is string {
+  // The runtime accepts a bare offset such as +05:30 as a zone; this wire does not, since an
+  // offset cannot say what day it is on either side of a daylight-saving change.
+  if (typeof value !== "string" || value.trim() === "" || /^[+-]/.test(value)) return false;
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The zone a host sends at connect: required, and an IANA name. */
+export function validateTimeZone(value: unknown, path = "context.timeZone"): ProtocolViolation[] {
+  const into = new Collector();
+  into.require(isTimeZone(value), "context.timeZone", path,
+    "a host states the agent's time zone at connect as an IANA name, such as Asia/Kolkata; an offset cannot survive a daylight-saving boundary");
+  return into.violations;
+}
+
 function validateUser(value: unknown, rule: string, path: string, into: Collector): void {
   if (!isPlainObject(value)) {
     into.add(rule, path, "an identity must be an object");
@@ -1941,6 +1962,10 @@ function validateUser(value: unknown, rule: string, path: string, into: Collecto
   }
   into.require(isUserId(value.id), `${rule}.id`, `${path}.id`, "an identity needs a provider-issued user id");
   into.filled(value.displayName, `${rule}.displayName`, `${path}.displayName`, "an identity needs a display name");
+  if (value.timeZone !== undefined) {
+    into.require(isTimeZone(value.timeZone), `${rule}.timeZone`, `${path}.timeZone`,
+      "timeZone is an IANA name, such as Asia/Kolkata, or omitted until the provider knows it");
+  }
 }
 
 function validateUserCapabilitiesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {

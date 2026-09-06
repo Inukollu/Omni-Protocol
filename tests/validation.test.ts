@@ -13,6 +13,8 @@ import {
   validateScheduledActivity,
   validateSnapshot,
   validateTask,
+  validateTimeZone,
+  isTimeZone,
   validateResult,
   validateTeamRoster,
   type ProtocolViolation,
@@ -1409,6 +1411,30 @@ describe("consulting a lead", () => {
     const ended = (outcome: unknown) => envelope({ type: "task-ended", taskId: "call-42", outcome });
     expect(rules(validateEventEnvelope(ended({ type: "left" }), manifest()))).toEqual([]);
     expect(rules(validateEventEnvelope(ended({ type: "vanished" }), manifest()))).toContain("event.taskEnded.outcome.type");
+  });
+});
+
+describe("the agent's day", () => {
+  const user = { id: "1042", displayName: "Asha Rao" };
+  const identity = (timeZone: unknown) =>
+    rules(validateAuthenticationState({ status: "authenticated", identity: { ...user, timeZone }, capabilities: {}, expiresAt: "2026-08-21T12:00:00Z" }));
+
+  it("carries an IANA zone on the identity, or nothing until it is known", () => {
+    expect(identity("Asia/Kolkata")).toEqual([]);
+    expect(identity("America/Chicago")).toEqual([]);
+    expect(identity(undefined)).toEqual([]);
+    // An offset cannot survive a daylight-saving boundary, and a made-up name is nowhere.
+    expect(identity("+05:30")).toEqual(["authentication.identity.timeZone"]);
+    expect(identity("Mars/Olympus")).toEqual(["authentication.identity.timeZone"]);
+    expect(identity("")).toEqual(["authentication.identity.timeZone"]);
+  });
+
+  it("holds the host's connect-time zone to the same rule, and requires one", () => {
+    expect(rules(validateTimeZone("Europe/London"))).toEqual([]);
+    expect(rules(validateTimeZone(undefined))).toEqual(["context.timeZone"]);
+    expect(rules(validateTimeZone("UTC+1"))).toEqual(["context.timeZone"]);
+    expect(isTimeZone("Asia/Kolkata")).toBe(true);
+    expect(isTimeZone("Asia/Nowhere")).toBe(false);
   });
 });
 

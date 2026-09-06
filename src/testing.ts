@@ -28,6 +28,8 @@ import {
   validateManifest,
   validateResult,
   validateSnapshot,
+  validateTimeZone,
+  isTimeZone,
   type ProtocolViolation,
   type ReaderContext,
 } from "./validation.js";
@@ -288,6 +290,8 @@ export async function exerciseAdapter<C extends Channel>(
     // voice connection's host reports its audio and no other does, and the host the adapter
     // receives is wrapped so the harness can tell whether the adapter ever asked.
     violations.push(...validateHostGuarantees(context.host.guarantees, "context.host.guarantees"));
+    // The zone is the host's to state, so a context without one is a host that cannot exist.
+    violations.push(...validateTimeZone(context.timeZone, "context.timeZone"));
     const first = context.host.report();
     violations.push(...validateHostReport(first, "context.host"));
     const hasAudio = isRecord(first) && first.audio !== undefined;
@@ -362,6 +366,15 @@ export async function exerciseAdapter<C extends Channel>(
     const capacity = await connection.setCapacity({ count: 1 });
     const malformed = validateResult(capacity, "setCapacity", "connection.setCapacity");
     violations.push(...malformed);
+    // The provider keeps the agent's day: once connected, the identity it publishes carries the
+    // zone the host sent, so a colleague's summary and a lead's view are bucketed by the right day.
+    if (isTimeZone(context.timeZone) && current().identity.timeZone !== context.timeZone) {
+      violations.push({
+        rule: "authentication.identity.timeZone.stored",
+        path: "authentication.identity.timeZone",
+        message: `the host sent ${context.timeZone} at connect and the identity says ${String(current().identity.timeZone)}: the provider stores the agent's time zone and republishes it`,
+      });
+    }
     // A refusal is read only from a result that has the shape of one.
     if (malformed.length === 0 && capacity.status === "failed") {
       violations.push({

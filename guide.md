@@ -135,9 +135,12 @@ adapter**, **Live connection**, and **Authenticating with a provider**.
 ```ts
 type Channel = "voice" | "chat" | "email";
 
+type TimeZone = string;
+
 type User = {
   id: UserId;
   displayName: string;
+  timeZone?: TimeZone;
 };
 
 type Attribute = { key: string; value: string };
@@ -296,6 +299,7 @@ type ConnectContext = {
   protocolVersion: number;
   loginId: string;
   autoAcceptTasks?: boolean;
+  timeZone: TimeZone;
   host: Host;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
@@ -1898,9 +1902,29 @@ Creates one live provider connection for the signed-in agent.
 | `protocolVersion` | Version negotiated before authentication. Fixed for this login. |
 | `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
 | `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login. Treated as `true` when omitted. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
+| `timeZone` | The zone the agent's day is reckoned in, as an IANA name from the host's clock. The provider stores it on the agent and republishes it on the identity. See **The agent's day**. |
 | `host` | The host's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The host reports, the adapter decides**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
+
+### The agent's day
+
+Every instant on this wire carries an explicit offset, so a moment is unambiguous everywhere and
+a desk renders it in the viewer's clock without help. A **day** is different: hours toward
+target, an answer streak, a per-queue count for today -- anything bucketed by day -- is bucketed
+by somebody's day, and a platform that was never told whose uses its own. An agent in Chennai
+then finds their day rolling at 05:30, and a night shift in Chicago lands in two buckets.
+
+So the host says whose day it is. `ConnectContext.timeZone` is the agent's zone as an IANA name
+-- `Asia/Kolkata`, `America/Chicago` -- never an offset, since an offset cannot survive a
+daylight-saving boundary and a day boundary is exactly where that bites (`context.timeZone`). The
+provider **stores it on the agent** and republishes it as `identity.timeZone` on the
+`authenticated` state, and on any `User` it returns from `describeUsers()`, so a lead reading a
+colleague's yesterday sees the colleague's yesterday and a summary is bucketed by the right day
+after a session has ended. A roaming agent corrects it by signing in from where they are. The
+harness holds a provider to it: once connected, the identity carries the zone the host sent
+(`authentication.identity.timeZone.stored`), and a zone that is not an IANA name is refused
+wherever it appears (`authentication.identity.timeZone`).
 
 ### Who the agent is
 
@@ -1943,7 +1967,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `disconnect()` | Always. |
 | `setCapacity(capacity)` | Always. Nothing may be allocated until a capacity is stated, so there is no connection that does not receive it. |
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability**. |
-| `describeUsers(ids)` | The adapter publishes any `UserId`: on `ImposedBreak.by`, a roster, or `handlingHistory[].by`. |
+| `describeUsers(ids)` | The adapter publishes any `UserId`: on `ImposedBreak.by`, a roster, or `handlingHistory[].by`. Each `User` carries its `timeZone` where the provider knows it. |
 | `dial(request)` | The manifest declares `idleCapabilities.dial`, and with it `dialOutcomes`. |
 | `requestBreak(request)` | The login declares `capabilities.breaks`. |
 | `commitBreak()` | The login declares `capabilities.breaks`. Commit and cancel are not optional halves of it. |

@@ -499,7 +499,7 @@ describe("browser isolation", () => {
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
 const speaking: HostReport = { online: true, audio: { input: { status: "available", localAudio: {} as MediaStream, flowing: true }, output: { status: "available" } } };
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", host: stillHost(speaking) };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Asia/Kolkata", host: stillHost(speaking) };
 /** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
 const hostFor = (manifest: unknown): Host =>
   stillHost((manifest as { channel?: string } | undefined)?.channel === "voice" ? speaking : { online: true });
@@ -583,6 +583,8 @@ interface AdapterOverrides {
   authenticated?: boolean;
   /** What the login declares. Breaks by default, so the conforming connection needs the four methods. */
   capabilities?: UserCapabilities;
+  /** The zone the identity republishes; `false` for a provider that never stored it. */
+  identityTimeZone?: string | false;
   disconnect?: () => Promise<void>;
   close?: () => Promise<void>;
 }
@@ -598,7 +600,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
       return {
         state: () => overrides.authenticated === false
           ? { status: "signed-out" as const }
-          : { status: "authenticated" as const, identity: { id: "1042", displayName: "Asha Rao" }, capabilities: overrides.capabilities ?? { breaks: true }, expiresAt: "2026-08-21T12:00:00Z" },
+          : { status: "authenticated" as const, identity: { id: "1042", displayName: "Asha Rao", ...(overrides.identityTimeZone === false ? {} : { timeZone: overrides.identityTimeZone ?? "Asia/Kolkata" }) }, capabilities: overrides.capabilities ?? { breaks: true }, expiresAt: "2026-08-21T12:00:00Z" },
         subscribe: (listener: (state: AuthenticationState) => void) => {
           overrides.emitAuthentication?.(listener);
           return unsubscribeAuthentication;
@@ -663,6 +665,18 @@ describe("exerciseAdapter", () => {
     expect(unsubscribeAuthentication).toHaveBeenCalledOnce();
     expect(disconnect).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("requires the host to state a time zone, and the provider to keep it on the identity", async () => {
+    // Both directions: the host's word is validated, and the provider is held to storing it.
+    expect(await rules({})).toEqual([]);
+    const without = await exerciseAdapter(makeAdapter({}).adapter, { ...context, timeZone: undefined as unknown as string }, { collectOnly: true });
+    expect(without.violations.map(v => v.rule)).toContain("context.timeZone");
+    const offset = await exerciseAdapter(makeAdapter({}).adapter, { ...context, timeZone: "+05:30" }, { collectOnly: true });
+    expect(offset.violations.map(v => v.rule)).toContain("context.timeZone");
+    // A provider that never stored it, or stored somebody else's day, is told so.
+    expect(await rules({ identityTimeZone: false })).toEqual(["authentication.identity.timeZone.stored"]);
+    expect(await rules({ identityTimeZone: "America/Chicago" })).toEqual(["authentication.identity.timeZone.stored"]);
   });
 
   it("catches a preview task that leaves preview still carrying its deadline, through the full run", async () => {

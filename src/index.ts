@@ -67,9 +67,21 @@ export type DurationSeconds = number;
 /** New channels require a later protocol version. */
 export type Channel = "voice" | "chat" | "email";
 
+/**
+ * An IANA time zone name, such as `Asia/Kolkata` -- never an offset, which cannot survive a
+ * daylight-saving boundary, and a day boundary is exactly where that bites.
+ */
+export type TimeZone = string;
+
 export interface User {
   id: UserId;
   displayName: string;
+  /**
+   * The zone this person's day is reckoned in, as the provider keeps it: sent by the host at
+   * connect, stored on the agent, and republished here so a day-scoped figure -- theirs or a
+   * colleague's a lead is reading -- is bucketed by the right day. Absent only until first known.
+   */
+  timeZone?: TimeZone;
 }
 
 /** Key/value detail on a `Contact` or a `ScheduledActivity`. A task's attributes are typed. */
@@ -389,6 +401,11 @@ export interface ConnectContext {
   loginId: string;
   /** Omni-side policy: whether the agent's tasks are accepted without asking them. */
   autoAcceptTasks?: boolean;
+  /**
+   * The zone the agent's day is reckoned in, as the host's clock has it. The provider stores it on
+   * the agent and republishes it on the identity; a roaming agent corrects it by signing in.
+   */
+  timeZone: TimeZone;
   /**
    * The host's report of the agent's station, to consult before declaring the agent ready to the
    * platform and whenever it changes. Omni reports; the adapter decides.
