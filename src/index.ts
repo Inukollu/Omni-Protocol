@@ -143,6 +143,16 @@ export type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "r
 
 export const DIAL_OUTCOMES = ["answered", "busy", "no-answer", "unreachable", "rejected", "cancelled", "unexplained"] as const satisfies readonly DialOutcome[];
 
+/**
+ * How the agent hears the call: on a `softphone`, where the host owns the audio and opens it
+ * through `openMedia`, or on a `deskPhone`, a handset the platform rings, where the host opens
+ * nothing and only shows the call. A voice manifest lists the phones its platform supports, and
+ * the host picks one for the login at authentication.
+ */
+export type Phone = "softphone" | "deskPhone";
+
+export const PHONES = ["softphone", "deskPhone"] as const satisfies readonly Phone[];
+
 /** Every idle capability a provider may declare. Only voice may `dial`; the channel arm says so. */
 export const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;
 
@@ -197,6 +207,11 @@ export interface Manifest<C extends Channel = Channel> {
    */
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   /**
+   * The phones this platform can put an agent on. Required of every voice manifest, and forbidden
+   * off voice, where there is no call to hear. The host picks one of these per login.
+   */
+  phones?: C extends "voice" ? Phone[] : never;
+  /**
    * The provider takes running reports of a host-performed step -- `recordStep` with `seconds`
    * so far and no `ended`. Absent, the host sends exactly two reports per leg, when it began and
    * when it ended, and a running report is refused: what a provider never asked for never crosses.
@@ -224,6 +239,11 @@ export interface AuthenticationContext {
    * later as `ConnectContext.timeZone`.
    */
   timeZone: TimeZone;
+  /**
+   * How this login hears its calls, chosen by the host from the manifest's `phones`. Required for
+   * a voice provider and absent for any other. The same value arrives later as `ConnectContext.phone`.
+   */
+  phone?: Phone;
   /** Scoped to this provider's manifest id. */
   secrets: SecretStore;
   signal?: AbortSignal;
@@ -414,6 +434,8 @@ export interface ConnectContext {
    * identity; a roaming agent corrects it by signing in.
    */
   timeZone: TimeZone;
+  /** The same value passed as `AuthenticationContext.phone`: how this login hears its calls. */
+  phone?: Phone;
   /**
    * The host's report of the agent's station, to consult before declaring the agent ready to the
    * platform and whenever it changes. Omni reports; the adapter decides.
@@ -1379,7 +1401,7 @@ export interface Connection<C extends Channel = Channel> {
   executeTeamMonitor?(request: TeamMonitorCommandRequest): Promise<TeamCommandResult>;
   /** Required when the login declares `capabilities.team.policyControl`. */
   executeTeamPolicy?(request: TeamPolicyCommandRequest): Promise<TeamCommandResult>;
-  /** Required of every voice adapter: all voice audio lands in Omni. */
+  /** Required of a voice adapter whose manifest lists `softphone`: on one, the call's audio lands in Omni. */
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
   /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;

@@ -171,6 +171,8 @@ type DialCapability = { destinations: DialDestinations };
 
 type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected" | "cancelled" | "unexplained";
 
+type Phone = "softphone" | "deskPhone";
+
 type IdleCapabilities<C extends Channel = Channel> = {
   personalBrowser?: PersonalBrowserCapability;
   calendar?: true;
@@ -188,6 +190,7 @@ type Manifest<C extends Channel = Channel> = {
   taskTypePresentation?: Record<string, TaskTypePresentation>;
   orgLevels?: LevelDeclaration[];
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
+  phones?: C extends "voice" ? Phone[] : never;
   runningStepReports?: true;
 };
 ```
@@ -229,6 +232,7 @@ type AuthenticationContext = {
   protocolVersion: number;
   loginId: string;
   timeZone: TimeZone;
+  phone?: Phone;
   secrets: SecretStore;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
@@ -301,6 +305,7 @@ type ConnectContext = {
   loginId: string;
   autoAcceptTasks?: boolean;
   timeZone: TimeZone;
+  phone?: Phone;
   host: Host;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
@@ -1450,6 +1455,7 @@ compile time.
 | `phaseLabels` | Optional static adapter-defined display names for canonical `TaskPhase` values. They cannot vary at runtime. |
 | `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
+| `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the host) and/or `deskPhone` (a handset the platform rings; the host shows the call and opens nothing). The host picks one per login. See **How the agent hears the call**. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that transfer, conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome**. |
 | `runningStepReports` | The provider takes running reports of a host-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the host sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The host records what it performs**. |
 
@@ -1706,6 +1712,7 @@ Creates the provider-scoped authentication session.
 | `protocolVersion` | The negotiated version, fixed for this login. |
 | `loginId` | Omni-generated identity for this login. The same value Omni later passes as `ConnectContext.loginId`, and how an adapter ties a connection back to the session that authenticated it. |
 | `timeZone` | The zone the agent's day is reckoned in, as an IANA name from the host's clock, stated before any identity exists so the first `authenticated` state already carries it. The same value Omni later passes as `ConnectContext.timeZone`. See **The agent's day**. |
+| `phone` | How this login hears its calls, chosen by the host from the manifest's `phones`: required for a voice provider, absent for any other. The same value Omni later passes as `ConnectContext.phone`. See **How the agent hears the call**. |
 | `secrets` | Omni-provided `SecretStore`, scoped to this provider's manifest id. |
 | `signal` | Optional cancellation signal. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -1905,6 +1912,7 @@ Creates one live provider connection for the signed-in agent.
 | `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
 | `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login. Treated as `true` when omitted. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
+| `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. |
 | `host` | The host's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The host reports, the adapter decides**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -1990,7 +1998,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
 | `recordStep(report)` | A task declares `mute`: the host performs that leg, and the provider's record has to have somewhere to take it. See **The host records what it performs**. |
 | `executeTeamPolicy(command)` | The login declares `capabilities.team.policyControl`. |
-| `openMedia(request)` | The manifest channel is `voice`. Every voice task's audio lands in Omni, so there is no voice adapter that does not implement it. |
+| `openMedia(request)` | The manifest lists `softphone` among its `phones`. On a softphone the call's audio lands in Omni, so the adapter has to open it; a platform of desk phones alone never does. |
 
 **The four break methods stand or fall together.** Declaring `capabilities.breaks` at login and then
 implementing `requestBreak` without `commitBreak` leaves an agent granted a break that can never
@@ -2139,7 +2147,8 @@ medium the task arrives on, not a separate decision.
 
 **Once a task is accepted, the call that comes with it is answered.** Omni has no discretion
 there and the provider is not consulted twice: one decision about the work, and the medium
-follows it. Where the audio lands is not in question — it opens in Omni, as it always does.
+follows it. Where the audio lands was settled at sign-in — in Omni on a softphone, on the handset
+on a desk phone — and is not in question per call. See **How the agent hears the call**.
 
 Automatic acceptance still begins with `task-offered`.
 
@@ -3669,8 +3678,9 @@ is the one that knows whether an agent without a microphone, or without a speake
 The host's own obligations here — asking at connect, never publishing `not-asked` when it does,
 publishing a state and not a flicker — are Omni's tests' to hold. `exerciseAdapter` holds the
 other side: it validates the shape of whatever host a test hands the adapter, requires `audio` on
-a voice connection and none elsewhere (`context.host.audio.required` / `.unexpected`), and
-refuses a voice adapter that never asked the host anything (`connection.host.consulted`).
+a softphone login and none elsewhere -- not on a desk phone, not off voice
+(`context.host.audio.required` / `.unexpected`) -- and refuses a voice adapter that never asked the
+host anything (`connection.host.consulted`).
 
 ### Capacity around setup
 
@@ -3702,10 +3712,36 @@ once; a break says they are not working. Collapsing the two would leave a provid
 an agent at their limit from an agent who has gone to lunch, and only one of those needs a reason,
 a decision and a return.
 
+### How the agent hears the call
+
+A voice platform can put an agent on a **softphone**, where the call's audio lands in the host
+and Omni owns the microphone and the playback, or on a **desk phone**, a handset on the platform's
+switch that the platform rings, where the host owns no audio and only shows the call. Which of
+these a platform can do is a fact about the platform, and which one a login is on is a choice the
+host makes for that agent -- so the manifest declares and the host chooses.
+
+```ts
+// Manifest: what the platform can do
+phones: ["softphone", "deskPhone"]
+// The host, at authentication and again at connect: which one this login is on
+{ phone: "softphone" }
+```
+
+A voice manifest lists its `phones` and any other channel lists none (`manifest.phones.required`,
+`manifest.phones.channel`). The host's `phone` is required on a voice login, absent on any other,
+and one the manifest listed (`context.phone.required`, `.unexpected`, `.unsupported`). Everything
+about audio then follows the phone rather than the channel: on a softphone the host reports its
+audio, the adapter implements `openMedia`, and `task-media-started` is the word to open it; on a
+desk phone the host reports no audio, opens nothing, and `task-media-started` still marks the
+moment the call is live so the desk shows it, with the sound on the handset. A platform that lists
+`deskPhone` alone never implements `openMedia`; one that lists `softphone` always does. An agent
+is never asked at sign-in which handset to use by this wire: what the platform does with a
+desk-phone login -- which handset, from which pool -- is its own business.
+
 ### Opening the audio
 
-`openMedia` hands Omni the remote audio for one task. Every voice adapter implements it, because
-every voice task's audio lands in Omni:
+`openMedia` hands Omni the remote audio for one task. Every adapter whose manifest lists
+`softphone` implements it, because on a softphone the call's audio lands in Omni:
 
 ```ts
 openMedia({ taskId, localAudio }): Promise<OpenMediaResult>

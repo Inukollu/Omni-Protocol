@@ -29,6 +29,7 @@ import {
   validateResult,
   validateSnapshot,
   validateTimeZone,
+  validatePhone,
   isTimeZone,
   type ProtocolViolation,
   type ReaderContext,
@@ -292,14 +293,19 @@ export async function exerciseAdapter<C extends Channel>(
     violations.push(...validateHostGuarantees(context.host.guarantees, "context.host.guarantees"));
     // The zone is the host's to state, so a context without one is a host that cannot exist.
     violations.push(...validateTimeZone(context.timeZone, "context.timeZone"));
+    // How the agent hears the call decides what the host owns: on a softphone the host has the
+    // audio and reports it; on a desk phone, or off voice, there is none for it to report.
+    violations.push(...validatePhone(context.phone, adapter.manifest, "context.phone"));
+    const softphone = adapter.manifest.channel === "voice" && context.phone === "softphone";
     const first = context.host.report();
     violations.push(...validateHostReport(first, "context.host"));
     const hasAudio = isRecord(first) && first.audio !== undefined;
-    if (adapter.manifest.channel === "voice" && !hasAudio) {
-      violations.push({ rule: "context.host.audio.required", path: "context.host.audio", message: "a voice connection's host reports its audio" });
+    if (softphone && !hasAudio) {
+      violations.push({ rule: "context.host.audio.required", path: "context.host.audio", message: "a softphone login's host reports its audio" });
     }
-    if (adapter.manifest.channel !== "voice" && hasAudio) {
-      violations.push({ rule: "context.host.audio.unexpected", path: "context.host.audio", message: `a ${adapter.manifest.channel} connection has no audio for the host to report` });
+    if (!softphone && hasAudio) {
+      violations.push({ rule: "context.host.audio.unexpected", path: "context.host.audio",
+        message: adapter.manifest.channel === "voice" ? "a desk-phone login has no audio in the host to report" : `a ${adapter.manifest.channel} connection has no audio for the host to report` });
     }
     unsubscribeHost = context.host.subscribe(report => {
       violations.push(...validateHostReport(report, "context.host"));
@@ -316,8 +322,8 @@ export async function exerciseAdapter<C extends Channel>(
     // Dial is declared by presence: the capability object carries a destination policy rather
     // than an `enabled` flag, so its presence is the declaration.
     if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod(live, "dial", "the manifest declares dial");
-    // Every voice task's audio lands in Omni, so there is no voice adapter that does not open it.
-    if (adapter.manifest.channel === "voice") requireMethod(live, "openMedia", "the manifest channel is voice");
+    // On a softphone the call's audio lands in Omni, so the adapter has to open it; on a desk phone the host opens nothing.
+    if (softphone) requireMethod(live, "openMedia", "the login is on a softphone");
 
     const eventIds = new Set<string>();
     unsubscribe = connection.subscribe(envelope => {

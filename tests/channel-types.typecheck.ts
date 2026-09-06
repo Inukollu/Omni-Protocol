@@ -38,7 +38,11 @@ export const voiceManifest = {
   idleCapabilities: {
     dial: { destinations: "any-number" },
   },
+  dialOutcomes: ["answered", "no-answer"],
+  phones: ["softphone"],
 } satisfies Manifest<"voice">;
+// @ts-expect-error A chat provider has no call to hear and lists no phones.
+export const chatPhones: Manifest<"chat">["phones"] = ["softphone"];
 
 export const chatManifest = {
   id: "chat-provider",

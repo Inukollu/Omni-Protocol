@@ -499,7 +499,7 @@ describe("browser isolation", () => {
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
 const speaking: HostReport = { online: true, audio: { input: { status: "available", localAudio: {} as MediaStream, flowing: true }, output: { status: "available" } } };
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Asia/Kolkata", host: stillHost(speaking) };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Asia/Kolkata", phone: "softphone" as const, host: stillHost(speaking) };
 /** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
 const hostFor = (manifest: unknown): Host =>
   stillHost((manifest as { channel?: string } | undefined)?.channel === "voice" ? speaking : { online: true });
@@ -517,6 +517,7 @@ const conformingManifest = {
     personalBrowser: { access: { mode: "block-all", allowList: ["https://*.example.com/*"], blockList: [] } },
   },
   dialOutcomes: ["answered", "no-answer"],
+  phones: ["softphone", "deskPhone"],
 } satisfies Manifest<"voice">;
 
 // Declares breaks and publishes a UserId, so the conforming connection below has to carry the
@@ -649,8 +650,11 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
   return { adapter, disconnect, close, unsubscribe, unsubscribeAuthentication };
 }
 
+/** The context a manifest's channel gets: a softphone on voice, no phone at all elsewhere. */
+const contextFor = (manifest: unknown) =>
+  ({ ...context, phone: (manifest as { channel?: string } | undefined)?.channel === "voice" ? "softphone" as const : undefined, host: hostFor(manifest) });
 const rules = async (overrides: AdapterOverrides) =>
-  (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, host: hostFor(overrides.manifest ?? conformingManifest) }, { collectOnly: true })).violations.map(violation => violation.rule);
+  (await exerciseAdapter(makeAdapter(overrides).adapter, contextFor(overrides.manifest ?? conformingManifest), { collectOnly: true })).violations.map(violation => violation.rule);
 
 const badEnvelope = { id: "", loginId: "session-1", occurredAt: "not-a-time", event: { type: "transport-status", status: "active" } } as unknown as ProviderEventEnvelope<"voice">;
 
@@ -665,6 +669,22 @@ describe("exerciseAdapter", () => {
     expect(unsubscribeAuthentication).toHaveBeenCalledOnce();
     expect(disconnect).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("holds the host's phone to the manifest, and lets a desk phone own no audio", async () => {
+    const on = async (phone: unknown, overrides: AdapterOverrides = {}, host: Host = stillHost(speaking)) =>
+      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, phone: phone as "softphone", host }, { collectOnly: true })).violations.map(v => v.rule);
+    // A softphone login: the host reports audio and the adapter opens media.
+    expect(await on("softphone")).toEqual([]);
+    expect(await on("softphone", { connection: { openMedia: undefined } })).toContain("connection.openMedia.required");
+    expect(await on("softphone", {}, stillHost({ online: true }))).toEqual(["context.host.audio.required"]);
+    // A desk-phone login: the host has no audio to report and nothing to open.
+    expect(await on("deskPhone", { connection: { openMedia: undefined } }, stillHost({ online: true }))).toEqual([]);
+    expect(await on("deskPhone")).toEqual(["context.host.audio.unexpected"]);
+    // The choice is held to the manifest, and required on voice.
+    expect(await on("deskPhone", { manifest: { ...conformingManifest, phones: ["softphone"] } })).toContain("context.phone.unsupported");
+    expect(await on("handset")).toContain("context.phone");
+    expect(await on(undefined)).toContain("context.phone.required");
   });
 
   it("requires the host to state a time zone, and the provider to keep it on the identity", async () => {
@@ -833,7 +853,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   // Every case pairs the refusal with its control: the same adapter with the declaration
   // withdrawn is clean, so a missing method is reported because of the declaration and not
   // because the check fires for everyone.
-  const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
+  const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, phones: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
   const chatSnapshot = { ...minimalSnapshot, contacts: [] } satisfies Snapshot<"chat">;
 
   it("dial(), when the manifest declares dial", async () => {
@@ -1058,10 +1078,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("gives a voice connection a host with audio and no other, and refuses an adapter that never asked", async () => {
-    const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
+    const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, phones: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
     const chatSnapshot = { ...minimalSnapshot, contacts: [] } satisfies Snapshot<"chat">;
     const run = async (overrides: AdapterOverrides, host: Host) =>
-      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, host }, { collectOnly: true })).violations.map(violation => violation.rule);
+      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...contextFor(overrides.manifest ?? conformingManifest), host }, { collectOnly: true })).violations.map(violation => violation.rule);
     expect(await run({}, stillHost(speaking))).toEqual([]);
     expect(await run({}, stillHost({ online: true }))).toEqual(["context.host.audio.required"]);
     const chat = { manifest: chatManifest, snapshot: chatSnapshot, connection: { openMedia: undefined, dial: undefined } };
@@ -1182,7 +1202,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("nothing optional of an adapter that declares nothing optional", async () => {
-    const bare = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, idleCapabilities: undefined } satisfies Manifest<"chat">;
+    const bare = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, phones: undefined, idleCapabilities: undefined } satisfies Manifest<"chat">;
     const found = await rules({
       manifest: bare,
       capabilities: {},

@@ -44,6 +44,7 @@ import {
   type OnCallRole,
   type OnCallStage,
   type PreviewDeadline,
+  type Phone,
   type MonitorMode,
   type DispositionRules,
   type HandlingStep,
@@ -143,6 +144,7 @@ const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending" | "confirmed" | 
   pending: true, confirmed: true, preview: true,
 });
 const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, expires: true });
+const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
 const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, monitorControl: true });
 const MONITOR_MODES = membersOf<MonitorMode>({ monitor: true, whisper: true, barge: true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
@@ -404,6 +406,47 @@ function validateDialOutcomes(manifest: Record<string, unknown>, path: string, i
   }
 }
 
+/**
+ * A voice platform says which phones it can put an agent on -- a softphone in the host, a desk
+ * phone it rings -- and nothing off voice does, since there is no call to hear.
+ */
+function validatePhones(manifest: Record<string, unknown>, path: string, into: Collector): void {
+  const declared = manifest.phones;
+  if (manifest.channel !== "voice") {
+    into.require(declared === undefined, "manifest.phones.channel", path, `a ${String(manifest.channel)} provider has no call to hear and declares no phones`);
+    return;
+  }
+  if (!Array.isArray(declared) || declared.length === 0) {
+    into.add("manifest.phones.required", path, "a voice manifest lists the phones its platform can put an agent on: softphone, deskPhone, or both");
+    return;
+  }
+  declared.forEach((phone: unknown, index: number) => {
+    if (into.oneOf(phone, PHONES, "manifest.phone", `${path}[${index}]`) && declared.indexOf(phone) !== index) {
+      into.add("manifest.phone.unique", `${path}[${index}]`, `duplicate phone: ${String(phone)}`);
+    }
+  });
+}
+
+/**
+ * The host's choice of phone for a login, held to the manifest: one the platform listed, required
+ * on voice, absent elsewhere.
+ */
+export function validatePhone(value: unknown, manifest: unknown, path = "context.phone"): ProtocolViolation[] {
+  const into = new Collector();
+  const channel = isPlainObject(manifest) ? manifest.channel : undefined;
+  const phones = isPlainObject(manifest) && Array.isArray(manifest.phones) ? manifest.phones : [];
+  if (channel !== "voice") {
+    into.require(value === undefined, "context.phone.unexpected", path, `a ${String(channel)} login has no call to hear and chooses no phone`);
+    return into.violations;
+  }
+  if (!into.require(value !== undefined, "context.phone.required", path, "a voice login says how the agent hears the call: one of the manifest's phones")) return into.violations;
+  if (into.oneOf(value, PHONES, "context.phone", path)) {
+    into.require(phones.includes(value), "context.phone.unsupported", path,
+      `the host chose ${String(value)} and the manifest lists ${phones.length === 0 ? "no phones" : phones.join(", ")}`);
+  }
+  return into.violations;
+}
+
 /** Whether a manifest says how a dial ends, and so may publish tasks that dial. `undefined` where there is no manifest to ask. */
 function manifestDials(manifest: unknown): boolean | undefined {
   return isPlainObject(manifest) ? Array.isArray(manifest.dialOutcomes) : undefined;
@@ -453,6 +496,7 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
 
   if (channelValid) validateIdleCapabilities(manifest.idleCapabilities, manifest.channel as string, `${path}.idleCapabilities`, into);
   validateDialOutcomes(manifest, `${path}.dialOutcomes`, into);
+  validatePhones(manifest, `${path}.phones`, into);
 
   if (manifest.phaseLabels !== undefined) {
     if (!isPlainObject(manifest.phaseLabels)) {

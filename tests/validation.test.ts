@@ -14,6 +14,7 @@ import {
   validateSnapshot,
   validateTask,
   validateTimeZone,
+  validatePhone,
   isTimeZone,
   validateResult,
   validateTeamRoster,
@@ -28,6 +29,8 @@ const manifest = (over: Record<string, unknown> = {}) => ({
   channel: "voice",
   supportedProtocolVersions: [1],
   authenticationMethods: ["credentials"],
+  // A voice manifest says which phones it supports; any other channel says nothing.
+  ...(over.channel !== undefined && over.channel !== "voice" ? {} : { phones: ["softphone"] }),
   ...over,
 });
 
@@ -1411,6 +1414,32 @@ describe("consulting a lead", () => {
     const ended = (outcome: unknown) => envelope({ type: "task-ended", taskId: "call-42", outcome });
     expect(rules(validateEventEnvelope(ended({ type: "left" }), manifest()))).toEqual([]);
     expect(rules(validateEventEnvelope(ended({ type: "vanished" }), manifest()))).toContain("event.taskEnded.outcome.type");
+  });
+});
+
+describe("how the agent hears the call", () => {
+  it("has a voice manifest list its phones, and no other channel list any", () => {
+    const m = (over: Record<string, unknown>) => rules(validateManifest(manifest(over)));
+    expect(m({ phones: ["softphone"] })).toEqual([]);
+    expect(m({ phones: ["deskPhone"] })).toEqual([]);
+    expect(m({ phones: ["softphone", "deskPhone"] })).toEqual([]);
+    expect(m({ phones: undefined })).toEqual(["manifest.phones.required"]);
+    expect(m({ phones: [] })).toEqual(["manifest.phones.required"]);
+    expect(m({ phones: ["handset"] })).toEqual(["manifest.phone"]);
+    expect(m({ phones: ["softphone", "softphone"] })).toEqual(["manifest.phone.unique"]);
+    expect(m({ channel: "chat", phones: ["softphone"] })).toEqual(["manifest.phones.channel"]);
+    expect(m({ channel: "chat" })).toEqual([]);
+  });
+
+  it("holds the host's choice of phone to the manifest", () => {
+    const voice = manifest({ phones: ["softphone"] });
+    expect(rules(validatePhone("softphone", voice))).toEqual([]);
+    expect(rules(validatePhone("deskPhone", voice))).toEqual(["context.phone.unsupported"]);
+    expect(rules(validatePhone("deskPhone", manifest({ phones: ["softphone", "deskPhone"] })))).toEqual([]);
+    expect(rules(validatePhone("handset", voice))).toEqual(["context.phone"]);
+    expect(rules(validatePhone(undefined, voice))).toEqual(["context.phone.required"]);
+    expect(rules(validatePhone("softphone", manifest({ channel: "chat" })))).toEqual(["context.phone.unexpected"]);
+    expect(rules(validatePhone(undefined, manifest({ channel: "chat" })))).toEqual([]);
   });
 });
 
