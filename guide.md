@@ -2672,10 +2672,12 @@ that produces two consumers disagreeing about one fact. The task is the one sour
 provider puts on the task what the platform permits for it.
 
 **A permission that changes while the task is open is republished on the task at the moment it
-changes.** An intern may not conference anyone in on their own; once a lead has joined the call,
-they may. A salesperson may not commit a discount until the product owner who can has joined, and
-the `custom` control that commits it appears on the task at that moment and not before. A call
-moving into another queue arrives under that queue's terms. A capability stated
+changes.** An agent on a billing dispute may refund up to their own limit and no further. The
+customer wants more, the agent asks for a lead, and the moment the lead joins the call the task is
+republished with the Refund control the agent could not have a minute ago; when the lead leaves, it
+is republished without it. Nothing about the agent changed -- who is on the call did -- and the
+task said so both times, at the moment it became true. A call moving into another queue arrives
+under that queue's terms the same way. A capability stated
 once at offer or answer and never corrected is a fact with a shelf life and no expiry, and a host
 draws a control the provider will now refuse -- or withholds one the agent now has. So the provider republishes
 the task, with its capabilities as they now stand, and a host treats the last statement as current
