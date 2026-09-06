@@ -1016,7 +1016,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     try { (session as { close: () => void }).close(); } catch { refuse("drive.openMedia.close", "drive.openMedia", "the media session threw on close"); }
   }
   // 6. Complete, where the agent completes; otherwise the provider does, and the drive waits for it.
-  if (latestTask().completionMode === "agent-command" && latestTask().phase === "completing") {
+  // A conversation has no media to end and no completing phase to wait for: a chat or an email,
+  // and a voice task offering no end-call, is completed from where it stands.
+  const completable = latestTask().phase === "completing" || latestTask().phase === "in-progress" || latestTask().phase === "paused";
+  if (latestTask().completionMode === "agent-command" && completable) {
     const command: Record<string, unknown> = { type: "complete" };
     const dispositions = isRecord(latestTask().capabilities) ? (latestTask().capabilities as Record<string, unknown>).dispositions : undefined;
     if (isRecord(dispositions) && dispositions.required === true && Array.isArray(dispositions.codes) && isRecord(dispositions.codes[0])) {

@@ -48,7 +48,7 @@ const PROSE = new Set([
   // Literals and grammar.
   "true", "false", "null", "undefined", "n", "0", "1", "[]", "{}", "enum",
   // Names from outside this contract: web APIs, OIDC, a platform's own vocabulary.
-  "URLPattern", "nonce", "not-ready",
+  "URLPattern", "nonce", "not-ready", "AudioContext",
   // Example values -- attribute keys, task types, categories -- chosen to read as data.
   "Lead", "Prospect", "Dept", "Department", "Billing", "Returns", "WhatsApp",
   // Placeholders in the isolation-scheme explanation.

@@ -4338,8 +4338,14 @@ complete it with a disposition where the agent completes -- and holds every step
 host holds a provider to. Each command is validated against the task as published
 (`drive.command.*`), each answer for its method, a refusal of a control the task offered is a
 violation (`drive.command.failed`), and an event the provider owes and never sends is one too
-(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). The drive stops where the task offers
-no way on and says nothing about what it could not reach. It is off by default because it issues
+(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). A task the agent completes is
+completed from wherever it stands once the drive has nothing left to do on it -- from `completing`
+after an `end-call`, or from `in-progress` where there is no call to end, which is every chat and
+email and a voice task offering no `endCall` -- so a conversation reaches its end as a call does.
+The drive stops where the task offers no way on and says nothing about what it could not reach. A
+softphone adapter written for a browser needs its media APIs supplied by whatever runs the
+harness: the drive opens media outside a browser, and a provider that quietly stopped carrying audio
+where `AudioContext` was missing would be lying about the one thing the channel is for. It is off by default because it issues
 commands against whatever platform the adapter is connected to: turn it on against a test backend.
 
 ```ts

@@ -926,10 +926,13 @@ describe("exerciseAdapter drives one call", () => {
     expect((await drive(driveable({ keepRoomOnEnd: true }))).violations.map(v => v.rule)).toContain("task.onCall.ended");
   });
 
-  it("stops where the task offers no way on, and says nothing about what it could not reach", async () => {
+  it("completes a task from where it stands when there is no call to end, and says what it could not reach", async () => {
+    // A voice task offering no end-call, like a chat or an email, has no completing phase to wait
+    // for: the agent completes it from in-progress, and the run reaches the end.
     const result = await drive(driveable({ noEndCall: true }));
     expect(result.violations).toEqual([]);
     expect(result.notExercised).toContain("event.task-media-ended");
+    expect(result.notExercised).not.toContain("event.task-ended");
   });
 });
 
