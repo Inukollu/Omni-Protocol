@@ -4127,6 +4127,9 @@ partial patch.
 The provider's word that the task's audio should now attach. Omni calls `openMedia` on it — and on
 a task carried with `media: "started"`, which is how a reconnect snapshot reattaches audio an
 earlier event brought — and renders the call as live from that word, never from its own senses. It
+precedes `openMedia` and is never a reply to it: a provider whose media state comes from the
+platform, a station going in use the moment a call is answered, sends it then, before any host has
+opened anything, and `openMedia` has its own answer for what the host did. It
 names a task whose work has begun, and it alternates with `task-media-ended`: media that never
 started cannot end, so a live call whose provider says nothing about its audio is a provider in
 breach, not a state a desk fills in from its own devices.
@@ -4338,8 +4341,14 @@ complete it with a disposition where the agent completes -- and holds every step
 host holds a provider to. Each command is validated against the task as published
 (`drive.command.*`), each answer for its method, a refusal of a control the task offered is a
 violation (`drive.command.failed`), and an event the provider owes and never sends is one too
-(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). The drive stops where the task offers
-no way on and says nothing about what it could not reach. It is off by default because it issues
+(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). A task the agent completes is
+completed from wherever it stands once the drive has nothing left to do on it -- from `completing`
+after an `end-call`, or from `in-progress` where there is no call to end, which is every chat and
+email and a voice task offering no `endCall` -- so a conversation reaches its end as a call does.
+The drive stops where the task offers no way on and says nothing about what it could not reach. A
+softphone adapter written for a browser needs its media APIs supplied by whatever runs the
+harness: the drive opens media outside a browser, and a provider that quietly stopped carrying audio
+where `AudioContext` was missing would be lying about the one thing the channel is for. It is off by default because it issues
 commands against whatever platform the adapter is connected to: turn it on against a test backend.
 
 ```ts

@@ -878,6 +878,9 @@ describe("exerciseAdapter drives one call", () => {
         execute: async ({ command }: { command: { type: string } }) => {
           switch (command.type) {
             case "answer":
+              // The phase moves first and the audio follows on its own event, which is the only
+              // order the stream allows: an update never moves media, and media never arrives on
+              // a task whose work has not begun.
               emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
               if (!script.skipMediaStart) emit({ type: "task-media-started", taskId: "call-77" });
               return { status: "applied" };
@@ -926,10 +929,13 @@ describe("exerciseAdapter drives one call", () => {
     expect((await drive(driveable({ keepRoomOnEnd: true }))).violations.map(v => v.rule)).toContain("task.onCall.ended");
   });
 
-  it("stops where the task offers no way on, and says nothing about what it could not reach", async () => {
+  it("completes a task from where it stands when there is no call to end, and says what it could not reach", async () => {
+    // A voice task offering no end-call, like a chat or an email, has no completing phase to wait
+    // for: the agent completes it from in-progress, and the run reaches the end.
     const result = await drive(driveable({ noEndCall: true }));
     expect(result.violations).toEqual([]);
     expect(result.notExercised).toContain("event.task-media-ended");
+    expect(result.notExercised).not.toContain("event.task-ended");
   });
 });
 
