@@ -694,10 +694,9 @@ describe("exerciseAdapter", () => {
     expect(without.violations.map(v => v.rule)).toContain("context.timeZone");
     const offset = await exerciseAdapter(makeAdapter({}).adapter, { ...context, timeZone: "+05:30" }, { collectOnly: true });
     expect(offset.violations.map(v => v.rule)).toContain("context.timeZone");
-    // A run in this machine's own zone could not tell a provider that stores from one that reads its clock.
-    const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const here = await exerciseAdapter(makeAdapter({ identityTimeZone: local }).adapter, { ...context, timeZone: local }, { collectOnly: true });
-    expect(here.violations.map(v => v.rule)).toEqual(["context.timeZone.local"]);
+    // A zone is judged by what it denotes: the host says Asia/Kolkata, the provider keeps Asia/Calcutta, one zone.
+    const alias = await exerciseAdapter(makeAdapter({ identityTimeZone: "Asia/Calcutta" }).adapter, { ...context, timeZone: "Asia/Kolkata" }, { collectOnly: true });
+    expect(alias.violations.map(v => v.rule)).toEqual([]);
     // An identity without a zone is not an identity on this wire; one with somebody else's day is told so.
     expect(await rules({ identityTimeZone: false })).toContain("authentication.identity.timeZone");
     expect(await rules({ identityTimeZone: "America/Chicago" })).toEqual(["authentication.identity.timeZone.republished"]);
