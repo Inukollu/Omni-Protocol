@@ -3751,9 +3751,9 @@ no audio to attach; a host that calls it anyway is in error, and an adapter that
 answers `unavailable` with a non-retryable failure, since waiting changes nothing about a station
 that is a telephone. The harness requires no `openMedia` of such an adapter and never calls it.
 
-**Which handset a desk-phone login rings is configuration**, set for the agent by an
-administrator on the platform, never a question put to the agent at sign-in by this wire or by
-the platform behind it.
+**Which handset a desk-phone login rings is the platform's configuration for that agent**, and
+this wire never asks the agent for it: a host declares `phone` and nothing more. What a platform
+asks on surfaces of its own is its own decision.
 
 ### Opening the audio
 
