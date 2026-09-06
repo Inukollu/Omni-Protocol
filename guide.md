@@ -3886,6 +3886,9 @@ declared:
 | `lead-assist` with `action: "take-over"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |
 | Everything else | Its own named capability. |
 
+`validateTaskCommand(command, task)` holds a command to this table at runtime, both ways: the
+capability it needs, the phase it belongs to, and the state that has to stand.
+
 Declining or rejecting a pending offer ends it without accepting or completing it. The provider
 confirms the end with `task-ended` and a `cancelled` outcome.
 
@@ -4238,6 +4241,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
 | `validateHandlingReport(report, path?, manifest?)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
+| `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a transfer's item, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`), and the state that has to stand: a consulted entry, a lead requested, somebody else still on the call (`command.conference.remove.alone`). A host validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
 
