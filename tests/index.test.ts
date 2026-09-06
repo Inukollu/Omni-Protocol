@@ -165,7 +165,7 @@ describe("Omni protocol", () => {
       },
       async createAuthenticationSession() {
         return {
-          state: () => ({ status: "authenticated" as const, identity: { id: "agent-1", displayName: "Agent One", timeZone: "Asia/Kolkata" }, capabilities: {} }),
+          state: () => ({ status: "authenticated" as const, identity: { id: "agent-1", displayName: "Agent One", timeZone: "Pacific/Chatham" }, capabilities: {} }),
           subscribe: () => () => undefined,
           start: async () => ({ status: "rejected" as const, failure: { code: "already-authenticated", message: "Already authenticated", retryable: false } }),
           complete: async () => ({ status: "rejected" as const, failure: { code: "no-flow", message: "No authentication flow", retryable: false } }),
@@ -188,7 +188,7 @@ describe("Omni protocol", () => {
       },
     });
 
-    const result = await exerciseAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Asia/Kolkata", host: stillHost() });
+    const result = await exerciseAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", host: stillHost() });
     expect(result.violations).toEqual([]);
     expect(result.events.map(item => item.event)).toEqual([{ type: "transport-status", status: "active" }]);
     expect(disconnect).toHaveBeenCalledOnce();

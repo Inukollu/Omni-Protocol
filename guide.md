@@ -1939,7 +1939,10 @@ field to fill in later: an identity without one is refused (`authentication.iden
 so is a zone that is not an IANA name, wherever it appears. Nothing is ever assumed in its place --
 not the viewer's browser, which gives a different answer per reader for the same record, and not the
 provider's clock. The harness holds a provider to the round trip: the identity carries the zone the
-host stated (`authentication.identity.timeZone.republished`). **The round trip is not the store.**
+host stated (`authentication.identity.timeZone.republished`), and a conformance run states a zone
+the machine running it is not in (`context.timeZone.local`): a provider that read its own clock
+would otherwise pass the round trip on any runner in the host's zone, which for a demo and a runner
+in one datacentre is most of them. **The round trip is not the store.**
 An adapter that echoes the stated zone back onto the identity passes that check with nothing kept,
 and a lead reading a colleague's day would still get the wrong one. What proves the store is a zone
 the run never sent: a colleague's `User` from `describeUsers()` carrying theirs. A provider's own
