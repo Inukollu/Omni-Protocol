@@ -3734,9 +3734,26 @@ about audio then follows the phone rather than the channel: on a softphone the h
 audio, the adapter implements `openMedia`, and `task-media-started` is the word to open it; on a
 desk phone the host reports no audio, opens nothing, and `task-media-started` still marks the
 moment the call is live so the desk shows it, with the sound on the handset. A platform that lists
-`deskPhone` alone never implements `openMedia`; one that lists `softphone` always does. An agent
-is never asked at sign-in which handset to use by this wire: what the platform does with a
-desk-phone login -- which handset, from which pool -- is its own business.
+`deskPhone` alone never implements `openMedia`; one that lists `softphone` always does.
+
+**The mode comes from the host; the status comes from the provider.** The host knows which kind
+of station the agent signed in at, because the person chose it, and nothing else can know that.
+The provider knows whether that station can carry a call right now -- whether a handset is
+registered -- which a host in a browser cannot see. So the host's `phone` selects the branch, and
+the provider's own knowledge of the device decides readiness within it. A provider never overrides
+the host's declaration from its device record: treating a desk-phone login as a softphone because
+the handset is momentarily unregistered, and demanding a microphone of it, is the reading this
+sentence exists to refuse. What the provider does when the handset is not registered is what it
+does for any station that cannot take a call -- hold the agent not-ready and say why.
+
+**On a desk-phone login the host never calls `openMedia`.** There is no stream to hand over and
+no audio to attach; a host that calls it anyway is in error, and an adapter that receives the call
+answers `unavailable` with a non-retryable failure, since waiting changes nothing about a station
+that is a telephone. The harness requires no `openMedia` of such an adapter and never calls it.
+
+**Which handset a desk-phone login rings is configuration**, set for the agent by an
+administrator on the platform, never a question put to the agent at sign-in by this wire or by
+the platform behind it.
 
 ### Opening the audio
 
