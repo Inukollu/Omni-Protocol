@@ -2664,6 +2664,23 @@ browser that used it.
 Task capabilities belong to each `Task`. If `hold` is omitted on one task, Omni
 must not show or issue hold for that task even if another task from the same provider supports it.
 
+**A capability is a property of the task, and of nothing the task names.** A provider derives it
+from no other source -- not the queue the task came from, not the login, not its own configuration
+-- because each of those answers a question about this task from somewhere that does not know
+about this task, and a client with two sources and a rule for choosing between them is the shape
+that produces two consumers disagreeing about one fact. The task is the one source, and the
+provider puts on the task what the platform permits for it.
+
+**A permission that changes while the task is open is republished on the task at the moment it
+changes.** Terms edited mid-call, a call moving into another queue and arriving under different
+ones: a capability stated once at offer or answer and never corrected is a fact with a shelf life
+and no expiry, and a host draws a control the provider will now refuse. So the provider republishes
+the task, with its capabilities as they now stand, and a host treats the last statement as current
+rather than re-deriving anything. This is the same shape as a room left full after the call ends
+-- a field describing the present, carried past the moment it stopped being true -- carried past
+this time not by a spread but by nobody sending the correction. A provider whose platform can
+change a permission mid-task and does not republish is in breach, however conformant its offer was.
+
 ```ts
 const taskCapabilities = {
   channel: "voice",
