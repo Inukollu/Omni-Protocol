@@ -960,6 +960,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     return declared !== undefined && !(isRecord(declared) && declared.lockedBy !== undefined);
   };
 
+  // Media may arrive any time after the accept, before or after the task's own update says
+  // in-progress: the event is the provider's word that the audio should attach, never a reply to
+  // openMedia, so the drive looks for it from the accept rather than from the last update it read.
+  const acceptedAt = drive.events.length;
   // 1. Accept the offer, if it is one.
   if (latestTask().phase === "pending") {
     if (await send({ type: drive.channel === "voice" ? "answer" : "accept" }) === undefined) return found;
@@ -982,9 +986,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       const started = await waitFor("task-media-started for the driven task", envelope => {
         const event = envelope.event as Record<string, unknown>;
         return event.type === "task-media-started" && event.taskId === taskId ? event : undefined;
-      }, cursor);
+      }, acceptedAt);
       if (started === undefined) return found;
-      cursor = started.at;
+      cursor = Math.max(cursor, started.at);
     }
     const opened = await drive.connection.openMedia?.({ taskId, localAudio: drive.localAudio });
     found.push(...validateResult(opened, "openMedia", "drive.openMedia"));

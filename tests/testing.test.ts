@@ -878,6 +878,9 @@ describe("exerciseAdapter drives one call", () => {
         execute: async ({ command }: { command: { type: string } }) => {
           switch (command.type) {
             case "answer":
+              // The phase moves first and the audio follows on its own event, which is the only
+              // order the stream allows: an update never moves media, and media never arrives on
+              // a task whose work has not begun.
               emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
               if (!script.skipMediaStart) emit({ type: "task-media-started", taskId: "call-77" });
               return { status: "applied" };

@@ -4127,6 +4127,9 @@ partial patch.
 The provider's word that the task's audio should now attach. Omni calls `openMedia` on it — and on
 a task carried with `media: "started"`, which is how a reconnect snapshot reattaches audio an
 earlier event brought — and renders the call as live from that word, never from its own senses. It
+precedes `openMedia` and is never a reply to it: a provider whose media state comes from the
+platform, a station going in use the moment a call is answered, sends it then, before any host has
+opened anything, and `openMedia` has its own answer for what the host did. It
 names a task whose work has begun, and it alternates with `task-media-ended`: media that never
 started cannot end, so a live call whose provider says nothing about its audio is a provider in
 breach, not a state a desk fills in from its own devices.
