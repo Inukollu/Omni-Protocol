@@ -2672,9 +2672,10 @@ that produces two consumers disagreeing about one fact. The task is the one sour
 provider puts on the task what the platform permits for it.
 
 **A permission that changes while the task is open is republished on the task at the moment it
-changes.** Terms edited mid-call, a call moving into another queue and arriving under different
-ones: a capability stated once at offer or answer and never corrected is a fact with a shelf life
-and no expiry, and a host draws a control the provider will now refuse. So the provider republishes
+changes.** An intern may not conference anyone in on their own; once a lead has joined the call,
+they may. A call moving into another queue arrives under that queue's terms. A capability stated
+once at offer or answer and never corrected is a fact with a shelf life and no expiry, and a host
+draws a control the provider will now refuse -- or withholds one the agent now has. So the provider republishes
 the task, with its capabilities as they now stand, and a host treats the last statement as current
 rather than re-deriving anything. This is the same shape as a room left full after the call ends
 -- a field describing the present, carried past the moment it stopped being true -- carried past
