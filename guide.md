@@ -3887,7 +3887,11 @@ declared:
 | Everything else | Its own named capability. |
 
 `validateTaskCommand(command, task)` holds a command to this table at runtime, both ways: the
-capability it needs, the phase it belongs to, and the state that has to stand.
+capability it needs, the phase it belongs to, and the state that has to stand. The task it wants
+is the one the provider published, not a host's own mapping of it: a host that keeps only its
+mapped shape has nothing honest to pass, and then checks shape alone, which is still worth doing
+-- it names a command the wire never had -- but is not the table. Keeping the published task
+beside the mapped one is what the full check costs a host; an adapter has it for free.
 
 Declining or rejecting a pending offer ends it without accepting or completing it. The provider
 confirms the end with `task-ended` and a `cancelled` outcome.
