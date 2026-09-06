@@ -13,6 +13,9 @@ import {
   validateScheduledActivity,
   validateSnapshot,
   validateTask,
+  validateTimeZone,
+  validatePhone,
+  isTimeZone,
   validateResult,
   validateTeamRoster,
   type ProtocolViolation,
@@ -26,6 +29,8 @@ const manifest = (over: Record<string, unknown> = {}) => ({
   channel: "voice",
   supportedProtocolVersions: [1],
   authenticationMethods: ["credentials"],
+  // A voice manifest says which phones it supports; any other channel says nothing.
+  ...(over.channel !== undefined && over.channel !== "voice" ? {} : { phones: ["softphone"] }),
   ...over,
 });
 
@@ -946,7 +951,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("carries a failure only on an expired state", () => {
-    const user = { id: "agent-1", displayName: "Ada" };
+    const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
     const failure = { code: "expired", message: "Sign in again", retryable: true };
     expect(rules(validateAuthenticationState({ status: "expired", identity: user, failure }))).toEqual([]);
     expect(rules(validateAuthenticationState({ status: "signed-out", failure }))).toEqual(["authentication.failure.unexpected"]);
@@ -1033,10 +1038,10 @@ describe("rules that had no test", () => {
 });
 
 describe("validateAuthenticationState", () => {
-  const user = { id: "agent-1", displayName: "Ada" };
+  const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
 
   it("declares what the team left to the person on the login, with who set it", () => {
-    const user = { id: "agent-1", displayName: "Ada" };
+    const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
     const prefs = (value: unknown) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: value } }));
     const mute = { id: "mute", label: "Mute", enabled: true, setBy: "team" };
     expect(prefs([mute, { id: "hold", label: "Hold", enabled: false, setBy: "person" }, { id: "skill:billing", label: "Billing", enabled: true, setBy: "provider" }])).toEqual([]);
@@ -1062,7 +1067,7 @@ describe("validateAuthenticationState", () => {
   });
   it("refuses provisioning as a setBy beside provider, which replaced it", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
-    const user = { id: "agent-1", displayName: "Ada" };
+    const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
     const prefs = (setBy: string) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ id: "mute", label: "Mute", enabled: true, setBy }] } }));
     expect(prefs("provider")).toEqual([]);
     expect(prefs("provisioning")).toEqual(["preference.setBy.unknown"]);
@@ -1102,7 +1107,7 @@ describe("validateAuthenticationState", () => {
     ["a status the contract dropped", { status: "connected" }, "authentication.status"],
     ["authenticated with no identity", { status: "authenticated" }, "authentication.identity"],
     ["refreshing with no identity", { status: "refreshing" }, "authentication.identity"],
-    ["an identity with no id", { status: "authenticated", identity: { displayName: "Ada" } }, "authentication.identity.id"],
+    ["an identity with no id", { status: "authenticated", identity: { displayName: "Ada", timeZone: "Asia/Kolkata" } }, "authentication.identity.id"],
     ["an identity on a signed-out state", { status: "signed-out", identity: user }, "authentication.identity.unexpected"],
     // A usable login says what it may do, {} included; a state that is not usable has nothing to say.
     ["authenticated with no capabilities", { status: "authenticated", identity: user }, "authentication.capabilities.shape"],
@@ -1412,6 +1417,56 @@ describe("consulting a lead", () => {
   });
 });
 
+describe("how the agent hears the call", () => {
+  it("has a voice manifest list its phones, and no other channel list any", () => {
+    const m = (over: Record<string, unknown>) => rules(validateManifest(manifest(over)));
+    expect(m({ phones: ["softphone"] })).toEqual([]);
+    expect(m({ phones: ["deskPhone"] })).toEqual([]);
+    expect(m({ phones: ["softphone", "deskPhone"] })).toEqual([]);
+    expect(m({ phones: undefined })).toEqual(["manifest.phones.required"]);
+    expect(m({ phones: [] })).toEqual(["manifest.phones.required"]);
+    expect(m({ phones: ["handset"] })).toEqual(["manifest.phone"]);
+    expect(m({ phones: ["softphone", "softphone"] })).toEqual(["manifest.phone.unique"]);
+    expect(m({ channel: "chat", phones: ["softphone"] })).toEqual(["manifest.phones.channel"]);
+    expect(m({ channel: "chat" })).toEqual([]);
+  });
+
+  it("holds the host's choice of phone to the manifest", () => {
+    const voice = manifest({ phones: ["softphone"] });
+    expect(rules(validatePhone("softphone", voice))).toEqual([]);
+    expect(rules(validatePhone("deskPhone", voice))).toEqual(["context.phone.unsupported"]);
+    expect(rules(validatePhone("deskPhone", manifest({ phones: ["softphone", "deskPhone"] })))).toEqual([]);
+    expect(rules(validatePhone("handset", voice))).toEqual(["context.phone"]);
+    expect(rules(validatePhone(undefined, voice))).toEqual(["context.phone.required"]);
+    expect(rules(validatePhone("softphone", manifest({ channel: "chat" })))).toEqual(["context.phone.unexpected"]);
+    expect(rules(validatePhone(undefined, manifest({ channel: "chat" })))).toEqual([]);
+  });
+});
+
+describe("the agent's day", () => {
+  const user = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
+  const identity = (timeZone: unknown) =>
+    rules(validateAuthenticationState({ status: "authenticated", identity: { ...user, timeZone }, capabilities: {}, expiresAt: "2026-08-21T12:00:00Z" }));
+
+  it("carries an IANA zone on every identity, never absent", () => {
+    expect(identity("Asia/Kolkata")).toEqual([]);
+    expect(identity("America/Chicago")).toEqual([]);
+    expect(identity(undefined)).toEqual(["authentication.identity.timeZone"]);
+    // An offset cannot survive a daylight-saving boundary, and a made-up name is nowhere.
+    expect(identity("+05:30")).toEqual(["authentication.identity.timeZone"]);
+    expect(identity("Mars/Olympus")).toEqual(["authentication.identity.timeZone"]);
+    expect(identity("")).toEqual(["authentication.identity.timeZone"]);
+  });
+
+  it("holds the host's connect-time zone to the same rule, and requires one", () => {
+    expect(rules(validateTimeZone("Europe/London"))).toEqual([]);
+    expect(rules(validateTimeZone(undefined))).toEqual(["context.timeZone"]);
+    expect(rules(validateTimeZone("UTC+1"))).toEqual(["context.timeZone"]);
+    expect(isTimeZone("Asia/Kolkata")).toBe(true);
+    expect(isTimeZone("Asia/Nowhere")).toBe(false);
+  });
+});
+
 describe("preview: the agent presses Call", () => {
   const voice = { channel: "voice" };
   const at = "2026-08-21T09:02:00Z";
@@ -1445,7 +1500,7 @@ describe("preview: the agent presses Call", () => {
 describe("monitoring a call", () => {
   const voice = { channel: "voice" };
   const since = "2026-08-21T09:04:00Z";
-  const user = { id: "L-9", displayName: "Lead" };
+  const user = { id: "L-9", displayName: "Lead", timeZone: "Asia/Kolkata" };
   const login = (team: Record<string, unknown>) =>
     rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { team }, expiresAt: "2026-08-21T12:00:00Z" }));
 

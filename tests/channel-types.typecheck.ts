@@ -38,7 +38,11 @@ export const voiceManifest = {
   idleCapabilities: {
     dial: { destinations: "any-number" },
   },
+  dialOutcomes: ["answered", "no-answer"],
+  phones: ["softphone"],
 } satisfies Manifest<"voice">;
+// @ts-expect-error A chat provider has no call to hear and lists no phones.
+export const chatPhones: Manifest<"chat">["phones"] = ["softphone"];
 
 export const chatManifest = {
   id: "chat-provider",
@@ -283,7 +287,7 @@ export const plainActive = { type: "transport-status", status: "active",
 export const emailAssisting: Task<"email"> = { ...emailTask, id: "email-7", assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } };
 
 // What the login may do travels with the identity, and nowhere else.
-const asha = { id: "1042", displayName: "Asha Rao" };
+const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
 export const leadLogin: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, team: { breakControl: true, leadAssistControl: true } } };
 export const plainLogin: AuthenticationState = { status: "refreshing", identity: asha, capabilities: {} };
 // @ts-expect-error A usable login says what it may do, {} included.

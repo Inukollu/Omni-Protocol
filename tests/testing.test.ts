@@ -23,16 +23,16 @@ const statusEvent = {
 describe("assertAuthenticationRestoreAndExpiry", () => {
   it("accepts a restored session that refreshes and then expires", () => {
     expect(() => assertAuthenticationRestoreAndExpiry([
-      { status: "authenticated", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
-      { status: "refreshing", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
-      { status: "expired", identity: { id: "A-1", displayName: "Ada" }, failure: { code: "expired", message: "Sign in again", retryable: true } },
+      { status: "authenticated", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: {} },
+      { status: "refreshing", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: {} },
+      { status: "expired", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, failure: { code: "expired", message: "Sign in again", retryable: true } },
     ])).not.toThrow();
   });
 
   it("rejects a sequence that never expires", () => {
     expect(() => assertAuthenticationRestoreAndExpiry([
-      { status: "authenticated", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
-      { status: "refreshing", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
+      { status: "authenticated", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: {} },
+      { status: "refreshing", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: {} },
     ])).toThrow(/must end in an expired state/);
   });
 
@@ -46,7 +46,7 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
   it("validates every state, not only their order", () => {
     // The same sequence three ways: as published, with a state that forgot what the login may
     // do, and with a refresh that quietly changed it.
-    const ada = { id: "A-1", displayName: "Ada" };
+    const ada = { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
     const sequence = (refreshing: AuthenticationState) => () => assertAuthenticationRestoreAndExpiry([
       { status: "authenticated", identity: ada, capabilities: { breaks: true } },
       refreshing,
@@ -59,9 +59,9 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
 
   it("rejects a refresh reported after expiry", () => {
     expect(() => assertAuthenticationRestoreAndExpiry([
-      { status: "authenticated", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
+      { status: "authenticated", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: {} },
       { status: "expired" },
-      { status: "refreshing", identity: { id: "A-1", displayName: "Ada" }, capabilities: {} },
+      { status: "refreshing", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: {} },
       { status: "expired" },
     ])).toThrow(/must occur before expiry/);
   });
@@ -72,7 +72,7 @@ describe("assertCapabilityWithdrawal", () => {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
     supportedProtocolVersions: [1], authenticationMethods: ["credentials"],
   } satisfies Manifest<"voice">;
-  const ada = { id: "A-1", displayName: "Ada" };
+  const ada = { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, team: { breakControl: true } } } satisfies AuthenticationState;
   const demoted = { status: "authenticated", identity: ada, capabilities: { breaks: true } } satisfies AuthenticationState;
   const bare: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [], taskCount: 0 };
@@ -109,7 +109,7 @@ describe("assertCapabilityWithdrawal", () => {
   });
 
   it("rejects a sequence that changes identity", () => {
-    const other = { ...demoted, identity: { id: "A-9", displayName: "Bo" } } satisfies AuthenticationState;
+    const other = { ...demoted, identity: { id: "A-9", displayName: "Bo", timeZone: "Asia/Kolkata" } } satisfies AuthenticationState;
     expect(() => assertCapabilityWithdrawal([lead, other], bare, manifest)).toThrow(/new login/);
   });
 
@@ -499,7 +499,7 @@ describe("browser isolation", () => {
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
 const speaking: HostReport = { online: true, audio: { input: { status: "available", localAudio: {} as MediaStream, flowing: true }, output: { status: "available" } } };
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", host: stillHost(speaking) };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Asia/Kolkata", phone: "softphone" as const, host: stillHost(speaking) };
 /** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
 const hostFor = (manifest: unknown): Host =>
   stillHost((manifest as { channel?: string } | undefined)?.channel === "voice" ? speaking : { online: true });
@@ -517,6 +517,7 @@ const conformingManifest = {
     personalBrowser: { access: { mode: "block-all", allowList: ["https://*.example.com/*"], blockList: [] } },
   },
   dialOutcomes: ["answered", "no-answer"],
+  phones: ["softphone", "deskPhone"],
 } satisfies Manifest<"voice">;
 
 // Declares breaks and publishes a UserId, so the conforming connection below has to carry the
@@ -583,6 +584,8 @@ interface AdapterOverrides {
   authenticated?: boolean;
   /** What the login declares. Breaks by default, so the conforming connection needs the four methods. */
   capabilities?: UserCapabilities;
+  /** The zone the identity republishes; `false` for a provider that never stored it. */
+  identityTimeZone?: string | false;
   disconnect?: () => Promise<void>;
   close?: () => Promise<void>;
 }
@@ -598,7 +601,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
       return {
         state: () => overrides.authenticated === false
           ? { status: "signed-out" as const }
-          : { status: "authenticated" as const, identity: { id: "1042", displayName: "Asha Rao" }, capabilities: overrides.capabilities ?? { breaks: true }, expiresAt: "2026-08-21T12:00:00Z" },
+          : { status: "authenticated" as const, identity: { id: "1042", displayName: "Asha Rao", timeZone: (overrides.identityTimeZone === false ? undefined : overrides.identityTimeZone ?? "Asia/Kolkata") as string }, capabilities: overrides.capabilities ?? { breaks: true }, expiresAt: "2026-08-21T12:00:00Z" },
         subscribe: (listener: (state: AuthenticationState) => void) => {
           overrides.emitAuthentication?.(listener);
           return unsubscribeAuthentication;
@@ -628,7 +631,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         setCapacity: async () => ({ status: "applied" }),
         execute: async () => ({ status: "applied" }),
         disconnect,
-        describeUsers: async ids => ids.map(id => ({ id, displayName: `User ${id}` })),
+        describeUsers: async ids => ids.map(id => ({ id, displayName: `User ${id}`, timeZone: "Asia/Kolkata" })),
         dial: async ({ dialId }) => ({ status: "dialling", dialId }),
         requestBreak: async () => ({ status: "requested" }),
         commitBreak: async () => ({ status: "committed" }),
@@ -647,8 +650,11 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
   return { adapter, disconnect, close, unsubscribe, unsubscribeAuthentication };
 }
 
+/** The context a manifest's channel gets: a softphone on voice, no phone at all elsewhere. */
+const contextFor = (manifest: unknown) =>
+  ({ ...context, phone: (manifest as { channel?: string } | undefined)?.channel === "voice" ? "softphone" as const : undefined, host: hostFor(manifest) });
 const rules = async (overrides: AdapterOverrides) =>
-  (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, host: hostFor(overrides.manifest ?? conformingManifest) }, { collectOnly: true })).violations.map(violation => violation.rule);
+  (await exerciseAdapter(makeAdapter(overrides).adapter, contextFor(overrides.manifest ?? conformingManifest), { collectOnly: true })).violations.map(violation => violation.rule);
 
 const badEnvelope = { id: "", loginId: "session-1", occurredAt: "not-a-time", event: { type: "transport-status", status: "active" } } as unknown as ProviderEventEnvelope<"voice">;
 
@@ -663,6 +669,34 @@ describe("exerciseAdapter", () => {
     expect(unsubscribeAuthentication).toHaveBeenCalledOnce();
     expect(disconnect).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("holds the host's phone to the manifest, and lets a desk phone own no audio", async () => {
+    const on = async (phone: unknown, overrides: AdapterOverrides = {}, host: Host = stillHost(speaking)) =>
+      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, phone: phone as "softphone", host }, { collectOnly: true })).violations.map(v => v.rule);
+    // A softphone login: the host reports audio and the adapter opens media.
+    expect(await on("softphone")).toEqual([]);
+    expect(await on("softphone", { connection: { openMedia: undefined } })).toContain("connection.openMedia.required");
+    expect(await on("softphone", {}, stillHost({ online: true }))).toEqual(["context.host.audio.required"]);
+    // A desk-phone login: the host has no audio to report and nothing to open.
+    expect(await on("deskPhone", { connection: { openMedia: undefined } }, stillHost({ online: true }))).toEqual([]);
+    expect(await on("deskPhone")).toEqual(["context.host.audio.unexpected"]);
+    // The choice is held to the manifest, and required on voice.
+    expect(await on("deskPhone", { manifest: { ...conformingManifest, phones: ["softphone"] } })).toContain("context.phone.unsupported");
+    expect(await on("handset")).toContain("context.phone");
+    expect(await on(undefined)).toContain("context.phone.required");
+  });
+
+  it("requires the host to state a time zone, and the provider to keep it on the identity", async () => {
+    // Both directions: the host's word is validated, and the provider is held to storing it.
+    expect(await rules({})).toEqual([]);
+    const without = await exerciseAdapter(makeAdapter({}).adapter, { ...context, timeZone: undefined as unknown as string }, { collectOnly: true });
+    expect(without.violations.map(v => v.rule)).toContain("context.timeZone");
+    const offset = await exerciseAdapter(makeAdapter({}).adapter, { ...context, timeZone: "+05:30" }, { collectOnly: true });
+    expect(offset.violations.map(v => v.rule)).toContain("context.timeZone");
+    // An identity without a zone is not an identity on this wire; one with somebody else's day is told so.
+    expect(await rules({ identityTimeZone: false })).toContain("authentication.identity.timeZone");
+    expect(await rules({ identityTimeZone: "America/Chicago" })).toEqual(["authentication.identity.timeZone.republished"]);
   });
 
   it("catches a preview task that leaves preview still carrying its deadline, through the full run", async () => {
@@ -819,7 +853,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   // Every case pairs the refusal with its control: the same adapter with the declaration
   // withdrawn is clean, so a missing method is reported because of the declaration and not
   // because the check fires for everyone.
-  const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
+  const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, phones: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
   const chatSnapshot = { ...minimalSnapshot, contacts: [] } satisfies Snapshot<"chat">;
 
   it("dial(), when the manifest declares dial", async () => {
@@ -868,7 +902,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("validates every authentication state the session publishes during the run", async () => {
-    const asha = { id: "1042", displayName: "Asha Rao" };
+    const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
     const forgetful = { status: "refreshing", identity: asha } as unknown as AuthenticationState;
     const careful = { status: "refreshing", identity: asha, capabilities: { breaks: true } } satisfies AuthenticationState;
     expect(await rules({ emitAuthentication: publish => publish(forgetful) })).toContain("authentication.capabilities.shape");
@@ -887,10 +921,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("holds refreshing to the login it refreshes", async () => {
-    const asha = { id: "1042", displayName: "Asha Rao" };
+    const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
     const same = { status: "refreshing", identity: asha, capabilities: { team: {} } } satisfies AuthenticationState;
     const fewer = { status: "refreshing", identity: asha, capabilities: {} } satisfies AuthenticationState;
-    const other = { status: "refreshing", identity: { id: "A-9", displayName: "Bo" }, capabilities: { team: {} } } satisfies AuthenticationState;
+    const other = { status: "refreshing", identity: { id: "A-9", displayName: "Bo", timeZone: "Asia/Kolkata" }, capabilities: { team: {} } } satisfies AuthenticationState;
     const roster = { ...minimalSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
     const lead = { team: {} };
     expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: roster, emitAuthentication: publish => publish(same) })).toEqual([]);
@@ -903,7 +937,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     // published from setCapacity, the last thing the harness calls -- so the four methods are
     // required by the listener, not by the check that ran at snapshot time. The paired republish
     // grants nothing.
-    const asha = { id: "1042", displayName: "Asha Rao" };
+    const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
     const granted = { status: "authenticated", identity: asha, capabilities: { breaks: true } } satisfies AuthenticationState;
     const unchanged = { status: "authenticated", identity: asha, capabilities: {} } satisfies AuthenticationState;
     const later = (state: AuthenticationState): AdapterOverrides => {
@@ -944,7 +978,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     // Signed in as a lead, then demoted before the snapshot: the roster on that snapshot is now
     // published to a login that does not lead. A harness that froze the login at sign-in would
     // pass it. The paired run republishes the same capabilities and stays clean.
-    const asha = { id: "1042", displayName: "Asha Rao" };
+    const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
     const roster = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "ready" }] } } satisfies Snapshot<"voice">;
     const demoted = { status: "authenticated", identity: asha, capabilities: {} } satisfies AuthenticationState;
     const unchanged = { status: "authenticated", identity: asha, capabilities: { team: {} } } satisfies AuthenticationState;
@@ -1044,10 +1078,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("gives a voice connection a host with audio and no other, and refuses an adapter that never asked", async () => {
-    const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
+    const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, phones: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
     const chatSnapshot = { ...minimalSnapshot, contacts: [] } satisfies Snapshot<"chat">;
     const run = async (overrides: AdapterOverrides, host: Host) =>
-      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, host }, { collectOnly: true })).violations.map(violation => violation.rule);
+      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...contextFor(overrides.manifest ?? conformingManifest), host }, { collectOnly: true })).violations.map(violation => violation.rule);
     expect(await run({}, stillHost(speaking))).toEqual([]);
     expect(await run({}, stillHost({ online: true }))).toEqual(["context.host.audio.required"]);
     const chat = { manifest: chatManifest, snapshot: chatSnapshot, connection: { openMedia: undefined, dial: undefined } };
@@ -1168,7 +1202,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("nothing optional of an adapter that declares nothing optional", async () => {
-    const bare = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, idleCapabilities: undefined } satisfies Manifest<"chat">;
+    const bare = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, phones: undefined, idleCapabilities: undefined } satisfies Manifest<"chat">;
     const found = await rules({
       manifest: bare,
       capabilities: {},
