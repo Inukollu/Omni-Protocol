@@ -2727,7 +2727,10 @@ also reported as a `diagnostic` naming the task, one per occurrence, so an opera
 the terms arrive, the task is republished under `queue` with the set as it now stands: the same
 republish as any other permission that changed while the task was open. The move goes one way.
 Terms once read stay read: a re-read that fails mid-task is not a new fact about the task, so the
-last statement stands and the failure is a `diagnostic`, and a task that was published under
+last statement stands and the failure is a `diagnostic`. A queue deleted while a call on it is live
+is the same case, not an exception to it: the call's terms were read when the queue handed it over,
+the provider sends no update for the deletion, and the agent works the call to its end under the
+terms it was given. A task that was published under
 `queue` or `ungoverned` never returns to `undetermined`, on an update (`stream.taskUpdated.capabilitySource`)
 or on a resync snapshot (`stream.snapshot.capabilitySource`).
 
