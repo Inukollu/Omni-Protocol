@@ -3808,7 +3808,10 @@ declaration on a switch that allows one registration per endpoint would evict th
 agent's phone stops ringing and their calls land in a tab, and nobody is told. So the provider
 refuses the login at authentication, with `omni.phone-not-permitted` and a message the host shows
 -- "this agent is configured for a desk phone" -- and refusing is correct, not an override of the
-host. It is a refusal, never a negotiation afterwards and never a quiet substitution. And **a
+host. It is a refusal, never a negotiation afterwards and never a quiet substitution, and it is
+never retryable: trying again does not reconfigure the agent, and a host validating the answer
+(`validateAuthenticationResult`) refuses a phone refusal marked otherwise
+(`authentication.failure.phone.retryable`). And **a
 provider never makes a declared phone true by changing the platform's configuration**: the record
 is the administrator's, and a login is not a request to reconfigure an agent.
 
@@ -4284,6 +4287,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
 | `validateHandlingReport(report, path?, manifest?)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
+| `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
 | `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a transfer's item, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`), and the state that has to stand: a consulted entry, a lead requested, somebody else still on the call (`command.conference.remove.alone`). A host validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
