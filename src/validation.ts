@@ -42,6 +42,7 @@ import {
   type CustomCapability,
   type DialDestinations,
   type DialOutcome,
+  type CapabilitySource,
   type OnCallRole,
   type OnCallStage,
   type PreviewDeadline,
@@ -102,6 +103,7 @@ const TASK_PHASES = membersOf<TaskPhase>({
   pending: true, confirmed: true, preview: true, "in-progress": true, paused: true, completing: true,
 });
 const COMPLETION_MODES = membersOf<CompletionMode>({ "agent-command": true, "provider-automatic": true });
+const CAPABILITY_SOURCES = membersOf<CapabilitySource>({ queue: true, ungoverned: true, undetermined: true });
 const ACCEPTANCE_MODES = membersOf<AcceptanceMode>({
   "no-preference": true, "consent": true, "automatic": true,
 });
@@ -1098,6 +1100,9 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.add("task.monitoring.assisting", `${path}.monitoring`, "a task is a joined call or a monitored one, never both");
   }
 
+  // Where the terms came from is stated with them: a host cannot tell "the platform permits
+  // nothing" from "the terms could not be read" from the set alone, and the provider knows which.
+  into.oneOf(task.capabilitySource, CAPABILITY_SOURCES, "task.capabilitySource", `${path}.capabilitySource`);
   const capabilities = task.capabilities;
   if (!isPlainObject(capabilities)) {
     into.add("task.capabilities.shape", `${path}.capabilities`, "a task needs a capabilities object");

@@ -8,6 +8,7 @@ const voiceTask = {
   channel: "voice",
   taskType: "Customer Support",
   capabilities: { hold: true },
+  capabilitySource: "queue",
   phase: "in-progress",
   browsers: [],
   completionMode: "agent-command",
@@ -581,6 +582,7 @@ const conformingSnapshot = {
       coldTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] },
       custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } }],
     },
+    capabilitySource: "queue",
     phase: "in-progress",
     media: "started",
     completionMode: "agent-command",
@@ -727,6 +729,19 @@ describe("exerciseAdapter", () => {
     expect(await on("deskPhone", { manifest: { ...conformingManifest, phones: ["softphone"] } })).toContain("context.phone.unsupported");
     expect(await on("handset")).toContain("context.phone");
     expect(await on(undefined)).toContain("context.phone.required");
+  });
+
+  it("fails a run whose platform could not determine a task's terms, and passes one that states them", async () => {
+    const [carried] = (conformingSnapshot as { tasks: Record<string, unknown>[] }).tasks;
+    const under = (capabilitySource: string) => ({ ...conformingSnapshot, tasks: [{ ...carried, capabilitySource }] });
+    expect(await rules({ snapshot: under("queue") })).toEqual([]);
+    expect(await rules({ snapshot: under("ungoverned") })).toEqual([]);
+    expect(await rules({ snapshot: under("undetermined") })).toEqual(["capabilitySource.undetermined"]);
+    // And on the wire after the snapshot: an offer under undetermined terms is the same fault.
+    const offer = (capabilitySource: string): ProviderEventEnvelope<"voice"> => ({ id: "offer-1", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
+      event: { type: "task-offered", task: { ...voiceTask, id: "call-77", phase: "pending", acceptance: "consent", capabilitySource: capabilitySource as "queue" } } });
+    expect(await rules({ emit: listener => listener(offer("queue")) })).toEqual([]);
+    expect(await rules({ emit: listener => listener(offer("undetermined")) })).toEqual(["capabilitySource.undetermined"]);
   });
 
   it("requires the host to state a time zone, and the provider to keep it on the identity", async () => {

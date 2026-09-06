@@ -351,6 +351,7 @@ export async function exerciseAdapter<C extends Channel>(
         violations.push({ rule: "diagnostic.raised", path: "event.diagnostic",
           message: `the provider reported a diagnostic: expected ${String(envelope.event.expected)}; observed ${String(envelope.event.observed)}` });
       }
+      violations.push(...undeterminedTasks(eventTasks(envelope), "event"));
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
       if (eventDeclaresMute(envelope)) requireMethod(live, "recordStep", "a task declares mute, which the host performs and must have somewhere to record");
       // Cross-event rules apply once the stream has a beginning: the connect snapshot.
@@ -366,6 +367,7 @@ export async function exerciseAdapter<C extends Channel>(
     const snapshot = await connection.snapshot() as Snapshot;
     observeSnapshot(snapshot, seen);
     violations.push(...validateSnapshot(snapshot, adapter.manifest, "snapshot", reader()));
+    violations.push(...undeterminedTasks(Array.isArray(snapshot?.tasks) ? snapshot.tasks : [], "snapshot.tasks"));
     stream.seed(snapshot);
     breaks.seed(snapshot);
     seeded = true;
@@ -555,6 +557,27 @@ export function assertAuthenticationRestoreAndExpiry(
   if (refreshingIndex >= 0 && refreshingIndex > expiredIndex) {
     throw new Error("Refreshing state must occur before expiry");
   }
+}
+
+/** The tasks an envelope carries: the one a task event names, or a snapshot event's list. */
+function eventTasks(envelope: unknown): unknown[] {
+  if (!isRecord(envelope) || !isRecord(envelope.event)) return [];
+  const event = envelope.event;
+  if (event.type === "task-offered" || event.type === "task-updated") return [event.task];
+  if (event.type === "snapshot" && isRecord(event.snapshot) && Array.isArray(event.snapshot.tasks)) return event.snapshot.tasks;
+  return [];
+}
+
+/**
+ * A task published under `undetermined` terms is a fact to a host and a failure to a conformance
+ * run, as a diagnostic is: the platform under test could not say what it permits, and a green
+ * result must not paper over it.
+ */
+function undeterminedTasks(tasks: readonly unknown[], path: string): ProtocolViolation[] {
+  return tasks.flatMap((task, index) => isRecord(task) && task.capabilitySource === "undetermined"
+    ? [{ rule: "capabilitySource.undetermined", path: `${path}[${index}].capabilitySource`,
+        message: `task ${String(task.id)} was published under terms the provider could not determine` }]
+    : []);
 }
 
 /**

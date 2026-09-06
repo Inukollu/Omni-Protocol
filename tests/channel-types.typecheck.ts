@@ -78,6 +78,7 @@ export const emailTask = {
   channel: "email",
   taskType: "Customer Support",
   capabilities: { browsers: true, dispositions: true },
+  capabilitySource: "queue",
   phase: "in-progress",
   browsers: [],
   completionMode: "agent-command",
@@ -93,6 +94,7 @@ export const invalidEmailTask = {
     // @ts-expect-error Hold is not an email task capability.
     hold: true,
   },
+  capabilitySource: "queue",
   phase: "in-progress",
   browsers: [],
   completionMode: "agent-command",

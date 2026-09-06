@@ -46,6 +46,7 @@ const task = (over: Record<string, unknown> = {}) => {
     channel: "voice",
     taskType: "Customer Support",
     capabilities,
+    capabilitySource: "queue",
     // A task supplies browsers only under the capability that shows them.
     browsers: capabilities.browsers === true ? [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false }] : [],
     phase: "in-progress",
@@ -1708,5 +1709,22 @@ describe("protocol-version interoperability", () => {
     // entry beside a good one is reported for the entry, not for interoperability.
     expect(rules(validateManifest(manifest({ supportedProtocolVersions: [99, 1] })))).toEqual([]);
     expect(rules(validateManifest(manifest({ supportedProtocolVersions: [1, 1.5] })))).toEqual(["manifest.supportedProtocolVersions.value"]);
+  });
+});
+
+describe("validateTask capabilitySource", () => {
+  const voice = { channel: "voice" };
+  const rules = (t: unknown) => validateTask(t, voice).map(v => v.rule);
+
+  it("requires the task to say where its capabilities came from, and closes the set", () => {
+    for (const source of ["queue", "ungoverned", "undetermined"]) expect(rules(task({ capabilitySource: source }))).toEqual([]);
+    expect(rules(task({ capabilitySource: undefined }))).toEqual(["task.capabilitySource"]);
+    expect(rules(task({ capabilitySource: "Unreadable" }))).toEqual(["task.capabilitySource"]);
+  });
+
+  it("holds undetermined terms to no shape of their own: what the provider will honour is what it publishes", () => {
+    expect(rules(task({ capabilitySource: "undetermined", capabilities: {} }))).toEqual([]);
+    expect(rules(task({ capabilitySource: "undetermined", capabilities: { hold: true, mute: true, endCall: true } }))).toEqual([]);
+    expect(rules(task({ capabilitySource: "queue", capabilities: {} }))).toEqual([]);
   });
 });
