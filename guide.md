@@ -2681,6 +2681,13 @@ rather than re-deriving anything. This is the same shape as a room left full aft
 this time not by a spread but by nobody sending the correction. A provider whose platform can
 change a permission mid-task and does not republish is in breach, however conformant its offer was.
 
+**An empty capability set is a statement, not a shrug.** `capabilities: {}` says the platform
+permits nothing on this task. A provider that has not yet learned what the platform permits -- a
+queue's configuration that has not reached it -- knows nothing of the kind, and must not publish
+the task as if it did: it holds the task until it knows, or reports the gap as a `diagnostic`,
+because "no queue governs this call" is a fact and "the configuration has not arrived" is a fault,
+and a host cannot tell them apart from a value that carries neither.
+
 ```ts
 const taskCapabilities = {
   channel: "voice",
