@@ -2725,7 +2725,10 @@ control the platform might not have granted than lose hold or hang-up mid-call o
 configuration read publishes those -- and the protocol chooses no default set for it. The fault is
 also reported as a `diagnostic` naming the task, one per occurrence, so an operator counts it. When
 the terms arrive, the task is republished under `queue` with the set as it now stands: the same
-republish as any other permission that changed while the task was open. `exerciseAdapter` treats a
+republish as any other permission that changed while the task was open. The move goes one way.
+Terms once read stay read: a re-read that fails mid-task is not a new fact about the task, so the
+last statement stands and the failure is a `diagnostic`, and a task that was published under
+`queue` or `ungoverned` never returns to `undetermined` (`stream.taskUpdated.capabilitySource`). `exerciseAdapter` treats a
 task published under `undetermined` as a violation (`capabilitySource.undetermined`), as it treats
 a diagnostic: a conformance run against a platform that cannot say what it permits fails loudly
 rather than passing with a note.

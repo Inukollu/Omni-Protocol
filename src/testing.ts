@@ -778,7 +778,7 @@ const WORK_BEGUN = new Set(["in-progress", "paused", "completing"]);
 
 /** What a stream has said about the tasks it carries, and the rules across events. */
 export class TaskStream {
-  private readonly tasks = new Map<string, { phase: string; media: string; stages: Map<string, string> }>();
+  private readonly tasks = new Map<string, { phase: string; media: string; source: string; stages: Map<string, string> }>();
   // Every dial the stream can place an outcome against: one the host said it placed, or one a
   // task carried on `onCall` or in its record -- which is how a dial made before a transfer is known
   // to whoever holds the task now. `answered` or `ended` once its outcome arrived, since it comes once.
@@ -800,7 +800,7 @@ export class TaskStream {
     }
   }
 
-  private static stated(task: unknown): { phase: string; media: string; stages: Map<string, string> } {
+  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string> } {
     const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
     // The stage of every dialled entry the room names by its dial, so an update can be held to the
     // outcome that moves it.
@@ -810,7 +810,7 @@ export class TaskStream {
         if (isRecord(entry) && typeof entry.dialId === "string" && typeof entry.stage === "string") stages.set(entry.dialId, entry.stage);
       }
     }
-    return { phase: String(isRecord(task) ? task.phase : undefined), media, stages };
+    return { phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages };
   }
 
   /** Replaces what is known with a snapshot's tasks, as a snapshot replaces Omni's state. */
@@ -847,6 +847,13 @@ export class TaskStream {
         if (known === undefined) {
           refuse("stream.taskUpdated.unknown", `${at}.task.id`, `${id} was never offered or carried on a snapshot`);
           break;
+        }
+        // Terms once read stay read. A re-read that fails is not a new fact about the task, so the
+        // last statement stands and the failure is a diagnostic; undetermined is a place a task
+        // starts from, never one it returns to.
+        if ((known.source === "queue" || known.source === "ungoverned") && isRecord(event.task) && event.task.capabilitySource === "undetermined") {
+          refuse("stream.taskUpdated.capabilitySource", `${at}.task.capabilitySource`,
+            `${id} was published under ${known.source} terms and now says undetermined: terms once read stay read, and a re-read that fails is a diagnostic, not a republish`);
         }
         if (known.media === "ended") {
           const phase = isRecord(event.task) ? String(event.task.phase) : "";
