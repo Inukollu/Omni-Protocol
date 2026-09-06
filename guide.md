@@ -2736,8 +2736,16 @@ and an agent working a call has no use for the name of the rule behind its butto
 `undetermined` the agent is told, beside the controls, that these are what the provider will honour
 until the queue's terms arrive, and that the controls may change when they do -- a statement about
 the buttons in front of them now, not about the provider, because that is what changes when the
-republish lands. The two words are close in English and far apart on the desk: `ungoverned` is
-silence, `undetermined` is a notice. `exerciseAdapter` treats a
+republish lands. It stays for as long as the set is provisional, beside the controls it qualifies;
+a message that shows and clears has said nothing about the buttons still on the screen. The two
+words are close in English and far apart on the desk: `ungoverned` is silence, `undetermined` is a
+standing notice.
+
+One consequence for whoever builds the host: because a conformance run fails on `undetermined`, a
+conformant adapter never shows a host `undetermined` under test, and a clean `exerciseAdapter`
+result says nothing about how the host renders it. That rendering is tested against a fixture --
+a task published under `undetermined` shows the notice, the same task under `queue` shows none --
+and never against an adapter, even in principle. `exerciseAdapter` treats a
 task published under `undetermined` as a violation (`capabilitySource.undetermined`), as it treats
 a diagnostic: a conformance run against a platform that cannot say what it permits fails loudly
 rather than passing with a note.
