@@ -2997,9 +2997,19 @@ never saw.
 **`onCall` is who is on the call now, and a task outlives its call.** Wrap-up is not an ending:
 the task is alive, the agent is working, and nothing arrives to say the call ended until they
 dispose. So the room must not be the last word about a call that has ended. Once the call is over
--- the task `completing`, or its `media` ended -- `onCall` is empty or absent, both saying nobody,
-and a task carrying people on a call that has ended is refused (`task.onCall.ended`). A provider
-that publishes the room only on change publishes one last change: the empty room. Two agents were
+-- the task `completing`, or its `media` ended -- `onCall` is empty, or absent only where the
+provider never publishes the room at all, and a task carrying people on a call that has ended is
+refused (`task.onCall.ended`). Empty says nobody is on the call; absent says the provider does not
+say who is, which is a different claim, so a provider that publishes the room publishes one last
+change: the empty room.
+
+**A field that describes the present is cleared by the transition that ends it.** `onCall`,
+`previewEndsAt` and `atDeadline` are three instances of one shape, and there will be more: each
+describes a state that is true now, and each is carried past the moment it stops being true by the
+most natural implementation there is, building the next task by spreading the last one. The
+provider's own state looks right, the claim on the wire is stale, and only the host sees it. An
+adapter that builds each transition from what is true after it, rather than from what was true
+before, needs none of these rules named. Two agents were
 once shown on calls for the better part of an hour while callers queued, because the last message
 describing the room live was never followed by one saying it had emptied, and every consumer that
 derived anything from it was wrong in a way that looked like its own bug.
