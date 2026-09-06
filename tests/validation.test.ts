@@ -1356,6 +1356,9 @@ describe("every dial has an outcome", () => {
     expect(rules(validateResult({ status: "dialling", dialId: "dial-7f2" }, "execute"))).toEqual(["result.status"]);
     expect(rules(validateResult({ status: "applied", dialId: "dial-7f2" }, "execute"))).toEqual(["result.dialId.unexpected"]);
     expect(rules(validateResult({ status: "failed", failure: { code: "omni.destination-not-permitted", message: "Not in contacts", retryable: false } }, "execute", "result", "dial-7f2"))).toEqual([]);
+    // A phone the platform does not permit for the agent is refused by name, and the name is the contract's.
+    expect(rules(validateResult({ status: "failed", failure: { code: "omni.phone-not-permitted", message: "This agent is configured for a desk phone", retryable: false } }, "execute"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure: { code: "omni.station-mismatch", message: "x", retryable: false } }, "execute"))).toEqual(["failure.code.unknown"]);
   });
 
   it("lets a step that dialled say which dial and where, and no other step", () => {

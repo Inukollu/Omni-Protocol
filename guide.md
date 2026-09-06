@@ -1120,6 +1120,7 @@ const OMNI_FAILURE_CODES = [
   "omni.capability-not-enabled",
   "omni.task-not-found",
   "omni.destination-not-permitted",
+  "omni.phone-not-permitted",
   "omni.rate-limited",
   "omni.unavailable",
   "omni.break-already-committed",
@@ -3799,6 +3800,18 @@ that is a telephone. The harness requires no `openMedia` of such an adapter and 
 this wire never asks the agent for it: a host declares `phone` and nothing more. What a platform
 asks on surfaces of its own is its own decision.
 
+**A declared phone the platform does not permit for this agent is a login that cannot be
+established.** The manifest says what the platform can do; the agent's record, kept by an
+administrator, says what this agent is configured for, and the two can disagree with the host's
+declaration -- a softphone declared for an agent whose record says desk phone. Honouring that
+declaration on a switch that allows one registration per endpoint would evict the handset: the
+agent's phone stops ringing and their calls land in a tab, and nobody is told. So the provider
+refuses the login at authentication, with `omni.phone-not-permitted` and a message the host shows
+-- "this agent is configured for a desk phone" -- and refusing is correct, not an override of the
+host. It is a refusal, never a negotiation afterwards and never a quiet substitution. And **a
+provider never makes a declared phone true by changing the platform's configuration**: the record
+is the administrator's, and a login is not a request to reconfigure an agent.
+
 ### Opening the audio
 
 `openMedia` hands Omni the remote audio for one task. Every adapter whose manifest lists
@@ -3963,6 +3976,7 @@ react rather than only display the message:
 | `omni.not-authenticated` | The provider session is no longer usable. The adapter has published `expired` at or before this answer — the state is what Omni surfaces reauthentication from; the code says why this action failed, and is never the only signal. |
 | `omni.capability-not-enabled` | The action targets a capability this task, manifest, or login did not declare — including a lead command from a login whose `capabilities` no longer carry it. |
 | `omni.task-not-found` | The provider-local task id is unknown, typically after the task already ended. |
+| `omni.phone-not-permitted` | The host declared a `phone` the platform does not permit for this agent -- a softphone for an agent configured for a desk phone, or the reverse. The login is refused at authentication, and the provider never reconfigures the agent to make the declaration true. See **How the agent hears the call**. |
 | `omni.destination-not-permitted` | The dialled number, or the `destinationId` named, is not one the provider offers this agent. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
 | `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `transport-status` is not `active`. |
