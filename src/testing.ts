@@ -30,6 +30,7 @@ import {
   validateSnapshot,
   validateTimeZone,
   validatePhone,
+  validateTaskCommand,
   isTimeZone,
   sameTimeZone,
   type ProtocolViolation,
@@ -173,6 +174,16 @@ export interface AdapterContractResult {
 export interface ExerciseAdapterOptions {
   /** Return violations in the result instead of throwing. Defaults to `false`. */
   collectOnly?: boolean;
+  /**
+   * Drive one ordinary lifecycle on the first task the provider offers -- accept it, open its
+   * media on a softphone, hold and resume where offered, end the call where offered, complete it
+   * where the agent completes -- so the rules about a live call are reached rather than listed
+   * under `notExercised`. Off by default, since it issues commands against whatever platform the
+   * adapter is connected to: turn it on against a test backend.
+   */
+  drive?: boolean;
+  /** How long the drive waits for each thing the provider owes it. Defaults to 5000. */
+  driveTimeoutMs?: number;
 }
 
 /**
@@ -327,6 +338,8 @@ export async function exerciseAdapter<C extends Channel>(
     if (softphone) requireMethod(live, "openMedia", "the login is on a softphone");
 
     const eventIds = new Set<string>();
+    // The drive waits on events: each waiter is offered every envelope as it lands.
+    const waiters = new Set<(envelope: ProviderEventEnvelope<C>) => void>();
     unsubscribe = connection.subscribe(envelope => {
       observeEvent(envelope, seen);
       violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader()));
@@ -345,6 +358,7 @@ export async function exerciseAdapter<C extends Channel>(
         eventIds.add(envelope.id);
       }
       events.push(envelope);
+      for (const waiter of waiters) waiter(envelope);
     });
 
     const snapshot = await connection.snapshot() as Snapshot;
@@ -392,6 +406,15 @@ export async function exerciseAdapter<C extends Channel>(
         path: "connection.setCapacity",
         message: `the provider would not accept a capacity: ${capacity.failure.code}`,
       });
+    }
+
+    if (options.drive) {
+      const localAudio = isRecord(first) && isRecord(first.audio) && isRecord(first.audio.input) && first.audio.input.status === "available"
+        ? first.audio.input.localAudio as MediaStream : undefined;
+      violations.push(...await driveOneCall({
+        connection: live, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
+        timeoutMs: options.driveTimeoutMs ?? 5000,
+      }));
     }
   } finally {
     let clean = true;
@@ -831,6 +854,179 @@ export class TaskStream {
     }
     return found;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Driving one call.
+// ---------------------------------------------------------------------------
+
+interface Drive<C extends Channel> {
+  connection: Connection<C>;
+  channel: Channel;
+  softphone: boolean;
+  snapshot: unknown;
+  events: readonly ProviderEventEnvelope<C>[];
+  waiters: Set<(envelope: ProviderEventEnvelope<C>) => void>;
+  stream: TaskStream;
+  localAudio: MediaStream | undefined;
+  timeoutMs: number;
+}
+
+/**
+ * One ordinary lifecycle on the first task offered, each step held to the rules a host holds a
+ * provider to: the command validated against the task as published, the result validated for the
+ * method, and the event the provider owes in return awaited -- a step that never arrives is a
+ * violation naming what was owed. The drive stops where the task offers no way on (no `endCall`,
+ * a provider that completes for itself) and says nothing about what it could not reach.
+ */
+async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<ProtocolViolation[]> {
+  const found: ProtocolViolation[] = [];
+  const refuse = (rule: string, path: string, message: string) => found.push({ rule, path, message });
+  const isTask = (value: unknown): value is Record<string, unknown> => isRecord(value) && typeof value.id === "string";
+
+  // Wait for an envelope that satisfies `matches`, looking first at what already arrived.
+  const waitFor = <T>(what: string, matches: (envelope: ProviderEventEnvelope<C>) => T | undefined, from: number): Promise<{ found: T; at: number } | undefined> =>
+    new Promise(resolve => {
+      for (let index = from; index < drive.events.length; index += 1) {
+        const hit = matches(drive.events[index]!);
+        if (hit !== undefined) { resolve({ found: hit, at: index + 1 }); return; }
+      }
+      const timer = setTimeout(() => {
+        drive.waiters.delete(waiter);
+        refuse("drive.timeout", "drive", `the provider owed ${what} within ${drive.timeoutMs}ms and it never arrived`);
+        resolve(undefined);
+      }, drive.timeoutMs);
+      const waiter = (envelope: ProviderEventEnvelope<C>) => {
+        const hit = matches(envelope);
+        if (hit === undefined) return;
+        clearTimeout(timer);
+        drive.waiters.delete(waiter);
+        resolve({ found: hit, at: drive.events.length });
+      };
+      drive.waiters.add(waiter);
+    });
+
+  // The task, as first seen: on the snapshot, or on the first offer.
+  let cursor = 0;
+  let task: Record<string, unknown> | undefined =
+    isRecord(drive.snapshot) && Array.isArray(drive.snapshot.tasks) ? drive.snapshot.tasks.find(isTask) : undefined;
+  if (task === undefined) {
+    const offered = await waitFor("a task-offered", envelope => {
+      const event = envelope.event as Record<string, unknown>;
+      return event.type === "task-offered" && isTask(event.task) ? event.task : undefined;
+    }, 0);
+    if (offered === undefined) return found;
+    task = offered.found; cursor = offered.at;
+  }
+  const taskId = task.id as string;
+  const latestTask = (): Record<string, unknown> => task!;
+  const updated = (until: (task: Record<string, unknown>) => boolean, what: string) =>
+    waitFor(what, envelope => {
+      const event = envelope.event as Record<string, unknown>;
+      if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.id === taskId) {
+        task = event.task;
+        return until(event.task) ? event.task : undefined;
+      }
+      return undefined;
+    }, cursor).then(hit => { if (hit) cursor = hit.at; return hit; });
+  const ended = () => waitFor("a task-ended for the driven task", envelope => {
+    const event = envelope.event as Record<string, unknown>;
+    return event.type === "task-ended" && event.taskId === taskId ? event : undefined;
+  }, cursor);
+
+  // Every command the drive sends is validated against the task as published, and its answer for its method.
+  const send = async (command: Record<string, unknown>, dialId?: string): Promise<Record<string, unknown> | undefined> => {
+    const own = validateTaskCommand(command, latestTask(), `drive.command.${String(command.type)}`);
+    found.push(...own);
+    if (own.length > 0) return undefined;
+    let result: unknown;
+    try {
+      result = await drive.connection.execute({ taskId, command } as never);
+    } catch (error) {
+      refuse("drive.command.rejected", `drive.command.${String(command.type)}`, `execute rejected rather than answered: ${String(error)}`);
+      return undefined;
+    }
+    found.push(...validateResult(result, "execute", `drive.command.${String(command.type)}.result`, dialId));
+    if (isRecord(result) && result.status === "failed") {
+      refuse("drive.command.failed", `drive.command.${String(command.type)}`,
+        `the provider refused ${String(command.type)} on a task that offered it: ${String(isRecord(result.failure) ? result.failure.code : result.failure)}`);
+      return undefined;
+    }
+    return isRecord(result) ? result : undefined;
+  };
+  const offers = (name: string): boolean => {
+    const capabilities: Record<string, unknown> = isRecord(latestTask().capabilities) ? latestTask().capabilities as Record<string, unknown> : {};
+    const declared = capabilities[name];
+    return declared !== undefined && !(isRecord(declared) && declared.lockedBy !== undefined);
+  };
+
+  // 1. Accept the offer, if it is one.
+  if (latestTask().phase === "pending") {
+    if (await send({ type: drive.channel === "voice" ? "answer" : "accept" }) === undefined) return found;
+    if (await updated(t => t.phase !== "pending", "the task leaving pending after it was accepted") === undefined) return found;
+  }
+  // 2. A preview: press Call, which is a dial.
+  if (latestTask().phase === "preview") {
+    const dialId = `drive-${taskId}`;
+    drive.stream.dialled(dialId);
+    if (await send({ type: "call", dialId }, dialId) === undefined) return found;
+    if (await updated(t => t.phase === "in-progress" || t.phase === "completing", "the task leaving preview after Call") === undefined) return found;
+  }
+  if (latestTask().phase === "confirmed") {
+    if (await updated(t => t.phase !== "confirmed", "the task leaving confirmed") === undefined) return found;
+  }
+  // 3. On a softphone, the audio arrives and the host opens it.
+  let session: Record<string, unknown> | undefined;
+  if (drive.softphone && latestTask().phase === "in-progress") {
+    if (latestTask().media !== "started") {
+      const started = await waitFor("task-media-started for the driven task", envelope => {
+        const event = envelope.event as Record<string, unknown>;
+        return event.type === "task-media-started" && event.taskId === taskId ? event : undefined;
+      }, cursor);
+      if (started === undefined) return found;
+      cursor = started.at;
+    }
+    const opened = await drive.connection.openMedia?.({ taskId, localAudio: drive.localAudio });
+    found.push(...validateResult(opened, "openMedia", "drive.openMedia"));
+    if (isRecord(opened) && opened.status === "opened") session = opened.session as unknown as Record<string, unknown>;
+    else if (isRecord(opened)) refuse("drive.openMedia.unavailable", "drive.openMedia", "a softphone login's adapter could not open the call's audio");
+  }
+  // 4. Hold and resume, where offered.
+  if (latestTask().phase === "in-progress" && offers("hold")) {
+    if (await send({ type: drive.channel === "chat" ? "pause" : "hold" }) !== undefined) {
+      if (await updated(t => t.phase === "paused", "the task pausing after hold") !== undefined) {
+        if (await send({ type: "resume" }) !== undefined) {
+          await updated(t => t.phase === "in-progress", "the task resuming after resume");
+        }
+      }
+    }
+  }
+  // 5. End the call, where the agent may.
+  if (drive.channel === "voice" && latestTask().phase === "in-progress" && offers("endCall")) {
+    if (await send({ type: "end-call" }) !== undefined) {
+      const mediaEnded = await waitFor("task-media-ended after end-call", envelope => {
+        const event = envelope.event as Record<string, unknown>;
+        return event.type === "task-media-ended" && event.taskId === taskId ? event : undefined;
+      }, cursor);
+      if (mediaEnded !== undefined) cursor = mediaEnded.at;
+      await updated(t => t.phase === "completing", "the task completing after its media ended");
+    }
+  }
+  if (typeof (session as { close?: unknown } | undefined)?.close === "function") {
+    try { (session as { close: () => void }).close(); } catch { refuse("drive.openMedia.close", "drive.openMedia", "the media session threw on close"); }
+  }
+  // 6. Complete, where the agent completes; otherwise the provider does, and the drive waits for it.
+  if (latestTask().completionMode === "agent-command" && latestTask().phase === "completing") {
+    const command: Record<string, unknown> = { type: "complete" };
+    const dispositions = isRecord(latestTask().capabilities) ? (latestTask().capabilities as Record<string, unknown>).dispositions : undefined;
+    if (isRecord(dispositions) && dispositions.required === true && Array.isArray(dispositions.codes) && isRecord(dispositions.codes[0])) {
+      command.disposition = (dispositions.codes[0] as Record<string, unknown>).id;
+    }
+    if (await send(command) !== undefined) await ended();
+  } else if (latestTask().phase === "completing") {
+    await ended();
+  }
+  return found;
 }
 
 // A request goes not-requested -> awaiting-decision | granted; a commit goes granted ->
