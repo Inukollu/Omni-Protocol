@@ -1929,10 +1929,10 @@ store.** An adapter that echoes the connect-time zone back onto the identity pas
 with nothing kept, and a lead reading a colleague's day would still get UTC. What proves the store
 is a zone the run never sent: a colleague's `User` from `describeUsers()` carrying theirs. A
 provider's own tests are where that is shown, with a second agent whose zone arrived through
-another session. **An absent `timeZone` means nobody has said**, and a desk shows a day-scoped
-figure for such a person as counted in the provider's own day, never as counted in the viewer's:
-filling it from the browser gives a different answer per reader for the same record, which is the
-defect the field exists to prevent.
+another session. **An absent `timeZone` means nobody has said, and nothing is assumed in its place.** A desk
+does not fill it from the viewer's browser, which gives a different answer per reader for the same
+record, and does not fill it from the provider's clock either; a day-scoped figure for a person
+whose zone is unknown is shown as a figure whose day is unknown, until the zone arrives.
 
 ### Who the agent is
 

@@ -79,7 +79,8 @@ export interface User {
   /**
    * The zone this person's day is reckoned in, as the provider keeps it: sent by the host at
    * connect, stored on the agent, and republished here so a day-scoped figure -- theirs or a
-   * colleague's a lead is reading -- is bucketed by the right day. Absent only until first known.
+   * colleague's a lead is reading -- is bucketed by the right day. Absent means nobody has said,
+   * and nothing is assumed in its place.
    */
   timeZone?: TimeZone;
 }
