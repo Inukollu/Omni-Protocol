@@ -855,14 +855,14 @@ describe("exerciseAdapter", () => {
 describe("exerciseAdapter drives one call", () => {
   const at = "2026-08-21T09:00:00Z";
   type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
-  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; noEndCall?: boolean }
+  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; noEndCall?: boolean; badCapability?: boolean }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   const driveable = (script: Script = {}) => {
     let listener: Listener | undefined;
     let n = 0;
     const id = () => `drv-${n += 1}`;
     const base: Record<string, unknown> = {
-      ...conformingSnapshot.tasks[0]!, id: "call-77", capabilities: { hold: true, ...(script.noEndCall ? {} : { endCall: true }), dispositions: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
+      ...conformingSnapshot.tasks[0]!, id: "call-77", capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), dispositions: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
       browsers: [], handlingHistory: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
     };
     const t = (over: Record<string, unknown>) => ({ ...base, ...over }) as unknown as Task<"voice">;
@@ -916,6 +916,10 @@ describe("exerciseAdapter drives one call", () => {
   it("names what the provider owed and never sent, and a refusal of a control the task offered", async () => {
     expect((await drive(driveable({ skipMediaStart: true }))).violations.map(v => v.rule)).toEqual(["drive.timeout"]);
     expect((await drive(driveable({ refuseHold: true }))).violations.map(v => v.rule)).toEqual(["drive.command.failed"]);
+    // A command is never sent against a task that does not stand: the malformed offer is named, and so is the command held to it.
+    const bad = (await drive(driveable({ badCapability: true }))).violations.map(v => v.rule);
+    expect(bad).toContain("task.capability.value");
+    expect(bad).toContain("command.task");
   });
 
   it("reaches the rules about a live call: a room left full after end-call is refused at the boundary", async () => {
