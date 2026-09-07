@@ -1010,7 +1010,9 @@ describe("exerciseAdapter drives one call", () => {
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
     reloadAs?: "another-provider" | "without-answered" | "miscounted";
     /** An adapter that ends the task and leaves its key in the store, for the next offer of the id to inherit. */
-    leavesKeys?: boolean }
+    leavesKeys?: boolean;
+    /** An adapter whose persist runs off a timer and writes about the task after its end was published. */
+    writesLate?: boolean }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   const driveable = (script: Script = {}) => {
     let listener: Listener | undefined;
@@ -1089,6 +1091,8 @@ describe("exerciseAdapter drives one call", () => {
               // A task's keys go with the task, before its end is published.
               if (script.legsIn === "store" && given !== undefined && !script.leavesKeys) await given.delete("legs:call-77");
               emit({ type: "task-ended", taskId: "call-77", outcome: { type: "completed", by: "agent" } });
+              // A persist hung off a timer sees the task as it was and writes it back after the end.
+              if (script.writesLate && given !== undefined) setTimeout(() => { void given!.set("legs:call-77", JSON.stringify(muted)); }, 0);
               return { status: "applied" };
             default: return { status: "failed", failure: { code: "omni.capability-not-enabled", message: command.type, retryable: false } };
           }
@@ -1182,6 +1186,17 @@ describe("exerciseAdapter drives one call", () => {
     expect((await exerciseAdapter(driveable({ ...script, leavesKeys: false }), { ...context, store: kept }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
     expect(await kept.get("legs:call-77")).toBeUndefined();
     expect(await store.get("legs:call-77")).toBeDefined();
+  });
+
+  it("names a key written about the task after it had ended, when its keys had gone with it", async () => {
+    // The store lists nothing, so what a previous life of the id left behind cannot be seen by the
+    // harness; what it can see is every write through the store it handed over, including a late one.
+    const store = memoryStore();
+    const late = (await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store", writesLate: true }), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations.map(v => v.rule);
+    expect(late).toEqual(["drive.store.late"]);
+    // The control: the same adapter on a clean store, writing nothing late, is clean (the test above holds it).
+    const clean = memoryStore();
+    expect((await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store" }), { ...context, store: clean }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
   });
 
   it("sends hold once more after the call has ended, past the validator, and names an adapter that applies it", async () => {
