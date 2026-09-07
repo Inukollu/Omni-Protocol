@@ -1109,7 +1109,21 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         return event.type === "task-media-ended" && event.taskId === taskId ? event : undefined;
       }, cursor);
       if (mediaEnded !== undefined) cursor = mediaEnded.at;
-      await updated(t => t.phase === "completing", "the task completing after its media ended");
+      if (await updated(t => t.phase === "completing", "the task completing after its media ended") !== undefined && offers("hold")) {
+        // The other direction of step 4: the same control, still declared, on a call that is over.
+        // A host holds it back (command.phase.handling), and an adapter that receives it anyway
+        // must refuse it -- so the drive sends it past the validator and expects failed.
+        let answer: unknown;
+        try {
+          answer = await drive.connection.execute({ taskId, command: { type: "hold" } } as never);
+        } catch (error) {
+          refuse("drive.command.rejected", "drive.command.hold", `execute rejected rather than answered: ${String(error)}`);
+        }
+        if (isRecord(answer) && answer.status !== "failed") {
+          refuse("drive.command.handling", "drive.command.hold",
+            `the provider applied hold on a completing task: a control on the contact belongs to in-progress or paused, and the adapter is the second gate`);
+        }
+      }
     }
   }
   if (typeof (session as { close?: unknown } | undefined)?.close === "function") {

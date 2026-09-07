@@ -954,7 +954,7 @@ describe("exerciseAdapter", () => {
 describe("exerciseAdapter drives one call", () => {
   const at = "2026-08-21T09:00:00Z";
   type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
-  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; noEndCall?: boolean; badCapability?: boolean }
+  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; noEndCall?: boolean; badCapability?: boolean }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   const driveable = (script: Script = {}) => {
     let listener: Listener | undefined;
@@ -964,7 +964,8 @@ describe("exerciseAdapter drives one call", () => {
       ...conformingSnapshot.tasks[0]!, id: "call-77", capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), dispositions: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
       browsers: [], handlingHistory: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
     };
-    const t = (over: Record<string, unknown>) => ({ ...base, ...over }) as unknown as Task<"voice">;
+    let phase = "pending";
+    const t = (over: Record<string, unknown>) => { if (typeof over.phase === "string") phase = over.phase; return { ...base, ...over } as unknown as Task<"voice">; };
     const emit = (event: ProviderEventEnvelope<"voice">["event"]) => listener?.({ id: id(), loginId: "session-1", occurredAt: at, event });
     const room = [{ role: "party" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
     // Nothing is offered until a capacity is stated, which is when a provider may allocate; the
@@ -985,6 +986,10 @@ describe("exerciseAdapter drives one call", () => {
               return { status: "applied" };
             case "hold":
               if (script.refuseHold) return { status: "failed", failure: { code: "provider.busy", message: "No hold today", retryable: false } };
+              // A conforming adapter refuses a control on a call that is over; one that applies it is the second gate failing.
+              if (phase === "completing") {
+                return script.holdAfterEnd ? { status: "applied" } : { status: "failed", failure: { code: "provider.call-ended", message: "Nothing to hold", retryable: false } };
+              }
               emit({ type: "task-updated", task: t({ phase: "paused", media: "started", onCall: room }) }); return { status: "applied" };
             case "resume": emit({ type: "task-updated", task: t({ phase: "in-progress", media: "started", onCall: room }) }); return { status: "applied" };
             case "end-call":
@@ -1026,6 +1031,11 @@ describe("exerciseAdapter drives one call", () => {
 
   it("reaches the rules about a live call: a room left full after end-call is refused at the boundary", async () => {
     expect((await drive(driveable({ keepRoomOnEnd: true }))).violations.map(v => v.rule)).toContain("task.onCall.ended");
+  });
+
+  it("sends hold once more after the call has ended, past the validator, and names an adapter that applies it", async () => {
+    // The conforming fixture refuses it and the run is clean (the first test); this one applies it.
+    expect((await drive(driveable({ holdAfterEnd: true }))).violations.map(v => v.rule)).toEqual(["drive.command.handling"]);
   });
 
   it("completes a task from where it stands when there is no call to end, and says what it could not reach", async () => {

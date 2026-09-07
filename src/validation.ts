@@ -2021,6 +2021,10 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   };
   const inPhase = (rule: string, ...phases: string[]) =>
     into.require(phases.includes(String(task.phase)), rule, path, `${String(type)} belongs to ${phases.join(" or ")}, and the task is ${String(task.phase)}`);
+  // A control on the contact acts on a contact being handled. Before in-progress there is nothing
+  // to act on yet, and in completing the handling has ended: a call with nobody on it, a
+  // conversation closed. What a capability offers, the phase decides whether there is anything to use it on.
+  const handling = () => inPhase("command.phase.handling", "in-progress", "paused");
   const onCall = Array.isArray(task.onCall) ? task.onCall.filter(isPlainObject) : [];
   switch (type) {
     case "answer": case "accept": case "decline": case "reject":
@@ -2030,15 +2034,16 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     case "call":
       inPhase("command.phase.preview", "preview");
       break;
-    case "mute": offered("mute"); break;
-    case "hold": case "resume": case "pause": offered("hold"); break;
-    case "end-call": offered("endCall"); break;
-    case "recording": offered("recording"); break;
+    case "mute": offered("mute"); handling(); break;
+    case "hold": case "resume": case "pause": offered("hold"); handling(); break;
+    case "end-call": offered("endCall"); handling(); break;
+    case "recording": offered("recording"); handling(); break;
     case "connect-back":
       offered("connectBack");
       inPhase("command.phase.completing", "completing");
       break;
     case "transfer":
+      handling();
       if (command.action === "cold") offered("coldTransfer");
       else if (command.action === "warm") offered("warmTransfer");
       else if (command.action === "complete" || command.action === "cancel") {
@@ -2047,6 +2052,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       }
       break;
     case "lead-assist":
+      handling();
       if (command.action === "request" || command.action === "cancel") {
         offered("leadAssist");
         if (command.action === "cancel") {
@@ -2059,6 +2065,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       }
       break;
     case "conference":
+      handling();
       if (offered("conference") && command.action === "remove") {
         const others = onCall.filter(entry => entry.role !== "agent");
         if (command.party === true) {
