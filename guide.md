@@ -4464,7 +4464,10 @@ complete it with a disposition where the agent completes -- and holds every step
 host holds a provider to. Each command is validated against the task as published
 (`drive.command.*`), each answer for its method, a refusal of a control the task offered is a
 violation (`drive.command.failed`), and an event the provider owes and never sends is one too
-(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). A task the agent completes is
+(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). Once the call has ended and the task is
+`completing`, the drive sends `hold` once more, past the validator that would hold it back, and
+expects `failed`: the adapter is the second gate on a control on the contact, and one that applies
+it on a call that is over is named (`drive.command.handling`). A task the agent completes is
 completed from wherever it stands once the drive has nothing left to do on it -- from `completing`
 after an `end-call`, or from `in-progress` where there is no call to end, which is every chat and
 email and a voice task offering no `endCall` -- so a conversation reaches its end as a call does.
