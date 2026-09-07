@@ -1,6 +1,8 @@
 // Compile-time assertions on the contract's channel arms and unions. Nothing here runs; every
 // `@ts-expect-error` is a shape the contract must refuse, paired with the shape it must accept.
 import {
+  HandlingReport,
+  HostAudioOutput,
   BROWSER_ISOLATION_SCHEMES,
   OMNI_PROTOCOL_VERSION,
   type AuthenticationState,
@@ -121,10 +123,12 @@ export const reusingBrowserWithoutAScheme: TaskBrowser = { id: "crm", name: "CRM
 export const isolatedBrowserWithAScheme: TaskBrowser = { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedSession: false, isolationScheme: BROWSER_ISOLATION_SCHEMES.TAB_NAME };
 
 // Every command reaches the provider through `execute`; the union is the channel's whole set.
-export const voiceMute: TaskCommand<"voice"> = { type: "mute", muted: true };
+export const voiceHold: TaskCommand<"voice"> = { type: "hold" };
 export const chatPause: TaskCommand<"chat"> = { type: "pause" };
-// @ts-expect-error Chat has no microphone to mute.
-export const chatMute: TaskCommand<"chat"> = { type: "mute", muted: true };
+// @ts-expect-error The microphone is the host's: no channel has a mute command for the provider.
+export const voiceMute: TaskCommand<"voice"> = { type: "mute", muted: true };
+// @ts-expect-error Chat has no call to hold; it pauses.
+export const chatHold: TaskCommand<"chat"> = { type: "hold" };
 // @ts-expect-error DTMF is not a task command: the tones travel with the audio, which is Omni's.
 export const voiceDtmf: TaskCommand<"voice"> = { type: "dtmf", digits: "12" };
 
@@ -272,6 +276,23 @@ export const staleAccessScope = { access: { mode: "allow-all" },
   accessPolicyScope: "initial-url" } satisfies PersonalBrowserCapability;
 export const promisingHost: Host = { guarantees: { browserUrlVisibility: true, personConsent: true }, report: () => noAudioHere, subscribe: () => () => undefined };
 export const reticentHost: Host = { guarantees: {}, report: () => noAudioHere, subscribe: () => () => undefined };
+// The station is the host's: a softphone host states what its Mute does, and a silenced device says who silenced it.
+export const streamMutingHost: Host = { guarantees: {}, mute: "stream", report: () => noAudioHere, subscribe: () => () => undefined };
+export const stationMutingHost: Host = { guarantees: {}, mute: "station", report: () => noAudioHere, subscribe: () => () => undefined };
+// @ts-expect-error A host mutes the stream it sends or the station's microphone; there is no third way.
+export const softMutingHost: Host = { guarantees: {}, mute: "soft", report: () => noAudioHere, subscribe: () => () => undefined };
+export const headsetMuted: HostAudioInput = { status: "available", localAudio: {} as MediaStream, flowing: false, mutedBy: "station" };
+// @ts-expect-error A microphone that is not flowing says who silenced it.
+export const silencedByNobody: HostAudioInput = { status: "available", localAudio: {} as MediaStream, flowing: false };
+// @ts-expect-error A flowing microphone was silenced by nobody.
+export const flowingYetMuted: HostAudioInput = { status: "available", localAudio: {} as MediaStream, flowing: true, mutedBy: "host" };
+export const speakerOff: HostAudioOutput = { status: "available", flowing: false, mutedBy: "station" };
+export const speakerUnknown: HostAudioOutput = { status: "available" };
+export const hostMutedLeg: HandlingReport = { taskId: "call-1", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
+// @ts-expect-error A muted leg says whose the silence was.
+export const anonymousMutedLeg: HandlingReport = { taskId: "call-1", step: "muted", at: "2026-08-21T09:00:00Z" };
+// @ts-expect-error Only a muted leg has anyone to name for the silence.
+export const mutedHold: HandlingReport = { taskId: "call-1", step: "held", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
 export const lyingHost: Host = {
   // @ts-expect-error A guarantee is declared by presence; a host that does not make one omits it, never false.
   guarantees: { personConsent: false }, report: () => noAudioHere, subscribe: () => () => undefined };
@@ -322,15 +343,19 @@ export const noAudioHere: HostReport = { online: true };
 export const readyWithoutAudio: HostReport = { online: true, audio: { input: { status: "available" }, output: { status: "available" } } };
 
 // Who decides: a control the queue could allow may stand locked in its place, naming the level;
-// a preference carries who set it; only hold, mute and skills are ever the person's.
-export const lockedMute: Task<"voice"> = { ...emailTask, id: "call-12", channel: "voice", capabilities: { hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" } }, party: { name: "Asha", number: { lockedBy: "org" }, email: { lockedBy: "site" } } };
-// @ts-expect-error An email task has no mute to lock.
-export const emailLockedMute: Task<"email"> = { ...emailTask, capabilities: { mute: { lockedBy: "team" } } };
+// a preference carries who set it; only hold and skills are ever the person's.
+export const lockedRecording: Task<"voice"> = { ...emailTask, id: "call-12", channel: "voice", capabilities: { hold: true, recording: { lockedBy: "team", reason: "Nobody on this team records" } }, party: { name: "Asha", number: { lockedBy: "org" }, email: { lockedBy: "site" } } };
+// @ts-expect-error An email task has no recording to lock.
+export const emailLockedRecording: Task<"email"> = { ...emailTask, capabilities: { recording: { lockedBy: "team" } } };
+// @ts-expect-error Mute is the host's, never a capability the provider declares or locks.
+export const lockedMute: Task<"voice"> = { ...emailTask, id: "call-13", channel: "voice", capabilities: { mute: { lockedBy: "team" } } };
 export const skillChoice: AgentPreference = { id: "skill:billing", label: "Billing", enabled: true, setBy: "person" };
 // @ts-expect-error Connecting back is the team's, never the person's.
 export const connectBackChoice: AgentPreference = { id: "connectBack", label: "Connect back", enabled: false, setBy: "team" };
-export const inheritAgain: SetPreferenceRequest = { id: "mute", inherit: true };
-export const teamMute: TeamPolicy = { setting: "off", setBy: "team" };
+export const inheritAgain: SetPreferenceRequest = { id: "hold", inherit: true };
+// @ts-expect-error Mute is the host's, never a preference the provider keeps.
+export const muteChoice: AgentPreference = { id: "mute", label: "Mute", enabled: true, setBy: "person" };
+export const teamHold: TeamPolicy = { setting: "off", setBy: "team" };
 export const siteRecording: TeamPolicy = { setting: "on", setBy: "site", lockedBy: "site" };
 
 // team may leave to the person.

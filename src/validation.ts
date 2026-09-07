@@ -34,6 +34,8 @@ import {
   type TaskMediaState,
   type TransportRecovery,
   type HostGuarantees,
+  type HostMute,
+  type MutedBy,
   type CredentialField,
   type HostOutputUnavailableReason,
   type Channel,
@@ -160,7 +162,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 /** The capabilities each channel arm of `TaskCapabilities` declares, keyed off the type itself. */
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
-    browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
+    browsers: true, dispositions: true, custom: true, decline: true, hold: true,
     endCall: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, decline: true, hold: true }),
@@ -684,7 +686,7 @@ const POLICY_SETTINGS = membersOf<TeamPolicySetting>({ on: true, off: true, pers
 const POLICY_KEYS = new Set<string>([
   ...TASK_CAPABILITIES.voice, ...TASK_CAPABILITIES.chat, ...TASK_CAPABILITIES.email, "dial",
 ].filter(name => name !== "browsers" && name !== "dispositions" && name !== "custom"));
-const PERSON_SETTABLE = /^(hold|mute|skill:.+)$/;
+const PERSON_SETTABLE = /^(hold|skill:.+)$/;
 const isLocked = (value: unknown): value is Record<string, unknown> => isPlainObject(value) && value.lockedBy !== undefined;
 
 /** The level ids in force: the manifest's, or the defaults when the caller holds no manifest. */
@@ -865,6 +867,11 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
       into.require(isDurationSeconds(entry.seconds) && (entry.seconds as number) > 0,
         "task.handlingHistory.seconds", `${at}.seconds`,
         "seconds must be a positive whole number; omit it while the step is still running");
+    }
+    // A muted entry carries whose the silence was, as the host reported it; no other step has it.
+    if (entry.step === "muted") into.oneOf(entry.mutedBy, MUTED_BY, "task.handlingHistory.mutedBy", `${at}.mutedBy`);
+    else if ((HANDLING_STEPS as readonly unknown[]).includes(entry.step)) {
+      into.require(entry.mutedBy === undefined, "task.handlingHistory.mutedBy.unexpected", `${at}.mutedBy`, "only a muted step says who silenced the microphone");
     }
     if (entry.by !== undefined) {
       into.require(isUserId(entry.by), "task.handlingHistory.by", `${at}.by`,
@@ -1120,8 +1127,14 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   }
   for (const [name, declared] of Object.entries(capabilities)) {
     if (declared === undefined) continue;
-    if (!into.require(allowed.includes(name), "task.capability.channel", `${path}.capabilities.${name}`,
-      `a ${context.channel} task may not declare ${name}`)) continue;
+    if (!allowed.includes(name)) {
+      // A name another channel owns is a channel error; one no channel owns is not a capability at
+      // all -- mute among them, since the microphone is the host's and no provider declares it.
+      const known = (Object.values(TASK_CAPABILITIES) as readonly (readonly string[])[]).some(names => names.includes(name));
+      into.add(known ? "task.capability.channel" : "task.capability.unknown", `${path}.capabilities.${name}`,
+        known ? `a ${context.channel} task may not declare ${name}` : `${name} is not a capability a provider declares on any channel`);
+      continue;
+    }
     // A control that dials needs the manifest to have said how a dial ends, or its outcome has no words.
     if ((DIALLING_CAPABILITIES as readonly string[]).includes(name) && context.dialOutcomesDeclared === false) {
       into.add("task.capability.dialOutcomes.required", `${path}.capabilities.${name}`,
@@ -1715,7 +1728,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
 // compiled against another version, and Omni shows the agent what it says.
 // ---------------------------------------------------------------------------
 
-const PREFERENCE_ID = /^(hold|mute|skill:.+)$/;
+const PREFERENCE_ID = /^(hold|skill:.+)$/;
 
 /** The choices left to the person, each with where it stands. */
 function validatePreferencesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
@@ -1731,7 +1744,7 @@ function validatePreferencesInto(value: unknown, path: string, into: Collector, 
       return;
     }
     if (into.require(typeof preference.id === "string" && PREFERENCE_ID.test(preference.id), "preference.id", `${at}.id`,
-      "a preference is hold, mute, or skill:<id>: nothing else is the person's to set")) {
+      "a preference is hold or skill:<id>: nothing else is the person's to set")) {
       if (seen.has(preference.id as string)) into.add("preference.unique", `${at}.id`, `duplicate preference: ${preference.id}`);
       seen.add(preference.id as string);
     }
@@ -1758,7 +1771,7 @@ function validateTeamPoliciesInto(value: unknown, path: string, into: Collector,
     }
     if (into.oneOf(policy.setting, POLICY_SETTINGS, "team.policy.setting", `${at}.setting`)) {
       into.require(policy.setting !== "person" || PERSON_SETTABLE.test(key), "team.policy.person", `${at}.setting`,
-        `${key} is the team's, on or off; only hold, mute and skills may be left to the person`);
+        `${key} is the team's, on or off; only hold and skills may be left to the person`);
     }
     validateResolvedInto(policy, "team.policy", at, levels, into);
     into.require(policy.setBy !== "person", "team.policy.setBy", `${at}.setBy`, "a team policy is not set by a person");
@@ -1806,6 +1819,23 @@ function validateUnavailable(value: Record<string, unknown>, rule: string, path:
  * hands the adapter.
  */
 const HOST_GUARANTEES = membersOf<keyof HostGuarantees>({ browserUrlVisibility: true, personConsent: true });
+const MUTED_BY = membersOf<MutedBy>({ host: true, station: true });
+const HOST_MUTES = membersOf<HostMute>({ stream: true, station: true });
+
+/**
+ * What pressing Mute does on this host, stated on a softphone login and nowhere else: on a desk
+ * phone the microphone is the phone's, and off voice there is none. Neither the value nor its
+ * absence is inferred from what kind of application the host is.
+ */
+export function validateHostMute(mute: unknown, softphone: boolean, path = "host.mute"): ProtocolViolation[] {
+  const into = new Collector();
+  if (mute === undefined) {
+    into.require(!softphone, "host.mute.required", path, "a softphone login's host states what its Mute does: stream or station");
+  } else if (into.require(softphone, "host.mute.unexpected", path, "only a softphone login's host holds a microphone to mute; a desk phone's is the phone's, and a conversation has none")) {
+    into.oneOf(mute, HOST_MUTES, "host.mute", path);
+  }
+  return into.violations;
+}
 
 /**
  * What a host promises. Presence is the guarantee, so a key declared `false` is refused: a
@@ -1841,6 +1871,11 @@ export function validateHandlingReport(report: unknown, path = "handlingReport",
   into.require(isTaskId(report.taskId), "handlingReport.taskId", `${path}.taskId`, "a report names the task");
   into.oneOf(report.step, HANDLING_STEPS, "handlingReport.step", `${path}.step`);
   into.timestamp(report.at, "handlingReport.at", `${path}.at`);
+  // A muted leg says whose the silence was; no other leg has anyone to name for it.
+  if (report.step === "muted") into.oneOf(report.mutedBy, MUTED_BY, "handlingReport.mutedBy", `${path}.mutedBy`);
+  else if ((HANDLING_STEPS as readonly unknown[]).includes(report.step)) {
+    into.require(report.mutedBy === undefined, "handlingReport.mutedBy.unexpected", `${path}.mutedBy`, "only a muted leg says who silenced the microphone");
+  }
   if (report.seconds !== undefined) {
     into.require(isDurationSeconds(report.seconds) && (report.seconds as number) > 0, "handlingReport.seconds", `${path}.seconds`,
       "seconds must be a positive whole number; omit it rather than report nought");
@@ -1857,6 +1892,16 @@ export function validateHandlingReport(report: unknown, path = "handlingReport",
       "this provider takes begin and end only; a running report was never asked for");
   }
   return into.violations;
+}
+
+/** A silenced device says who silenced it; one that flows, or whose flow the host cannot know, says nothing. */
+function validateMutedBy(device: Record<string, unknown>, rule: string, path: string, into: Collector): void {
+  if (device.flowing === false) {
+    into.oneOf(device.mutedBy, MUTED_BY, `${rule}.mutedBy`, `${path}.mutedBy`);
+  } else {
+    into.require(device.mutedBy === undefined, `${rule}.mutedBy.unexpected`, `${path}.mutedBy`,
+      "mutedBy says who silenced a device that is not flowing; a flowing one names nobody");
+  }
 }
 
 export function validateHostReport(report: unknown, path = "host"): ProtocolViolation[] {
@@ -1880,6 +1925,7 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
       "a ready input carries the captured microphone");
     into.require(typeof input.flowing === "boolean", "host.audio.input.flowing", `${at}.flowing`,
       "a ready input says whether audio is flowing through it");
+    validateMutedBy(input, "host.audio.input", at, into);
     into.require(input.failure === undefined, "host.audio.input.failure.unexpected", `${at}.failure`, "a ready input carries no failure");
     into.require(input.reason === undefined, "host.audio.input.reason.unexpected", `${at}.reason`, "a ready input has no reason to be unavailable");
   } else if (input.status === "unavailable") {
@@ -1889,6 +1935,8 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
       "an unavailable input carries no microphone");
     into.require(input.flowing === undefined, "host.audio.input.flowing.unexpected", `${at}.flowing`,
       "an unavailable input has nothing to flow");
+    into.require(input.mutedBy === undefined, "host.audio.input.mutedBy.unexpected", `${at}.mutedBy`,
+      "an unavailable input was not silenced; it is absent");
   } else {
     into.add("host.audio.input.status", `${at}.status`, `an input is available or unavailable, not ${String(input.status)}`);
   }
@@ -1897,11 +1945,21 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
   if (!isPlainObject(output)) {
     into.add("host.audio.output.shape", out, "audio carries its output");
   } else if (output.status === "available") {
+    // Whether the speaker is silenced is stated only where the host can know it: a browser mostly cannot, and omits it.
+    if (output.flowing !== undefined) {
+      into.require(typeof output.flowing === "boolean", "host.audio.output.flowing", `${out}.flowing`,
+        "flowing says whether audio reaches the speaker, when the host can know");
+    }
+    validateMutedBy(output, "host.audio.output", out, into);
     into.require(output.failure === undefined, "host.audio.output.failure.unexpected", `${out}.failure`, "a ready output carries no failure");
     into.require(output.reason === undefined, "host.audio.output.reason.unexpected", `${out}.reason`, "a ready output has no reason to be unavailable");
   } else if (output.status === "unavailable") {
     into.oneOf(output.reason, HOST_OUTPUT_REASONS, "host.audio.output.reason", `${out}.reason`);
     validateUnavailable(output, "host.audio.output", out, into);
+    into.require(output.flowing === undefined, "host.audio.output.flowing.unexpected", `${out}.flowing`,
+      "an unavailable output has nothing to flow");
+    into.require(output.mutedBy === undefined, "host.audio.output.mutedBy.unexpected", `${out}.mutedBy`,
+      "an unavailable output was not silenced; it is absent");
   } else {
     into.add("host.audio.output.status", `${out}.status`, `an output is available or unavailable, not ${String(output.status)}`);
   }
@@ -1945,9 +2003,6 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   }
   const dial = (rule: string) => into.filled(command.dialId, rule, `${path}.dialId`, "a command that dials carries the host's dialId");
   switch (type) {
-    case "mute":
-      into.require(typeof command.muted === "boolean", "command.mute.muted", `${path}.muted`, "mute says whether the agent is muted");
-      break;
     case "call":
       dial("command.call.dialId");
       break;
@@ -2034,7 +2089,6 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     case "call":
       inPhase("command.phase.preview", "preview");
       break;
-    case "mute": offered("mute"); handling(); break;
     case "hold": case "resume": case "pause": offered("hold"); handling(); break;
     case "end-call": offered("endCall"); handling(); break;
     case "recording": offered("recording"); handling(); break;

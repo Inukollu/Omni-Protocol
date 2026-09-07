@@ -15,6 +15,7 @@ import {
   type ConnectContext,
   type Host,
   type HostGuarantees,
+  type HostMute,
   type HostReport,
   type Manifest,
   type ProviderEvent,
@@ -26,6 +27,8 @@ import {
   validateEventEnvelope,
   validateHostGuarantees,
   validateHostReport,
+  validateHostMute,
+  validateHandlingReport,
   validateManifest,
   validateResult,
   validateSnapshot,
@@ -321,6 +324,8 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push({ rule: "context.host.audio.unexpected", path: "context.host.audio",
         message: adapter.manifest.channel === "voice" ? "a desk-phone login has no audio in the host to report" : `a ${adapter.manifest.channel} connection has no audio for the host to report` });
     }
+    // What the host's Mute does is stated where the host holds a microphone, and nowhere else.
+    violations.push(...validateHostMute(context.host.mute, softphone, "context.host.mute"));
     unsubscribeHost = context.host.subscribe(report => {
       violations.push(...validateHostReport(report, "context.host"));
     });
@@ -338,6 +343,9 @@ export async function exerciseAdapter<C extends Channel>(
     if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod(live, "dial", "the manifest declares dial");
     // On a softphone the call's audio lands in Omni, so the adapter has to open it; on a desk phone the host opens nothing.
     if (softphone) requireMethod(live, "openMedia", "the login is on a softphone");
+    // The microphone is the host's, so on a softphone every call can be muted by it, and the
+    // record of that leg is the provider's to take; on a desk phone the host holds no microphone.
+    if (softphone) requireMethod(live, "recordStep", "the login is on a softphone, whose microphone the host mutes");
 
     const eventIds = new Set<string>();
     // The drive waits on events: each waiter is offered every envelope as it lands.
@@ -353,7 +361,6 @@ export async function exerciseAdapter<C extends Channel>(
       }
       violations.push(...undeterminedTasks(eventTasks(envelope), "event"));
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
-      if (eventDeclaresMute(envelope)) requireMethod(live, "recordStep", "a task declares mute, which the host performs and must have somewhere to record");
       // Cross-event rules apply once the stream has a beginning: the connect snapshot.
       if (seeded) violations.push(...stream.apply(envelope), ...breaks.apply(envelope));
       if (typeof envelope?.id === "string") {
@@ -373,9 +380,6 @@ export async function exerciseAdapter<C extends Channel>(
     seeded = true;
     requireCapabilityMethods(live, current().capabilities);
     if (publishesUserIds(snapshot)) requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
-    if (isRecord(snapshot) && Array.isArray(snapshot.tasks) && snapshot.tasks.some(taskDeclaresMute)) {
-      requireMethod(live, "recordStep", "a task declares mute, which the host performs and must have somewhere to record");
-    }
 
     // Capacity is stated, not requested: nothing may be allocated until it is, so a connection
     // that will not accept one is a connection nothing can be given to.
@@ -416,7 +420,7 @@ export async function exerciseAdapter<C extends Channel>(
       const localAudio = isRecord(first) && isRecord(first.audio) && isRecord(first.audio.input) && first.audio.input.status === "available"
         ? first.audio.input.localAudio as MediaStream : undefined;
       violations.push(...await driveOneCall({
-        connection: live, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
+        connection: live, manifest: adapter.manifest, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
         timeoutMs: options.driveTimeoutMs ?? 5000,
       }));
     }
@@ -471,16 +475,6 @@ const taskNamesUsers = (task: unknown): boolean =>
     isRecord(task.assisting) ||
     isRecord(task.monitoring));
 
-/** Mute is the leg the host performs, so a task that allows it obliges the provider to take the record. */
-const taskDeclaresMute = (task: unknown): boolean =>
-  isRecord(task) && isRecord(task.capabilities) && task.capabilities.mute !== undefined;
-function eventDeclaresMute(envelope: unknown): boolean {
-  const event = isRecord(envelope) ? envelope.event : undefined;
-  if (!isRecord(event)) return false;
-  if (event.type === "task-offered" || event.type === "task-updated") return taskDeclaresMute(event.task);
-  if (event.type === "snapshot" && isRecord(event.snapshot) && Array.isArray(event.snapshot.tasks)) return event.snapshot.tasks.some(taskDeclaresMute);
-  return false;
-}
 
 /** Whether an event publishes a `UserId`, on a roster, a task, or the snapshot a reconnect carries. */
 function eventNamesUsers(envelope: unknown): boolean {
@@ -958,6 +952,7 @@ export class TaskStream {
 
 interface Drive<C extends Channel> {
   connection: Connection<C>;
+  manifest: Manifest<C>;
   channel: Channel;
   softphone: boolean;
   snapshot: unknown;
@@ -1091,6 +1086,44 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (isRecord(opened) && opened.status === "opened") session = opened.session as unknown as Record<string, unknown>;
     else if (isRecord(opened)) refuse("drive.openMedia.unavailable", "drive.openMedia", "a softphone login's adapter could not open the call's audio");
   }
+  // 3b. The microphone is the host's. With the audio open, the drive mutes it for a moment and
+  // reports the leg the provider's record would otherwise miss -- begun, then ended -- and
+  // expects each report recorded. If the provider restates the task's record afterwards, the leg is in it.
+  let mutedLeg: { at: string; task: Record<string, unknown> } | undefined;
+  if (session !== undefined && typeof session.setMuted === "function" && typeof drive.connection.recordStep === "function") {
+    const at = new Date().toISOString();
+    const report = async (body: Record<string, unknown>): Promise<void> => {
+      // The drive holds its own report to the contract before it crosses, as a host must.
+      const leg = { taskId, step: "muted", at, mutedBy: "host", ...body };
+      const own = validateHandlingReport(leg, "drive.recordStep.report", drive.manifest);
+      found.push(...own);
+      if (own.length > 0) return;
+      let answer: unknown;
+      try {
+        answer = await drive.connection.recordStep!(leg as never);
+      } catch (error) {
+        refuse("drive.recordStep.rejected", "drive.recordStep", `recordStep rejected rather than answered: ${String(error)}`);
+        return;
+      }
+      found.push(...validateResult(answer, "recordStep", "drive.recordStep.result"));
+      if (isRecord(answer) && answer.status === "failed") {
+        refuse("drive.recordStep.failed", "drive.recordStep",
+          `the provider refused to record the host's muted leg: ${String(isRecord(answer.failure) ? answer.failure.code : answer.failure)}`);
+      }
+    };
+    const setMuted = (muted: boolean) => {
+      try { (session!.setMuted as (muted: boolean) => void)(muted); }
+      catch { refuse("drive.openMedia.setMuted", "drive.openMedia", `the media session threw on setMuted(${String(muted)})`); }
+    };
+    const began = Date.now();
+    setMuted(true);
+    await report({});
+    // A leg's duration is whole seconds and a leg shorter than one cannot be stated, so the mute holds for one.
+    await new Promise<void>(resolve => setTimeout(resolve, 1000));
+    setMuted(false);
+    await report({ seconds: Math.round((Date.now() - began) / 1000), ended: true });
+    mutedLeg = { at, task: latestTask() };
+  }
   // 4. Hold and resume, where offered.
   if (latestTask().phase === "in-progress" && offers("hold")) {
     if (await send({ type: drive.channel === "chat" ? "pause" : "hold" }) !== undefined) {
@@ -1142,6 +1175,21 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (await send(command) !== undefined) await ended();
   } else if (latestTask().phase === "completing") {
     await ended();
+  }
+  // The record kept by the provider has the leg the host reported, wherever the provider restated it.
+  if (mutedLeg !== undefined && latestTask() !== mutedLeg.task) {
+    const history = latestTask().handlingHistory;
+    if (isRecord(history) && Array.isArray(history.steps)) {
+      const { at } = mutedLeg;
+      const leg = history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined;
+      if (leg === undefined) {
+        refuse("drive.recordStep.history", "drive.recordStep",
+          `the provider restated the task's record after the host reported a muted leg at ${at}, and the leg is not in it`);
+      } else if (leg.mutedBy !== "host") {
+        refuse("drive.recordStep.history", "drive.recordStep",
+          `the record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host, and the record keeps the host's word`);
+      }
+    }
   }
   return found;
 }
@@ -1225,9 +1273,12 @@ export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvel
   assertNoViolations(found, "The media follows the task");
 }
 
-/** A host that reports one thing and never changes: what most adapter tests hand `exerciseAdapter`. */
-export function stillHost(report: HostReport = { online: true }, guarantees: HostGuarantees = {}): Host {
-  return { guarantees, report: () => report, subscribe: () => () => undefined };
+/**
+ * A host that reports one thing and never changes: what most adapter tests hand `exerciseAdapter`.
+ * A softphone host states what its Mute does; a desk-phone or conversation host has no microphone and states nothing.
+ */
+export function stillHost(report: HostReport = { online: true }, guarantees: HostGuarantees = {}, mute?: HostMute): Host {
+  return { guarantees, ...(mute === undefined ? {} : { mute }), report: () => report, subscribe: () => () => undefined };
 }
 
 /** One provider as the host sees it when freezing the providers a break attempt asks. */

@@ -6,6 +6,8 @@ import {
   DEFAULT_TASK_TYPE_PRESENTATION,
   DIAL_OUTCOMES,
   CAPABILITY_SOURCES,
+  HOST_MUTES,
+  MUTED_BY,
   MONITORING_BREAK_KINDS,
   breakKindAllowsMonitoring,
   HANDLING_STEPS_THAT_DIAL,
@@ -296,6 +298,8 @@ describe("every dial has an outcome", () => {
   it("closes the set of outcomes, and says which record steps a dial writes", () => {
     expect(DIAL_OUTCOMES).toEqual(["answered", "busy", "no-answer", "unreachable", "rejected", "cancelled", "unexplained"]);
     expect(CAPABILITY_SOURCES).toEqual(["queue", "ungoverned", "undetermined"]);
+    expect(HOST_MUTES).toEqual(["stream", "station"]);
+    expect(MUTED_BY).toEqual(["host", "station"]);
     expect(HANDLING_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);
     for (const step of HANDLING_STEPS_THAT_DIAL) expect(handlingStepDials(step)).toBe(true);
     for (const step of ["queued", "offered", "answered", "held", "muted"] as const) expect(handlingStepDials(step)).toBe(false);

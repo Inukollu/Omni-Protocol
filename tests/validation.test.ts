@@ -10,6 +10,7 @@ import {
   validateEventEnvelope,
   validateHandlingReport,
   validateHostGuarantees,
+  validateHostMute,
   validateHostReport,
   validateManifest,
   validateScheduledActivity,
@@ -170,26 +171,26 @@ describe("validateTask", () => {
   });
   it("lets a control stand locked in its place, naming the level, and never a queue's own content", () => {
     const caps = (capabilities: unknown) => rules(validateTask(task({ capabilities }), { channel: "voice" }));
-    expect(caps({ hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" }, recording: { lockedBy: "site" } })).toEqual([]);
+    expect(caps({ hold: true, recording: { lockedBy: "team", reason: "Nobody on this team records" }, endCall: { lockedBy: "site" } })).toEqual([]);
     expect(caps({ coldTransfer: { lockedBy: "org" } })).toEqual([]);
-    expect(caps({ mute: { lockedBy: "person" } })).toEqual(["task.capability.locked.lockedBy.person"]);
+    expect(caps({ recording: { lockedBy: "person" } })).toEqual(["task.capability.locked.lockedBy.person"]);
     // A level is one of the four defaults when the manifest declares no ladder.
-    expect(caps({ mute: { lockedBy: "org" } })).toEqual([]);
-    expect(caps({ mute: { lockedBy: "region" } })).toEqual(["task.capability.locked.lockedBy.unknown"]);
+    expect(caps({ recording: { lockedBy: "org" } })).toEqual([]);
+    expect(caps({ recording: { lockedBy: "region" } })).toEqual(["task.capability.locked.lockedBy.unknown"]);
     // The control: a manifest that declares no ladder has all four defaults in force.
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "site" } } })] }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })] }), manifest()))).toEqual([]);
     const regional = manifest({ orgLevels: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] });
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "region" } } })] }), regional))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "region" } } })] }), regional))).toEqual([]);
     // The ladder is the whole ladder: a default the manifest left out is not in force.
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "site" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { mute: { lockedBy: "district" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
-    expect(caps({ mute: { lockedBy: "team", reason: "" } })).toEqual(["task.capability.locked.reason"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "district" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
+    expect(caps({ recording: { lockedBy: "team", reason: "" } })).toEqual(["task.capability.locked.reason"]);
     expect(caps({ browsers: { lockedBy: "team" } })).toEqual(["task.capability.locked.unexpected"]);
     // lockedBy is the discriminant: a directory carrying it would read as a lock, so it may not.
     expect(caps({ coldTransfer: { destinations: [{ id: "t2", label: "Tier 2" }] } })).toEqual([]);
     expect(caps({ coldTransfer: { lockedBy: "org" } })).toEqual([]);
-    // A chat task has no mute to lock; the channel rule speaks first.
-    expect(rules(validateTask(task({ channel: "chat", capabilities: { mute: { lockedBy: "team" } } }), { channel: "chat" }))).toEqual(["task.capability.channel"]);
+    // A chat task has no recording to lock; the channel rule speaks first.
+    expect(rules(validateTask(task({ channel: "chat", capabilities: { recording: { lockedBy: "team" } } }), { channel: "chat" }))).toEqual(["task.capability.channel"]);
   });
   it("withholds a number by locking it in place, never by a flag", () => {
     const contact = (value: unknown) => rules(validateTask(task({ party: value }), { channel: "voice" }));
@@ -239,7 +240,11 @@ describe("validateTask", () => {
     const answered = { step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" };
     // Two holds are two entries; the running one omits its seconds.
     expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
-    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4 }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9 }])).toEqual([]);
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9, mutedBy: "station" }])).toEqual([]);
+    // A muted entry says whose the silence was, as the host reported it; no other step has anyone to name.
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4 }])).toEqual(["task.handlingHistory.mutedBy"]);
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "headset" }])).toEqual(["task.handlingHistory.mutedBy"]);
+    expect(history([answered, { step: "held", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }])).toEqual(["task.handlingHistory.mutedBy.unexpected"]);
     // Oldest first: a hold filed before the answer it followed is out of its turn.
     expect(history([{ step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, answered])).toEqual(["task.handlingHistory.order"]);
     expect(history([answered, { step: "held", at: "2026-08-21T00:59:41Z", by: "a-17" }])).toEqual([]);
@@ -288,10 +293,17 @@ describe("validateTask", () => {
   });
 
   it("gates capabilities by channel", () => {
-    // mute is a voice control; an email task declaring one would render a button that
+    // hold is a voice control; an email task declaring one would render a button that
     // cannot work.
-    expect(rules(validateTask(task({ channel: "email", capabilities: { mute: true } }), { channel: "email" })))
+    expect(rules(validateTask(task({ channel: "email", capabilities: { hold: true } }), { channel: "email" })))
       .toContain("task.capability.channel");
+    // Mute is the host's: the microphone belongs to the station, so no channel's provider declares it.
+    // The control beside it: the same task with a capability the provider does own is clean.
+    expect(rules(validateTask(task({ capabilities: { mute: true } }), { channel: "voice" }))).toEqual(["task.capability.unknown"]);
+    expect(rules(validateTask(task({ capabilities: { mute: { lockedBy: "team" } } }), { channel: "voice" }))).toEqual(["task.capability.unknown"]);
+    expect(rules(validateTask(task({ capabilities: { hold: true } }), { channel: "voice" }))).toEqual([]);
+    // A name another channel owns is a channel error; one no channel owns is not a capability at all.
+    expect(rules(validateTask(task({ capabilities: { zap: true } }), { channel: "voice" }))).toEqual(["task.capability.unknown"]);
     expect(rules(validateTask(task({ channel: "email", capabilities: { decline: true } }), { channel: "email" }))).toEqual([]);
   });
 
@@ -424,14 +436,16 @@ describe("validateTeamRoster", () => {
   it("carries the team's policies on the roster, as the lead sees them", () => {
     const may = { capabilities: { team: { policyControl: true as const } } };
     const policies = (value: unknown) => rules(validateTeamRoster({ members: [], policies: value }, "team", may));
-    expect(policies({ mute: { setting: "off", setBy: "team" }, hold: { setting: "person", setBy: "team" }, recording: { setting: "on", setBy: "site", lockedBy: "site", reason: "Compliance" }, dial: { setting: "on", setBy: "provider" }, "skill:billing": { setting: "person", setBy: "org" } })).toEqual([]);
+    expect(policies({ endCall: { setting: "off", setBy: "team" }, hold: { setting: "person", setBy: "team" }, recording: { setting: "on", setBy: "site", lockedBy: "site", reason: "Compliance" }, dial: { setting: "on", setBy: "provider" }, "skill:billing": { setting: "person", setBy: "org" } })).toEqual([]);
     expect(policies({ telepathy: { setting: "on", setBy: "team" } })).toEqual(["team.policy.key"]);
-    expect(policies({ mute: "off" })).toEqual(["team.policy.shape"]);
-    expect(policies({ mute: { setting: "maybe", setBy: "team" } })).toEqual(["team.policy.setting"]);
+    // Mute is the host's: no team sets a policy on the station's microphone. The control beside it stands two lines up.
+    expect(policies({ mute: { setting: "off", setBy: "team" } })).toEqual(["team.policy.key"]);
+    expect(policies({ hold: "off" })).toEqual(["team.policy.shape"]);
+    expect(policies({ hold: { setting: "maybe", setBy: "team" } })).toEqual(["team.policy.setting"]);
     expect(policies({ connectBack: { setting: "person", setBy: "team" } })).toEqual(["team.policy.person"]);
     expect(policies({ dial: { setting: "person", setBy: "team" } })).toEqual(["team.policy.person"]);
-    expect(policies({ mute: { setting: "off" } })).toEqual(["team.policy.setBy"]);
-    expect(policies({ mute: { setting: "off", setBy: "person" } })).toEqual(["team.policy.setBy"]);
+    expect(policies({ hold: { setting: "off" } })).toEqual(["team.policy.setBy"]);
+    expect(policies({ hold: { setting: "off", setBy: "person" } })).toEqual(["team.policy.setBy"]);
     expect(policies("off")).toEqual(["team.policies.shape"]);
     // Present exactly when the login may set them.
     expect(rules(validateTeamRoster({ members: [] }, "team", may))).toEqual(["team.policies.required"]);
@@ -441,7 +455,7 @@ describe("validateTeamRoster", () => {
   it("refuses agent as a policy setting beside person, which replaced it", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
     const lead = { capabilities: { team: { policyControl: true as const } } };
-    const setting = (value: string) => rules(validateTeamRoster({ members: [], policies: { mute: { setting: value, setBy: "team" } } }, "team", lead));
+    const setting = (value: string) => rules(validateTeamRoster({ members: [], policies: { hold: { setting: value, setBy: "team" } } }, "team", lead));
     expect(setting("person")).toEqual([]);
     // renamed away: what the team leaves to the individual is the person's, in the level's own word.
     expect(setting("agent")).toEqual(["team.policy.setting"]);
@@ -667,10 +681,28 @@ describe("validateEventEnvelope", () => {
   });
 });
 
+describe("validateHostMute", () => {
+  it("is stated where the host holds a microphone, in one of two words, and nowhere else", () => {
+    expect(rules(validateHostMute("stream", true))).toEqual([]);
+    expect(rules(validateHostMute("station", true))).toEqual([]);
+    expect(rules(validateHostMute(undefined, false))).toEqual([]);
+    // Neither the value nor its absence is inferred from what the host is.
+    expect(rules(validateHostMute(undefined, true))).toEqual(["host.mute.required"]);
+    expect(rules(validateHostMute("stream", false))).toEqual(["host.mute.unexpected"]);
+    expect(rules(validateHostMute("soft", true))).toEqual(["host.mute"]);
+  });
+});
+
 describe("validateHandlingReport", () => {
   it("takes a leg the host performed as it begins, runs, and ends", () => {
-    const report = (over: Record<string, unknown> = {}) => rules(validateHandlingReport({ taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", ...over }));
+    const report = (over: Record<string, unknown> = {}) => rules(validateHandlingReport({ taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host", ...over }));
     expect(report()).toEqual([]);
+    // A muted leg says whose the silence was; no other leg has anyone to name for it.
+    expect(report({ mutedBy: "station" })).toEqual([]);
+    expect(report({ mutedBy: undefined })).toEqual(["handlingReport.mutedBy"]);
+    expect(report({ mutedBy: "headset" })).toEqual(["handlingReport.mutedBy"]);
+    expect(report({ step: "held", mutedBy: undefined })).toEqual([]);
+    expect(report({ step: "held" })).toEqual(["handlingReport.mutedBy.unexpected"]);
     expect(report({ seconds: 15 })).toEqual([]);
     expect(report({ seconds: 42, ended: true })).toEqual([]);
     // The end is stated, never inferred, and it carries the final duration.
@@ -682,11 +714,11 @@ describe("validateHandlingReport", () => {
     expect(report({ at: "now" })).toEqual(["handlingReport.at"]);
     expect(rules(validateHandlingReport("muted"))).toEqual(["handlingReport.shape"]);
     // What a provider never asked for never crosses: a running report reaches only a manifest that declares it.
-    const running = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", seconds: 15 };
+    const running = { taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host", seconds: 15 };
     expect(rules(validateHandlingReport(running, "report", manifest({ runningStepReports: true })))).toEqual([]);
     expect(rules(validateHandlingReport(running, "report", manifest()))).toEqual(["handlingReport.running.unexpected"]);
     expect(rules(validateHandlingReport({ ...running, seconds: 42, ended: true }, "report", manifest()))).toEqual([]);
-    expect(rules(validateHandlingReport({ taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z" }, "report", manifest()))).toEqual([]);
+    expect(rules(validateHandlingReport({ taskId: "call-42", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" }, "report", manifest()))).toEqual([]);
     expect(rules(validateManifest(manifest({ runningStepReports: true })))).toEqual([]);
     expect(rules(validateManifest(manifest({ runningStepReports: false })))).toEqual(["manifest.runningStepReports"]);
     expect(rules(validateResult({ status: "recorded" }, "recordStep"))).toEqual([]);
@@ -728,8 +760,12 @@ describe("validateHostReport", () => {
     expect(rules(validateHostReport("online"))).toEqual(["host.shape"]);
     expect(rules(validateHostReport({ online: true, audio: "ready" }))).toEqual(["host.audio.shape"]);
     expect(audio(ready)).toEqual([]);
-    expect(audio({ ...ready, flowing: false })).toEqual([]);
+    expect(audio({ ...ready, flowing: false, mutedBy: "station" })).toEqual([]);
+    expect(audio({ ...ready, flowing: false, mutedBy: "host" })).toEqual([]);
     expect(audio(denied)).toEqual([]);
+    // The speaker says whether it is flowing only where the host can know; silenced, it says by whom.
+    expect(audio(ready, { status: "available", flowing: true })).toEqual([]);
+    expect(audio(ready, { status: "available", flowing: false, mutedBy: "station" })).toEqual([]);
     expect(audio(ready, { status: "unavailable", reason: "no-device", failure })).toEqual([]);
     for (const reason of ["no-device", "denied", "not-asked", "in-use", "lost"]) expect(audio({ ...denied, reason })).toEqual([]);
   });
@@ -747,6 +783,16 @@ describe("validateHostReport", () => {
     expect(audio({ ...denied, failure: { code: "x" } })).toEqual(["failure.message", "failure.retryable"]);
     expect(audio({ ...denied, localAudio: microphone })).toEqual(["host.audio.input.localAudio.unexpected"]);
     expect(audio({ status: "muted" })).toEqual(["host.audio.input.status"]);
+    // A silenced device names who silenced it, in one of two words; a flowing or absent one names nobody.
+    expect(audio({ ...ready, flowing: false })).toEqual(["host.audio.input.mutedBy"]);
+    expect(audio({ ...ready, flowing: false, mutedBy: "headset" })).toEqual(["host.audio.input.mutedBy"]);
+    expect(audio({ ...ready, mutedBy: "host" })).toEqual(["host.audio.input.mutedBy.unexpected"]);
+    expect(audio({ ...denied, mutedBy: "station" })).toEqual(["host.audio.input.mutedBy.unexpected"]);
+    expect(audio(ready, { status: "available", flowing: false })).toEqual(["host.audio.output.mutedBy"]);
+    expect(audio(ready, { status: "available", mutedBy: "station" })).toEqual(["host.audio.output.mutedBy.unexpected"]);
+    expect(audio(ready, { status: "available", flowing: "yes" })).toEqual(["host.audio.output.flowing"]);
+    expect(audio(ready, { status: "unavailable", reason: "lost", failure, flowing: false, mutedBy: "station" }))
+      .toEqual(["host.audio.output.flowing.unexpected", "host.audio.output.mutedBy.unexpected"]);
     expect(audio(undefined)).toEqual(["host.audio.input.shape"]);
     expect(audio(ready, { status: "available", failure })).toEqual(["host.audio.output.failure.unexpected"]);
     expect(audio(ready, { status: "unavailable", reason: "no-device" })).toEqual(["host.audio.output.failure.required"]);
@@ -1048,32 +1094,34 @@ describe("validateAuthenticationState", () => {
   it("declares what the team left to the person on the login, with who set it", () => {
     const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
     const prefs = (value: unknown) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: value } }));
-    const mute = { id: "mute", label: "Mute", enabled: true, setBy: "team" };
-    expect(prefs([mute, { id: "hold", label: "Hold", enabled: false, setBy: "person" }, { id: "skill:billing", label: "Billing", enabled: true, setBy: "provider" }])).toEqual([]);
+    const hold = { id: "hold", label: "Hold", enabled: true, setBy: "team" };
+    expect(prefs([hold, { id: "skill:tier2", label: "Tier 2", enabled: false, setBy: "person" }, { id: "skill:billing", label: "Billing", enabled: true, setBy: "provider" }])).toEqual([]);
     // Nothing is hidden: a preference a level above has since locked is listed, locked.
-    expect(prefs([{ ...mute, lockedBy: "site", reason: "No mute at this site" }])).toEqual([]);
+    expect(prefs([{ ...hold, lockedBy: "site", reason: "No hold at this site" }])).toEqual([]);
     expect(prefs(undefined)).toEqual([]);
     expect(prefs([])).toEqual(["authentication.capability.preferences.empty"]);
-    expect(prefs([{ ...mute, id: "connectBack" }])).toEqual(["preference.id"]);
-    expect(prefs([{ ...mute, id: "skill:" }])).toEqual(["preference.id"]);
-    expect(prefs([mute, mute])).toEqual(["preference.unique"]);
-    expect(prefs([{ id: "mute", enabled: true, setBy: "team" }])).toEqual(["preference.label"]);
-    expect(prefs([{ id: "mute", label: "Mute", setBy: "team" }])).toEqual(["preference.enabled"]);
-    expect(prefs([{ id: "mute", label: "Mute", enabled: true }])).toEqual(["preference.setBy"]);
-    expect(prefs([{ ...mute, setBy: "queue" }])).toEqual(["preference.setBy.unknown"]);
-    expect(prefs([{ ...mute, lockedBy: "person" }])).toEqual(["preference.lockedBy.person"]);
+    expect(prefs([{ ...hold, id: "connectBack" }])).toEqual(["preference.id"]);
+    // Mute is the host's: not a preference the provider keeps, whatever level would set it.
+    expect(prefs([{ ...hold, id: "mute" }])).toEqual(["preference.id"]);
+    expect(prefs([{ ...hold, id: "skill:" }])).toEqual(["preference.id"]);
+    expect(prefs([hold, hold])).toEqual(["preference.unique"]);
+    expect(prefs([{ id: "hold", enabled: true, setBy: "team" }])).toEqual(["preference.label"]);
+    expect(prefs([{ id: "hold", label: "Hold", setBy: "team" }])).toEqual(["preference.enabled"]);
+    expect(prefs([{ id: "hold", label: "Hold", enabled: true }])).toEqual(["preference.setBy"]);
+    expect(prefs([{ ...hold, setBy: "queue" }])).toEqual(["preference.setBy.unknown"]);
+    expect(prefs([{ ...hold, lockedBy: "person" }])).toEqual(["preference.lockedBy.person"]);
     // Given the manifest's levels, a declared one is accepted and an undeclared one is not.
     const declared = { levels: ["org", "region", "team", "person"] };
-    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...mute, setBy: "region" }] } }, "authentication", declared))).toEqual([]);
-    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...mute, setBy: "site" }] } }, "authentication", declared))).toEqual(["preference.setBy.unknown"]);
-    expect(prefs([{ ...mute, reason: "Because" }])).toEqual(["preference.reason.unexpected"]);
-    expect(prefs(["mute"])).toEqual(["preference.shape"]);
-    expect(prefs("mute")).toEqual(["preferences.shape"]);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, setBy: "region" }] } }, "authentication", declared))).toEqual([]);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, setBy: "site" }] } }, "authentication", declared))).toEqual(["preference.setBy.unknown"]);
+    expect(prefs([{ ...hold, reason: "Because" }])).toEqual(["preference.reason.unexpected"]);
+    expect(prefs(["hold"])).toEqual(["preference.shape"]);
+    expect(prefs("hold")).toEqual(["preferences.shape"]);
   });
   it("refuses provisioning as a setBy beside provider, which replaced it", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
     const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
-    const prefs = (setBy: string) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ id: "mute", label: "Mute", enabled: true, setBy }] } }));
+    const prefs = (setBy: string) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ id: "hold", label: "Hold", enabled: true, setBy }] } }));
     expect(prefs("provider")).toEqual([]);
     expect(prefs("provisioning")).toEqual(["preference.setBy.unknown"]);
   });
@@ -1438,7 +1486,7 @@ describe("consulting a lead", () => {
 });
 
 describe("validateTaskCommand", () => {
-  const voice = task({ capabilities: { mute: true, hold: true, endCall: true, recording: true, conference: { destinations: [{ id: "tier2", label: "Tier 2" }] }, warmTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } } });
+  const voice = task({ capabilities: { hold: true, endCall: true, recording: true, conference: { destinations: [{ id: "tier2", label: "Tier 2" }] }, warmTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } } });
   const since = "2026-08-21T09:05:00Z";
   const cmd = (command: unknown, on: unknown = voice) => rules(validateTaskCommand(command, on));
 
@@ -1448,8 +1496,9 @@ describe("validateTaskCommand", () => {
     expect(rules(validateTaskCommand({ type: "hang-up" }))).toEqual(["command.type"]);
     expect(rules(validateTaskCommand({ type: "custom", name: "request-supervisor" }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "custom", name: "" }))).toEqual(["command.custom.name"]);
-    expect(rules(validateTaskCommand({ type: "mute", muted: true }))).toEqual([]);
-    expect(rules(validateTaskCommand({ type: "mute" }))).toEqual(["command.mute.muted"]);
+    // The microphone is the host's: there is no mute command for a provider, on any channel.
+    expect(rules(validateTaskCommand({ type: "mute", muted: true }))).toEqual(["command.type"]);
+    expect(rules(validateTaskCommand({ type: "mute", muted: true }, voice))).toEqual(["command.type"]);
     expect(rules(validateTaskCommand({ type: "call", dialId: "dial-1" }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "call" }))).toEqual(["command.call.dialId"]);
     expect(rules(validateTaskCommand({ type: "connect-back" }))).toEqual(["command.connectBack.dialId"]);
@@ -1483,7 +1532,6 @@ describe("validateTaskCommand", () => {
     // Every control that acts on the call or the conversation, on a task that offers it, in every phase.
     const consulting = { onCall: [{ role: "party", since }, { role: "consulted", destinationId: "tier2", stage: "joined", since }] };
     const controls: [unknown, Record<string, unknown>][] = [
-      [{ type: "mute", muted: true }, {}],
       [{ type: "hold" }, {}],
       [{ type: "resume" }, {}],
       [{ type: "end-call" }, {}],
@@ -1767,7 +1815,7 @@ describe("validateTask capabilitySource", () => {
 
   it("holds undetermined terms to no shape of their own: what the provider will honour is what it publishes", () => {
     expect(rules(task({ capabilitySource: "undetermined", capabilities: {} }))).toEqual([]);
-    expect(rules(task({ capabilitySource: "undetermined", capabilities: { hold: true, mute: true, endCall: true } }))).toEqual([]);
+    expect(rules(task({ capabilitySource: "undetermined", capabilities: { hold: true, endCall: true } }))).toEqual([]);
     expect(rules(task({ capabilitySource: "queue", capabilities: {} }))).toEqual([]);
   });
 });
