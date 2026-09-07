@@ -708,6 +708,9 @@ describe("validateHostGuarantees", () => {
     expect(rules(validateHostGuarantees({}))).toEqual([]);
     expect(rules(validateHostGuarantees({ browserUrlVisibility: true }))).toEqual([]);
     expect(rules(validateHostGuarantees({ browserUrlVisibility: true, personConsent: true }))).toEqual([]);
+    // A native host may promise to clear a station's mute; a browser cannot, and says nothing. Presence, never false.
+    expect(rules(validateHostGuarantees({ stationMute: true }))).toEqual([]);
+    expect(rules(validateHostGuarantees({ stationMute: false }))).toEqual(["host.guarantee.value"]);
     // A promise withheld is an absent key: false is a host saying two things at once.
     expect(rules(validateHostGuarantees({ personConsent: false }))).toEqual(["host.guarantee.value"]);
     expect(rules(validateHostGuarantees({ hidesUrls: true }))).toEqual(["host.guarantee.unknown"]);

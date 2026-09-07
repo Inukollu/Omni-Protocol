@@ -292,6 +292,7 @@ type HostReport = {
 type HostGuarantees = {
   browserUrlVisibility?: true;
   personConsent?: true;
+  stationMute?: true;
 };
 
 type Host = {
@@ -3785,9 +3786,11 @@ is signing in rather than over a contact, prompts, retries on the agent's reques
 what failed, and reports. It never decides for the adapter what a missing microphone means.
 
 **The host also guarantees, and a promise the provider cannot see is not one it can rely on.**
-Two of this contract's obligations fall on the host rather than the provider — honouring a task
-browser's `urlVisibility`, and taking a `consent` offer only on the person's own press — and more
-than one desk speaks this contract. So `ConnectContext.host.guarantees` says which promises the
+Some of this contract's obligations fall on the host rather than the provider — honouring a task
+browser's `urlVisibility`, taking a `consent` offer only on the person's own press, clearing a
+mute the station imposed — and more than one desk speaks this contract: a browser and a native
+application differ in what they can reach, and a provider never branches on which it is talking
+to, only on what it has promised. So `ConnectContext.host.guarantees` says which promises the
 connected host makes, declared once per connection, presence being the guarantee exactly as it is
 the permission everywhere else:
 
@@ -3795,6 +3798,7 @@ the permission everywhere else:
 | --- | --- |
 | `browserUrlVisibility` | Every task browser's `urlVisibility` is honoured in this host's chrome, tab by tab. A provider that would send a caller's number in a URL checks this first and tokenises where the promise is absent. |
 | `personConsent` | A `consent` offer is accepted only by the person's own explicit act, never on their behalf. A provider whose work may only be taken by a human checks this first and does not offer it where the promise is absent. |
+| `stationMute` | The host can detect a hardware or operating-system mute of the station's microphone and clear it, so `audio.input.flowing: false` is a condition the host resolves rather than one the agent is stuck with. A browser never makes this promise -- it reads the condition and cannot touch it -- and a native host with the platform's audio APIs can. A provider that would take an agent out of ready on a silent microphone waits for the host where the promise stands. See **Mute is the host's**. |
 
 A guarantee the host does not make is an absent key, never `false` — `validateHostGuarantees`
 refuses a false one, as it refuses a name this contract does not list.
@@ -3997,7 +4001,7 @@ Three things on a station are called mute, and the host can influence two of the
 | --- | --- | --- |
 | The host's own control | The Mute button the host draws. The host stops the audio it sends; nothing outside the host knows unless the host says. | Performs it on the media session, and reports the leg to the provider through `recordStep` as a `muted` step. |
 | The headset's call-control button | A USB headset exposing the HID Telephony usage page sends a Phone Mute report when its button is pressed, and lights its mute LED when the host writes one back. The press is a signal to the softphone, not a microphone mute: the host applies its own mute and answers with the LED state, and the headset follows. | Treats the press as a press of its own Mute, and drives the LED from its own state, so the button, the LED and the control are one state with one owner. Recorded exactly as the first row: the agent muted, whichever button they pressed. |
-| Hardware or operating-system mute | A physical slider on the headset, or the OS input mute. The host cannot set or clear it; a browser reports it read-only through the capture track's muted state. | Observes it, and publishes it as `audio.input.flowing: false` in the host report, where the provider already reads it. Not a `muted` step: the host did not perform it, and the provider already has the fact. When the hardware says muted while the host's control says unmuted, the host tells the agent the headset itself is muted, since pressing Mute cannot lift it. |
+| Hardware or operating-system mute | A physical slider on the headset, or the OS input mute. A browser reads it, read-only, through the capture track's muted state, and cannot touch it; a native host with the platform's audio APIs can clear an OS mute, and says so with the `stationMute` guarantee. | Observes it, and publishes it as `audio.input.flowing: false` in the host report, where the provider already reads it. Not a `muted` step: the host did not perform it, and the provider already has the fact. A host that guarantees `stationMute` clears an OS mute itself; one that does not tells the agent the headset or the system is muted, since pressing Mute cannot lift it. |
 
 One state, one owner. The provider's record has the legs the host performed, through the one
 path that exists for them; the station's condition is in the host report. Where a provider's own

@@ -272,7 +272,7 @@ export const staleCapacity: CapacityResult = { status: "accepted" };
 export const staleAccessScope = { access: { mode: "allow-all" },
   // @ts-expect-error The access rules say what they apply to: accessAppliesTo.
   accessPolicyScope: "initial-url" } satisfies PersonalBrowserCapability;
-export const promisingHost: Host = { guarantees: { browserUrlVisibility: true, personConsent: true }, report: () => noAudioHere, subscribe: () => () => undefined };
+export const promisingHost: Host = { guarantees: { browserUrlVisibility: true, personConsent: true, stationMute: true }, report: () => noAudioHere, subscribe: () => () => undefined };
 export const reticentHost: Host = { guarantees: {}, report: () => noAudioHere, subscribe: () => () => undefined };
 export const lyingHost: Host = {
   // @ts-expect-error A guarantee is declared by presence; a host that does not make one omits it, never false.

@@ -1811,7 +1811,7 @@ function validateUnavailable(value: Record<string, unknown>, rule: string, path:
  * check belongs to the host's own tests and to the harness, which validates whatever host a test
  * hands the adapter.
  */
-const HOST_GUARANTEES = membersOf<keyof HostGuarantees>({ browserUrlVisibility: true, personConsent: true });
+const HOST_GUARANTEES = membersOf<keyof HostGuarantees>({ browserUrlVisibility: true, personConsent: true, stationMute: true });
 
 /**
  * What a host promises. Presence is the guarantee, so a key declared `false` is refused: a

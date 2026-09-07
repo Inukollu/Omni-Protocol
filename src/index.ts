@@ -414,6 +414,13 @@ export interface HostGuarantees {
   browserUrlVisibility?: true;
   /** A `consent` offer is accepted only by the person's own explicit act, never on their behalf. */
   personConsent?: true;
+  /**
+   * The host can detect a hardware or operating-system mute of the station's microphone and clear
+   * it, so `audio.input.flowing: false` is a condition the host resolves rather than one the agent
+   * is stuck with. A browser never makes this promise; a native host with the platform's audio
+   * APIs can.
+   */
+  stationMute?: true;
 }
 
 export interface Host {
