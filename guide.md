@@ -2465,8 +2465,13 @@ Steps are `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conf
 **The record is one entry per occurrence, oldest first.** Each hold is its own `held` entry — `at`
 when it began, `seconds` once it ended and omitted while it runs — and a second hold is a second
 entry after the first, never a revision of it. The same goes for every step: two mutes are two
-`muted` entries. Order is enforced: an entry earlier than the one before it is refused
-(`task.handlingHistory.order`). **Handle time is anchored, not restarted.** It runs from the
+`muted` entries, and a call that joined two queues -- a menu's, then this one -- has two `queued`
+entries, one per join. Order is enforced: an entry earlier than the one before it is refused
+(`task.handlingHistory.order`). **Intervals between steps are the host's to subtract**, never a
+total the provider adds: *time to offer*, from the call's arrival to the agent's screen lighting
+up, is the `offered` entry's `at` minus the last `queued` entry's, and the ring is outside it.
+`queueSeconds` keeps the industry's meaning -- the whole wait until somebody answered -- and is not
+that interval. **Handle time is anchored, not restarted.** It runs from the
 `answered` step's `at` — from the task's first `in-progress` where the provider reports no
 history — until the task's media ends, and a hold neither pauses nor resets it: the hold's own
 duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is

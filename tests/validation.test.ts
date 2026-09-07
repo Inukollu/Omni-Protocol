@@ -241,6 +241,8 @@ describe("validateTask", () => {
     // Two holds are two entries; the running one omits its seconds.
     expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
     expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9, mutedBy: "station" }])).toEqual([]);
+    // A call that joined two queues is two queued entries, one per join, and the offer follows the last of them.
+    expect(history([{ step: "queued", at: "2026-08-21T00:55:00Z", seconds: 240 }, { step: "queued", at: "2026-08-21T00:59:00Z", seconds: 30 }, { step: "offered", at: "2026-08-21T00:59:30Z", by: "a-17" }, answered])).toEqual([]);
     // A muted entry says whose the silence was, as the host reported it; no other step has anyone to name.
     expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4 }])).toEqual(["task.handlingHistory.mutedBy"]);
     expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "headset" }])).toEqual(["task.handlingHistory.mutedBy"]);
