@@ -17,6 +17,7 @@ import {
   type HostGuarantees,
   type HostMute,
   type LoginStore,
+  type SecretStore,
   type HostReport,
   type Manifest,
   type ProviderEvent,
@@ -191,6 +192,14 @@ export interface ExerciseAdapterOptions {
   drive?: boolean;
   /** How long the drive waits for each thing the provider owes it. Defaults to 5000. */
   driveTimeoutMs?: number;
+  /**
+   * Builds the adapter again, as a host reload does: a new object with no memory, for the same
+   * login. Given it, the drive -- once the host's muted leg is recorded -- connects a second adapter
+   * with the same context and the same store and expects its snapshot to carry the task with that
+   * leg. A platform that holds the record hands it back; an adapter that composed the record in
+   * memory has nothing, and is named. Without it the store is required and never read.
+   */
+  rebuild?: () => Adapter<Channel>;
 }
 
 /**
@@ -218,14 +227,12 @@ export async function exerciseAdapter<C extends Channel>(
   let seeded = false;
 
   const storedSecrets = new Map<string, string>();
-  const authentication = await adapter.createAuthenticationSession({
-    ...context,
-    secrets: {
-      get: async key => storedSecrets.get(key),
-      set: async (key, value) => { storedSecrets.set(key, value); },
-      delete: async key => { storedSecrets.delete(key); },
-    },
-  });
+  const authenticationSecrets: SecretStore = {
+    get: async key => storedSecrets.get(key),
+    set: async (key, value) => { storedSecrets.set(key, value); },
+    delete: async key => { storedSecrets.delete(key); },
+  };
+  const authentication = await adapter.createAuthenticationSession({ ...context, secrets: authenticationSecrets });
 
   let connection: Connection<C> | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -428,6 +435,7 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push(...await driveOneCall({
         connection: live, manifest: adapter.manifest, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
         timeoutMs: options.driveTimeoutMs ?? 5000,
+        context, secrets: authenticationSecrets, reader, rebuild: options.rebuild,
       }));
     }
   } finally {
@@ -986,6 +994,10 @@ export class TaskStream {
 interface Drive<C extends Channel> {
   connection: Connection<C>;
   manifest: Manifest<C>;
+  context: ConnectContext;
+  secrets: SecretStore;
+  reader: () => ReaderContext;
+  rebuild: (() => Adapter<Channel>) | undefined;
   channel: Channel;
   softphone: boolean;
   snapshot: unknown;
@@ -1029,6 +1041,62 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       };
       drive.waiters.add(waiter);
     });
+
+  const recordSurvivesReload = async (at: string): Promise<void> => {
+    let again: Adapter<Channel>;
+    try {
+      again = drive.rebuild!();
+    } catch (error) {
+      refuse("drive.reload.rejected", "drive.reload", `building the adapter again threw: ${String(error)}`);
+      return;
+    }
+    let session: { close(): Promise<void> } | undefined;
+    let second: Connection<Channel> | undefined;
+    try {
+      // The same provider, built again: a different manifest is a different adapter, and proves nothing about this one.
+      if (again.manifest.id !== drive.manifest.id) {
+        refuse("drive.reload.manifest", "drive.reload.manifest",
+          `rebuild returned an adapter for ${String(again.manifest.id)}; the reload is of ${String(drive.manifest.id)}`);
+        return;
+      }
+      session = await again.createAuthenticationSession({ ...drive.context, secrets: drive.secrets });
+      second = await again.connect(drive.context);
+      const snapshot = await second.snapshot() as unknown;
+      // The second adapter's snapshot is held to everything a first one is.
+      found.push(...validateSnapshot(snapshot, again.manifest, "drive.reload.snapshot", drive.reader()));
+      const carried = isRecord(snapshot) && Array.isArray(snapshot.tasks)
+        ? snapshot.tasks.find(task => isRecord(task) && task.id === taskId) as Record<string, unknown> | undefined : undefined;
+      if (carried === undefined) {
+        refuse("drive.reload.snapshot", "drive.reload.snapshot",
+          `a second adapter built from the same login does not carry ${taskId} on its snapshot, and the task is still open`);
+        return;
+      }
+      const history = carried.handlingHistory;
+      const steps: unknown[] = isRecord(history) && Array.isArray(history.steps) ? history.steps : [];
+      // A record once read is not unread across a reload either: every entry the first adapter published is here.
+      const before = latestTask().handlingHistory;
+      const wasRead = isRecord(before) && Array.isArray(before.steps) ? before.steps.filter(isRecord) : [];
+      const lost = wasRead.filter(entry => !steps.some(now => isRecord(now) && now.step === entry.step && now.at === entry.at))
+        .map(entry => `${String(entry.step)}@${String(entry.at)}`);
+      if (lost.length > 0) {
+        refuse("drive.reload.history", "drive.reload.history",
+          `a second adapter built from the same login carries ${taskId} without ${lost.join(", ")}, which the first had published: a record once read is not unread`);
+      }
+      const leg = steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined;
+      if (leg === undefined) {
+        refuse("drive.reload.history", "drive.reload.history",
+          `a second adapter built from the same login carries ${taskId} without the muted leg at ${at}: the record was composed in memory and died with the adapter; the login's store is where it lives`);
+      } else if (leg.mutedBy !== "host") {
+        refuse("drive.reload.history", "drive.reload.history",
+          `the reloaded record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host`);
+      }
+    } catch (error) {
+      refuse("drive.reload.rejected", "drive.reload", `the second adapter rejected rather than answered: ${String(error)}`);
+    } finally {
+      try { await second?.disconnect(); } catch (error) { refuse("drive.reload.rejected", "drive.reload", `the second adapter's disconnect threw: ${String(error)}`); }
+      try { await session?.close(); } catch (error) { refuse("drive.reload.rejected", "drive.reload", `the second adapter's session threw on close: ${String(error)}`); }
+    }
+  };
 
   // The task, as first seen: on the snapshot, or on the first offer.
   let cursor = 0;
@@ -1173,6 +1241,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     setMuted(false);
     await report({ seconds: Math.round((Date.now() - began) / 1000), ended: true });
     mutedLeg = { at, task: latestTask() };
+    // 3c. A host reload destroys the adapter object and keeps the login's store. Built again from
+    // the same login, a second adapter carries the task and the leg -- from its platform, or from
+    // the store -- or it composed the record in memory and the record died with it.
+    if (drive.rebuild !== undefined) await recordSurvivesReload(at);
   }
   // 4. Hold and resume, where offered.
   if (latestTask().phase === "in-progress" && offers("hold")) {

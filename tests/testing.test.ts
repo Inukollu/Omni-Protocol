@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakApproval, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
+import type { LoginStore } from "../src/index.js";
 import { memoryStore, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const voiceTask = {
@@ -998,7 +999,13 @@ describe("exerciseAdapter", () => {
 describe("exerciseAdapter drives one call", () => {
   const at = "2026-08-21T09:00:00Z";
   type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
-  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute" }
+  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute";
+    /** A platform shared between instances of the adapter, as a host reload shares it: which task is open. */
+    platform?: { open: boolean };
+    /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
+    legsIn?: "memory" | "store"; store?: LoginStore;
+    /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
+    reloadAs?: "another-provider" | "without-answered" | "miscounted" }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   const driveable = (script: Script = {}) => {
     let listener: Listener | undefined;
@@ -1010,19 +1017,35 @@ describe("exerciseAdapter drives one call", () => {
     };
     let phase = "pending";
     let muted: { at: string; seconds: number; mutedBy: "host" | "station" } | undefined;
+    const legEntry = (leg: { at: string; seconds: number; mutedBy: "host" | "station" }) =>
+      ({ step: "muted" as const, ...leg, by: "1042", mutedBy: script.restateHistory === "with-mute-by-station" ? "station" as const : leg.mutedBy });
     const history = () => script.restateHistory === undefined ? undefined
-      : { steps: [{ step: "answered" as const, at }, ...(muted !== undefined && script.restateHistory !== "without-mute"
-          ? [{ step: "muted" as const, ...muted, by: "1042", mutedBy: script.restateHistory === "with-mute-by-station" ? "station" as const : muted.mutedBy }] : [])] };
-    const t = (over: Record<string, unknown>) => { if (typeof over.phase === "string") phase = over.phase; return { ...base, ...over } as unknown as Task<"voice">; };
+      : { steps: [{ step: "answered" as const, at }, ...(muted !== undefined && script.restateHistory !== "without-mute" ? [legEntry(muted)] : [])] };
+    // What a second instance knows: the platform's open task, and the legs it can reach -- the store's, or its own empty memory.
+    const reloaded = async () => {
+      if (script.platform?.open !== true) return { ...conformingSnapshot, tasks: [], taskCount: 0 };
+      const kept = script.legsIn === "store" && script.store !== undefined ? await script.store.get("legs:call-77") : undefined;
+      const legs = kept === undefined ? (muted === undefined ? [] : [legEntry(muted)]) : [legEntry(JSON.parse(kept) as { at: string; seconds: number; mutedBy: "host" | "station" })];
+      const steps = [...(script.reloadAs === "without-answered" ? [] : [{ step: "answered" as const, at }]), ...legs];
+      return { ...conformingSnapshot, tasks: [t({ phase: "in-progress", media: "started", onCall: room, handlingHistory: { steps } })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
+    };
+    // A provider that restates its record does so on every publication once work has begun, never only at the end.
+    const t = (over: Record<string, unknown>) => {
+      if (typeof over.phase === "string") phase = over.phase;
+      const begun = over.phase !== "pending" && over.phase !== "confirmed";
+      return { ...base, ...(begun && script.restateHistory !== undefined ? { handlingHistory: history() } : {}), ...over } as unknown as Task<"voice">;
+    };
     const emit = (event: ProviderEventEnvelope<"voice">["event"]) => listener?.({ id: id(), loginId: "session-1", occurredAt: at, event });
     const room = [{ role: "party" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
     // Nothing is offered until a capacity is stated, which is when a provider may allocate; the
     // offer lands after the snapshot, as it does in life.
     const { adapter } = makeAdapter({
       snapshot: { ...conformingSnapshot, tasks: [], taskCount: 0 },
+      ...(script.reloadAs === "another-provider" && script.platform?.open === true ? { manifest: { ...conformingManifest, id: "acme-voice-2" } } : {}),
       emit: l => { listener = l; },
       connection: {
-        setCapacity: async () => { emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) }); return { status: "applied" }; },
+        ...(script.platform === undefined ? {} : { snapshot: reloaded }),
+        setCapacity: async () => { if (script.platform !== undefined) script.platform.open = true; emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) }); return { status: "applied" }; },
         execute: async ({ command }: { command: { type: string } }) => {
           switch (command.type) {
             case "answer":
@@ -1053,14 +1076,18 @@ describe("exerciseAdapter drives one call", () => {
               emit({ type: "task-media-ended", taskId: "call-77" });
               emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [], handlingHistory: history() }) });
               return { status: "applied" };
-            case "complete": emit({ type: "task-ended", taskId: "call-77", outcome: { type: "completed", by: "agent" } }); return { status: "applied" };
+            case "complete": if (script.platform !== undefined) script.platform.open = false; emit({ type: "task-ended", taskId: "call-77", outcome: { type: "completed", by: "agent" } }); return { status: "applied" };
             default: return { status: "failed", failure: { code: "omni.capability-not-enabled", message: command.type, retryable: false } };
           }
         },
         openMedia: async () => ({ status: "opened", session: { remoteAudio: {} as MediaStream, setMuted: () => undefined, close: () => undefined } }),
         recordStep: async (report: { step: string; at: string; seconds?: number; ended?: boolean; mutedBy?: "host" | "station" }) => {
           if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
-          if (report.step === "muted" && report.ended === true && report.seconds !== undefined && report.mutedBy !== undefined) muted = { at: report.at, seconds: report.seconds, mutedBy: report.mutedBy };
+          if (report.step === "muted" && report.ended === true && report.seconds !== undefined && report.mutedBy !== undefined) {
+            muted = { at: report.at, seconds: report.seconds, mutedBy: report.mutedBy };
+            // The store write is part of recording: what the platform cannot hold goes there first.
+            if (script.legsIn === "store" && script.store !== undefined) await script.store.set("legs:call-77", JSON.stringify(muted));
+          }
           return { status: "recorded" };
         },
       },
@@ -1104,6 +1131,33 @@ describe("exerciseAdapter drives one call", () => {
     // The record keeps the host's word on whose the silence was.
     expect((await drive(driveable({ restateHistory: "with-mute-by-station" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.history"]);
   });
+
+  it("builds the adapter again as a host reload does, and names one whose record died with it", async () => {
+    // Two instances share the platform and the store, as a reloaded host's do; the first's closure is gone.
+    const run = async (legsIn: "memory" | "store", sharesPlatform = true) => {
+      const store = memoryStore();
+      const script = { restateHistory: "with-mute" as const, legsIn, store, platform: sharesPlatform ? { open: false } : undefined };
+      return (await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations.map(v => v.rule);
+    };
+    expect(await run("store")).toEqual([]);
+    expect(await run("memory")).toEqual(["drive.reload.history"]);
+    // A second instance that does not carry the open task at all is named for that first.
+    expect(await run("store", false)).toEqual(["drive.reload.snapshot"]);
+    // The control: the same adapters without a rebuild pass either way, which is what the rebuild exists to end.
+    const store = memoryStore();
+    expect((await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "memory", store, platform: { open: false } }), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
+  }, 20000);
+
+  it("holds the second adapter to what the first was: the same provider, a snapshot that stands, a record that lost nothing", async () => {
+    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted") => {
+      const store = memoryStore();
+      const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, store, platform: { open: false }, reloadAs };
+      return (await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations.map(v => v.rule);
+    };
+    expect(await misbehaving("another-provider")).toEqual(["drive.reload.manifest"]);
+    expect(await misbehaving("without-answered")).toEqual(["drive.reload.history"]);
+    expect(await misbehaving("miscounted")).toEqual(["snapshot.taskCount.mismatch"]);
+  }, 20000);
 
   it("sends hold once more after the call has ended, past the validator, and names an adapter that applies it", async () => {
     // The conforming fixture refuses it and the run is clean (the first test); this one applies it.
