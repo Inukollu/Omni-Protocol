@@ -336,7 +336,10 @@ export async function exerciseAdapter<C extends Channel>(
     // What the host's Mute does is stated where the host holds a microphone, and nowhere else.
     violations.push(...validateHostMute(context.host.mute, softphone, "context.host.mute"));
     // The login's store is the host's to provide: an adapter that composes a record keeps in it what its platform cannot.
-    violations.push(...validateLoginStore((context as { store?: unknown }).store, "context.store"));
+    const storeShape = validateLoginStore((context as { store?: unknown }).store, "context.store");
+    violations.push(...storeShape);
+    // The harness watches the store it hands over, so what an adapter leaves behind is seen rather than asked for.
+    const watched = storeShape.length === 0 ? watchStore(context.store) : { store: context.store, held: new Set<string>() };
     unsubscribeHost = context.host.subscribe(report => {
       violations.push(...validateHostReport(report, "context.host"));
     });
@@ -349,7 +352,8 @@ export async function exerciseAdapter<C extends Channel>(
       subscribe: listener => { consulted = true; return context.host.subscribe(listener); },
     } as ConnectContext["host"];
 
-    connection = await adapter.connect({ ...context, host } as ConnectContext);
+    const connected = { ...context, host, store: watched.store } as ConnectContext;
+    connection = await adapter.connect(connected);
     const live = connection;
     // Dial is declared by presence: the capability object carries a destination policy rather
     // than an `enabled` flag, so its presence is the declaration.
@@ -435,7 +439,7 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push(...await driveOneCall({
         connection: live, manifest: adapter.manifest, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
         timeoutMs: options.driveTimeoutMs ?? 5000,
-        context, secrets: authenticationSecrets, reader, rebuild: options.rebuild,
+        context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held,
       }));
     }
   } finally {
@@ -998,6 +1002,8 @@ interface Drive<C extends Channel> {
   secrets: SecretStore;
   reader: () => ReaderContext;
   rebuild: (() => Adapter<Channel>) | undefined;
+  /** Every key the watched store currently holds. */
+  held: ReadonlySet<string>;
   channel: Channel;
   softphone: boolean;
   snapshot: unknown;
@@ -1095,6 +1101,18 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     } finally {
       try { await second?.disconnect(); } catch (error) { refuse("drive.reload.rejected", "drive.reload", `the second adapter's disconnect threw: ${String(error)}`); }
       try { await session?.close(); } catch (error) { refuse("drive.reload.rejected", "drive.reload", `the second adapter's session threw on close: ${String(error)}`); }
+    }
+  };
+
+  // A task's keys are gone with the task. A task-scoped key carries the task id, so the watched
+  // store says which keys were the task's; one still held after task-ended is a key about to be
+  // inherited by the next offer of the same id, since a platform retires an id minutes after closing it.
+  const storeReleased = async (): Promise<void> => {
+    await Promise.resolve(); await Promise.resolve();
+    const retained = [...drive.held].filter(key => key.includes(taskId));
+    if (retained.length > 0) {
+      refuse("drive.store.retained", "drive.store",
+        `${taskId} has ended and the login's store still holds ${retained.join(", ")}: a task's keys go with the task, or the next offer of the same id inherits them`);
     }
   };
 
@@ -1282,9 +1300,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (isRecord(dispositions) && dispositions.required === true && Array.isArray(dispositions.codes) && isRecord(dispositions.codes[0])) {
       command.disposition = (dispositions.codes[0] as Record<string, unknown>).id;
     }
-    if (await send(command) !== undefined) await ended();
+    if (await send(command) !== undefined && await ended() !== undefined) await storeReleased();
   } else if (latestTask().phase === "completing") {
-    await ended();
+    if (await ended() !== undefined) await storeReleased();
   }
   // The record kept by the provider has the leg the host reported, wherever the provider restated it.
   if (mutedLeg !== undefined && latestTask() !== mutedLeg.task) {
@@ -1381,6 +1399,19 @@ export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvel
   const found: ProtocolViolation[] = [];
   envelopes.forEach((envelope, index) => found.push(...stream.apply(envelope, `envelopes[${index}]`)));
   assertNoViolations(found, "The media follows the task");
+}
+
+/** The store as handed to the adapter, and the keys it holds at any moment, seen rather than reported. */
+function watchStore(store: LoginStore): { store: LoginStore; held: Set<string> } {
+  const held = new Set<string>();
+  return {
+    held,
+    store: {
+      get: key => store.get(key),
+      set: async (key, value) => { await store.set(key, value); held.add(key); },
+      delete: async key => { await store.delete(key); held.delete(key); },
+    },
+  };
 }
 
 /** A login store that lives in memory for the test: what most adapter tests hand `exerciseAdapter` as `context.store`. */
