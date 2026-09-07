@@ -15,6 +15,7 @@ import {
   type ConnectContext,
   type Host,
   type HostGuarantees,
+  type HostMute,
   type HostReport,
   type Manifest,
   type ProviderEvent,
@@ -26,6 +27,8 @@ import {
   validateEventEnvelope,
   validateHostGuarantees,
   validateHostReport,
+  validateHostMute,
+  validateHandlingReport,
   validateManifest,
   validateResult,
   validateSnapshot,
@@ -321,6 +324,8 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push({ rule: "context.host.audio.unexpected", path: "context.host.audio",
         message: adapter.manifest.channel === "voice" ? "a desk-phone login has no audio in the host to report" : `a ${adapter.manifest.channel} connection has no audio for the host to report` });
     }
+    // What the host's Mute does is stated where the host holds a microphone, and nowhere else.
+    violations.push(...validateHostMute(context.host.mute, softphone, "context.host.mute"));
     unsubscribeHost = context.host.subscribe(report => {
       violations.push(...validateHostReport(report, "context.host"));
     });
@@ -415,7 +420,7 @@ export async function exerciseAdapter<C extends Channel>(
       const localAudio = isRecord(first) && isRecord(first.audio) && isRecord(first.audio.input) && first.audio.input.status === "available"
         ? first.audio.input.localAudio as MediaStream : undefined;
       violations.push(...await driveOneCall({
-        connection: live, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
+        connection: live, manifest: adapter.manifest, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
         timeoutMs: options.driveTimeoutMs ?? 5000,
       }));
     }
@@ -947,6 +952,7 @@ export class TaskStream {
 
 interface Drive<C extends Channel> {
   connection: Connection<C>;
+  manifest: Manifest<C>;
   channel: Channel;
   softphone: boolean;
   snapshot: unknown;
@@ -1087,9 +1093,14 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   if (session !== undefined && typeof session.setMuted === "function" && typeof drive.connection.recordStep === "function") {
     const at = new Date().toISOString();
     const report = async (body: Record<string, unknown>): Promise<void> => {
+      // The drive holds its own report to the contract before it crosses, as a host must.
+      const leg = { taskId, step: "muted", at, mutedBy: "host", ...body };
+      const own = validateHandlingReport(leg, "drive.recordStep.report", drive.manifest);
+      found.push(...own);
+      if (own.length > 0) return;
       let answer: unknown;
       try {
-        answer = await drive.connection.recordStep!({ taskId, step: "muted", at, ...body } as never);
+        answer = await drive.connection.recordStep!(leg as never);
       } catch (error) {
         refuse("drive.recordStep.rejected", "drive.recordStep", `recordStep rejected rather than answered: ${String(error)}`);
         return;
@@ -1170,9 +1181,13 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     const history = latestTask().handlingHistory;
     if (isRecord(history) && Array.isArray(history.steps)) {
       const { at } = mutedLeg;
-      if (!history.steps.some(entry => isRecord(entry) && entry.step === "muted" && entry.at === at)) {
+      const leg = history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined;
+      if (leg === undefined) {
         refuse("drive.recordStep.history", "drive.recordStep",
           `the provider restated the task's record after the host reported a muted leg at ${at}, and the leg is not in it`);
+      } else if (leg.mutedBy !== "host") {
+        refuse("drive.recordStep.history", "drive.recordStep",
+          `the record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host, and the record keeps the host's word`);
       }
     }
   }
@@ -1258,9 +1273,12 @@ export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvel
   assertNoViolations(found, "The media follows the task");
 }
 
-/** A host that reports one thing and never changes: what most adapter tests hand `exerciseAdapter`. */
-export function stillHost(report: HostReport = { online: true }, guarantees: HostGuarantees = {}): Host {
-  return { guarantees, report: () => report, subscribe: () => () => undefined };
+/**
+ * A host that reports one thing and never changes: what most adapter tests hand `exerciseAdapter`.
+ * A softphone host states what its Mute does; a desk-phone or conversation host has no microphone and states nothing.
+ */
+export function stillHost(report: HostReport = { online: true }, guarantees: HostGuarantees = {}, mute?: HostMute): Host {
+  return { guarantees, ...(mute === undefined ? {} : { mute }), report: () => report, subscribe: () => () => undefined };
 }
 
 /** One provider as the host sees it when freezing the providers a break attempt asks. */

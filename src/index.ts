@@ -365,9 +365,27 @@ export interface AuthenticationSession {
  * does not decide for the adapter what a missing one means. The adapter does what its platform
  * needs: go not-ready, refuse calls, or carry on because audio lands elsewhere.
  */
+/**
+ * Who silenced a device that is present and permitted: the host, by its own Mute, or the station --
+ * a slider on the headset, the operating system -- which the host observes and, on a browser,
+ * cannot touch. The same word on a `muted` handling leg says whose the silence was.
+ */
+export type MutedBy = "host" | "station";
+export const MUTED_BY = ["host", "station"] as const satisfies readonly MutedBy[];
+
+/**
+ * What pressing Mute does on this host. `stream`: the host stops the audio it sends, and the
+ * microphone keeps capturing. `station`: the host mutes the microphone itself at the operating
+ * system, which every application on the machine then shares. A browser can only do the first;
+ * a native host says which it does. Stated by the host on a softphone login, never inferred
+ * from what kind of application it is.
+ */
+export type HostMute = "stream" | "station";
+export const HOST_MUTES = ["stream", "station"] as const satisfies readonly HostMute[];
+
 export type HostAudioInput =
-  /** Omni has the microphone. `flowing` is false while the hardware or OS says no audio moves through it. */
-  | { status: "available"; localAudio: MediaStream; flowing: boolean }
+  /** Omni has the microphone. `flowing` is false while no audio moves through it, and then `mutedBy` says who stopped it. */
+  | ({ status: "available"; localAudio: MediaStream } & ({ flowing: true; mutedBy?: never } | { flowing: false; mutedBy: MutedBy }))
   /** Omni does not, and `reason` says which fix the agent needs; `failure` is the words Omni showed them. */
   | { status: "unavailable"; reason: HostAudioUnavailableReason; failure: ProtocolFailure };
 
@@ -382,7 +400,8 @@ export type HostAudioUnavailableReason = "no-device" | "denied" | "not-asked" | 
 export type HostOutputUnavailableReason = "no-device" | "lost";
 
 export type HostAudioOutput =
-  | { status: "available" }
+  /** Omni has a speaker. `flowing` is stated only where the host can know it: false while the output is silenced, and then `mutedBy` says who did it. */
+  | ({ status: "available" } & ({ flowing?: true; mutedBy?: never } | { flowing: false; mutedBy: MutedBy }))
   | { status: "unavailable"; reason: HostOutputUnavailableReason; failure: ProtocolFailure };
 
 /**
@@ -414,17 +433,12 @@ export interface HostGuarantees {
   browserUrlVisibility?: true;
   /** A `consent` offer is accepted only by the person's own explicit act, never on their behalf. */
   personConsent?: true;
-  /**
-   * The host can detect a hardware or operating-system mute of the station's microphone and clear
-   * it, so `audio.input.flowing: false` is a condition the host resolves rather than one the agent
-   * is stuck with. A browser never makes this promise; a native host with the platform's audio
-   * APIs can.
-   */
-  stationMute?: true;
 }
 
 export interface Host {
   guarantees: HostGuarantees;
+  /** What pressing Mute does on this host. Stated on a softphone login, where the host holds the microphone; absent on a desk phone and off voice. */
+  mute?: HostMute;
   report(): HostReport;
   subscribe(listener: (report: HostReport) => void): Unsubscribe;
 }
@@ -704,6 +718,8 @@ export interface TaskHandlingStep {
    * provider could not attribute it, which is a different claim and a legitimate one.
    */
   by?: UserId;
+  /** On a `muted` step, and only there: whose the silence was, as the host reported it. */
+  mutedBy?: MutedBy;
 }
 
 /**
@@ -1289,7 +1305,11 @@ export type SetPreferenceRequest =
  * legs it performs, so `seconds` may say how long so far at any time; the end is stated, never
  * inferred from a number's presence. What the adapter forwards upstream, and how often, is its own.
  */
-export type HandlingReport = { taskId: TaskId; step: HandlingStep; at: IsoTimestamp } & (
+export type HandlingReport = { taskId: TaskId; at: IsoTimestamp } & (
+  /** A muted leg says whose the silence was: the host's own Mute, or the station's slider or system. */
+  | { step: "muted"; mutedBy: MutedBy }
+  | { step: Exclude<HandlingStep, "muted">; mutedBy?: never }
+) & (
   | { ended: true; seconds: DurationSeconds }
   | { ended?: never; seconds?: DurationSeconds }
 );

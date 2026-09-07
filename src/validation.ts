@@ -34,6 +34,8 @@ import {
   type TaskMediaState,
   type TransportRecovery,
   type HostGuarantees,
+  type HostMute,
+  type MutedBy,
   type CredentialField,
   type HostOutputUnavailableReason,
   type Channel,
@@ -865,6 +867,11 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
       into.require(isDurationSeconds(entry.seconds) && (entry.seconds as number) > 0,
         "task.handlingHistory.seconds", `${at}.seconds`,
         "seconds must be a positive whole number; omit it while the step is still running");
+    }
+    // A muted entry carries whose the silence was, as the host reported it; no other step has it.
+    if (entry.step === "muted") into.oneOf(entry.mutedBy, MUTED_BY, "task.handlingHistory.mutedBy", `${at}.mutedBy`);
+    else if ((HANDLING_STEPS as readonly unknown[]).includes(entry.step)) {
+      into.require(entry.mutedBy === undefined, "task.handlingHistory.mutedBy.unexpected", `${at}.mutedBy`, "only a muted step says who silenced the microphone");
     }
     if (entry.by !== undefined) {
       into.require(isUserId(entry.by), "task.handlingHistory.by", `${at}.by`,
@@ -1811,7 +1818,24 @@ function validateUnavailable(value: Record<string, unknown>, rule: string, path:
  * check belongs to the host's own tests and to the harness, which validates whatever host a test
  * hands the adapter.
  */
-const HOST_GUARANTEES = membersOf<keyof HostGuarantees>({ browserUrlVisibility: true, personConsent: true, stationMute: true });
+const HOST_GUARANTEES = membersOf<keyof HostGuarantees>({ browserUrlVisibility: true, personConsent: true });
+const MUTED_BY = membersOf<MutedBy>({ host: true, station: true });
+const HOST_MUTES = membersOf<HostMute>({ stream: true, station: true });
+
+/**
+ * What pressing Mute does on this host, stated on a softphone login and nowhere else: on a desk
+ * phone the microphone is the phone's, and off voice there is none. Neither the value nor its
+ * absence is inferred from what kind of application the host is.
+ */
+export function validateHostMute(mute: unknown, softphone: boolean, path = "host.mute"): ProtocolViolation[] {
+  const into = new Collector();
+  if (mute === undefined) {
+    into.require(!softphone, "host.mute.required", path, "a softphone login's host states what its Mute does: stream or station");
+  } else if (into.require(softphone, "host.mute.unexpected", path, "only a softphone login's host holds a microphone to mute; a desk phone's is the phone's, and a conversation has none")) {
+    into.oneOf(mute, HOST_MUTES, "host.mute", path);
+  }
+  return into.violations;
+}
 
 /**
  * What a host promises. Presence is the guarantee, so a key declared `false` is refused: a
@@ -1847,6 +1871,11 @@ export function validateHandlingReport(report: unknown, path = "handlingReport",
   into.require(isTaskId(report.taskId), "handlingReport.taskId", `${path}.taskId`, "a report names the task");
   into.oneOf(report.step, HANDLING_STEPS, "handlingReport.step", `${path}.step`);
   into.timestamp(report.at, "handlingReport.at", `${path}.at`);
+  // A muted leg says whose the silence was; no other leg has anyone to name for it.
+  if (report.step === "muted") into.oneOf(report.mutedBy, MUTED_BY, "handlingReport.mutedBy", `${path}.mutedBy`);
+  else if ((HANDLING_STEPS as readonly unknown[]).includes(report.step)) {
+    into.require(report.mutedBy === undefined, "handlingReport.mutedBy.unexpected", `${path}.mutedBy`, "only a muted leg says who silenced the microphone");
+  }
   if (report.seconds !== undefined) {
     into.require(isDurationSeconds(report.seconds) && (report.seconds as number) > 0, "handlingReport.seconds", `${path}.seconds`,
       "seconds must be a positive whole number; omit it rather than report nought");
@@ -1863,6 +1892,16 @@ export function validateHandlingReport(report: unknown, path = "handlingReport",
       "this provider takes begin and end only; a running report was never asked for");
   }
   return into.violations;
+}
+
+/** A silenced device says who silenced it; one that flows, or whose flow the host cannot know, says nothing. */
+function validateMutedBy(device: Record<string, unknown>, rule: string, path: string, into: Collector): void {
+  if (device.flowing === false) {
+    into.oneOf(device.mutedBy, MUTED_BY, `${rule}.mutedBy`, `${path}.mutedBy`);
+  } else {
+    into.require(device.mutedBy === undefined, `${rule}.mutedBy.unexpected`, `${path}.mutedBy`,
+      "mutedBy says who silenced a device that is not flowing; a flowing one names nobody");
+  }
 }
 
 export function validateHostReport(report: unknown, path = "host"): ProtocolViolation[] {
@@ -1886,6 +1925,7 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
       "a ready input carries the captured microphone");
     into.require(typeof input.flowing === "boolean", "host.audio.input.flowing", `${at}.flowing`,
       "a ready input says whether audio is flowing through it");
+    validateMutedBy(input, "host.audio.input", at, into);
     into.require(input.failure === undefined, "host.audio.input.failure.unexpected", `${at}.failure`, "a ready input carries no failure");
     into.require(input.reason === undefined, "host.audio.input.reason.unexpected", `${at}.reason`, "a ready input has no reason to be unavailable");
   } else if (input.status === "unavailable") {
@@ -1895,6 +1935,8 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
       "an unavailable input carries no microphone");
     into.require(input.flowing === undefined, "host.audio.input.flowing.unexpected", `${at}.flowing`,
       "an unavailable input has nothing to flow");
+    into.require(input.mutedBy === undefined, "host.audio.input.mutedBy.unexpected", `${at}.mutedBy`,
+      "an unavailable input was not silenced; it is absent");
   } else {
     into.add("host.audio.input.status", `${at}.status`, `an input is available or unavailable, not ${String(input.status)}`);
   }
@@ -1903,11 +1945,21 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
   if (!isPlainObject(output)) {
     into.add("host.audio.output.shape", out, "audio carries its output");
   } else if (output.status === "available") {
+    // Whether the speaker is silenced is stated only where the host can know it: a browser mostly cannot, and omits it.
+    if (output.flowing !== undefined) {
+      into.require(typeof output.flowing === "boolean", "host.audio.output.flowing", `${out}.flowing`,
+        "flowing says whether audio reaches the speaker, when the host can know");
+    }
+    validateMutedBy(output, "host.audio.output", out, into);
     into.require(output.failure === undefined, "host.audio.output.failure.unexpected", `${out}.failure`, "a ready output carries no failure");
     into.require(output.reason === undefined, "host.audio.output.reason.unexpected", `${out}.reason`, "a ready output has no reason to be unavailable");
   } else if (output.status === "unavailable") {
     into.oneOf(output.reason, HOST_OUTPUT_REASONS, "host.audio.output.reason", `${out}.reason`);
     validateUnavailable(output, "host.audio.output", out, into);
+    into.require(output.flowing === undefined, "host.audio.output.flowing.unexpected", `${out}.flowing`,
+      "an unavailable output has nothing to flow");
+    into.require(output.mutedBy === undefined, "host.audio.output.mutedBy.unexpected", `${out}.mutedBy`,
+      "an unavailable output was not silenced; it is absent");
   } else {
     into.add("host.audio.output.status", `${out}.status`, `an output is available or unavailable, not ${String(output.status)}`);
   }
