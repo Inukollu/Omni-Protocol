@@ -4540,10 +4540,13 @@ violation (`drive.command.failed`), and an event the provider owes and never sen
 the drive mutes it for one second and reports the leg through `recordStep`, begun and then ended,
 expecting each report `recorded` (`drive.recordStep.failed`, `.rejected`); and where the provider
 restates the task's record afterwards, the leg is in it or the hole is named
-(`drive.recordStep.history`). Once the call has ended and the task is
-`completing`, the drive sends `hold` once more, past the validator that would hold it back, and
-expects `failed`: the adapter is the second gate on a control on the contact, and one that applies
-it on a call that is over is named (`drive.command.handling`). A task the agent completes is
+(`drive.recordStep.history`). Outside the handling phases with `hold` still declared -- in
+`confirmed`, where the provider publishes it, and in `completing` once the call has ended -- the
+drive sends `hold` past the validator that would hold it back, and expects `failed`: the adapter
+is the second gate on a control on the contact, and one that applies it where there is nothing to
+hold is named (`drive.command.handling`). The drive cannot put a task into a phase the provider
+never publishes, so a provider that goes straight from `pending` to `in-progress` is checked in
+`completing` alone. A task the agent completes is
 completed from wherever it stands once the drive has nothing left to do on it -- from `completing`
 after an `end-call`, or from `in-progress` where there is no call to end, which is every chat and
 email and a voice task offering no `endCall` -- so a conversation reaches its end as a call does.
