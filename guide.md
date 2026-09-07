@@ -2465,8 +2465,13 @@ Steps are `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conf
 **The record is one entry per occurrence, oldest first.** Each hold is its own `held` entry — `at`
 when it began, `seconds` once it ended and omitted while it runs — and a second hold is a second
 entry after the first, never a revision of it. The same goes for every step: two mutes are two
-`muted` entries. Order is enforced: an entry earlier than the one before it is refused
-(`task.handlingHistory.order`). **Handle time is anchored, not restarted.** It runs from the
+`muted` entries, and a call that joined two queues -- a menu's, then this one -- has two `queued`
+entries, one per join. Order is enforced: an entry earlier than the one before it is refused
+(`task.handlingHistory.order`). **Intervals between steps are the host's to subtract**, never a
+total the provider adds: *time to offer*, from the call's arrival to the agent's screen lighting
+up, is the `offered` entry's `at` minus the last `queued` entry's, and the ring is outside it.
+`queueSeconds` keeps the industry's meaning -- the whole wait until somebody answered -- and is not
+that interval. **Handle time is anchored, not restarted.** It runs from the
 `answered` step's `at` — from the task's first `in-progress` where the provider reports no
 history — until the task's media ends, and a hold neither pauses nor resets it: the hold's own
 duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is
@@ -4540,10 +4545,13 @@ violation (`drive.command.failed`), and an event the provider owes and never sen
 the drive mutes it for one second and reports the leg through `recordStep`, begun and then ended,
 expecting each report `recorded` (`drive.recordStep.failed`, `.rejected`); and where the provider
 restates the task's record afterwards, the leg is in it or the hole is named
-(`drive.recordStep.history`). Once the call has ended and the task is
-`completing`, the drive sends `hold` once more, past the validator that would hold it back, and
-expects `failed`: the adapter is the second gate on a control on the contact, and one that applies
-it on a call that is over is named (`drive.command.handling`). A task the agent completes is
+(`drive.recordStep.history`). Outside the handling phases with `hold` still declared -- in
+`confirmed`, where the provider publishes it, and in `completing` once the call has ended -- the
+drive sends `hold` past the validator that would hold it back, and expects `failed`: the adapter
+is the second gate on a control on the contact, and one that applies it where there is nothing to
+hold is named (`drive.command.handling`). The drive cannot put a task into a phase the provider
+never publishes, so a provider that goes straight from `pending` to `in-progress` is checked in
+`completing` alone. A task the agent completes is
 completed from wherever it stands once the drive has nothing left to do on it -- from `completing`
 after an `end-call`, or from `in-progress` where there is no call to end, which is every chat and
 email and a voice task offering no `endCall` -- so a conversation reaches its end as a call does.

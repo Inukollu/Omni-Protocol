@@ -1067,7 +1067,24 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (await send({ type: "call", dialId }, dialId) === undefined) return found;
     if (await updated(t => t.phase === "in-progress" || t.phase === "completing", "the task leaving preview after Call") === undefined) return found;
   }
+  // The other direction of step 4, wherever the task stands outside the handling phases with the
+  // control still declared: a host holds it back (command.phase.handling), and an adapter that
+  // receives it anyway must refuse it -- so the drive sends it past the validator and expects failed.
+  const holdRefusedOutsideHandling = async (): Promise<void> => {
+    const phase = String(latestTask().phase);
+    let answer: unknown;
+    try {
+      answer = await drive.connection.execute({ taskId, command: { type: "hold" } } as never);
+    } catch (error) {
+      refuse("drive.command.rejected", "drive.command.hold", `execute rejected rather than answered: ${String(error)}`);
+    }
+    if (isRecord(answer) && answer.status !== "failed") {
+      refuse("drive.command.handling", "drive.command.hold",
+        `the provider applied hold on a ${phase} task: a control on the contact belongs to in-progress or paused, and the adapter is the second gate`);
+    }
+  };
   if (latestTask().phase === "confirmed") {
+    if (offers("hold")) await holdRefusedOutsideHandling();
     if (await updated(t => t.phase !== "confirmed", "the task leaving confirmed") === undefined) return found;
   }
   // 3. On a softphone, the audio arrives and the host opens it.
@@ -1143,19 +1160,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       }, cursor);
       if (mediaEnded !== undefined) cursor = mediaEnded.at;
       if (await updated(t => t.phase === "completing", "the task completing after its media ended") !== undefined && offers("hold")) {
-        // The other direction of step 4: the same control, still declared, on a call that is over.
-        // A host holds it back (command.phase.handling), and an adapter that receives it anyway
-        // must refuse it -- so the drive sends it past the validator and expects failed.
-        let answer: unknown;
-        try {
-          answer = await drive.connection.execute({ taskId, command: { type: "hold" } } as never);
-        } catch (error) {
-          refuse("drive.command.rejected", "drive.command.hold", `execute rejected rather than answered: ${String(error)}`);
-        }
-        if (isRecord(answer) && answer.status !== "failed") {
-          refuse("drive.command.handling", "drive.command.hold",
-            `the provider applied hold on a completing task: a control on the contact belongs to in-progress or paused, and the adapter is the second gate`);
-        }
+        await holdRefusedOutsideHandling();
       }
     }
   }

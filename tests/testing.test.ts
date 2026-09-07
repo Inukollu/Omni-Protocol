@@ -959,7 +959,7 @@ describe("exerciseAdapter", () => {
 describe("exerciseAdapter drives one call", () => {
   const at = "2026-08-21T09:00:00Z";
   type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
-  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute" }
+  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute" }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   const driveable = (script: Script = {}) => {
     let listener: Listener | undefined;
@@ -990,6 +990,8 @@ describe("exerciseAdapter drives one call", () => {
               // The phase moves first and the audio follows on its own event, which is the only
               // order the stream allows: an update never moves media, and media never arrives on
               // a task whose work has not begun.
+              // A provider that acknowledges before it starts says so: confirmed first, then work begins.
+              if (script.confirmFirst) { emit({ type: "task-updated", task: t({ phase: "confirmed" }) }); return { status: "applied" }; }
               emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
               if (!script.skipMediaStart) emit({ type: "task-media-started", taskId: "call-77" });
               return { status: "applied" };
@@ -998,6 +1000,13 @@ describe("exerciseAdapter drives one call", () => {
               // A conforming adapter refuses a control on a call that is over; one that applies it is the second gate failing.
               if (phase === "completing") {
                 return script.holdAfterEnd ? { status: "applied" } : { status: "failed", failure: { code: "provider.call-ended", message: "Nothing to hold", retryable: false } };
+              }
+              if (phase === "confirmed") {
+                // Work begins once the probe has been answered: the drive is still in confirmed when it sends.
+                const answer = script.holdBeforeStart ? { status: "applied" as const } : { status: "failed" as const, failure: { code: "provider.not-started", message: "Nothing to hold yet", retryable: false } };
+                emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
+                emit({ type: "task-media-started", taskId: "call-77" });
+                return answer;
               }
               emit({ type: "task-updated", task: t({ phase: "paused", media: "started", onCall: room }) }); return { status: "applied" };
             case "resume": emit({ type: "task-updated", task: t({ phase: "in-progress", media: "started", onCall: room }) }); return { status: "applied" };
@@ -1060,6 +1069,16 @@ describe("exerciseAdapter drives one call", () => {
   it("sends hold once more after the call has ended, past the validator, and names an adapter that applies it", async () => {
     // The conforming fixture refuses it and the run is clean (the first test); this one applies it.
     expect((await drive(driveable({ holdAfterEnd: true }))).violations.map(v => v.rule)).toEqual(["drive.command.handling"]);
+  });
+
+  it("sends hold in confirmed too, where the provider publishes it, and names an adapter that applies it there", async () => {
+    // The drive sees the fixture's confirmed while the task is in it, so the pass through that phase is real, not raced.
+    const confirming = driveable({ confirmFirst: true });
+    const clean = await exerciseAdapter(confirming, context, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+    expect(clean.violations).toEqual([]);
+    expect((await drive(driveable({ confirmFirst: true, holdBeforeStart: true }))).violations.map(v => v.rule)).toEqual(["drive.command.handling"]);
+    // The control: without confirmed on the way, the misbehaviour has nowhere to show.
+    expect((await drive(driveable({ holdBeforeStart: true }))).violations).toEqual([]);
   });
 
   it("completes a task from where it stands when there is no call to end, and says what it could not reach", async () => {
