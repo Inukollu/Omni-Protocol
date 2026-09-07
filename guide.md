@@ -4599,7 +4599,11 @@ adapter is held to what the first was: the same provider (`drive.reload.manifest
 stands as any snapshot must, and a record that lost none of the entries the first had published --
 a record once read is not unread across a reload either. A reconnect on the same adapter object
 would prove nothing, since an in-process adapter's memory survives it; only a second object
-separates kept-in-the-store from never-lost. And once the task has ended, the store the drive
+separates kept-in-the-store from never-lost. The second adapter opens its session from the same
+`secrets`, so the reload is a restore before it is anything else: an adapter that holds a session
+has already put what would rebuild it into the secrets store, from the moment it was handed one,
+not only when a flow completes -- the session is the adapter's, the store is the host's, and a
+host reload is exactly when no flow will run. And once the task has ended, the store the drive
 handed the adapter holds no key carrying the task's id (`drive.store.retained`): a task's keys go
 with the task, or the next offer of the same id inherits them. Outside the
 handling phases with `hold` still declared -- in
