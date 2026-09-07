@@ -1479,6 +1479,49 @@ describe("validateTaskCommand", () => {
     expect(cmd({ type: "hold" }, task({ capabilities: {} }))).toEqual(["command.capability.hold"]);
   });
 
+  it("holds a control on the contact to a contact being handled: in-progress or paused", () => {
+    // Every control that acts on the call or the conversation, on a task that offers it, in every phase.
+    const consulting = { onCall: [{ role: "party", since }, { role: "consulted", destinationId: "tier2", stage: "joined", since }] };
+    const controls: [unknown, Record<string, unknown>][] = [
+      [{ type: "mute", muted: true }, {}],
+      [{ type: "hold" }, {}],
+      [{ type: "resume" }, {}],
+      [{ type: "end-call" }, {}],
+      [{ type: "recording", action: "start" }, {}],
+      [{ type: "transfer", action: "warm", dialId: "dial-2", destinationId: "tier2" }, {}],
+      [{ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" }, { capabilities: { coldTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } } }],
+      [{ type: "transfer", action: "complete" }, consulting],
+      [{ type: "transfer", action: "cancel" }, consulting],
+      [{ type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" }, {}],
+      [{ type: "conference", action: "remove", party: true }, { onCall: [{ role: "party", since }, { role: "conferenced", destinationId: "tier2", stage: "joined", since }] }],
+      [{ type: "lead-assist", action: "request", note: "Angry customer" }, { capabilities: { leadAssist: true } }],
+      [{ type: "lead-assist", action: "cancel" }, { capabilities: { leadAssist: true }, leadAssist: { stage: "requested", since } }],
+      [{ type: "lead-assist", action: "take-over" }, { assisting: { memberId: "a-17", note: "Angry customer", since } }],
+      [{ type: "lead-assist", action: "leave" }, { assisting: { memberId: "a-17", note: "Angry customer", since } }],
+    ];
+    for (const [command, state] of controls) {
+      const on = (phase: string) => task({ ...voice, ...state, phase, ...(phase === "completing" ? { onCall: [] } : {}) });
+      expect(cmd(command, on("in-progress")), `${JSON.stringify(command)} in-progress`).toEqual([]);
+      expect(cmd(command, on("paused")), `${JSON.stringify(command)} paused`).toEqual([]);
+      // Once the call is over, what a warm step put on it is gone too: the phase names the gap first.
+      for (const phase of ["pending", "confirmed", "preview", "completing"]) {
+        expect(cmd(command, on(phase)), `${JSON.stringify(command)} ${phase}`).toContain("command.phase.handling");
+      }
+    }
+    // A wrap-up that still offers a transfer offers it for nothing: the capability stands, the phase refuses.
+    expect(cmd({ type: "transfer", action: "warm", dialId: "dial-2", destinationId: "tier2" }, task({ ...voice, phase: "completing" }))).toEqual(["command.phase.handling"]);
+    // The same word on a conversation: a paused chat resumes, a completing one has nothing to pause.
+    const chat = (phase: string) => task({ channel: "chat", capabilities: { hold: true }, phase });
+    expect(cmd({ type: "pause" }, chat("in-progress"))).toEqual([]);
+    expect(cmd({ type: "resume" }, chat("paused"))).toEqual([]);
+    expect(cmd({ type: "pause" }, chat("completing"))).toEqual(["command.phase.handling"]);
+    expect(cmd({ type: "pause" }, chat("pending"))).toEqual(["command.phase.handling"]);
+    // The phases with their own commands are untouched by it.
+    expect(cmd({ type: "answer" }, task({ phase: "pending" }))).toEqual([]);
+    expect(cmd({ type: "connect-back", dialId: "dial-1" }, task({ phase: "completing", capabilities: { connectBack: true } }))).toEqual([]);
+    expect(cmd({ type: "complete", disposition: "resolved" }, task({ phase: "completing" }))).toEqual([]);
+  });
+
   it("holds a command to the task's channel, capabilities, phase and state", () => {
     expect(cmd({ type: "end-call" })).toEqual([]);
     expect(cmd({ type: "end-call" }, task({ capabilities: { hold: true } }))).toEqual(["command.capability.endCall"]);
