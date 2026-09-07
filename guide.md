@@ -4594,9 +4594,12 @@ restates the task's record afterwards, the leg is in it or the hole is named
 does, the drive then connects a second adapter for the same login with the same context and the
 same `store`, and expects its snapshot to carry the task with that leg and the host's word: a
 platform that holds the record hands it back, and an adapter that composed the record in memory
-has nothing and is named (`drive.reload.snapshot`, `drive.reload.history`, `.rejected`). A
-reconnect on the same adapter object would prove nothing, since an in-process adapter's memory
-survives it; only a second object separates kept-in-the-store from never-lost. Outside the
+has nothing and is named (`drive.reload.snapshot`, `drive.reload.history`, `.rejected`). The second
+adapter is held to what the first was: the same provider (`drive.reload.manifest`), a snapshot that
+stands as any snapshot must, and a record that lost none of the entries the first had published --
+a record once read is not unread across a reload either. A reconnect on the same adapter object
+would prove nothing, since an in-process adapter's memory survives it; only a second object
+separates kept-in-the-store from never-lost. Outside the
 handling phases with `hold` still declared -- in
 `confirmed`, where the provider publishes it, and in `completing` once the call has ended -- the
 drive sends `hold` past the validator that would hold it back, and expects `failed`: the adapter
