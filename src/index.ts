@@ -229,6 +229,18 @@ export interface SecretStore {
   delete(key: string): Promise<void>;
 }
 
+/**
+ * A small store for one login's operational state -- what an adapter holds about open work that
+ * its platform cannot hold for it, such as the handling legs a host reported. Kept by the host for
+ * the life of the login, across a reload of the host, and cleared at sign-out. Never for anything
+ * sensitive: that is `SecretStore`, whose contract is that a host may clear it aggressively.
+ */
+export interface LoginStore {
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
 export interface AuthenticationContext {
   protocolVersion: number;
   /** Omni's identity for this login. The same value arrives later as `ConnectContext.loginId`. */
@@ -443,7 +455,7 @@ export interface Host {
   subscribe(listener: (report: HostReport) => void): Unsubscribe;
 }
 
-export interface ConnectContext {
+export type ConnectContext = {
   protocolVersion: number;
   /** The session that authenticated this connection. */
   loginId: string;
@@ -455,16 +467,27 @@ export interface ConnectContext {
    * identity; a roaming agent corrects it by signing in.
    */
   timeZone: TimeZone;
-  /** The same value passed as `AuthenticationContext.phone`: how this login hears its calls. */
+  /** Where the adapter keeps this login's operational state across a reload of the host. */
+  store: LoginStore;
+  /** The same value passed as `AuthenticationContext.phone`: how this login hears its calls. Narrowed by the arms below. */
   phone?: Phone;
   /**
    * The host's report of the agent's station, to consult before declaring the agent ready to the
-   * platform and whenever it changes. Omni reports; the adapter decides.
+   * platform and whenever it changes. Omni reports; the adapter decides. What it states about its
+   * Mute is tied to the phone by the arms below.
    */
   host: Host;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
-}
+} & (
+  /**
+   * On a softphone the host holds the microphone and states what its Mute does; on a desk phone,
+   * or off voice, it holds none and states nothing. The arms make the omission a compile error
+   * where a live seat would otherwise be the first to find it.
+   */
+  | { phone: "softphone"; host: { mute: HostMute } }
+  | { phone?: "deskPhone"; host: { mute?: never } }
+);
 
 export type TransportStatus = "connecting" | "active" | "error";
 

@@ -305,16 +305,26 @@ type Host = {
   subscribe(listener: (report: HostReport) => void): Unsubscribe;
 };
 
+type LoginStore = {
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+};
+
 type ConnectContext = {
   protocolVersion: number;
   loginId: string;
   autoAcceptTasks?: boolean;
   timeZone: TimeZone;
+  store: LoginStore;
   phone?: Phone;
   host: Host;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
-};
+} & (
+  | { phone: "softphone"; host: { mute: HostMute } }
+  | { phone?: "deskPhone"; host: { mute?: never } }
+);
 
 type TransportStatus = "connecting" | "active" | "error";
 
@@ -1388,6 +1398,16 @@ replaces its local provider view; it does not overwrite the provider.
 Every member of a closed set — break kinds, handling steps, destination kinds — must have a
 normative definition; matching names alone do not establish shared meaning.
 
+### 10. Order on the wire is display order
+
+A list the provider publishes — a destination directory, disposition codes, a task's custom
+controls, its browsers — is in the order the provider wants it shown, and a host keeps that order.
+A reader will find meaning in position unless something says there is none, so the provider
+decides: where it has an intention, an administrator's sequence, it lists in that order; where it
+has none, it orders by the label, so the order is visibly arbitrary and does not move under the
+reader. A directory that reorders itself as colleagues become free is a list lying about what it
+means. A record's steps are the exception with a stated order of their own, oldest first.
+
 ## Provider adapter requirements
 
 ### 1. One adapter is one provider
@@ -1925,7 +1945,8 @@ Creates one live provider connection for the signed-in agent.
 | `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
 | `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login. Treated as `true` when omitted. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
-| `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. |
+| `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's host states what its Mute does, and a desk-phone or conversation login's host cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the host's**. |
+| `store` | The login's operational store, kept by the host for the life of the login, across a reload of the host, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the handling legs a host reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store a host may clear aggressively. The harness requires it of every connection (`store.shape`, `store.get`, `.set`, `.delete`). |
 | `host` | The host's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The host reports, the adapter decides**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -2471,7 +2492,24 @@ entries, one per join. Order is enforced: an entry earlier than the one before i
 total the provider adds: *time to offer*, from the call's arrival to the agent's screen lighting
 up, is the `offered` entry's `at` minus the last `queued` entry's, and the ring is outside it.
 `queueSeconds` keeps the industry's meaning -- the whole wait until somebody answered -- and is not
-that interval. **Handle time is anchored, not restarted.** It runs from the
+that interval.
+
+**A record once read is not unread.** Every restatement of a task's record -- on `task-updated`,
+on a resync snapshot -- carries every entry the host has already read, by step and instant, and
+may add to them; it never has fewer, and never drops the record while the task is open. A fact
+stated to the host and then withdrawn without an event is a record contradicting itself, exactly
+as a task that lost the terms it had read would be, and the stream refuses it the same way
+(`stream.taskUpdated.handlingHistory`, `stream.snapshot.handlingHistory`). A provider whose
+platform cannot hold a leg the host reported keeps it in the login's `store` for the life of the
+task, so a reload of the host restates the same record; the entry is keyed by `step` and `at`, so
+a running hold restated with its final `seconds` is the same entry.
+
+**The record is ordered by the instants stated in it, whoever stamped them.** The host stamps the
+legs it performs from the same clock it reports everything else with, and the provider writes a
+host leg into the record with the host's `at`, in its place among the others by that instant, and
+answers `recorded`: it never refuses a leg, or the task, for a timestamp it did not write. A host
+whose clock runs ahead of the platform's puts its own mute before the platform's answer, and the
+record shows what was stated; that is the host's clock to fix, not the provider's record to edit. **Handle time is anchored, not restarted.** It runs from the
 `answered` step's `at` — from the task's first `in-progress` where the provider reports no
 history — until the task's media ends, and a hold neither pauses nor resets it: the hold's own
 duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is
@@ -2748,7 +2786,8 @@ republish as any other permission that changed while the task was open. The move
 Terms once read stay read: a re-read that fails mid-task is not a new fact about the task, so the
 last statement stands and the failure is a `diagnostic`, and a task that was published under
 `queue` or `ungoverned` never returns to `undetermined`, on an update (`stream.taskUpdated.capabilitySource`)
-or on a resync snapshot (`stream.snapshot.capabilitySource`).
+or on a resync snapshot (`stream.snapshot.capabilitySource`); a record once read never loses an
+entry the same two ways (`stream.taskUpdated.handlingHistory`, `stream.snapshot.handlingHistory`).
 
 What the agent is told differs by source, and only one source tells them anything. Under `queue`
 and `ungoverned` the agent sees controls and nothing about where they came from: both are facts,
@@ -4036,14 +4075,19 @@ the endpoint and can clear an operating-system mute. A hardware slider is nobody
 heard, and the record exists so that period is not a hole. The host reports every such period
 through `recordStep` -- its own Mute, and a station mute it observed during a call -- with
 `mutedBy` saying whose the silence was, and the provider writes the word into the entry
-(`task.handlingHistory.mutedBy`). A supervisor reading the record then sees "the agent muted for
+(`task.handlingHistory.mutedBy`). The report names no agent because the host has exactly one, and
+the provider knows who that is: it attributes the leg to the login's agent in `by`, a fact it
+holds and not an inference, for a station mute as much as for the host's own. An unattributed
+`muted` entry is refused (`task.handlingHistory.muted.by`); a shared handset's unattributed hold
+is a different claim, and stands. A supervisor reading the record then sees "the agent muted for
 forty seconds" and "the agent's headset was muted for forty seconds" as the different things they
 are. See **The host records what it performs**.
 
 **Mute has a lifecycle, and none of it is inferred.** A call that starts while the station is
 already muted begins a `muted` leg the moment its media starts, `mutedBy: "station"`. Media that
 ends while any leg is open ends the leg at that instant, as every host-performed leg ends. And the
-host's own Mute starts off on every call: an agent is never muted by the call before.
+host's own Mute starts off on every call, which is every `task-media-started` -- a connect-back
+opens a second call on the same task with no offer -- so an agent is never muted by the call before.
 
 **Every press on a headset is the agent's own press**, performed the host's way, and the lights
 follow the host's state. The `personConsent` guarantee is honoured by a hook-switch press exactly
@@ -4469,6 +4513,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateHandlingReport(report, path?, manifest?)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateHostMute(mute, softphone)` | What the host's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the host holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
+| `validateLoginStore(store)` | The login's store the host hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
 | `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
 | `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a transfer's item, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.handling` for every control on the call or the conversation), and the state that has to stand: a consulted entry, a lead requested, somebody else still on the call (`command.conference.remove.alone`). A host validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |

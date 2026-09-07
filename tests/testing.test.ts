@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakApproval, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
-import { assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
+import { memoryStore, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const voiceTask = {
   id: "call-42",
@@ -299,6 +299,45 @@ describe("assertMediaFollowsTheTask", () => {
   });
 });
 
+describe("TaskStream holds a record once read", () => {
+  const at = "2026-08-21T09:00:00Z";
+  const rulesOf = (violations: { rule: string }[]) => violations.map(v => v.rule);
+  const answered = { step: "answered" as const, at: "2026-08-21T08:59:41Z", by: "a-17" };
+  const held = { step: "held" as const, at: "2026-08-21T09:02:10Z", seconds: 35, by: "a-17" };
+  const muted = { step: "muted" as const, at: "2026-08-21T09:04:00Z", seconds: 4, by: "a-17", mutedBy: "host" as const };
+  const withRecord = (steps: unknown[] | undefined): Task<"voice"> =>
+    ({ ...voiceTask, handlingHistory: steps === undefined ? undefined : { steps } }) as unknown as Task<"voice">;
+  const seeded = (steps: unknown[] | undefined) => { const s = new TaskStream(); s.seed({ tasks: [withRecord(steps)] }); return s; };
+  const update = (steps: unknown[] | undefined): ProviderEventEnvelope<"voice"> =>
+    ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: withRecord(steps) } });
+  const resync = (steps: unknown[] | undefined): ProviderEventEnvelope<"voice"> =>
+    ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [withRecord(steps)], taskCount: 1 } } });
+
+  it("lets a record grow or stand, and refuses its loss on an update", () => {
+    expect(rulesOf(seeded([answered]).apply(update([answered, held])))).toEqual([]);
+    expect(rulesOf(seeded([answered, held]).apply(update([answered, held])))).toEqual([]);
+    expect(rulesOf(seeded([answered, held]).apply(update([answered, held, muted])))).toEqual([]);
+    // A record that arrives where there was none is a record arriving.
+    expect(rulesOf(seeded(undefined).apply(update([answered])))).toEqual([]);
+    // Lost: an entry the host read is gone, or the whole record is.
+    expect(rulesOf(seeded([answered, held]).apply(update([answered])))).toEqual(["stream.taskUpdated.handlingHistory"]);
+    expect(rulesOf(seeded([answered, held]).apply(update(undefined)))).toEqual(["stream.taskUpdated.handlingHistory"]);
+    // An entry is known by its step and instant: the same hold restated with its final seconds is the same entry.
+    expect(rulesOf(seeded([answered, { ...held, seconds: undefined }]).apply(update([answered, held])))).toEqual([]);
+  });
+
+  it("holds a resync snapshot to the same rule", () => {
+    expect(rulesOf(seeded([answered, held]).apply(resync([answered])))).toEqual(["stream.snapshot.handlingHistory"]);
+    expect(rulesOf(seeded([answered, held]).apply(resync(undefined)))).toEqual(["stream.snapshot.handlingHistory"]);
+    // The control: a snapshot restating the record, or adding to it, is what a snapshot is for.
+    expect(rulesOf(seeded([answered, held]).apply(resync([answered, held])))).toEqual([]);
+    expect(rulesOf(seeded([answered]).apply(resync([answered, held, muted])))).toEqual([]);
+    // And a snapshot replaces what is known: after it, the shorter record is the one held.
+    const stream = seeded([answered]); stream.apply(resync([answered, held]));
+    expect(rulesOf(stream.apply(update([answered])))).toEqual(["stream.taskUpdated.handlingHistory"]);
+  });
+});
+
 describe("TaskStream holds terms once read", () => {
   const at = "2026-08-21T09:00:00Z";
   const rulesOf = (violations: { rule: string }[]) => violations.map(v => v.rule);
@@ -584,10 +623,8 @@ describe("browser isolation", () => {
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
 const speaking: HostReport = { online: true, audio: { input: { status: "available", localAudio: {} as MediaStream, flowing: true }, output: { status: "available" } } };
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", phone: "softphone" as const, host: stillHost(speaking, {}, "stream") };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", phone: "softphone" as const, host: stillHost(speaking, {}, "stream"), store: memoryStore() };
 /** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
-const hostFor = (manifest: unknown): Host =>
-  (manifest as { channel?: string } | undefined)?.channel === "voice" ? stillHost(speaking, {}, "stream") : stillHost({ online: true });
 
 const conformingManifest = {
   id: "acme-voice",
@@ -736,8 +773,10 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
 }
 
 /** The context a manifest's channel gets: a softphone on voice, no phone at all elsewhere. */
-const contextFor = (manifest: unknown) =>
-  ({ ...context, phone: (manifest as { channel?: string } | undefined)?.channel === "voice" ? "softphone" as const : undefined, host: hostFor(manifest) });
+const contextFor = (manifest: unknown): ConnectContext =>
+  (manifest as { channel?: string } | undefined)?.channel === "voice"
+    ? { ...context, phone: "softphone", host: stillHost(speaking, {}, "stream") }
+    : { ...context, phone: undefined, host: stillHost({ online: true }) };
 const rules = async (overrides: AdapterOverrides) =>
   (await exerciseAdapter(makeAdapter(overrides).adapter, contextFor(overrides.manifest ?? conformingManifest), { collectOnly: true })).violations.map(violation => violation.rule);
 
@@ -758,7 +797,7 @@ describe("exerciseAdapter", () => {
 
   it("holds the host's phone to the manifest, and lets a desk phone own no audio", async () => {
     const on = async (phone: unknown, overrides: AdapterOverrides = {}, host: Host = stillHost(speaking, {}, "stream")) =>
-      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, phone: phone as "softphone", host }, { collectOnly: true })).violations.map(v => v.rule);
+      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, phone: phone as "softphone", host } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule);
     // A softphone login: the host reports audio and the adapter opens media.
     expect(await on("softphone")).toEqual([]);
     expect(await on("softphone", { connection: { openMedia: undefined } })).toContain("connection.openMedia.required");
@@ -973,7 +1012,7 @@ describe("exerciseAdapter drives one call", () => {
     let muted: { at: string; seconds: number; mutedBy: "host" | "station" } | undefined;
     const history = () => script.restateHistory === undefined ? undefined
       : { steps: [{ step: "answered" as const, at }, ...(muted !== undefined && script.restateHistory !== "without-mute"
-          ? [{ step: "muted" as const, ...muted, mutedBy: script.restateHistory === "with-mute-by-station" ? "station" as const : muted.mutedBy }] : [])] };
+          ? [{ step: "muted" as const, ...muted, by: "1042", mutedBy: script.restateHistory === "with-mute-by-station" ? "station" as const : muted.mutedBy }] : [])] };
     const t = (over: Record<string, unknown>) => { if (typeof over.phase === "string") phase = over.phase; return { ...base, ...over } as unknown as Task<"voice">; };
     const emit = (event: ProviderEventEnvelope<"voice">["event"]) => listener?.({ id: id(), loginId: "session-1", occurredAt: at, event });
     const room = [{ role: "party" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
@@ -1291,10 +1330,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     let seen: HostGuarantees | undefined;
     const { adapter } = makeAdapter();
     const observing = { ...adapter, connect: async (connectContext: ConnectContext) => { seen = connectContext.host.guarantees; return adapter.connect(connectContext); } } as typeof adapter;
-    expect((await exerciseAdapter(observing, { ...context, host: { ...promising, report: () => speaking } }, { collectOnly: true })).violations.map(v => v.rule)).toEqual([]);
+    expect((await exerciseAdapter(observing, { ...context, host: { ...promising, report: () => speaking } } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual([]);
     expect(seen).toEqual({ personConsent: true });
     const lying: Host = { ...promising, guarantees: { personConsent: false } as unknown as HostGuarantees, report: () => speaking };
-    expect((await exerciseAdapter(makeAdapter().adapter, { ...context, host: lying }, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["host.guarantee.value"]);
+    expect((await exerciseAdapter(makeAdapter().adapter, { ...context, host: lying } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["host.guarantee.value"]);
   });
 
   it("validates the host report a test hands the adapter, first and later, and lets go of it", async () => {
@@ -1310,7 +1349,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       subscribe: listener => { if (later !== undefined) listener(later as HostReport); return unsubscribe; },
     });
     const run = async (h: Host) =>
-      (await exerciseAdapter(makeAdapter().adapter, { ...context, host: h }, { collectOnly: true })).violations.map(violation => violation.rule);
+      (await exerciseAdapter(makeAdapter().adapter, { ...context, host: h } as ConnectContext, { collectOnly: true })).violations.map(violation => violation.rule);
     const speaking = { online: true, audio: { input: { status: "available", localAudio: microphone, flowing: true }, output: { status: "available" } } };
     expect(await run(host(speaking))).toEqual([]);
     expect(await run(host({ online: true, audio: { input: { status: "unavailable", reason: "denied", failure }, output: { status: "available" } } }))).toEqual([]);
@@ -1320,11 +1359,28 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({})).toEqual([]);
   });
 
+  it("requires the login's store of every connection, and passes it through", async () => {
+    // A store the test hands the harness reaches the adapter; one missing or malformed is named before connect.
+    let seen: unknown;
+    const { adapter } = makeAdapter();
+    const observing = { ...adapter, connect: async (connectContext: ConnectContext) => { seen = connectContext.store; return adapter.connect(connectContext); } } as typeof adapter;
+    const store = memoryStore();
+    expect((await exerciseAdapter(observing, { ...context, store }, { collectOnly: true })).violations).toEqual([]);
+    expect(seen).toBe(store);
+    expect((await exerciseAdapter(makeAdapter().adapter, { ...context, store: undefined } as unknown as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["store.shape"]);
+    expect((await exerciseAdapter(makeAdapter().adapter, { ...context, store: { get: store.get, set: store.set } } as unknown as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["store.delete"]);
+    // The store keeps what it is given, by key, until it is deleted.
+    await store.set("legs:call-42", "[]");
+    expect(await store.get("legs:call-42")).toBe("[]");
+    await store.delete("legs:call-42");
+    expect(await store.get("legs:call-42")).toBeUndefined();
+  });
+
   it("gives a voice connection a host with audio and no other, and refuses an adapter that never asked", async () => {
     const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, phones: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
     const chatSnapshot = { ...minimalSnapshot, contacts: [] } satisfies Snapshot<"chat">;
     const run = async (overrides: AdapterOverrides, host: Host) =>
-      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...contextFor(overrides.manifest ?? conformingManifest), host }, { collectOnly: true })).violations.map(violation => violation.rule);
+      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...contextFor(overrides.manifest ?? conformingManifest), host } as ConnectContext, { collectOnly: true })).violations.map(violation => violation.rule);
     expect(await run({}, stillHost(speaking, {}, "stream"))).toEqual([]);
     expect(await run({}, stillHost({ online: true }, {}, "stream"))).toEqual(["context.host.audio.required"]);
     const chat = { manifest: chatManifest, snapshot: chatSnapshot, connection: { openMedia: undefined, dial: undefined } };
@@ -1338,7 +1394,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   it("releases the host subscription when connect itself throws", async () => {
     const unsubscribe = vi.fn(() => undefined);
     const host: Host = { guarantees: {}, mute: "stream", report: () => speaking, subscribe: () => unsubscribe };
-    await expect(exerciseAdapter(makeAdapter({ connect: async () => { throw new Error("no transport"); } }).adapter, { ...context, host }, { collectOnly: true })).rejects.toThrow(/no transport/);
+    await expect(exerciseAdapter(makeAdapter({ connect: async () => { throw new Error("no transport"); } }).adapter, { ...context, host } as ConnectContext, { collectOnly: true })).rejects.toThrow(/no transport/);
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
