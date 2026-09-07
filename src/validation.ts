@@ -160,7 +160,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 /** The capabilities each channel arm of `TaskCapabilities` declares, keyed off the type itself. */
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
-    browsers: true, dispositions: true, custom: true, decline: true, mute: true, hold: true,
+    browsers: true, dispositions: true, custom: true, decline: true, hold: true,
     endCall: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, decline: true, hold: true }),
@@ -684,7 +684,7 @@ const POLICY_SETTINGS = membersOf<TeamPolicySetting>({ on: true, off: true, pers
 const POLICY_KEYS = new Set<string>([
   ...TASK_CAPABILITIES.voice, ...TASK_CAPABILITIES.chat, ...TASK_CAPABILITIES.email, "dial",
 ].filter(name => name !== "browsers" && name !== "dispositions" && name !== "custom"));
-const PERSON_SETTABLE = /^(hold|mute|skill:.+)$/;
+const PERSON_SETTABLE = /^(hold|skill:.+)$/;
 const isLocked = (value: unknown): value is Record<string, unknown> => isPlainObject(value) && value.lockedBy !== undefined;
 
 /** The level ids in force: the manifest's, or the defaults when the caller holds no manifest. */
@@ -1120,8 +1120,14 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   }
   for (const [name, declared] of Object.entries(capabilities)) {
     if (declared === undefined) continue;
-    if (!into.require(allowed.includes(name), "task.capability.channel", `${path}.capabilities.${name}`,
-      `a ${context.channel} task may not declare ${name}`)) continue;
+    if (!allowed.includes(name)) {
+      // A name another channel owns is a channel error; one no channel owns is not a capability at
+      // all -- mute among them, since the microphone is the host's and no provider declares it.
+      const known = (Object.values(TASK_CAPABILITIES) as readonly (readonly string[])[]).some(names => names.includes(name));
+      into.add(known ? "task.capability.channel" : "task.capability.unknown", `${path}.capabilities.${name}`,
+        known ? `a ${context.channel} task may not declare ${name}` : `${name} is not a capability a provider declares on any channel`);
+      continue;
+    }
     // A control that dials needs the manifest to have said how a dial ends, or its outcome has no words.
     if ((DIALLING_CAPABILITIES as readonly string[]).includes(name) && context.dialOutcomesDeclared === false) {
       into.add("task.capability.dialOutcomes.required", `${path}.capabilities.${name}`,
@@ -1715,7 +1721,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
 // compiled against another version, and Omni shows the agent what it says.
 // ---------------------------------------------------------------------------
 
-const PREFERENCE_ID = /^(hold|mute|skill:.+)$/;
+const PREFERENCE_ID = /^(hold|skill:.+)$/;
 
 /** The choices left to the person, each with where it stands. */
 function validatePreferencesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
@@ -1731,7 +1737,7 @@ function validatePreferencesInto(value: unknown, path: string, into: Collector, 
       return;
     }
     if (into.require(typeof preference.id === "string" && PREFERENCE_ID.test(preference.id), "preference.id", `${at}.id`,
-      "a preference is hold, mute, or skill:<id>: nothing else is the person's to set")) {
+      "a preference is hold or skill:<id>: nothing else is the person's to set")) {
       if (seen.has(preference.id as string)) into.add("preference.unique", `${at}.id`, `duplicate preference: ${preference.id}`);
       seen.add(preference.id as string);
     }
@@ -1758,7 +1764,7 @@ function validateTeamPoliciesInto(value: unknown, path: string, into: Collector,
     }
     if (into.oneOf(policy.setting, POLICY_SETTINGS, "team.policy.setting", `${at}.setting`)) {
       into.require(policy.setting !== "person" || PERSON_SETTABLE.test(key), "team.policy.person", `${at}.setting`,
-        `${key} is the team's, on or off; only hold, mute and skills may be left to the person`);
+        `${key} is the team's, on or off; only hold and skills may be left to the person`);
     }
     validateResolvedInto(policy, "team.policy", at, levels, into);
     into.require(policy.setBy !== "person", "team.policy.setBy", `${at}.setBy`, "a team policy is not set by a person");
@@ -1945,9 +1951,6 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   }
   const dial = (rule: string) => into.filled(command.dialId, rule, `${path}.dialId`, "a command that dials carries the host's dialId");
   switch (type) {
-    case "mute":
-      into.require(typeof command.muted === "boolean", "command.mute.muted", `${path}.muted`, "mute says whether the agent is muted");
-      break;
     case "call":
       dial("command.call.dialId");
       break;
@@ -2034,7 +2037,6 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     case "call":
       inPhase("command.phase.preview", "preview");
       break;
-    case "mute": offered("mute"); handling(); break;
     case "hold": case "resume": case "pause": offered("hold"); handling(); break;
     case "end-call": offered("endCall"); handling(); break;
     case "recording": offered("recording"); handling(); break;

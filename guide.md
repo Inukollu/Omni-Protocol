@@ -361,7 +361,7 @@ type AuthenticationSession = {
 ### Provider state
 
 ```ts
-type PreferenceId = "hold" | "mute" | `skill:${string}`;
+type PreferenceId = "hold" | `skill:${string}`;
 
 type SetBy = Level | "provider";
 
@@ -484,7 +484,6 @@ type TaskCapabilities<C extends Channel = Channel> =
   C extends "voice"
     ? SharedTaskCapabilities & {
         decline?: Lockable<true>;
-        mute?: Lockable<true>;
         hold?: Lockable<true>;
         endCall?: Lockable<true>;
         connectBack?: Lockable<true>;
@@ -692,7 +691,6 @@ const TASK_COMMAND_NAMES = {
     "answer",
     "decline",
     "call",
-    "mute",
     "hold",
     "resume",
     "end-call",
@@ -716,7 +714,6 @@ type VoiceTaskCommand =
   | { type: "answer" }
   | { type: "decline" }
   | { type: "call"; dialId: DialId }
-  | { type: "mute"; muted: boolean }
   | { type: "hold" }
   | { type: "resume" }
   | { type: "end-call" }
@@ -767,7 +764,7 @@ type TaskCommandResult =
 ### Who decides what an agent may do
 
 An agent desk has two managers, not one. **The queue** — a process, a work type — is owned by a
-process manager and **allows** a set of capabilities: hold, mute, connect back, new call, conference,
+process manager and **allows** a set of capabilities: hold, connect back, new call, conference,
 whether the number is visible, the actions it offers, the skills it needs. **The people** are
 managed through the organisation's structure — a team, a location, the organisation itself, in
 whatever combination the structure defines for a person — and **decide** per capability within
@@ -801,8 +798,8 @@ against them, not only the sign-in. What the wire carries is the resolution:
 **On a task, a control the queue could allow may stand locked in its place.** `Task.capabilities`
 is the effective set. What the queue does not allow is absent and nothing is shown. What the queue
 allows and a level above the person locked is present as `{ lockedBy, reason? }` where the control's
-value would be — `mute: { lockedBy: "team", reason: "Nobody on this team mutes" }` — and Omni
-renders that control disabled, saying who decided, so an agent who cannot press Mute knows whether
+value would be — `recording: { lockedBy: "team", reason: "Nobody on this team records" }` — and Omni
+renders that control disabled, saying who decided, so an agent who cannot press Record knows whether
 to ask their lead or their site. `lockedBy` is the discriminant: a value that carries it is the
 lock, so nothing that can be locked — a directory, a number — may carry that key itself. A
 contact's number and email are the same, since each identifies a person: where the queue says
@@ -813,14 +810,14 @@ controls — is content, and is never locked.
 
 **A lead sets the team's policy from their roster.** A login that declares
 `capabilities.team.policyControl` may `executeTeamPolicy({ type: "set", capability, setting })`
-with `on`, `off`, or `person`, for any task control, `dial`, or a skill — and only `hold`, `mute`
+with `on`, `off`, or `person`, for any task control, `dial`, or a skill — and only `hold`
 and skills may be `person`; connect back and new call are the team's, on or off, within what the queue
 allows. The roster carries `policies` for such a login: every policy as it stands, who set it, and
 `lockedBy` where a level above the team made it theirs to keep, which the lead sees and cannot
 change — `executeTeamPolicy` on it answers `failed` with `omni.capability-not-enabled`.
 
 **What the team left to the person is the person's, and the provider keeps it.** The login's
-`capabilities.preferences` lists every preference the person may hold — `hold`, `mute`, a skill —
+`capabilities.preferences` lists every preference the person may hold — `hold`, a skill —
 with where it stands and who set it: `setBy: "team"` while they inherit the team's default,
 `"person"` once they have set their own, `"provider"` where no level has said anything. Nothing
 is hidden for want of a row, and a preference a level above has since locked is listed with
@@ -831,8 +828,10 @@ inherit: true }` to give it up and inherit again — answered `applied` and repu
 person's preference from their own screen, which arrives the same way. A preference is keyed by
 the capability's own name because it is the same capability at another level: effective in
 `Task.capabilities`, set for the team in `policies`, left to the person in `preferences`. The
-command `mute` acts on one call; the preference `mute` says whether the person wants the control
-at all, and a host renders it in its settings, never as the button on a call.
+command `hold` acts on one call; the preference `hold` says whether the person wants the control
+at all, and a host renders it in its settings, never as the button on a call. Mute is in none of
+these ladders: the microphone is the host's, and nobody on the provider's side allows, locks or
+keeps a choice about it. See **Mute is the host's**.
 
 ## Breaks
 
@@ -2003,7 +2002,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `executeTeamLeadAssist(command)` | The login declares `capabilities.team.leadAssistControl`. |
 | `executeTeamMonitor(command)` | The login declares `capabilities.team.monitorControl`. |
 | `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
-| `recordStep(report)` | A task declares `mute`: the host performs that leg, and the provider's record has to have somewhere to take it. See **The host records what it performs**. |
+| `recordStep(report)` | The manifest lists `softphone` among its `phones`. On a softphone the host mutes its own microphone on any call, and the provider's record has to have somewhere to take that leg; a desk phone's microphone is the phone's. See **The host records what it performs**. |
 | `executeTeamPolicy(command)` | The login declares `capabilities.team.policyControl`. |
 | `openMedia(request)` | The manifest lists `softphone` among its `phones`. On a softphone the call's audio lands in Omni, so the adapter has to open it; a platform of desk phones alone never does. |
 
@@ -2187,7 +2186,7 @@ into a new session.
 `task-offered` introduces a new task and does not imply acceptance.
 
 `Task<C>` is channel-discriminated. For example, `Task<"email">` accepts
-`browsers` and `dispositions`, but rejects voice-only controls such as `mute` and `hold` at compile
+`browsers` and `dispositions`, but rejects voice-only controls such as `hold` and `endCall` at compile
 time. Runtime conformance checks also require the task channel to match its provider manifest.
 
 | Field | Contract |
@@ -2464,8 +2463,8 @@ history — until the task's media ends, and a hold neither pauses nor resets it
 duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is
 counting the wrong thing.
 
-`muted` is there because Omni performs the mute rather than the provider — see **Where a command
-executes** — so without a step the provider, which alone keeps the task's record, would have no
+`muted` is there because the mute is the host's and never the provider's — see **Mute is the
+host's** — so without a step the provider, which alone keeps the task's record, would have no
 account of a period the agent could not be heard.
 
 **A step that dialled says which dial and where.** `transferred`, `conferenced` and `unanswered`
@@ -2522,8 +2521,8 @@ added here as a need is shown, not invented ahead of one.
 
 #### The host records what it performs
 
-`muted` is the one leg Omni performs rather than the provider, and a record kept by the provider
-would have a hole exactly there. So the host reports it, through `recordStep`, and the provider
+`muted` is the one leg the host performs rather than the provider, and a record kept by the
+provider would have a hole exactly there. So the host reports it, through `recordStep`, and the provider
 writes it into its record as it writes every other leg:
 
 ```ts
@@ -2546,7 +2545,9 @@ leg, when it began and when it ended, and `validateHandlingReport(report, path, 
 a running one it was never asked for (`handlingReport.running.unexpected`). What a provider that
 did ask for them forwards upstream, and how often, is its own business. The step appears in
 `handlingHistory` when the *provider* publishes it: Omni never writes the record itself.
-`recordStep` is required of a connection whose tasks declare `mute`, and answers `recorded`.
+`recordStep` is required of every softphone login's connection, since every call on a softphone
+can be muted by the host, and answers `recorded`. On a desk phone the microphone is the phone's:
+the host mutes nothing and records nothing.
 
 **A host-performed leg still open when the task's media ends, or the task ends, is ended by the
 host at that instant** — `ended: true`, `seconds` to the end, the same `at` — since a provider
@@ -2772,7 +2773,6 @@ See **Which commands need a capability**.
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
 | `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when provisioning also permits declining. |
-| `mute` | Primary toggle: Mute | Omni may mute and unmute the agent's outbound audio. |
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
 | `endCall` | Primary button: End call | Omni may end the whole call: everyone leaves, the media ends, and the task stays for its wrap-up. See **Ending a call, and removing one person from it**. |
 | `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance disposes at provider end. See **Connecting back during completion**. |
@@ -3957,8 +3957,8 @@ unions are declared under **Shapes**.
 
 **A toggle carries the state it wants, not a flip.** Inverting whatever is found cannot converge
 with a stale view: a flip against a state the provider has already changed turns something on and
-then off again. `mute` therefore carries `muted`, and a custom `toggle` control carries its own
-boolean. `hold` and `resume`, `pause` and `resume` need no flag, being pairs rather than toggles.
+then off again. A custom `toggle` control therefore carries its own boolean. `hold` and `resume`,
+`pause` and `resume` need no flag, being pairs rather than toggles.
 
 **`complete` sends a disposition only where one was published.** `disposition` is a
 `DispositionCode.id` from the task's own `dispositions` capability, and `notes` obeys that
@@ -3966,14 +3966,10 @@ capability's `notes` setting. A task publishing no codes still receives `complet
 
 ### Where a command executes
 
-Every command reaches the provider through `execute`, with no branch at the call site. What differs
-is what the provider is being asked for: to **perform** the command, or to **record** that Omni
-already did.
-
-| Command | The provider's part |
-| --- | --- |
-| `mute` | **Record it, and keep the history.** The microphone is the host's, so Omni has already stopped the audio through `VoiceMediaSession.setMuted()` — no adapter can do that on the host's behalf. The command still arrives because the provider owns the task's record: it holds the current state for supervision, and each change as a `muted` handling step, exactly as it does for `held`. A platform that never hears about it shows a supervisor an agent who sounds absent for no reason, and reports a call with a silence it cannot explain. |
-| Every other command | **Perform it.** `hold`, `transfer`, `conference`, `end-call`, `recording` and the rest act on the platform's own call leg, its bridge, or its record of the task. Nothing has happened until the provider applies them. |
+Every command reaches the provider through `execute`, with no branch at the call site, and every
+command asks the provider to **perform** something: `hold`, `transfer`, `conference`, `end-call`,
+`recording` and the rest act on the platform's own call leg, its bridge, or its record of the
+task. Nothing has happened until the provider applies them, and `failed` means nothing happened.
 
 **The provider performs every action; the host only offers it.** A control drawn on the host is
 an affordance, never the enforcement: the host asks, and the provider does or declines. A provider
@@ -3982,16 +3978,31 @@ honouring its own declaration, not the host deciding policy -- a host that refus
 its own reading of a queue's flag has decided something that was never its to decide. What a
 command means on the platform is the provider's to work out: `end-call` ends the conversation, and
 which legs on which bridge that touches is a fact about the switch, never a choice the host makes.
-The one leg the host performs physically is the microphone, and even there the provider owns the
-record.
+The one thing the host performs physically is the microphone, and that is not a command at all.
 
-**A failed `mute` does not unmute the agent.** The agent asked, Omni holds the microphone, and it
-is already done; a failure means only that the provider did not record it, leaving its view stale
-until the next snapshot. That is the safe direction to fail in, and it is the one place where
-`failed` does not mean *nothing happened* — everywhere else it does.
+### Mute is the host's
 
-`mute` carries `muted` rather than flipping, so a stale view converges on the stated state
-instead of flipping it back — see **Task commands**.
+The microphone is the station's, and the station is the host's. So mute is not a capability a
+provider declares, not a control a queue allows or a team locks, not a preference the person
+keeps with the provider, and not a command: nothing about it crosses to the provider except the
+record of when the agent could not be heard. A host offers Mute on every voice task with media
+open, under its own provisioning, in `in-progress` and `paused` alone, and performs it through
+`VoiceMediaSession.setMuted()`. A task carrying `capabilities.mute` is refused
+(`task.capability.unknown`), and so is a `mute` command (`command.type`), a `mute` preference
+(`preference.id`) and a `mute` policy (`team.policy.key`).
+
+Three things on a station are called mute, and the host can influence two of them:
+
+| Source | What it is | What the host does |
+| --- | --- | --- |
+| The host's own control | The Mute button the host draws. The host stops the audio it sends; nothing outside the host knows unless the host says. | Performs it on the media session, and reports the leg to the provider through `recordStep` as a `muted` step. |
+| The headset's call-control button | A USB headset exposing the HID Telephony usage page sends a Phone Mute report when its button is pressed, and lights its mute LED when the host writes one back. The press is a signal to the softphone, not a microphone mute: the host applies its own mute and answers with the LED state, and the headset follows. | Treats the press as a press of its own Mute, and drives the LED from its own state, so the button, the LED and the control are one state with one owner. Recorded exactly as the first row: the agent muted, whichever button they pressed. |
+| Hardware or operating-system mute | A physical slider on the headset, or the OS input mute. The host cannot set or clear it; a browser reports it read-only through the capture track's muted state. | Observes it, and publishes it as `audio.input.flowing: false` in the host report, where the provider already reads it. Not a `muted` step: the host did not perform it, and the provider already has the fact. When the hardware says muted while the host's control says unmuted, the host tells the agent the headset itself is muted, since pressing Mute cannot lift it. |
+
+One state, one owner. The provider's record has the legs the host performed, through the one
+path that exists for them; the station's condition is in the host report. Where a provider's own
+platform holds a mute of its own -- a bridge that silences a leg -- that is a fact about the
+switch, reported as the provider sees fit, and never the host's Mute.
 
 ### Which commands need a capability
 
@@ -4014,7 +4025,7 @@ declared:
 | `lead-assist` with `action: "take-over"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |
 | Everything else | Its own named capability. |
 
-**A control on the contact belongs to the handling phases**, `in-progress` and `paused`: `mute`,
+**A control on the contact belongs to the handling phases**, `in-progress` and `paused`:
 `hold`, `resume` and `pause`, `end-call`, `recording`, every `transfer` and `conference` action, and
 every `lead-assist` action. Each acts on the call or the conversation, and only while there is one.
 Before `in-progress` nothing has been placed or opened; in `completing` the handling has ended -- a

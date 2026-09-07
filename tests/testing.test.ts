@@ -126,34 +126,34 @@ describe("assertTaskCapabilityWithdrawal", () => {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
     supportedProtocolVersions: [1], authenticationMethods: ["credentials"],
   } satisfies Manifest<"voice">;
-  const withHold = { ...voiceTask, capabilities: { hold: true, mute: true } } satisfies Task<"voice">;
-  const withoutHold = { ...voiceTask, capabilities: { mute: true } } satisfies Task<"voice">;
+  const withHold = { ...voiceTask, capabilities: { hold: true, recording: true } } satisfies Task<"voice">;
+  const withoutHold = { ...voiceTask, capabilities: { recording: true } } satisfies Task<"voice">;
   const hold = { type: "hold" };
 
   it("accepts a control withdrawn by a republish, refusing the command it governed and nothing else", () => {
     expect(() => assertTaskCapabilityWithdrawal([withHold, withoutHold], manifest, hold)).not.toThrow();
     // The control: the same sequence, and a command under a capability that stayed, is not refused.
-    expect(() => assertTaskCapabilityWithdrawal([withHold, withoutHold], manifest, { type: "mute", muted: true })).toThrow(/for want of hold; it was accepted/);
+    expect(() => assertTaskCapabilityWithdrawal([withHold, withoutHold], manifest, { type: "recording", action: "start" })).toThrow(/for want of hold; it was accepted/);
   });
 
   it("rejects a sequence that withdraws nothing, and does not count a lock as a withdrawal", () => {
     expect(() => assertTaskCapabilityWithdrawal([withHold, withHold], manifest, hold)).toThrow(/withdrawn/);
-    const locked = { ...voiceTask, capabilities: { hold: { lockedBy: "team" }, mute: true } } satisfies Task<"voice">;
+    const locked = { ...voiceTask, capabilities: { hold: { lockedBy: "team" }, recording: true } } satisfies Task<"voice">;
     expect(() => assertTaskCapabilityWithdrawal([withHold, locked], manifest, hold)).toThrow(/locked control is present/);
   });
 
   it("requires the command to have been issuable before the withdrawal", () => {
-    const neverHeld = { ...voiceTask, capabilities: { mute: true } } satisfies Task<"voice">;
-    expect(() => assertTaskCapabilityWithdrawal([{ ...neverHeld, capabilities: { mute: true, endCall: true } }, neverHeld], manifest, hold)).toThrow(/issuable against the task as offered/);
+    const neverHeld = { ...voiceTask, capabilities: { recording: true } } satisfies Task<"voice">;
+    expect(() => assertTaskCapabilityWithdrawal([{ ...neverHeld, capabilities: { recording: true, endCall: true } }, neverHeld], manifest, hold)).toThrow(/issuable against the task as offered/);
   });
 
   it("refuses a republish that changes more than the withdrawal", () => {
     const dials = { ...manifest, dialOutcomes: ["answered", "no-answer"] } satisfies Manifest<"voice">;
-    const wrappingUp = { ...voiceTask, phase: "completing", capabilities: { connectBack: true, mute: true } } satisfies Task<"voice">;
-    const backOnTheCall = { ...voiceTask, phase: "in-progress", capabilities: { mute: true } } satisfies Task<"voice">;
+    const wrappingUp = { ...voiceTask, phase: "completing", capabilities: { connectBack: true, recording: true } } satisfies Task<"voice">;
+    const backOnTheCall = { ...voiceTask, phase: "in-progress", capabilities: { recording: true } } satisfies Task<"voice">;
     const connectBack = { type: "connect-back", dialId: "dial-1" };
     expect(() => assertTaskCapabilityWithdrawal([wrappingUp, backOnTheCall], dials, connectBack)).toThrow(/more than the withdrawal/);
-    expect(() => assertTaskCapabilityWithdrawal([wrappingUp, { ...wrappingUp, capabilities: { mute: true } }], dials, connectBack)).not.toThrow();
+    expect(() => assertTaskCapabilityWithdrawal([wrappingUp, { ...wrappingUp, capabilities: { recording: true } }], dials, connectBack)).not.toThrow();
   });
 
   it("keeps the task, and validates every task on the way", () => {
@@ -619,7 +619,6 @@ const conformingSnapshot = {
     capabilities: {
       browsers: true,
       hold: true,
-      mute: true,
       dispositions: { required: true, notes: "optional", codes: [{ id: "resolved", label: "Resolved" }, { id: "callback", label: "Callback needed" }] },
       coldTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] },
       custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } }],
@@ -1355,11 +1354,11 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("setPreference() and executeTeamPolicy(), when the login declares preferences or policyControl", async () => {
-    const choosing = { preferences: [{ id: "mute" as const, label: "Mute", enabled: true, setBy: "team" as const }] };
+    const choosing = { preferences: [{ id: "hold" as const, label: "Hold", enabled: true, setBy: "team" as const }] };
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: choosing, connection: { setPreference: undefined } })).toContain("connection.setPreference.required");
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: {}, connection: { setPreference: undefined } })).not.toContain("connection.setPreference.required");
     const setting = { team: { policyControl: true as const } };
-    const withPolicies = { ...minimalSnapshot, team: { members: [], policies: { mute: { setting: "off", setBy: "team" } } } } satisfies Snapshot<"voice">;
+    const withPolicies = { ...minimalSnapshot, team: { members: [], policies: { hold: { setting: "off", setBy: "team" } } } } satisfies Snapshot<"voice">;
     expect(await rules({ manifest: plainManifest, snapshot: withPolicies, capabilities: setting, connection: { executeTeamPolicy: undefined } })).toContain("connection.executeTeamPolicy.required");
     expect(await rules({ manifest: plainManifest, snapshot: withPolicies, capabilities: setting })).toEqual([]);
     // The roster carries policies exactly when the login may set them.
@@ -1369,24 +1368,23 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
 
   it("holds who-decided to the manifest's declared ladder, on the login and on the snapshot", async () => {
     const laddered = { ...conformingManifest, orgLevels: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] } satisfies Manifest<"voice">;
-    const of = (setBy: string) => ({ preferences: [{ id: "mute" as const, label: "Mute", enabled: true, setBy }] });
+    const of = (setBy: string) => ({ preferences: [{ id: "hold" as const, label: "Hold", enabled: true, setBy }] });
     expect(await rules({ manifest: laddered, capabilities: of("region") })).toEqual([]);
     // The ladder is the whole ladder: the default the manifest left out is refused.
     expect(await rules({ manifest: laddered, capabilities: of("site") })).toEqual(["preference.setBy.unknown"]);
-    const lockedTask = (lockedBy: string) => ({ ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, capabilities: { ...conformingSnapshot.tasks[0]!.capabilities, mute: { lockedBy } } }] });
+    const lockedTask = (lockedBy: string) => ({ ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, capabilities: { ...conformingSnapshot.tasks[0]!.capabilities, recording: { lockedBy } } }] });
     expect(await rules({ manifest: laddered, snapshot: lockedTask("region") })).toEqual([]);
     expect(await rules({ manifest: laddered, snapshot: lockedTask("site") })).toEqual(["task.capability.locked.lockedBy.unknown"]);
   });
 
-  it("recordStep(), when a task declares mute, on the snapshot or on an offer", async () => {
-    // The conforming task declares mute; the host performs that leg and needs somewhere to record it.
+  it("recordStep(), of every softphone login: the host mutes its microphone, and the record is the provider's", async () => {
     expect(await rules({ connection: { recordStep: undefined } })).toContain("connection.recordStep.required");
-    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, connection: { recordStep: undefined } })).not.toContain("connection.recordStep.required");
-    const muteless = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, capabilities: { ...conformingSnapshot.tasks[0]!.capabilities, mute: undefined } }] };
-    expect(await rules({ snapshot: muteless, connection: { recordStep: undefined } })).not.toContain("connection.recordStep.required");
-    const offered: ProviderEventEnvelope<"voice"> = { id: "evt-offer", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
-      event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, id: "call-77", phase: "pending", media: undefined, acceptance: "consent" } } };
-    expect(await rules({ snapshot: muteless, emit: listener => listener(offered), connection: { recordStep: undefined } })).toContain("connection.recordStep.required");
+    // A chat provider has no microphone in play; a desk phone's is the phone's own, and the host mutes nothing.
+    expect(await rules({ manifest: chatManifest, snapshot: chatSnapshot, connection: { recordStep: undefined, dial: undefined, openMedia: undefined } }))
+      .not.toContain("connection.recordStep.required");
+    const deskPhone = await exerciseAdapter(makeAdapter({ connection: { recordStep: undefined, openMedia: undefined } }).adapter,
+      { ...context, phone: "deskPhone", host: stillHost({ online: true }) }, { collectOnly: true });
+    expect(deskPhone.violations.map(v => v.rule)).not.toContain("connection.recordStep.required");
   });
 
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {

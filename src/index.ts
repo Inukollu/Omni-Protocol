@@ -537,7 +537,6 @@ export type TaskCapabilities<C extends Channel = Channel> =
   C extends "voice"
     ? SharedTaskCapabilities & {
         decline?: Lockable<true>;
-        mute?: Lockable<true>;
         hold?: Lockable<true>;
         /** The agent may end the whole call: everyone leaves and the media ends, the task stays for its wrap-up. */
         endCall?: Lockable<true>;
@@ -892,7 +891,7 @@ export type TaskOutcome =
 // ---------------------------------------------------------------------------
 
 export const TASK_COMMAND_NAMES = {
-  voice: ["answer", "decline", "call", "mute", "hold", "resume", "end-call",
+  voice: ["answer", "decline", "call", "hold", "resume", "end-call",
           "connect-back", "transfer", "lead-assist", "conference", "recording", "complete"],
   chat: ["accept", "decline", "pause", "resume", "complete"],
   email: ["accept", "decline", "complete"],
@@ -911,7 +910,6 @@ export type VoiceTaskCommand =
   | { type: "decline" }
   /** In `preview`: place the call to the party whose record the agent has read. A dial, gated by the phase alone. */
   | { type: "call"; dialId: DialId }
-  | { type: "mute"; muted: boolean }
   | { type: "hold" }
   | { type: "resume" }
   /** End the whole call: everyone leaves and the task's media ends; the task stays for its wrap-up. Gated by `endCall`. */
@@ -1152,7 +1150,7 @@ export type PolicyKey =
   | "dial"
   | `skill:${string}`;
 
-/** On for everyone, off for everyone, or the agent's own choice. Only `hold`, `mute` and skills may be `agent`. */
+/** On for everyone, off for everyone, or the agent's own choice. Only `hold` and skills may be `person`. */
 export type TeamPolicySetting = "on" | "off" | "person";
 
 /** One policy as the lead sees it: the setting, who set it, and `lockedBy` when a level above the team made it theirs to keep. */
@@ -1238,12 +1236,12 @@ export type OpenMediaResult =
 
 /** The provider's complete state at one moment. It replaces what Omni holds; never a patch. */
 /**
- * What the team may leave to the person: a capability by its own name -- `hold`, `mute` -- or a
+ * What the team may leave to the person: a capability by its own name -- `hold` -- or a
  * skill by its provider id. The same key as in `Task.capabilities`, because it is the same
  * capability seen at another level. Connecting back and a new call are never the person's; they
  * are the team's, on or off, within what the queue allows.
  */
-export type PreferenceId = "hold" | "mute" | `skill:${string}`;
+export type PreferenceId = "hold" | `skill:${string}`;
 
 /**
  * Who stated a value as it stands: a level -- `person` among them -- or `provisioning`, the
@@ -1277,8 +1275,8 @@ export type SetPreferenceRequest =
   | { id: PreferenceId; inherit: true };
 
 /**
- * The host's report of a handling leg it performed itself -- a mute, which Omni does rather than
- * the provider -- so the provider's record has an account of it. Keyed by `step` and `at`: the
+ * The host's report of a handling leg it performed itself -- a mute, which is the host's and
+ * never the provider's -- so the provider's record has an account of it. Keyed by `step` and `at`: the
  * same entry is reported when it begins, as often as the host cares to while it runs, and once
  * more with `ended`, when `seconds` is the final duration. The host is the authority for the
  * legs it performs, so `seconds` may say how long so far at any time; the end is stated, never
@@ -1430,7 +1428,7 @@ export interface Connection<C extends Channel = Channel> {
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
   /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
-  /** Records a handling leg the host performed. Required of a connection whose tasks may declare `mute`. */
+  /** Records a handling leg the host performed. Required of a softphone login's connection: the host mutes its microphone on any call, and the record is the provider's. */
   recordStep?(report: HandlingReport): Promise<HandlingReportResult>;
 }
 

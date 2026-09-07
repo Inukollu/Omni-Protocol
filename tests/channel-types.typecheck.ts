@@ -121,10 +121,12 @@ export const reusingBrowserWithoutAScheme: TaskBrowser = { id: "crm", name: "CRM
 export const isolatedBrowserWithAScheme: TaskBrowser = { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedSession: false, isolationScheme: BROWSER_ISOLATION_SCHEMES.TAB_NAME };
 
 // Every command reaches the provider through `execute`; the union is the channel's whole set.
-export const voiceMute: TaskCommand<"voice"> = { type: "mute", muted: true };
+export const voiceHold: TaskCommand<"voice"> = { type: "hold" };
 export const chatPause: TaskCommand<"chat"> = { type: "pause" };
-// @ts-expect-error Chat has no microphone to mute.
-export const chatMute: TaskCommand<"chat"> = { type: "mute", muted: true };
+// @ts-expect-error The microphone is the host's: no channel has a mute command for the provider.
+export const voiceMute: TaskCommand<"voice"> = { type: "mute", muted: true };
+// @ts-expect-error Chat has no call to hold; it pauses.
+export const chatHold: TaskCommand<"chat"> = { type: "hold" };
 // @ts-expect-error DTMF is not a task command: the tones travel with the audio, which is Omni's.
 export const voiceDtmf: TaskCommand<"voice"> = { type: "dtmf", digits: "12" };
 
@@ -322,15 +324,19 @@ export const noAudioHere: HostReport = { online: true };
 export const readyWithoutAudio: HostReport = { online: true, audio: { input: { status: "available" }, output: { status: "available" } } };
 
 // Who decides: a control the queue could allow may stand locked in its place, naming the level;
-// a preference carries who set it; only hold, mute and skills are ever the person's.
-export const lockedMute: Task<"voice"> = { ...emailTask, id: "call-12", channel: "voice", capabilities: { hold: true, mute: { lockedBy: "team", reason: "Nobody on this team mutes" } }, party: { name: "Asha", number: { lockedBy: "org" }, email: { lockedBy: "site" } } };
-// @ts-expect-error An email task has no mute to lock.
-export const emailLockedMute: Task<"email"> = { ...emailTask, capabilities: { mute: { lockedBy: "team" } } };
+// a preference carries who set it; only hold and skills are ever the person's.
+export const lockedRecording: Task<"voice"> = { ...emailTask, id: "call-12", channel: "voice", capabilities: { hold: true, recording: { lockedBy: "team", reason: "Nobody on this team records" } }, party: { name: "Asha", number: { lockedBy: "org" }, email: { lockedBy: "site" } } };
+// @ts-expect-error An email task has no recording to lock.
+export const emailLockedRecording: Task<"email"> = { ...emailTask, capabilities: { recording: { lockedBy: "team" } } };
+// @ts-expect-error Mute is the host's, never a capability the provider declares or locks.
+export const lockedMute: Task<"voice"> = { ...emailTask, id: "call-13", channel: "voice", capabilities: { mute: { lockedBy: "team" } } };
 export const skillChoice: AgentPreference = { id: "skill:billing", label: "Billing", enabled: true, setBy: "person" };
 // @ts-expect-error Connecting back is the team's, never the person's.
 export const connectBackChoice: AgentPreference = { id: "connectBack", label: "Connect back", enabled: false, setBy: "team" };
-export const inheritAgain: SetPreferenceRequest = { id: "mute", inherit: true };
-export const teamMute: TeamPolicy = { setting: "off", setBy: "team" };
+export const inheritAgain: SetPreferenceRequest = { id: "hold", inherit: true };
+// @ts-expect-error Mute is the host's, never a preference the provider keeps.
+export const muteChoice: AgentPreference = { id: "mute", label: "Mute", enabled: true, setBy: "person" };
+export const teamHold: TeamPolicy = { setting: "off", setBy: "team" };
 export const siteRecording: TeamPolicy = { setting: "on", setBy: "site", lockedBy: "site" };
 
 // team may leave to the person.
