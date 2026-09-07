@@ -4475,7 +4475,11 @@ complete it with a disposition where the agent completes -- and holds every step
 host holds a provider to. Each command is validated against the task as published
 (`drive.command.*`), each answer for its method, a refusal of a control the task offered is a
 violation (`drive.command.failed`), and an event the provider owes and never sends is one too
-(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). Once the call has ended and the task is
+(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). With the audio open on a softphone,
+the drive mutes it for one second and reports the leg through `recordStep`, begun and then ended,
+expecting each report `recorded` (`drive.recordStep.failed`, `.rejected`); and where the provider
+restates the task's record afterwards, the leg is in it or the hole is named
+(`drive.recordStep.history`). Once the call has ended and the task is
 `completing`, the drive sends `hold` once more, past the validator that would hold it back, and
 expects `failed`: the adapter is the second gate on a control on the contact, and one that applies
 it on a call that is over is named (`drive.command.handling`). A task the agent completes is

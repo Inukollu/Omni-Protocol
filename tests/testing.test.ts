@@ -953,7 +953,7 @@ describe("exerciseAdapter", () => {
 describe("exerciseAdapter drives one call", () => {
   const at = "2026-08-21T09:00:00Z";
   type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
-  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; noEndCall?: boolean; badCapability?: boolean }
+  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "without-mute" }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   const driveable = (script: Script = {}) => {
     let listener: Listener | undefined;
@@ -964,6 +964,9 @@ describe("exerciseAdapter drives one call", () => {
       browsers: [], handlingHistory: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
     };
     let phase = "pending";
+    let muted: { at: string; seconds: number } | undefined;
+    const history = () => script.restateHistory === undefined ? undefined
+      : { steps: [{ step: "answered" as const, at }, ...(script.restateHistory === "with-mute" && muted !== undefined ? [{ step: "muted" as const, ...muted }] : [])] };
     const t = (over: Record<string, unknown>) => { if (typeof over.phase === "string") phase = over.phase; return { ...base, ...over } as unknown as Task<"voice">; };
     const emit = (event: ProviderEventEnvelope<"voice">["event"]) => listener?.({ id: id(), loginId: "session-1", occurredAt: at, event });
     const room = [{ role: "party" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
@@ -993,13 +996,18 @@ describe("exerciseAdapter drives one call", () => {
             case "resume": emit({ type: "task-updated", task: t({ phase: "in-progress", media: "started", onCall: room }) }); return { status: "applied" };
             case "end-call":
               emit({ type: "task-media-ended", taskId: "call-77" });
-              emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
+              emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [], handlingHistory: history() }) });
               return { status: "applied" };
             case "complete": emit({ type: "task-ended", taskId: "call-77", outcome: { type: "completed", by: "agent" } }); return { status: "applied" };
             default: return { status: "failed", failure: { code: "omni.capability-not-enabled", message: command.type, retryable: false } };
           }
         },
         openMedia: async () => ({ status: "opened", session: { remoteAudio: {} as MediaStream, setMuted: () => undefined, close: () => undefined } }),
+        recordStep: async (report: { step: string; at: string; seconds?: number; ended?: boolean }) => {
+          if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
+          if (report.step === "muted" && report.ended === true && report.seconds !== undefined) muted = { at: report.at, seconds: report.seconds };
+          return { status: "recorded" };
+        },
       },
     });
     return adapter;
@@ -1030,6 +1038,14 @@ describe("exerciseAdapter drives one call", () => {
 
   it("reaches the rules about a live call: a room left full after end-call is refused at the boundary", async () => {
     expect((await drive(driveable({ keepRoomOnEnd: true }))).violations.map(v => v.rule)).toContain("task.onCall.ended");
+  });
+
+  it("mutes the open audio for a moment and reports the leg, expecting it recorded and, where the record is restated, present", async () => {
+    // The conforming fixture records it and the run is clean (the first test). The provider may
+    // restate the record afterwards; when it does, the host's leg is in it or the hole is named.
+    expect((await drive(driveable({ refuseRecordStep: true }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.failed", "drive.recordStep.failed"]);
+    expect((await drive(driveable({ restateHistory: "with-mute" }))).violations).toEqual([]);
+    expect((await drive(driveable({ restateHistory: "without-mute" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.history"]);
   });
 
   it("sends hold once more after the call has ended, past the validator, and names an adapter that applies it", async () => {

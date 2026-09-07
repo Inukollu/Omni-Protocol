@@ -1080,6 +1080,39 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (isRecord(opened) && opened.status === "opened") session = opened.session as unknown as Record<string, unknown>;
     else if (isRecord(opened)) refuse("drive.openMedia.unavailable", "drive.openMedia", "a softphone login's adapter could not open the call's audio");
   }
+  // 3b. The microphone is the host's. With the audio open, the drive mutes it for a moment and
+  // reports the leg the provider's record would otherwise miss -- begun, then ended -- and
+  // expects each report recorded. If the provider restates the task's record afterwards, the leg is in it.
+  let mutedLeg: { at: string; task: Record<string, unknown> } | undefined;
+  if (session !== undefined && typeof session.setMuted === "function" && typeof drive.connection.recordStep === "function") {
+    const at = new Date().toISOString();
+    const report = async (body: Record<string, unknown>): Promise<void> => {
+      let answer: unknown;
+      try {
+        answer = await drive.connection.recordStep!({ taskId, step: "muted", at, ...body } as never);
+      } catch (error) {
+        refuse("drive.recordStep.rejected", "drive.recordStep", `recordStep rejected rather than answered: ${String(error)}`);
+        return;
+      }
+      found.push(...validateResult(answer, "recordStep", "drive.recordStep.result"));
+      if (isRecord(answer) && answer.status === "failed") {
+        refuse("drive.recordStep.failed", "drive.recordStep",
+          `the provider refused to record the host's muted leg: ${String(isRecord(answer.failure) ? answer.failure.code : answer.failure)}`);
+      }
+    };
+    const setMuted = (muted: boolean) => {
+      try { (session!.setMuted as (muted: boolean) => void)(muted); }
+      catch { refuse("drive.openMedia.setMuted", "drive.openMedia", `the media session threw on setMuted(${String(muted)})`); }
+    };
+    const began = Date.now();
+    setMuted(true);
+    await report({});
+    // A leg's duration is whole seconds and a leg shorter than one cannot be stated, so the mute holds for one.
+    await new Promise<void>(resolve => setTimeout(resolve, 1000));
+    setMuted(false);
+    await report({ seconds: Math.round((Date.now() - began) / 1000), ended: true });
+    mutedLeg = { at, task: latestTask() };
+  }
   // 4. Hold and resume, where offered.
   if (latestTask().phase === "in-progress" && offers("hold")) {
     if (await send({ type: drive.channel === "chat" ? "pause" : "hold" }) !== undefined) {
@@ -1131,6 +1164,17 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (await send(command) !== undefined) await ended();
   } else if (latestTask().phase === "completing") {
     await ended();
+  }
+  // The record kept by the provider has the leg the host reported, wherever the provider restated it.
+  if (mutedLeg !== undefined && latestTask() !== mutedLeg.task) {
+    const history = latestTask().handlingHistory;
+    if (isRecord(history) && Array.isArray(history.steps)) {
+      const { at } = mutedLeg;
+      if (!history.steps.some(entry => isRecord(entry) && entry.step === "muted" && entry.at === at)) {
+        refuse("drive.recordStep.history", "drive.recordStep",
+          `the provider restated the task's record after the host reported a muted leg at ${at}, and the leg is not in it`);
+      }
+    }
   }
   return found;
 }
