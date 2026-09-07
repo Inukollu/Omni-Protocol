@@ -869,7 +869,13 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
         "seconds must be a positive whole number; omit it while the step is still running");
     }
     // A muted entry carries whose the silence was, as the host reported it; no other step has it.
-    if (entry.step === "muted") into.oneOf(entry.mutedBy, MUTED_BY, "task.handlingHistory.mutedBy", `${at}.mutedBy`);
+    // And it names the agent: the host has exactly one, the provider knows who, so an unattributed
+    // muted leg is a record that dropped a fact it held rather than one it could not establish.
+    if (entry.step === "muted") {
+      into.oneOf(entry.mutedBy, MUTED_BY, "task.handlingHistory.mutedBy", `${at}.mutedBy`);
+      into.require(entry.by !== undefined, "task.handlingHistory.muted.by", `${at}.by`,
+        "a muted leg is attributed to the login's agent: the host reported it, and the provider knows who the host's agent is");
+    }
     else if ((HANDLING_STEPS as readonly unknown[]).includes(entry.step)) {
       into.require(entry.mutedBy === undefined, "task.handlingHistory.mutedBy.unexpected", `${at}.mutedBy`, "only a muted step says who silenced the microphone");
     }
@@ -1827,6 +1833,19 @@ const HOST_MUTES = membersOf<HostMute>({ stream: true, station: true });
  * phone the microphone is the phone's, and off voice there is none. Neither the value nor its
  * absence is inferred from what kind of application the host is.
  */
+/** The login's store, which the host provides on every connection: three functions, and nothing else is a store. */
+export function validateLoginStore(store: unknown, path = "store"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(store)) {
+    into.add("store.shape", path, "a connection carries the login's store: an object with get, set and delete");
+    return into.violations;
+  }
+  for (const method of ["get", "set", "delete"] as const) {
+    into.require(typeof store[method] === "function", `store.${method}`, `${path}.${method}`, `a login store ${method}s by key`);
+  }
+  return into.violations;
+}
+
 export function validateHostMute(mute: unknown, softphone: boolean, path = "host.mute"): ProtocolViolation[] {
   const into = new Collector();
   if (mute === undefined) {

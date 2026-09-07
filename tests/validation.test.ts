@@ -11,6 +11,7 @@ import {
   validateHandlingReport,
   validateHostGuarantees,
   validateHostMute,
+  validateLoginStore,
   validateHostReport,
   validateManifest,
   validateScheduledActivity,
@@ -240,12 +241,15 @@ describe("validateTask", () => {
     const answered = { step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" };
     // Two holds are two entries; the running one omits its seconds.
     expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
-    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9, mutedBy: "station" }])).toEqual([]);
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17", mutedBy: "host" }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9, by: "a-17", mutedBy: "station" }])).toEqual([]);
+    // A muted leg names the agent: the host has one, the provider knows who. A held leg may honestly not.
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }])).toEqual(["task.handlingHistory.muted.by"]);
+    expect(history([answered, { step: "held", at: "2026-08-21T01:00:00Z", seconds: 4 }])).toEqual([]);
     // A call that joined two queues is two queued entries, one per join, and the offer follows the last of them.
     expect(history([{ step: "queued", at: "2026-08-21T00:55:00Z", seconds: 240 }, { step: "queued", at: "2026-08-21T00:59:00Z", seconds: 30 }, { step: "offered", at: "2026-08-21T00:59:30Z", by: "a-17" }, answered])).toEqual([]);
     // A muted entry says whose the silence was, as the host reported it; no other step has anyone to name.
-    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4 }])).toEqual(["task.handlingHistory.mutedBy"]);
-    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "headset" }])).toEqual(["task.handlingHistory.mutedBy"]);
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17" }])).toEqual(["task.handlingHistory.mutedBy"]);
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17", mutedBy: "headset" }])).toEqual(["task.handlingHistory.mutedBy"]);
     expect(history([answered, { step: "held", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }])).toEqual(["task.handlingHistory.mutedBy.unexpected"]);
     // Oldest first: a hold filed before the answer it followed is out of its turn.
     expect(history([{ step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, answered])).toEqual(["task.handlingHistory.order"]);
@@ -680,6 +684,17 @@ describe("validateEventEnvelope", () => {
     expect(summary({ title: "", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" })).toContain("event.summary.title");
     expect(summary({ title: "Q", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics: [{ id: "a", label: "A", value: 7 }] }))
       .toContain("event.summary.metric.value");
+  });
+});
+
+describe("validateLoginStore", () => {
+  it("is an object with get, set and delete, and nothing else is a store", () => {
+    const store = { get: async () => undefined, set: async () => undefined, delete: async () => undefined };
+    expect(rules(validateLoginStore(store))).toEqual([]);
+    expect(rules(validateLoginStore({ ...store, delete: undefined }))).toEqual(["store.delete"]);
+    expect(rules(validateLoginStore({ get: store.get }))).toEqual(["store.set", "store.delete"]);
+    expect(rules(validateLoginStore(undefined))).toEqual(["store.shape"]);
+    expect(rules(validateLoginStore("localStorage"))).toEqual(["store.shape"]);
   });
 });
 

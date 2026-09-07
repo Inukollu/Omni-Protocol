@@ -16,6 +16,7 @@ import {
   type Host,
   type HostGuarantees,
   type HostMute,
+  type LoginStore,
   type HostReport,
   type Manifest,
   type ProviderEvent,
@@ -28,6 +29,7 @@ import {
   validateHostGuarantees,
   validateHostReport,
   validateHostMute,
+  validateLoginStore,
   validateHandlingReport,
   validateManifest,
   validateResult,
@@ -326,17 +328,21 @@ export async function exerciseAdapter<C extends Channel>(
     }
     // What the host's Mute does is stated where the host holds a microphone, and nowhere else.
     violations.push(...validateHostMute(context.host.mute, softphone, "context.host.mute"));
+    // The login's store is the host's to provide: an adapter that composes a record keeps in it what its platform cannot.
+    violations.push(...validateLoginStore((context as { store?: unknown }).store, "context.store"));
     unsubscribeHost = context.host.subscribe(report => {
       violations.push(...validateHostReport(report, "context.host"));
     });
     let consulted = false;
-    const host: Host = {
+    // The wrapped host carries the mute kind the test's host stated, so the arms of ConnectContext still hold.
+    const host = {
       guarantees: context.host.guarantees,
+      ...(context.host.mute === undefined ? {} : { mute: context.host.mute }),
       report: () => { consulted = true; return context.host.report(); },
       subscribe: listener => { consulted = true; return context.host.subscribe(listener); },
-    };
+    } as ConnectContext["host"];
 
-    connection = await adapter.connect({ ...context, host });
+    connection = await adapter.connect({ ...context, host } as ConnectContext);
     const live = connection;
     // Dial is declared by presence: the capability object carries a destination policy rather
     // than an `enabled` flag, so its presence is the declaration.
@@ -772,7 +778,7 @@ const WORK_BEGUN = new Set(["in-progress", "paused", "completing"]);
 
 /** What a stream has said about the tasks it carries, and the rules across events. */
 export class TaskStream {
-  private readonly tasks = new Map<string, { phase: string; media: string; source: string; stages: Map<string, string> }>();
+  private readonly tasks = new Map<string, { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined }>();
   // Every dial the stream can place an outcome against: one the host said it placed, or one a
   // task carried on `onCall` or in its record -- which is how a dial made before a transfer is known
   // to whoever holds the task now. `answered` or `ended` once its outcome arrived, since it comes once.
@@ -794,7 +800,20 @@ export class TaskStream {
     }
   }
 
-  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string> } {
+  /** The entries of a task's record, each by step and instant, or undefined where the task carries no record. */
+  private static record(task: unknown): Set<string> | undefined {
+    if (!isRecord(task) || !isRecord(task.handlingHistory) || !Array.isArray(task.handlingHistory.steps)) return undefined;
+    return new Set(task.handlingHistory.steps.filter(isRecord).map(entry => `${String(entry.step)}@${String(entry.at)}`));
+  }
+
+  /** What a restated record lost of the one read before it: nothing, or the entries by step and instant. */
+  private static lost(was: Set<string> | undefined, now: Set<string> | undefined): string[] {
+    if (was === undefined || was.size === 0) return [];
+    if (now === undefined) return [...was];
+    return [...was].filter(key => !now.has(key));
+  }
+
+  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined } {
     const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
     // The stage of every dialled entry the room names by its dial, so an update can be held to the
     // outcome that moves it.
@@ -804,7 +823,7 @@ export class TaskStream {
         if (isRecord(entry) && typeof entry.dialId === "string" && typeof entry.stage === "string") stages.set(entry.dialId, entry.stage);
       }
     }
-    return { phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages };
+    return { phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task) };
   }
 
   /** Replaces what is known with a snapshot's tasks, as a snapshot replaces Omni's state. */
@@ -837,6 +856,12 @@ export class TaskStream {
               refuse("stream.snapshot.capabilitySource", `${at}.snapshot.tasks[${index}].capabilitySource`,
                 `${task.id} was published under ${was.source} terms and the snapshot says undetermined: terms once read stay read`);
             }
+            // A record once read is not unread: a resync restates it whole, or with more, never with less.
+            const lost = TaskStream.lost(was?.record, TaskStream.record(task));
+            if (lost.length > 0) {
+              refuse("stream.snapshot.handlingHistory", `${at}.snapshot.tasks[${index}].handlingHistory`,
+                `${task.id}'s record lost ${lost.join(", ")} on the snapshot: an entry read by the host stays in the record until the task ends`);
+            }
           });
         }
         this.seed(event.snapshot);
@@ -859,6 +884,14 @@ export class TaskStream {
         if ((known.source === "queue" || known.source === "ungoverned") && isRecord(event.task) && event.task.capabilitySource === "undetermined") {
           refuse("stream.taskUpdated.capabilitySource", `${at}.task.capabilitySource`,
             `${id} was published under ${known.source} terms and now says undetermined: terms once read stay read, and a re-read that fails is a diagnostic, not a republish`);
+        }
+        // A record once read is not unread: an update restates it whole, or with more, never with less.
+        {
+          const lost = TaskStream.lost(known.record, TaskStream.record(event.task));
+          if (lost.length > 0) {
+            refuse("stream.taskUpdated.handlingHistory", `${at}.task.handlingHistory`,
+              `${id}'s record lost ${lost.join(", ")} on the update: an entry read by the host stays in the record until the task ends`);
+          }
         }
         if (known.media === "ended") {
           const phase = isRecord(event.task) ? String(event.task.phase) : "";
@@ -1278,10 +1311,22 @@ export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvel
   assertNoViolations(found, "The media follows the task");
 }
 
+/** A login store that lives in memory for the test: what most adapter tests hand `exerciseAdapter` as `context.store`. */
+export function memoryStore(): LoginStore {
+  const kept = new Map<string, string>();
+  return {
+    get: async key => kept.get(key),
+    set: async (key, value) => { kept.set(key, value); },
+    delete: async key => { kept.delete(key); },
+  };
+}
+
 /**
  * A host that reports one thing and never changes: what most adapter tests hand `exerciseAdapter`.
  * A softphone host states what its Mute does; a desk-phone or conversation host has no microphone and states nothing.
  */
+export function stillHost(report: HostReport, guarantees: HostGuarantees, mute: HostMute): Host & { mute: HostMute };
+export function stillHost(report?: HostReport, guarantees?: HostGuarantees): Host & { mute?: never };
 export function stillHost(report: HostReport = { online: true }, guarantees: HostGuarantees = {}, mute?: HostMute): Host {
   return { guarantees, ...(mute === undefined ? {} : { mute }), report: () => report, subscribe: () => () => undefined };
 }
