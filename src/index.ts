@@ -1381,11 +1381,15 @@ export interface Snapshot<C extends Channel = Channel> {
 /**
  * How many tasks this provider may have allocated to the agent at once.
  *
- * An absolute ceiling, never less than 1, standing until Omni restates it. The provider counts
- * its own outstanding tasks against it and needs no new signal when one ends. What the agent
- * holds at other providers is not this provider's concern -- Omni set `count` knowing it.
+ * An absolute ceiling standing until Omni restates it. The provider counts its own outstanding
+ * tasks against it and needs no new signal when one ends. The agent is one person on several
+ * providers, and the host divides their capacity among them: `0` is host-stopped -- the agent's
+ * capacity is elsewhere for now, this provider allocates nothing and shows the member as
+ * `on-task` -- and is not a break, which is the agent not working at all. The host restates a
+ * count of one or more when this provider has the agent's capacity again.
  */
 export interface AgentCapacity {
+  /** A whole number, zero or more; zero is host-stopped. */
   count: number;
 }
 

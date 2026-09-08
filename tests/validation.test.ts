@@ -12,6 +12,7 @@ import {
   validateHostGuarantees,
   validateHostMute,
   validateLoginStore,
+  validateCapacity,
   validateHostReport,
   validateManifest,
   validateScheduledActivity,
@@ -738,6 +739,18 @@ describe("validateEventEnvelope", () => {
     expect(summary({ title: "", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" })).toContain("event.summary.title");
     expect(summary({ title: "Q", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics: [{ id: "a", label: "A", value: 7 }] }))
       .toContain("event.summary.metric.value");
+  });
+});
+
+describe("validateCapacity", () => {
+  it("is a whole number of zero or more, zero being host-stopped", () => {
+    expect(rules(validateCapacity({ count: 1 }))).toEqual([]);
+    expect(rules(validateCapacity({ count: 0 }))).toEqual([]);
+    expect(rules(validateCapacity({ count: 3 }))).toEqual([]);
+    expect(rules(validateCapacity({ count: -1 }))).toEqual(["capacity.count"]);
+    expect(rules(validateCapacity({ count: 1.5 }))).toEqual(["capacity.count"]);
+    expect(rules(validateCapacity({ count: "1" }))).toEqual(["capacity.count"]);
+    expect(rules(validateCapacity(1))).toEqual(["capacity.shape"]);
   });
 });
 

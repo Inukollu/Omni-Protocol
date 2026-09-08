@@ -425,7 +425,7 @@ type Snapshot = {
 };
 
 type AgentCapacity = {
-  count: number; // absolute ceiling, at least 1
+  count: number; // absolute ceiling, zero or more; zero is host-stopped
 };
 
 type CapacityResult =
@@ -3370,9 +3370,10 @@ hold applied. A `held` result would repeat the discriminant that travelled with 
 
 States how many tasks this provider may have allocated to the agent **at once**.
 
-`count` is an absolute ceiling, not an increment and never less than 1. An agent's capacity is a
-property of the agent, not of the moment: it is stated when the agent is set up and restated only
-when it genuinely changes, which is a provisioning change rather than a task starting or ending.
+`count` is an absolute ceiling, not an increment, a whole number of zero or more
+(`capacity.count`). An agent's capacity is a property of the agent, not of the moment: it is
+stated when the agent is set up and restated only when it genuinely changes, which is a
+provisioning change rather than a task starting or ending -- with one exception below.
 
 **The provider counts its own outstanding tasks against it.** Allocate while you hold fewer than
 `count` tasks for this agent, and stop when you hold that many; when one of yours ends you have
@@ -3380,9 +3381,21 @@ room again and need no new signal to know it. Omni does not re-state capacity as
 go, and a provider that waits for it will stall.
 
 Your own tasks are the only ones you count. What the agent holds at other providers is not your
-concern — Omni set `count` knowing it.
+concern — Omni set `count` knowing it, and this is how: the agent is one person on several
+providers, and the host divides their capacity among them rather than telling each the whole. A
+provider that has none of it for now is told **`count: 0`, host-stopped**: allocate nothing, show
+the member as `on-task` on the roster, since the agent is working, and take the next count as any
+other when the host has capacity for this provider again. Zero is not a refusal to state, and a
+provider that answers it `failed` is named (`connection.setCapacity.zero`); it is the one restatement
+that follows work rather than provisioning.
 
-Capacity supersedes rather than accumulates: the latest value is the ceiling.
+Capacity supersedes rather than accumulates: the latest value is the ceiling, and a decrease is as
+ordinary as an increase. A provider whose ceiling can only rise -- one that keeps the highest count
+it was ever told, or returns early on a small one -- cannot be told to take less work, and a host
+taking capacity away is answered `applied` while the work keeps coming. The harness moves the axis
+both ways after the drive, two then one then nought, and names a provider that will not come down
+(`connection.setCapacity.lowered`, `connection.setCapacity.zero`); an offer after a lower count is
+caught against it (`stream.taskOffered.overCapacity`).
 
 **Capacity gates what the provider allocates, not what the agent starts.** A call placed from the
 idle dialpad arrives through `task-offered` like any other task, and a full agent does not forbid
@@ -3974,10 +3987,12 @@ anything to become available.
 | Omni commits a break | `commitBreak`. The break stops allocation, not the ceiling. |
 | Agent returns from break | `endBreak` |
 
-**Stopping is a break, not a capacity of zero.** Capacity says how much this agent can carry at
-once; a break says they are not working. Collapsing the two would leave a provider unable to tell
-an agent at their limit from an agent who has gone to lunch, and only one of those needs a reason,
-a decision and a return.
+**A break is not a capacity of zero, and neither is the reverse.** Capacity says how much of this
+agent this provider may carry; a break says they are not working at all. A provider told
+`count: 0` shows an agent whose capacity is elsewhere, `on-task`; a provider told a break shows
+`on-break`. Collapsing the two would leave a provider unable to tell an agent working on another
+provider from an agent who has gone to lunch, and only one of those needs a reason, a decision and
+a return.
 
 ### How the agent hears the call
 
@@ -4587,6 +4602,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateHostMute(mute, softphone)` | What the host's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the host holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
 | `validateLoginStore(store)` | The login's store the host hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
+| `validateCapacity(capacity)` | What the host states as capacity: a whole number of zero or more (`capacity.count`), zero being host-stopped. The harness states one on connect and two, one and zero after the drive, and names a provider that will not come down (`connection.setCapacity.lowered`) or take zero (`connection.setCapacity.zero`). |
 | `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
 | `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a transfer's item, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.handling` for every control on the call or the conversation), and the state that has to stand: a consulted entry, a lead requested, somebody else still on the call (`command.conference.remove.alone`). A host validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |

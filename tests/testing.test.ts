@@ -847,6 +847,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
     async connect(connectContext) {
       if (overrides.connect !== undefined) return overrides.connect();
       let subscribed: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
+      let emittedOnCapacity = false;
       // A voice adapter consults the host before it declares the agent ready to its platform.
       if (overrides.ignoresHost !== true) connectContext.host.report();
       overrides.onConnect?.(connectContext);
@@ -862,7 +863,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
           overrides.emit?.(listener);
           return unsubscribe;
         },
-        setCapacity: async () => { if (subscribed !== undefined) overrides.emitOnCapacity?.(subscribed); return { status: "applied" }; },
+        setCapacity: async ({ count }) => { if (count > 0 && subscribed !== undefined && !emittedOnCapacity) { emittedOnCapacity = true; overrides.emitOnCapacity?.(subscribed); } return { status: "applied" }; },
         refused: () => undefined,
         execute: async () => ({ status: "applied" }),
         disconnect,
@@ -1141,6 +1142,7 @@ describe("exerciseAdapter drives one call", () => {
       browsers: [], handlingHistory: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
     };
     let phase = "pending";
+    let offeredOnce = false;
     let muted: { at: string; seconds: number; mutedBy: "host" | "station" } | undefined;
     // The store as the host handed it on connect: an adapter writes through what it was given, never a copy the test holds.
     let given: LoginStore | undefined;
@@ -1178,7 +1180,15 @@ describe("exerciseAdapter drives one call", () => {
       onConnect: connectContext => { given = connectContext.store; },
       connection: {
         ...(script.platform === undefined ? {} : { snapshot: reloaded }),
-        setCapacity: async () => { if (script.platform !== undefined) script.platform.open = true; emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) }); return { status: "applied" }; },
+        setCapacity: async ({ count }: { count: number }) => {
+          // A provider allocates while it holds room and has work: this platform has one call, offered
+          // once the first positive count arrives. Zero, and every restatement, is answered applied.
+          if (count === 0 || offeredOnce) return { status: "applied" };
+          offeredOnce = true;
+          if (script.platform !== undefined) script.platform.open = true;
+          emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) });
+          return { status: "applied" };
+        },
         execute: async ({ command, allocationId }: { command: { type: string }; allocationId?: string }) => {
           if (allocationId !== "alloc-77") return { status: "failed", failure: { code: "omni.task-not-found", message: `no allocation ${String(allocationId)}`, retryable: false } };
           if (script.throwsOn === "execute" && command.type === "hold") throw new Error("hub unreachable");
@@ -1374,6 +1384,21 @@ describe("exerciseAdapter drives one call", () => {
     // Without the method, or throwing when told, the adapter is named.
     expect((await exerciseAdapter(makeAdapter({ connection: { refused: undefined } }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["connection.refused.required"]);
     expect((await exerciseAdapter(makeAdapter({ snapshot: broken, connection: { refused: () => { throw new Error("no logger"); } } }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["task.wrapAllowance", "connection.refused.rejected"]);
+  });
+
+  it("states a capacity of zero after the run, host-stopped, and names a provider that will not take it", async () => {
+    const stated: number[] = [];
+    const counting = { setCapacity: async ({ count }: { count: number }) => { stated.push(count); return { status: "applied" as const }; } };
+    expect((await exerciseAdapter(makeAdapter({ connection: counting }).adapter, context, { collectOnly: true })).violations).toEqual([]);
+    // Raised, lowered, taken away: the axis moves both ways, since a ceiling that can only rise passes a special-cased zero.
+    expect(stated).toEqual([1, 2, 1, 0]);
+    let highest = 0;
+    const accumulating = { setCapacity: async ({ count }: { count: number }) => { if (count < highest) return { status: "failed" as const, failure: { code: "provider.capacity", message: "Capacity can only rise", retryable: false } }; highest = Math.max(highest, count); return { status: "applied" as const }; } };
+    expect((await exerciseAdapter(makeAdapter({ connection: accumulating }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["connection.setCapacity.lowered"]);
+    const refusing = { setCapacity: async ({ count }: { count: number }) => count === 0
+      ? { status: "failed" as const, failure: { code: "provider.capacity", message: "Capacity must be at least one", retryable: false } }
+      : { status: "applied" as const } };
+    expect((await exerciseAdapter(makeAdapter({ connection: refusing }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["connection.setCapacity.zero"]);
   });
 
   it("says which rules it evaluated, so a rule never looked at is a visible gap rather than a pass", async () => {
