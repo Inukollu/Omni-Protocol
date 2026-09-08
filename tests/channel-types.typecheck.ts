@@ -38,6 +38,7 @@ export const voiceManifest = {
   displayName: "Voice Provider",
   channel: "voice",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
+  disposalSettleMs: 5000,
   authenticationMethods: ["browser-sso"],
   idleCapabilities: {
     dial: { destinations: "any-number" },
@@ -53,6 +54,7 @@ export const chatManifest = {
   displayName: "Chat Provider",
   channel: "chat",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
+  disposalSettleMs: 5000,
   authenticationMethods: ["credentials"],
   idleCapabilities: {
     contacts: true,

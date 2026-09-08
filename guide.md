@@ -193,6 +193,7 @@ type Manifest<C extends Channel = Channel> = {
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   phones?: C extends "voice" ? Phone[] : never;
   runningStepReports?: true;
+  disposalSettleMs: number;
 };
 ```
 
@@ -1471,6 +1472,7 @@ export default defineAdapter({
     channel: "voice",
     supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
     authenticationMethods: ["browser-sso"],
+    disposalSettleMs: 5000,
     idleCapabilities: {
       dial: { destinations: "any-number" },
     },
@@ -1506,6 +1508,7 @@ compile time.
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the host) and/or `deskPhone` (a handset the platform rings; the host shows the call and opens nothing). The host picks one per login. See **How the agent hears the call**. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that transfer, conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome**. |
 | `runningStepReports` | The provider takes running reports of a host-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the host sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The host records what it performs**. |
+| `disposalSettleMs` | Required. How long after an applied disposal -- `complete`, `transfer` `complete`, `lead-assist` `take-over` -- the provider's `task-ended` is owed, a positive whole number of milliseconds (`manifest.disposalSettleMs`). Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
 
 ### Authentication methods
 
@@ -4492,8 +4495,16 @@ Every outcome ends the task for this agent. On `task-ended`, Omni:
 A `left` outcome ends the task for this agent alone: the call continues without them, as it does
 when a lead who joined it leaves -- see **Lead assist**.
 
-A successful `complete` or `transfer` command does not clear the task. Omni waits for `task-ended`.
-The `task-media-ended` event and the `completing` phase are likewise non-terminal. A replacement
+A successful `complete` or `transfer` command does not clear the task. Omni waits for `task-ended`,
+and not for ever: `applied` to a disposal -- `complete`, `transfer` `complete`, `lead-assist`
+`take-over` -- says the provider has disposed of the task, and its `task-ended` follows within the
+manifest's `disposalSettleMs`. A provider never answers `applied` for a disposal it has not yet
+performed. Past the bound the host calls `snapshot()`: a snapshot still carrying the task is a task
+held open by a provider that said it was done, and the desk shows it as unsettled -- "Completing...
+the provider has not confirmed" -- naming the command; a snapshot no longer carrying it clears the
+task, since the ending was owed and lost. The drive holds a provider to the same bound
+(`drive.disposal.unsettled`). The `task-media-ended` event and the `completing` phase are likewise
+non-terminal. A replacement
 snapshot that no longer contains the task also clears it. Repeated `task-ended` delivery with the
 same envelope ID is harmless, and a `task-ended` naming an allocation that has already ended is
 recognised as the late event it is, never applied to the life now open under the same id.

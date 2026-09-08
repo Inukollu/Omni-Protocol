@@ -36,6 +36,7 @@ const manifest = (over: Record<string, unknown> = {}) => ({
   channel: "voice",
   supportedProtocolVersions: [1],
   authenticationMethods: ["credentials"],
+  disposalSettleMs: 5000,
   // A voice manifest says which phones it supports; any other channel says nothing.
   ...(over.channel !== undefined && over.channel !== "voice" ? {} : { phones: ["softphone"] }),
   ...over,
@@ -810,6 +811,11 @@ describe("validateHandlingReport", () => {
     expect(rules(validateHandlingReport({ taskId: "call-42", allocationId: "alloc-42", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" }, "report", manifest()))).toEqual([]);
     expect(rules(validateManifest(manifest({ runningStepReports: true })))).toEqual([]);
     expect(rules(validateManifest(manifest({ runningStepReports: false })))).toEqual(["manifest.runningStepReports"]);
+    // The disposal bound is stated by every provider, as a positive whole number of milliseconds.
+    expect(rules(validateManifest(manifest({ disposalSettleMs: 5000 })))).toEqual([]);
+    expect(rules(validateManifest(manifest({ disposalSettleMs: 0 })))).toEqual(["manifest.disposalSettleMs"]);
+    expect(rules(validateManifest(manifest({ disposalSettleMs: 1.5 })))).toEqual(["manifest.disposalSettleMs"]);
+    expect(rules(validateManifest({ ...manifest(), disposalSettleMs: undefined }))).toEqual(["manifest.disposalSettleMs"]);
     expect(rules(validateResult({ status: "recorded" }, "recordStep"))).toEqual([]);
     expect(rules(validateResult({ status: "applied" }, "recordStep"))).toEqual(["result.status"]);
   });

@@ -1295,7 +1295,8 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   const isTask = (value: unknown): value is Record<string, unknown> => isRecord(value) && typeof value.id === "string";
 
   // Wait for an envelope that satisfies `matches`, looking first at what already arrived.
-  const waitFor = <T>(what: string, matches: (envelope: ProviderEventEnvelope<C>) => T | undefined, from: number): Promise<{ found: T; at: number } | undefined> =>
+  const waitFor = <T>(what: string, matches: (envelope: ProviderEventEnvelope<C>) => T | undefined, from: number,
+    within: { ms: number; onExpiry: () => void } = { ms: drive.timeoutMs, onExpiry: () => refuse("drive.timeout", "drive", `the provider owed ${what} within ${drive.timeoutMs}ms and it never arrived`) }): Promise<{ found: T; at: number } | undefined> =>
     new Promise(resolve => {
       for (let index = from; index < drive.events.length; index += 1) {
         const hit = matches(drive.events[index]!);
@@ -1303,9 +1304,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       }
       const timer = setTimeout(() => {
         drive.waiters.delete(waiter);
-        refuse("drive.timeout", "drive", `the provider owed ${what} within ${drive.timeoutMs}ms and it never arrived`);
+        within.onExpiry();
         resolve(undefined);
-      }, drive.timeoutMs);
+      }, within.ms);
       const waiter = (envelope: ProviderEventEnvelope<C>) => {
         const hit = matches(envelope);
         if (hit === undefined) return;
@@ -1446,10 +1447,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       }
       return undefined;
     }, cursor).then(hit => { if (hit) cursor = hit.at; return hit; });
-  const ended = () => waitFor("a task-ended for the driven task", envelope => {
+  const ended = (within?: { ms: number; onExpiry: () => void }) => waitFor("a task-ended for the driven task", envelope => {
     const event = envelope.event as Record<string, unknown>;
     return event.type === "task-ended" && event.taskId === taskId ? event : undefined;
-  }, cursor);
+  }, cursor, within);
 
   // Every command the drive sends is validated against the task as published, and its answer for its method.
   ruleEvaluated("drive.timeout");
@@ -1620,7 +1621,25 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (isRecord(dispositions) && dispositions.required === true && Array.isArray(dispositions.codes) && isRecord(dispositions.codes[0])) {
       command.disposition = (dispositions.codes[0] as Record<string, unknown>).id;
     }
-    if (await send(command) !== undefined && await ended() !== undefined) await storeReleased();
+    if (await send(command) !== undefined) {
+      // applied says the provider has disposed of the task, and its ending follows within the bound
+      // the manifest stated. Past it the host resyncs: a snapshot still carrying the task is a task
+      // held open by a provider that said it was done, and the desk shows it as unsettled.
+      ruleEvaluated("drive.disposal.unsettled");
+      const settle = Number(drive.manifest.disposalSettleMs);
+      let unsettled = false;
+      const end = await ended({ ms: settle, onExpiry: () => { unsettled = true; } });
+      if (end !== undefined) await storeReleased();
+      else if (unsettled) {
+        let resync: unknown;
+        try { resync = await drive.connection.snapshot(); } catch (error) { refuse("drive.command.rejected", "drive.disposal", `snapshot() after an unsettled disposal rejected: ${String(error)}`); }
+        const still = isRecord(resync) && Array.isArray(resync.tasks) && resync.tasks.some(t => isRecord(t) && t.id === taskId && t.allocationId === allocationOf());
+        refuse("drive.disposal.unsettled", "drive.disposal",
+          still
+            ? `complete was applied and ${settle}ms later the task-ended has not come and a snapshot still carries ${taskId}: applied says the provider disposed of the task, and it has not`
+            : `complete was applied and ${settle}ms later the task-ended has not come; a snapshot no longer carries ${taskId}, so the ending was owed and never sent`);
+      }
+    }
   } else if (latestTask().phase === "completing") {
     if (await ended() !== undefined) await storeReleased();
   }
