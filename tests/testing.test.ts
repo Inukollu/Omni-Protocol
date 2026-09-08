@@ -275,6 +275,8 @@ describe("assertMediaFollowsTheTask", () => {
 
   it("refuses media that moves before the work began, arrives twice, or ends where none arrived", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), mediaReady()]))).toEqual(["stream.taskMediaStarted.beforeWork"]);
+    // A completing task's call is over: a connect-back returns it to in-progress before any audio arrives.
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), mediaReady("e6")]))).toEqual(["stream.taskMediaStarted.beforeWork"]);
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), mediaEnded]))).toEqual(["stream.taskMediaEnded.beforeWork", "stream.taskMediaEnded.silent"]);
     // The defect this rule is for: a live call whose provider said nothing about its audio.
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaEnded]))).toEqual(["stream.taskMediaEnded.silent"]);
@@ -672,7 +674,7 @@ describe("browser isolation", () => {
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
 const speaking: HostReport = { online: true, audio: { input: { status: "available", localAudio: {} as MediaStream, flowing: true }, output: { status: "available" } } };
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", phone: "softphone" as const, host: stillHost(speaking, {}, "stream"), store: memoryStore() };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, phone: "softphone" as const, host: stillHost(speaking, {}, "stream"), store: memoryStore() };
 /** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
 
 const conformingManifest = {
@@ -750,6 +752,8 @@ interface AdapterOverrides {
   ignoresHost?: boolean;
   /** Sees the context connect() was handed, for a fixture that must use what the host gave it rather than what the test holds. */
   onConnect?: (connectContext: ConnectContext) => void;
+  /** Publishes once the host has stated capacity, which is when a provider may allocate: where a fixture's offers belong. */
+  emitOnCapacity?: (listener: (envelope: ProviderEventEnvelope<"voice">) => void) => void;
   /** Publishes authentication states to the harness once it subscribes to the session. */
   emitAuthentication?: (listener: (state: AuthenticationState) => void) => void;
   /** Methods to replace, or to remove by passing `undefined`. */
@@ -788,6 +792,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
     },
     async connect(connectContext) {
       if (overrides.connect !== undefined) return overrides.connect();
+      let subscribed: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
       // A voice adapter consults the host before it declares the agent ready to its platform.
       if (overrides.ignoresHost !== true) connectContext.host.report();
       overrides.onConnect?.(connectContext);
@@ -799,10 +804,11 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
           return (overrides.snapshot ?? conformingSnapshot) as Snapshot<"voice">;
         },
         subscribe: listener => {
+          subscribed = listener;
           overrides.emit?.(listener);
           return unsubscribe;
         },
-        setCapacity: async () => ({ status: "applied" }),
+        setCapacity: async () => { if (subscribed !== undefined) overrides.emitOnCapacity?.(subscribed); return { status: "applied" }; },
         execute: async () => ({ status: "applied" }),
         disconnect,
         describeUsers: async ids => ids.map(id => ({ id, displayName: `User ${id}`, timeZone: "Pacific/Chatham" })),
@@ -878,8 +884,9 @@ describe("exerciseAdapter", () => {
     // And on the wire after the snapshot: an offer under undetermined terms is the same fault.
     const offer = (capabilitySource: string): ProviderEventEnvelope<"voice"> => ({ id: "offer-1", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
       event: { type: "task-offered", task: { ...voiceTask, id: "call-77", phase: "pending", acceptance: "consent", capabilitySource: capabilitySource as "queue" } } });
-    expect(await rules({ emit: listener => listener(offer("queue")) })).toEqual([]);
-    expect(await rules({ emit: listener => listener(offer("undetermined")) })).toEqual(["capabilitySource.undetermined"]);
+    const idle = { ...conformingSnapshot, tasks: [], taskCount: 0 };
+    expect(await rules({ snapshot: idle, emitOnCapacity: listener => listener(offer("queue")) })).toEqual([]);
+    expect(await rules({ snapshot: idle, emitOnCapacity: listener => listener(offer("undetermined")) })).toEqual(["capabilitySource.undetermined"]);
   });
 
   it("requires the host to state a time zone, and the provider to keep it on the identity", async () => {
@@ -1056,7 +1063,7 @@ describe("exerciseAdapter drives one call", () => {
     /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
     legsIn?: "memory" | "store";
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
-    reloadAs?: "another-provider" | "without-answered" | "miscounted";
+    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out";
     /** An adapter that ends the task and leaves its key in the store, for the next offer of the id to inherit. */
     leavesKeys?: boolean;
     /** An adapter whose persist runs off a timer and writes about the task after its end was published. */
@@ -1064,7 +1071,9 @@ describe("exerciseAdapter drives one call", () => {
     /** A provider that writes the hold into its record and never closes it on resume. */
     leavesHoldOpen?: boolean;
     /** A provider that restates the host's muted leg without its duration after the call is over. */
-    leavesMuteOpen?: boolean }
+    leavesMuteOpen?: boolean;
+    /** Where the adapter throws instead of answering, so each catch in the drive is seen to name it. */
+    throwsOn?: "execute" | "recordStep" | "setMuted" | "close" | "rebuild" }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   const driveable = (script: Script = {}) => {
     let listener: Listener | undefined;
@@ -1105,12 +1114,14 @@ describe("exerciseAdapter drives one call", () => {
     const { adapter } = makeAdapter({
       snapshot: { ...conformingSnapshot, tasks: [], taskCount: 0 },
       ...(script.reloadAs === "another-provider" && script.platform?.open === true ? { manifest: { ...conformingManifest, id: "acme-voice-2" } } : {}),
+      ...(script.reloadAs === "signed-out" && script.platform?.open === true ? { authenticated: false } : {}),
       emit: l => { listener = l; },
       onConnect: connectContext => { given = connectContext.store; },
       connection: {
         ...(script.platform === undefined ? {} : { snapshot: reloaded }),
         setCapacity: async () => { if (script.platform !== undefined) script.platform.open = true; emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) }); return { status: "applied" }; },
         execute: async ({ command }: { command: { type: string } }) => {
+          if (script.throwsOn === "execute" && command.type === "hold") throw new Error("hub unreachable");
           switch (command.type) {
             case "answer":
               // The phase moves first and the audio follows on its own event, which is the only
@@ -1155,8 +1166,11 @@ describe("exerciseAdapter drives one call", () => {
             default: return { status: "failed", failure: { code: "omni.capability-not-enabled", message: command.type, retryable: false } };
           }
         },
-        openMedia: async () => ({ status: "opened", session: { remoteAudio: {} as MediaStream, setMuted: () => undefined, close: () => undefined } }),
+        openMedia: async () => ({ status: "opened", session: { remoteAudio: {} as MediaStream,
+          setMuted: () => { if (script.throwsOn === "setMuted") throw new Error("no mixer"); },
+          close: () => { if (script.throwsOn === "close") throw new Error("already closed"); } } }),
         recordStep: async (report: { step: string; at: string; seconds?: number; ended?: boolean; mutedBy?: "host" | "station" }) => {
+          if (script.throwsOn === "recordStep") throw new Error("record store down");
           if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
           if (report.step === "muted" && report.ended === true && report.seconds !== undefined && report.mutedBy !== undefined) {
             muted = { at: report.at, seconds: report.seconds, mutedBy: report.mutedBy };
@@ -1224,7 +1238,7 @@ describe("exerciseAdapter drives one call", () => {
   }, 20000);
 
   it("holds the second adapter to what the first was: the same provider, a snapshot that stands, a record that lost nothing", async () => {
-    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted") => {
+    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out") => {
       const store = memoryStore();
       const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, reloadAs };
       return (await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations.map(v => v.rule);
@@ -1232,7 +1246,34 @@ describe("exerciseAdapter drives one call", () => {
     expect(await misbehaving("another-provider")).toEqual(["drive.reload.manifest"]);
     expect(await misbehaving("without-answered")).toEqual(["drive.reload.history"]);
     expect(await misbehaving("miscounted")).toEqual(["snapshot.taskCount.mismatch"]);
+    // The reload is a restore before it is anything else: a second adapter that does not come up signed in as this login is named first.
+    expect(await misbehaving("signed-out")).toEqual(["drive.reload.login"]);
   }, 20000);
+
+  it("names an adapter that throws where it should answer, at every catch in the drive", async () => {
+    // Each catch was deletable with the suite green; each is now seen to name the throw, and the same adapter answering is clean.
+    // hold is sent twice, once on the call and once past the validator after it, and both throws are named.
+    expect((await drive(driveable({ throwsOn: "execute" }))).violations.map(v => v.rule)).toEqual(["drive.command.rejected", "drive.command.rejected"]);
+    expect((await drive(driveable({ throwsOn: "recordStep" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.rejected", "drive.recordStep.rejected"]);
+    expect((await drive(driveable({ throwsOn: "setMuted" }))).violations.map(v => v.rule)).toEqual(["drive.openMedia.setMuted", "drive.openMedia.setMuted"]);
+    expect((await drive(driveable({ throwsOn: "close" }))).violations.map(v => v.rule)).toEqual(["drive.openMedia.close"]);
+    const store = memoryStore();
+    const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } };
+    expect((await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => { throw new Error("no factory"); } })).violations.map(v => v.rule)).toEqual(["drive.reload.rejected"]);
+    expect((await drive(driveable({}))).violations).toEqual([]);
+  }, 20000);
+
+  it("applies a re-delivered envelope once, and names an id reused for a different event", async () => {
+    const at = "2026-08-21T09:00:00Z";
+    const first: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-1", occurredAt: at, event: { type: "transport-status", status: "active" } };
+    const again: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-1", occurredAt: at, event: { type: "transport-status", status: "error", recovery: "reconnect" } as never };
+    const run = async (...envelopes: ProviderEventEnvelope<"voice">[]) =>
+      await exerciseAdapter(makeAdapter({ emit: listener => { for (const envelope of envelopes) listener(envelope); } }).adapter, context, { collectOnly: true });
+    const harmless = await run(first, first);
+    expect(harmless.violations).toEqual([]);
+    expect(harmless.events.filter(e => e.id === "evt-1")).toHaveLength(1);
+    expect((await run(first, again)).violations.map(v => v.rule)).toEqual(["event.id.reused"]);
+  });
 
   it("names a task's key still in the store after the task has ended, and passes one that went with the task", async () => {
     // The clean case is the store-kept adapter above, which deletes its key before publishing the end. This one leaves it.
@@ -1612,16 +1653,20 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, emit: listener => listener(stray) })).toContain("event.loginId.mismatch");
   });
 
-  it("passes autoAcceptTasks through, absent meaning true", async () => {
+  it("passes autoAcceptTasks through as the host stated it, and infers nothing from a caller that states none", async () => {
     const offered = (acceptance?: "consent"): ProviderEventEnvelope<"voice"> => ({
       id: "evt-offer", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
       event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending", media: undefined, ...(acceptance ? { acceptance } : {}) } },
     });
-    const run = async (autoAcceptTasks: boolean | undefined, envelope: ProviderEventEnvelope<"voice">) =>
-      (await exerciseAdapter(makeAdapter({ emit: listener => listener(envelope) }).adapter, { ...context, ...(autoAcceptTasks === undefined ? {} : { autoAcceptTasks }) }, { collectOnly: true }))
+    const run = async (autoAcceptTasks: boolean, envelope: ProviderEventEnvelope<"voice">) =>
+      (await exerciseAdapter(makeAdapter({ snapshot: { ...conformingSnapshot, tasks: [], taskCount: 0 }, emitOnCapacity: listener => listener(envelope) }).adapter, { ...context, autoAcceptTasks }, { collectOnly: true }))
         .violations.map(violation => violation.rule);
-    expect(await run(undefined, offered("consent"))).toEqual([]);
-    expect(await run(undefined, offered())).toContain("task.acceptance.required");
+    expect(await run(true, offered("consent"))).toEqual([]);
+    expect(await run(true, offered())).toContain("task.acceptance.required");
+    // A validator called without the host's word checks neither way: absence is not a value.
+    const pending = { ...conformingSnapshot.tasks[0]!, phase: "pending" as const, media: undefined };
+    expect(validateTask(pending, { channel: "voice" }).map(v => v.rule)).not.toContain("task.acceptance.required");
+    expect(validateTask({ ...pending, acceptance: "consent" }, { channel: "voice" }).map(v => v.rule)).not.toContain("task.acceptance.unexpected");
     expect(await run(false, offered())).toEqual([]);
     expect(await run(false, offered("consent"))).toContain("task.acceptance.unexpected");
     // The word is on the task, so a reconnect snapshot says it too: a pending task carried in without it is refused the same way.
@@ -1684,7 +1729,27 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const imposed = { ...minimalSnapshot, break: { approval: "in-effect", mayAsk: true, imposed: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: imposed, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     expect(await rules({ snapshot: minimalSnapshot, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
+    // Present is not enough: the names the snapshot published are looked up, and the answer is held to the shape.
+    // The conforming snapshot names A-1: it is looked up and the answer stands, or the answer is named.
+    expect(await rules({})).toEqual([]);
+    expect(await rules({ connection: { describeUsers: async () => [] } })).toEqual(["connection.describeUsers.empty"]);
+    expect(await rules({ connection: { describeUsers: async () => [{ id: "Z-9", displayName: "Nobody asked", timeZone: "Pacific/Chatham" }] } })).toEqual(["describeUsers.unasked"]);
+    expect(await rules({ connection: { describeUsers: async (ids: string[]) => ids.map(id => ({ id, displayName: "" })) } })).toEqual(["describeUsers.user.displayName", "describeUsers.user.timeZone"]);
+    expect(await rules({ connection: { describeUsers: async () => { throw new Error("directory down"); } } })).toEqual(["connection.describeUsers.rejected"]);
+  });
 
+  it("holds work to being pulled: no offer before capacity is stated, none beyond it, the host's own dial excepted", async () => {
+    const idle = { ...conformingSnapshot, tasks: [], taskCount: 0 };
+    const offer = (id: string, over: Record<string, unknown> = {}): ProviderEventEnvelope<"voice"> => ({ id: `offer-${id}`, loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
+      event: { type: "task-offered", task: { ...voiceTask, id, phase: "pending", acceptance: "consent", ...over } } });
+    expect(await rules({ snapshot: idle, emitOnCapacity: listener => listener(offer("call-77")) })).toEqual([]);
+    expect(await rules({ snapshot: idle, emit: listener => listener(offer("call-77")) })).toEqual(["stream.taskOffered.beforeCapacity"]);
+    expect(await rules({ snapshot: idle, emitOnCapacity: listener => { listener(offer("call-77")); listener(offer("call-78")); } })).toEqual(["stream.taskOffered.overCapacity"]);
+    // The conforming snapshot already holds one task against a capacity of one: a second is one too many,
+    // unless it is the host's own dial arriving, which counts against nothing.
+    expect(await rules({ emitOnCapacity: listener => listener(offer("call-78")) })).toEqual(["stream.taskOffered.overCapacity"]);
+    const dialled = { acceptance: "automatic", onCall: [{ role: "party", dialId: "dial-1a0", stage: "ringing", since: "2026-08-21T09:00:00Z" }] };
+    expect(await rules({ emitOnCapacity: listener => listener(offer("call-78", dialled)) })).toEqual([]);
   });
 
   it("nothing optional of an adapter that declares nothing optional", async () => {

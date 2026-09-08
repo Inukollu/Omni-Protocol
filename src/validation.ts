@@ -308,7 +308,7 @@ export function validateScheduledActivity(activity: unknown, path = "scheduledAc
   return into.violations;
 }
 
-function validateScheduledActivityInto(activity: unknown, path: string, into: Collector): void {
+function validateScheduledActivityInto(activity: unknown, path: string, into: Collector, levels?: readonly string[]): void {
   if (!isPlainObject(activity)) {
     into.add("activity.shape", path, "a scheduled activity must be an object");
     return;
@@ -325,7 +325,7 @@ function validateScheduledActivityInto(activity: unknown, path: string, into: Co
       );
     }
   }
-  if (activity.party !== undefined) validateContactInto(activity.party, `${path}.party`, into);
+  if (activity.party !== undefined) validateContactInto(activity.party, `${path}.party`, into, levels);
   validateAttributes(activity.attributes, `${path}.attributes`, into);
 }
 
@@ -806,7 +806,7 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
   });
 }
 
-function validateTaskAttributes(value: unknown, path: string, into: Collector): void {
+function validateTaskAttributes(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
   if (value === undefined) return;
   if (!Array.isArray(value)) {
     into.add("task.attributes.shape", path, "attributes must be an array when present");
@@ -831,7 +831,7 @@ function validateTaskAttributes(value: unknown, path: string, into: Collector): 
         into.require(typeof attribute.value === "string", "task.attribute.text", `${at}.value`, "a text attribute needs a string value");
         break;
       case "contact":
-        validateContactInto(attribute.contact, `${at}.contact`, into);
+        validateContactInto(attribute.party, `${at}.party`, into, levels);
         break;
       case "timestamp":
         into.timestamp(attribute.at, "task.attribute.timestamp", `${at}.at`);
@@ -933,12 +933,18 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector, 
 const TASK_MEDIA_STATES = membersOf<TaskMediaState>({ started: true, ended: true });
 
 /** Real-time media is a voice affair, and its state is one of two words. */
-function validateTaskMedia(value: unknown, channel: string, path: string, into: Collector): void {
+function validateTaskMedia(value: unknown, channel: string, phase: unknown, path: string, into: Collector): void {
   if (value === undefined) return;
   if (!into.require(channel === "voice", "task.media.channel", path,
     `a ${channel} task carries no real-time media state`)) return;
-  into.oneOf(value, TASK_MEDIA_STATES, "task.media", path);
+  if (into.oneOf(value, TASK_MEDIA_STATES, "task.media", path)) {
+    // Nothing is acquired while pending, and a preview has placed no call: media names a task whose
+    // work has begun, on a snapshot as on the event, or a host would open the microphone on an offer.
+    into.require(!(WORK_NOT_BEGUN as readonly unknown[]).includes(phase), "task.media.beforeWork", path,
+      `a ${String(phase)} task has no media: audio arrives once its work has begun`);
+  }
 }
+const WORK_NOT_BEGUN = ["pending", "confirmed", "preview"] as const;
 
 /**
  * Who is on the call, as the provider states it. Voice only. Each entry is a role with what that
@@ -1061,7 +1067,7 @@ export interface TaskValidationContext {
   channel: string;
   /** The level ids in force, from the manifest. The defaults when absent. */
   levels?: readonly string[];
-  /** `ConnectContext.autoAcceptTasks` as sent, absent meaning `true`: whether a pending task states its `acceptance`. */
+  /** `ConnectContext.autoAcceptTasks` as sent: whether a pending task states its `acceptance`. Unknown to a caller without the context, and then unchecked. */
   autoAcceptTasks?: boolean;
   /** Whether the manifest declares `dialOutcomes`. A task that may dial needs it to; absent, the question is not asked. */
   dialOutcomesDeclared?: boolean;
@@ -1140,7 +1146,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   if (task.party !== undefined) validateContactInto(task.party, `${path}.party`, into, context.levels);
 
   validateBrowsers(task.browsers, `${path}.browsers`, into);
-  validateTaskAttributes(task.attributes, `${path}.attributes`, into);
+  validateTaskAttributes(task.attributes, `${path}.attributes`, into, context.levels);
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into, { phase: task.phase, media: task.media });
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
   // The room is who is on the call now, and a task outlives its call by the whole of wrap-up: a
@@ -1150,7 +1156,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.add("task.onCall.ended", `${path}.onCall`,
       `the call has ended (${task.phase === "completing" ? "the task is completing" : "its media ended"}) and onCall still names people on it: the room is who is on the call now, and now nobody is`);
   }
-  validateTaskMedia(task.media, context.channel, `${path}.media`, into);
+  validateTaskMedia(task.media, context.channel, task.phase, `${path}.media`, into);
   validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
   validateAssisting(task.assisting, context.channel, `${path}.assisting`, into);
   validateMonitoring(task.monitoring, context.channel, `${path}.monitoring`, into);
@@ -1331,7 +1337,7 @@ export interface ReaderContext {
   levels?: readonly string[];
   /** The login's `loginId`. A snapshot or event naming another belongs to a login that is gone. */
   loginId?: string;
-  /** `ConnectContext.autoAcceptTasks` as sent, absent meaning `true`: whether a pending task states its `acceptance`. */
+  /** `ConnectContext.autoAcceptTasks` as sent: whether a pending task states its `acceptance`. Unknown to a caller without the context, and then unchecked. */
   autoAcceptTasks?: boolean;
 }
 
@@ -1528,7 +1534,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       "contacts require the contacts idle capability");
     if (Array.isArray(snapshot.contacts)) {
       snapshot.contacts.forEach((contact: unknown, index: number) =>
-        validateContactInto(contact, `${path}.contacts[${index}]`, into));
+        validateContactInto(contact, `${path}.contacts[${index}]`, into, levels));
     } else {
       into.add("snapshot.contacts.shape", `${path}.contacts`, "contacts must be an array when present");
     }
@@ -1539,7 +1545,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     if (Array.isArray(snapshot.scheduledActivities)) {
       const seen = new Set<string>();
       snapshot.scheduledActivities.forEach((activity: unknown, index: number) => {
-        validateScheduledActivityInto(activity, `${path}.scheduledActivities[${index}]`, into);
+        validateScheduledActivityInto(activity, `${path}.scheduledActivities[${index}]`, into, levels);
         if (isPlainObject(activity) && isFilled(activity.id)) {
           if (seen.has(activity.id as string)) {
             into.add("activity.id.unique", `${path}.scheduledActivities[${index}].id`, `duplicate activity id: ${activity.id}`);
@@ -1750,7 +1756,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
         into.add("event.contacts.shape", `${at}.contacts`, "contacts must be an array");
       } else {
         event.contacts.forEach((contact: unknown, index: number) =>
-          validateContactInto(contact, `${at}.contacts[${index}]`, into));
+          validateContactInto(contact, `${at}.contacts[${index}]`, into, levels));
       }
       break;
     case "calendar-updated":
@@ -1761,7 +1767,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       } else {
         const ids = new Set<string>();
         event.scheduledActivities.forEach((activity: unknown, index: number) => {
-          validateScheduledActivityInto(activity, `${at}.scheduledActivities[${index}]`, into);
+          validateScheduledActivityInto(activity, `${at}.scheduledActivities[${index}]`, into, levels);
           if (isPlainObject(activity) && isFilled(activity.id)) {
             if (ids.has(activity.id as string)) into.add("activity.id.unique", `${at}.scheduledActivities[${index}].id`, `duplicate activity id: ${activity.id}`);
             ids.add(activity.id as string);
@@ -2060,6 +2066,22 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     : [...new Set([...TASK_COMMAND_NAMES.voice, ...TASK_COMMAND_NAMES.chat, ...TASK_COMMAND_NAMES.email])];
   if (type === "custom") {
     into.filled(command.name, "command.custom.name", `${path}.name`, "a custom command names the control it presses");
+    if (task === undefined) return into.violations;
+    // Held to the task: the control it presses is one the task published, and what the control asked for travels with it.
+    const custom = isPlainObject(task) && isPlainObject(task.capabilities) ? task.capabilities.custom : undefined;
+    const control = Array.isArray(custom) ? custom.filter(isPlainObject).find(entry => entry.id === command.name) : undefined;
+    if (control === undefined) {
+      into.add("command.capability.custom", path, `custom ${String(command.name)} presses a control the task never published`);
+      return into.violations;
+    }
+    if (isPlainObject(control.prompt) && Array.isArray(control.prompt.fields)) {
+      for (const field of control.prompt.fields.filter(isPlainObject)) {
+        if (typeof field.name === "string") {
+          into.require(typeof command[field.name] === "string" && (command[field.name] as string).length > 0, "command.custom.prompt", `${path}.${field.name}`,
+            `the control asked for ${field.name} and the command does not carry it`);
+        }
+      }
+    }
     return into.violations;
   }
   if (!into.require(typeof type === "string" && names.includes(type), "command.type", `${path}.type`,
@@ -2145,9 +2167,16 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   // to act on yet, and in completing the handling has ended: a call with nobody on it, a
   // conversation closed. What a capability offers, the phase decides whether there is anything to use it on.
   const handling = () => inPhase("command.phase.handling", "in-progress", "paused");
+  // A destination is one the directory offered: the id Omni sends is the id the provider published.
+  const listed = (name: string) => {
+    const declared = capabilities[name];
+    const directory = isPlainObject(declared) && Array.isArray(declared.destinations) ? declared.destinations.filter(isPlainObject) : [];
+    into.require(directory.some(item => item.id === command.destinationId), "command.destination.unknown", `${path}.destinationId`,
+      `${String(command.destinationId)} is not a destination the task's ${name} directory offered`);
+  };
   const onCall = Array.isArray(task.onCall) ? task.onCall.filter(isPlainObject) : [];
   switch (type) {
-    case "answer": case "accept": case "decline": case "reject":
+    case "answer": case "accept": case "decline":
       inPhase("command.phase.pending", "pending");
       if (type === "decline") offered("decline");
       break;
@@ -2163,8 +2192,8 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       break;
     case "transfer":
       handling();
-      if (command.action === "cold") offered("coldTransfer");
-      else if (command.action === "warm") offered("warmTransfer");
+      if (command.action === "cold") { if (offered("coldTransfer")) listed("coldTransfer"); }
+      else if (command.action === "warm") { if (offered("warmTransfer")) listed("warmTransfer"); }
       else if (command.action === "complete" || command.action === "cancel") {
         into.require(onCall.some(entry => entry.role === "consulted"), "command.transfer.consulted", path,
           `${String(command.action)} needs a consulted entry on onCall: without one there is nothing to complete or cancel`);
@@ -2183,9 +2212,11 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
           `${String(command.action)} is the lead's own act on a call they joined: the task carries assisting`);
       }
       break;
-    case "conference":
+    case "conference": {
       handling();
-      if (offered("conference") && command.action === "remove") {
+      const conferencing = offered("conference");
+      if (conferencing && command.action === "add") listed("conference");
+      if (conferencing && command.action === "remove") {
         const others = onCall.filter(entry => entry.role !== "agent");
         if (command.party === true) {
           into.require(others.some(entry => entry.role !== "party"), "command.conference.remove.alone", path,
@@ -2198,10 +2229,35 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
         }
       }
       break;
-    case "complete":
+    }
+    case "complete": {
       into.require(task.completionMode === "agent-command", "command.complete.mode", path,
         "complete belongs to agent-command; a provider-automatic task completes itself");
+      // What travels with complete is what the dispositions capability published: a code from its
+      // list where it has one, a code at all where it requires one, notes as it said, nothing where it published nothing.
+      const dispositions = capabilities.dispositions;
+      if (dispositions === undefined) {
+        into.require(command.disposition === undefined, "command.complete.disposition.unexpected", `${path}.disposition`,
+          "the task declares no dispositions; complete travels with no code");
+        into.require(command.notes === undefined, "command.complete.notes.unexpected", `${path}.notes`,
+          "the task declares no dispositions; complete travels with no notes");
+      } else if (isPlainObject(dispositions)) {
+        if (Array.isArray(dispositions.codes) && command.disposition !== undefined) {
+          into.require(dispositions.codes.some(code => isPlainObject(code) && code.id === command.disposition), "command.complete.disposition.unknown", `${path}.disposition`,
+            `${String(command.disposition)} is not a code the task published`);
+        }
+        if (dispositions.required === true) {
+          into.require(command.disposition !== undefined, "command.complete.disposition.required", `${path}.disposition`,
+            "the task requires a disposition and complete carries none");
+        }
+        if (dispositions.notes === "none") {
+          into.require(command.notes === undefined, "command.complete.notes.unexpected", `${path}.notes`, "the task takes no notes");
+        } else if (dispositions.notes === "required") {
+          into.require(typeof command.notes === "string" && command.notes.length > 0, "command.complete.notes.required", `${path}.notes`, "the task requires notes and complete carries none");
+        }
+      }
       break;
+    }
     default:
       break;
   }
@@ -2316,6 +2372,27 @@ export function validateTimeZone(value: unknown, path = "context.timeZone"): Pro
   const into = new Collector();
   into.require(isTimeZone(value), "context.timeZone", path,
     "a host states the agent's time zone at connect as an IANA name, such as Asia/Kolkata; an offset cannot survive a daylight-saving boundary");
+  return into.violations;
+}
+
+/**
+ * What `describeUsers(ids)` answered: an array of users, each one asked for, each a valid identity.
+ * The provider may answer fewer than asked, which is what "unknown to it" looks like; it never
+ * answers somebody nobody asked about.
+ */
+export function validateDescribedUsers(users: unknown, asked: readonly string[], path = "describeUsers"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!Array.isArray(users)) {
+    into.add("describeUsers.shape", path, "describeUsers answers an array of users, empty when it knows none of them");
+    return into.violations;
+  }
+  users.forEach((user: unknown, index: number) => {
+    const at = `${path}[${index}]`;
+    validateUser(user, "describeUsers.user", at, into);
+    if (isPlainObject(user) && typeof user.id === "string") {
+      into.require(asked.includes(user.id), "describeUsers.unasked", `${at}.id`, `${user.id} was not among the ids asked for`);
+    }
+  });
   return into.violations;
 }
 

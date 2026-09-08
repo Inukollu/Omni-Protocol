@@ -459,8 +459,8 @@ export type ConnectContext = {
   protocolVersion: number;
   /** The session that authenticated this connection. */
   loginId: string;
-  /** Omni-side policy: whether the agent's tasks are accepted without asking them. */
-  autoAcceptTasks?: boolean;
+  /** Omni-side policy: whether the agent's tasks are accepted without asking them. Stated, never assumed: a host says which. */
+  autoAcceptTasks: boolean;
   /**
    * The zone the agent's day is reckoned in, the same value passed as
    * `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the
