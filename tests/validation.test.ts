@@ -723,7 +723,8 @@ describe("validateEventEnvelope", () => {
     expect(ended({ type: "completed", by: "agent" })).toEqual([]);
     expect(ended({ type: "completed", by: "somebody" })).toContain("event.taskEnded.outcome.completed");
     expect(ended({ type: "transferred", destinationId: "tier2" })).toEqual([]);
-    expect(ended({ type: "cancelled" })).toEqual([]);
+    expect(ended({ type: "cancelled", by: "provider" })).toEqual([]);
+    expect(ended({ type: "cancelled" })).toEqual(["event.taskEnded.outcome.cancelled.by"]);
     // Only the phases in which somebody is still being waited on can expire.
     expect(ended({ type: "expired", phase: "pending" })).toEqual([]);
     expect(ended({ type: "expired", phase: "in-progress" })).toContain("event.taskEnded.outcome.expired");
@@ -1165,8 +1166,15 @@ describe("rules that had no test", () => {
     const ended = (outcome: unknown) => check({ type: "task-ended", taskId: "call-42", allocationId: "alloc-42", outcome });
     expect(ended({ type: "transferred", destinationId: "tier2" })).toEqual([]);
     expect(ended({ type: "transferred", destinationId: "" })).toEqual(["event.taskEnded.outcome.transferred"]);
-    expect(ended({ type: "cancelled", reason: "Caller hung up" })).toEqual([]);
-    expect(ended({ type: "cancelled", reason: "" })).toEqual(["event.taskEnded.outcome.cancelled"]);
+    // cancelled says who called the work off, as completed does: the agent, the provider, the party; nobody else, and never nobody.
+    expect(ended({ type: "cancelled", by: "party", reason: "Caller hung up" })).toEqual([]);
+    expect(ended({ type: "cancelled", by: "agent" })).toEqual([]);
+    expect(ended({ type: "cancelled", by: "provider" })).toEqual([]);
+    expect(ended({ type: "cancelled", reason: "Caller hung up" })).toEqual(["event.taskEnded.outcome.cancelled.by"]);
+    expect(ended({ type: "cancelled", by: "system" })).toEqual(["event.taskEnded.outcome.cancelled.by"]);
+    expect(ended({ type: "cancelled", by: "party", reason: "" })).toEqual(["event.taskEnded.outcome.cancelled"]);
+    // An offer that lapsed at its allocation deadline was cancelled by nobody: it expired, pending.
+    expect(ended({ type: "expired", phase: "pending" })).toEqual([]);
     expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "Upstream down" })).toEqual([]);
     expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "" })).toEqual(["event.transportStatus.message"]);
   });

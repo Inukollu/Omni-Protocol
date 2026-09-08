@@ -701,7 +701,7 @@ type AcceptanceMode =
 type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
   | { type: "transferred"; destinationId?: string }
-  | { type: "cancelled"; reason?: string }
+  | { type: "cancelled"; by: "agent" | "provider" | "party"; reason?: string }
   | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
   | { type: "left" }
   | { type: "failed"; failure: ProtocolFailure };
@@ -2204,14 +2204,20 @@ on a desk phone — and is not in question per call. See **How the agent hears t
 Automatic acceptance still begins with `task-offered`.
 
 `allocationExpiresAt` is the deadline after which the offer lapses. Where present, Omni counts
-down and stops offering **Accept** once it passes. **Omit it unless the provider can observe it.**
+down and stops offering **Accept** once it passes; the provider ends the lapsed offer with
+`task-ended` and an `expired` outcome naming `pending`, since nobody cancelled it. **Omit it unless the provider can observe it.**
 A provider that reports only elapsed ring time after the fact cannot say when an offer is due
 to end, and a computed value would have Omni withdraw **Accept** from a task still pending.
 
 A preview's deadline is not on the offer. It travels on the task, as `previewEndsAt` with
 `atDeadline`, so a snapshot carries it too -- see **Preview: the agent presses Call**.
 
-A provider may withdraw a pending task by emitting `task-ended` with a `cancelled` outcome.
+A provider may withdraw a pending task by emitting `task-ended` with a `cancelled` outcome, `by:
+"provider"`. **`cancelled` says who called the work off**, as `completed` says who completed it:
+`agent` for a decline, `provider` for a withdrawal or a re-route, `party` for a caller who abandoned
+the ring. One word for the three left a supervisor's record unable to tell them apart, so `by` is
+required and closed (`event.taskEnded.outcome.cancelled.by`). An offer nobody acted on before
+`allocationExpiresAt` is not cancelled by anyone: it lapses, and ends `expired` naming `pending`.
 
 ### Tasks already in progress
 
@@ -2293,7 +2299,8 @@ The canonical task transitions are:
 | `preview` | Agent presses Call (`call`) and the customer answers, or the deadline `calls` and they answer | `in-progress` |
 | `preview` | The call goes out and nobody answers | `completing` |
 | `preview` | The deadline `expires` | Removed by `task-ended` with `expired` outcome |
-| `pending` | Provider withdraws the allocation | Removed by `task-ended` with `cancelled` outcome |
+| `pending` | Provider withdraws the allocation, the agent declines, or the party abandons the ring | Removed by `task-ended` with `cancelled` outcome, `by` saying which |
+| `pending` | The offer lapses at `allocationExpiresAt` | Removed by `task-ended` with `expired` outcome naming `pending` |
 | No task | Snapshot reports work already underway | `in-progress` |
 | `in-progress` | Provider or agent pauses the task | `paused` |
 | `in-progress` | Agent starts a warm transfer (`transfer` `warm`); the customer is parked | `paused` |
@@ -4241,8 +4248,8 @@ beside the mapped one is what the full check costs a host; an adapter has it for
 validator holds a command only to a task that stands: a task handed in that is not one the wire
 published is named (`command.task`) rather than checked against.
 
-Declining or rejecting a pending offer ends it without accepting or completing it. The provider
-confirms the end with `task-ended` and a `cancelled` outcome.
+Declining a pending offer ends it without accepting or completing it. The provider confirms the
+end with `task-ended` and a `cancelled` outcome, `by: "agent"`.
 
 ### `execute(request)`
 

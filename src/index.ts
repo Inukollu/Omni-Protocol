@@ -942,8 +942,9 @@ export type AcceptanceMode =
 export type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
   | { type: "transferred"; destinationId?: string }
-  | { type: "cancelled"; reason?: string }
-  /** Only the phases in which somebody is still being waited on can expire. */
+  /** Who called the work off: the agent declining, the provider withdrawing or re-routing, the party abandoning. */
+  | { type: "cancelled"; by: "agent" | "provider" | "party"; reason?: string }
+  /** Only the phases in which somebody is still being waited on can expire; an offer that lapses at `allocationExpiresAt` names `pending`. */
   | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
   /** This agent left a call that continues without them: a lead who joined and dropped. */
   | { type: "left" }
