@@ -301,6 +301,21 @@ describe("assertMediaFollowsTheTask", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatEnded({ type: "cancelled", by: "party" })]))).toEqual([]);
   });
 
+  it("holds a resync snapshot to what the stream knew: no phase backwards, and no audio forgotten on a task still at work", () => {
+    const resync = (task: Record<string, unknown>, id = "s1") => ({ id, loginId: "session-1", occurredAt: at,
+      event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [task], taskCount: 1 } } }) as unknown as ProviderEventEnvelope<"voice">;
+    // The audio was up; a snapshot carrying the task at work without it lost state. One carrying it started, or completing with it ended, did not.
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync(call("in-progress"))]))).toEqual(["stream.snapshot.media"]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync({ ...call("paused") })]))).toEqual(["stream.snapshot.media"]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync({ ...call("in-progress"), media: "started" })]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync({ ...call("completing"), media: "ended" })]))).toEqual([]);
+    // A task does not go backwards on a resync either; the same phase, or a later one, stands.
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), resync(call("confirmed"))]))).toEqual(["stream.snapshot.phase"]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), resync(call("in-progress"))]))).toEqual([]);
+    // A task the snapshot carries under another allocation is another life, and is held to nothing the old one said.
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync({ ...call("pending"), allocationId: "alloc-43" })]))).toEqual([]);
+  });
+
   it("refuses media that moves before the work began, arrives twice, or ends where none arrived", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), mediaReady()]))).toEqual(["stream.taskMediaStarted.beforeWork"]);
     // A completing task's call is over: a connect-back returns it to in-progress before any audio arrives.
@@ -1181,7 +1196,7 @@ describe("exerciseAdapter drives one call", () => {
     /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
     legsIn?: "memory" | "store";
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
-    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted";
+    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-media" | "gone-backwards";
     /** The platform pushes the open task to every client of the login: the first connection sees a re-offer and says so. */
     reofferOnReload?: boolean;
     /** The reloaded client itself raises a diagnostic once it stands: a live client's shout, counted. */
@@ -1244,7 +1259,10 @@ describe("exerciseAdapter drives one call", () => {
       if (kept !== undefined) muted = JSON.parse(kept) as { at: string; seconds: number; mutedBy: "host" | "station" };
       const legs = muted === undefined ? [] : [legEntry(muted)];
       const steps = [...(script.reloadAs === "without-answered" ? [] : [{ step: "answered" as const, at }]), ...legs];
-      return { ...conformingSnapshot, tasks: [t({ phase: "in-progress", media: "started", onCall: room, handlingHistory: { steps }, allocationId: myAllocation })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
+      // A reloaded instance that forgot the audio was up, or that reads the task as not yet begun, serves a snapshot that lost state.
+      const media = script.reloadAs === "without-media" ? {} : { media: "started" };
+      const phase = script.reloadAs === "gone-backwards" ? "confirmed" : "in-progress";
+      return { ...conformingSnapshot, tasks: [t({ phase, ...media, onCall: room, handlingHistory: { steps }, allocationId: myAllocation })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
     };
     // A provider that restates its record does so on every publication once work has begun, never only at the end.
     const t = (over: Record<string, unknown>) => {
@@ -1425,18 +1443,23 @@ describe("exerciseAdapter drives one call", () => {
   }, 20000);
 
   it("holds the second adapter to what the first was: the same provider, a snapshot that stands, a record that lost nothing", async () => {
-    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted") => {
+    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-media" | "gone-backwards") => {
       const store = memoryStore();
       const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, reloadAs };
       return (await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations.map(v => v.rule);
     };
     expect(await misbehaving("another-provider")).toEqual(["drive.reload.manifest"]);
-    expect(await misbehaving("without-answered")).toEqual(["drive.reload.history"]);
+    // A record that shrank across the reload is named by the stream, as on any resync, and by the drive's check of the leg's word.
+    expect(await misbehaving("without-answered")).toEqual(["stream.snapshot.handlingHistory", "drive.reload.history"]);
     expect(await misbehaving("miscounted")).toEqual(["snapshot.taskCount.mismatch"]);
     // The reload is a restore before it is anything else: a second adapter that does not come up signed in as this login is named first.
     expect(await misbehaving("signed-out")).toEqual(["drive.reload.login"]);
     // The allocation is part of the task: a rebuilt adapter that mints a new one has renamed the life.
     expect(await misbehaving("reminted")).toEqual(["drive.reload.allocation"]);
+    // The stream's rules keep working across the reload: the second snapshot may not forget the audio the first held up,
+    // nor read the task as not yet begun. Named by the stream, as any resync is, not by a reload twin.
+    expect(await misbehaving("without-media")).toContain("stream.snapshot.media");
+    expect(await misbehaving("gone-backwards")).toContain("stream.snapshot.phase");
     // A reload is the first client dying: the platform's push to it goes nowhere, so a re-offer it would have shouted about never reaches a client. Nothing is exempted; there is nobody to hear it.
     const store = memoryStore();
     const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } as { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean }, reofferOnReload: true };

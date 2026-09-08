@@ -1100,6 +1100,52 @@ export class TaskStream {
       phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task), allocation: String(isRecord(task) ? task.allocationId : undefined) };
   }
 
+  /**
+   * Takes a resync snapshot -- a `snapshot` event, or the read a reloaded client makes -- as the
+   * state now, and first holds it to what the stream knew. A snapshot replaces state; it does not
+   * get to forget it. A task it carries that the stream already held may not go backwards, lose an
+   * entry of its record, return to undetermined terms, or be at work without the audio the stream
+   * held up: media ends on task-media-ended and the call moves on, so a task still in-progress or
+   * paused without its media is a snapshot that lost state, not a call that ended.
+   */
+  resync(snapshot: unknown, at: string): ProtocolViolation[] {
+    const found: ProtocolViolation[] = [];
+    const refuse = (rule: string, where: string, message: string) => found.push({ rule, path: where, message });
+    ruleEvaluated("stream.snapshot.capabilitySource", "stream.snapshot.handlingHistory", "stream.snapshot.phase", "stream.snapshot.media");
+    if (isRecord(snapshot) && Array.isArray(snapshot.tasks)) {
+      snapshot.tasks.forEach((task, index) => {
+        if (!isRecord(task) || typeof task.id !== "string") return;
+        const was = this.tasks.get(task.id);
+        if (was === undefined || was.allocation !== String(task.allocationId)) return;
+        if ((was.source === "queue" || was.source === "ungoverned") && task.capabilitySource === "undetermined") {
+          refuse("stream.snapshot.capabilitySource", `${at}.tasks[${index}].capabilitySource`,
+            `${task.id} was published under ${was.source} terms and the snapshot says undetermined: terms once read stay read`);
+        }
+        // A record once read is not unread: a resync restates it whole, or with more, never with less.
+        const lost = TaskStream.lost(was.record, TaskStream.record(task));
+        if (lost.length > 0) {
+          refuse("stream.snapshot.handlingHistory", `${at}.tasks[${index}].handlingHistory`,
+            `${task.id}'s record lost ${lost.join(", ")} on the snapshot: an entry read by the host stays in the record until the task ends`);
+        }
+        const to = String(task.phase);
+        const reachable = REACHABLE_PHASES[was.phase];
+        if (reachable !== undefined && (TASK_PHASES_ORDERED as readonly string[]).includes(to) && !reachable.has(to)) {
+          const connectingBack = was.phase === "completing" && TaskStream.partyDialled(task) && (to === "in-progress" || to === "paused");
+          if (!connectingBack) {
+            refuse("stream.snapshot.phase", `${at}.tasks[${index}].phase`,
+              `${task.id} was ${was.phase} and the snapshot says ${to}: a task does not go backwards, on an update or on a resync`);
+          }
+        }
+        if (was.media === "started" && (to === "in-progress" || to === "paused") && task.media !== "started") {
+          refuse("stream.snapshot.media", `${at}.tasks[${index}].media`,
+            `${task.id}'s audio was up and the snapshot carries it ${to} without it: media ends on task-media-ended and the call moves on, so a snapshot that forgets the audio lost state`);
+        }
+      });
+    }
+    this.seed(snapshot);
+    return found;
+  }
+
   /** Replaces what is known with a snapshot's tasks, as a snapshot replaces Omni's state. */
   seed(snapshot: unknown): void {
     this.tasks.clear();
@@ -1124,25 +1170,7 @@ export class TaskStream {
     const known = id === undefined ? undefined : this.tasks.get(id);
     switch (event.type) {
       case "snapshot":
-        ruleEvaluated("stream.snapshot.capabilitySource", "stream.snapshot.handlingHistory");
-        // A snapshot replaces what is known, and still may not say a task lost terms it had read.
-        if (isRecord(event.snapshot) && Array.isArray(event.snapshot.tasks)) {
-          event.snapshot.tasks.forEach((task, index) => {
-            if (!isRecord(task) || typeof task.id !== "string") return;
-            const was = this.tasks.get(task.id);
-            if (was !== undefined && (was.source === "queue" || was.source === "ungoverned") && task.capabilitySource === "undetermined") {
-              refuse("stream.snapshot.capabilitySource", `${at}.snapshot.tasks[${index}].capabilitySource`,
-                `${task.id} was published under ${was.source} terms and the snapshot says undetermined: terms once read stay read`);
-            }
-            // A record once read is not unread: a resync restates it whole, or with more, never with less.
-            const lost = TaskStream.lost(was?.record, TaskStream.record(task));
-            if (lost.length > 0) {
-              refuse("stream.snapshot.handlingHistory", `${at}.snapshot.tasks[${index}].handlingHistory`,
-                `${task.id}'s record lost ${lost.join(", ")} on the snapshot: an entry read by the host stays in the record until the task ends`);
-            }
-          });
-        }
-        this.seed(event.snapshot);
+        found.push(...this.resync(event.snapshot, `${at}.snapshot`));
         break;
       case "task-offered": {
         ruleEvaluated("stream.taskOffered.duplicate", "stream.taskOffered.allocation");
@@ -1428,9 +1456,11 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       drive.handOver.up(session, second);
       drive.connection = second;
       const snapshot = await second.snapshot() as unknown;
-      // The second adapter's snapshot is held to everything a first one is, and the streams take it as the state now.
+      // The second adapter's snapshot is held to everything a first one is, and the streams take it
+      // as the state now the way they take any resync: held to what they knew, then replaced. A reload
+      // is a place the stream's rules keep working, not one where they all stop.
       found.push(...validateSnapshot(snapshot, again.manifest, "drive.reload.snapshot", drive.reader()));
-      drive.streams.stream.seed(snapshot);
+      found.push(...drive.streams.stream.resync(snapshot, "drive.reload.snapshot"));
       drive.streams.breaks.seed(snapshot);
       const carried = isRecord(snapshot) && Array.isArray(snapshot.tasks)
         ? snapshot.tasks.find(task => isRecord(task) && task.id === taskId) as Record<string, unknown> | undefined : undefined;
