@@ -1041,6 +1041,24 @@ describe("exerciseAdapter", () => {
     expect(await rules({ manifest: plainManifest, snapshot: neither })).toEqual([]);
   });
 
+  it("reads its connect snapshot as a host does: drops what the snapshot restates, applies what it cannot carry, and holds it to account", async () => {
+    const at = "2026-08-21T01:00:00Z";
+    const ringing = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0], onCall: [{ role: "party", dialId: "dial-9", stage: "ringing", since: at }] }] };
+    const outcome = (id: string) => ({ id, loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId: "dial-9", taskId: "call-42", allocationId: "alloc-42", outcome: "no-answer" } }) as ProviderEventEnvelope<"voice">;
+    // An outcome delivered during the read ends the dial once the snapshot lands, so a second afterwards is the duplicate it is;
+    // delivered once, the dial has its outcome and nothing is refused.
+    expect(await rules({ snapshot: ringing, emit: l => l(outcome("o1")), emitOnCapacity: l => l(outcome("o2")) })).toEqual(["stream.dialOutcome.duplicate"]);
+    expect(await rules({ snapshot: ringing, emit: l => l(outcome("o1")) })).toEqual([]);
+    // A task event during the read is superseded, and the snapshot must then carry what it said: an update the snapshot
+    // carries is accounted for, one it does not is not; an ending the snapshot still carries is not, one it dropped is.
+    const updated = (task: Record<string, unknown>) => ({ id: "u1", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task } }) as ProviderEventEnvelope<"voice">;
+    const ended = (taskId: string, allocationId: string) => ({ id: "x1", loginId: "session-1", occurredAt: at, event: { type: "task-ended", taskId, allocationId, outcome: { type: "completed", by: "agent" } } }) as ProviderEventEnvelope<"voice">;
+    expect(await rules({ emit: l => l(updated({ ...voiceTask, phase: "paused" })) })).toEqual([]);
+    expect(await rules({ emit: l => l(updated({ ...voiceTask, id: "call-77", allocationId: "alloc-77" })) })).toEqual(["snapshot.accounts.task"]);
+    expect(await rules({ emit: l => l(ended("call-42", "alloc-42")) })).toEqual(["snapshot.accounts.ended"]);
+    expect(await rules({ emit: l => l(ended("call-77", "alloc-77")) })).toEqual([]);
+  });
+
   it("collects delivered events and deduplicates repeated ids", async () => {
     const good = { id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } } as ProviderEventEnvelope<"voice">;
     const { adapter } = makeAdapter({ emit: listener => { listener(good); listener(good); } });
@@ -1880,7 +1898,8 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const offer = (id: string, over: Record<string, unknown> = {}): ProviderEventEnvelope<"voice"> => ({ id: `offer-${id}`, loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
       event: { type: "task-offered", task: { ...voiceTask, id, allocationId: `${id}-a`, phase: "pending", acceptance: "consent", ...over } } });
     expect(await rules({ snapshot: idle, emitOnCapacity: listener => listener(offer("call-77")) })).toEqual([]);
-    expect(await rules({ snapshot: idle, emit: listener => listener(offer("call-77")) })).toEqual(["stream.taskOffered.beforeCapacity"]);
+    // Emitted at subscribe, the offer lands during the connect read too: an offer against no capacity, and a task the snapshot then fails to carry.
+    expect(await rules({ snapshot: idle, emit: listener => listener(offer("call-77")) })).toEqual(["stream.taskOffered.beforeCapacity", "snapshot.accounts.task"]);
     expect(await rules({ snapshot: idle, emitOnCapacity: listener => { listener(offer("call-77")); listener(offer("call-78")); } })).toEqual(["stream.taskOffered.overCapacity"]);
     // The conforming snapshot already holds one task against a capacity of one: a second is one too many,
     // unless it is the host's own dial arriving, which counts against nothing.
