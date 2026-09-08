@@ -239,8 +239,19 @@ describe("validateTask", () => {
   it("records each hold as its own entry, oldest first", () => {
     const history = (steps: unknown) => rules(validateTask(task({ handlingHistory: { steps } }), { channel: "voice" }));
     const answered = { step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" };
-    // Two holds are two entries; the running one omits its seconds.
-    expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
+    // Two holds are two entries; the running one omits its seconds, and runs only while the task is paused.
+    const paused = (steps: unknown) => rules(validateTask(task({ phase: "paused", handlingHistory: { steps } }), { channel: "voice" }));
+    expect(paused([answered, { step: "held", at: "2026-08-21T01:02:10Z", by: "a-17" }])).toEqual([]);
+    expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", by: "a-17" }])).toEqual(["task.handlingHistory.held.open"]);
+    expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }])).toEqual([]);
+    // A mute runs only while the media is up: an open one on a call that is over is a leg nobody closed.
+    const over = (steps: unknown, over: Record<string, unknown>) => rules(validateTask(task({ ...over, handlingHistory: { steps } }), { channel: "voice" }));
+    const openMute = { step: "muted", at: "2026-08-21T01:00:00Z", by: "a-17", mutedBy: "host" };
+    expect(over([answered, openMute], { media: "started" })).toEqual([]);
+    expect(over([answered, openMute], { media: "ended" })).toEqual(["task.handlingHistory.muted.open"]);
+    expect(over([answered, openMute], { phase: "completing", onCall: [] })).toEqual(["task.handlingHistory.muted.open"]);
+    expect(over([answered, { ...openMute, seconds: 4 }], { media: "ended" })).toEqual([]);
+    expect(paused([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
     expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17", mutedBy: "host" }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9, by: "a-17", mutedBy: "station" }])).toEqual([]);
     // A muted leg names the agent: the host has one, the provider knows who. A held leg may honestly not.
     expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }])).toEqual(["task.handlingHistory.muted.by"]);
@@ -253,9 +264,9 @@ describe("validateTask", () => {
     expect(history([answered, { step: "held", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }])).toEqual(["task.handlingHistory.mutedBy.unexpected"]);
     // Oldest first: a hold filed before the answer it followed is out of its turn.
     expect(history([{ step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, answered])).toEqual(["task.handlingHistory.order"]);
-    expect(history([answered, { step: "held", at: "2026-08-21T00:59:41Z", by: "a-17" }])).toEqual([]);
+    expect(paused([answered, { step: "held", at: "2026-08-21T00:59:41Z", by: "a-17" }])).toEqual([]);
     // A malformed instant is its own violation and takes no part in the ordering.
-    expect(history([answered, { step: "held", at: "soon", by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual(["task.handlingHistory.at"]);
+    expect(paused([answered, { step: "held", at: "soon", by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual(["task.handlingHistory.at"]);
   });
 
   it("refuses the task words the contract renamed, beside the words that replaced them", () => {
@@ -1437,7 +1448,7 @@ describe("every dial has an outcome", () => {
     }
     expect(step({ step: "transferred", dialId: "" })).toEqual(["task.handlingHistory.dialId"]);
     expect(step({ step: "transferred", destinationId: "" })).toEqual(["task.handlingHistory.destinationId"]);
-    expect(step({ step: "held", dialId: "dial-7f2" })).toEqual(["task.handlingHistory.dialId.unexpected"]);
+    expect(step({ step: "held", seconds: 12, dialId: "dial-7f2" })).toEqual(["task.handlingHistory.dialId.unexpected"]);
     expect(step({ step: "answered", destinationId: "tier2" })).toEqual(["task.handlingHistory.destinationId.unexpected"]);
   });
 });

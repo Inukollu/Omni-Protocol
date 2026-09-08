@@ -1012,7 +1012,11 @@ describe("exerciseAdapter drives one call", () => {
     /** An adapter that ends the task and leaves its key in the store, for the next offer of the id to inherit. */
     leavesKeys?: boolean;
     /** An adapter whose persist runs off a timer and writes about the task after its end was published. */
-    writesLate?: boolean }
+    writesLate?: boolean;
+    /** A provider that writes the hold into its record and never closes it on resume. */
+    leavesHoldOpen?: boolean;
+    /** A provider that restates the host's muted leg without its duration after the call is over. */
+    leavesMuteOpen?: boolean }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   const driveable = (script: Script = {}) => {
     let listener: Listener | undefined;
@@ -1027,9 +1031,11 @@ describe("exerciseAdapter drives one call", () => {
     // The store as the host handed it on connect: an adapter writes through what it was given, never a copy the test holds.
     let given: LoginStore | undefined;
     const legEntry = (leg: { at: string; seconds: number; mutedBy: "host" | "station" }) =>
-      ({ step: "muted" as const, ...leg, by: "1042", mutedBy: script.restateHistory === "with-mute-by-station" ? "station" as const : leg.mutedBy });
+      ({ step: "muted" as const, ...leg, ...(script.leavesMuteOpen && phase === "completing" ? { seconds: undefined } : {}), by: "1042", mutedBy: script.restateHistory === "with-mute-by-station" ? "station" as const : leg.mutedBy });
+    // The hold as the record carries it: open while the task is paused, closed with its duration on resume, unless the provider forgets.
+    let held: { at: string; seconds?: number } | undefined;
     const history = () => script.restateHistory === undefined ? undefined
-      : { steps: [{ step: "answered" as const, at }, ...(muted !== undefined && script.restateHistory !== "without-mute" ? [legEntry(muted)] : [])] };
+      : { steps: [{ step: "answered" as const, at }, ...(held === undefined ? [] : [{ step: "held" as const, ...held, by: "1042" }]), ...(muted !== undefined && script.restateHistory !== "without-mute" ? [legEntry(muted)] : [])] };
     // What a second instance knows: the platform's open task, and the legs it can reach -- the store's, or its own empty memory.
     const reloaded = async () => {
       if (script.platform?.open !== true) return { ...conformingSnapshot, tasks: [], taskCount: 0 };
@@ -1080,11 +1086,15 @@ describe("exerciseAdapter drives one call", () => {
                 emit({ type: "task-media-started", taskId: "call-77" });
                 return answer;
               }
+              held = { at: "2026-08-21T09:01:00Z" };
               emit({ type: "task-updated", task: t({ phase: "paused", media: "started", onCall: room }) }); return { status: "applied" };
-            case "resume": emit({ type: "task-updated", task: t({ phase: "in-progress", media: "started", onCall: room }) }); return { status: "applied" };
+            case "resume":
+              if (held !== undefined && !script.leavesHoldOpen) held = { ...held, seconds: 5 };
+              emit({ type: "task-updated", task: t({ phase: "in-progress", media: "started", onCall: room }) }); return { status: "applied" };
             case "end-call":
               emit({ type: "task-media-ended", taskId: "call-77" });
-              emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [], handlingHistory: history() }) });
+              // t() restates the record after it has taken the phase, so what the record says of a leg follows the phase it is published under.
+              emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
               return { status: "applied" };
             case "complete":
               if (script.platform !== undefined) script.platform.open = false;
@@ -1186,6 +1196,18 @@ describe("exerciseAdapter drives one call", () => {
     expect((await exerciseAdapter(driveable({ ...script, leavesKeys: false }), { ...context, store: kept }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
     expect(await kept.get("legs:call-77")).toBeUndefined();
     expect(await store.get("legs:call-77")).toBeDefined();
+  });
+
+  it("names a provider that writes the hold into its record and never closes it on resume, or the mute once the call is over", async () => {
+    // The record carries the hold open while the task is paused, and closed with its duration once it resumes;
+    // the host's muted leg it restates closed, since the host ended it before the media ended.
+    expect((await drive(driveable({ restateHistory: "with-mute" }))).violations).toEqual([]);
+    const openHold = (await drive(driveable({ restateHistory: "with-mute", leavesHoldOpen: true }))).violations.map(v => v.rule);
+    expect(openHold).toContain("task.handlingHistory.held.open");
+    expect(openHold).not.toContain("task.handlingHistory.muted.open");
+    const openMute = (await drive(driveable({ restateHistory: "with-mute", leavesMuteOpen: true }))).violations.map(v => v.rule);
+    expect(openMute).toContain("task.handlingHistory.muted.open");
+    expect(openMute).not.toContain("task.handlingHistory.held.open");
   });
 
   it("names a key written about the task after it had ended, when its keys had gone with it", async () => {
