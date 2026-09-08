@@ -211,6 +211,13 @@ export interface ExerciseAdapterOptions {
    * memory has nothing, and is named. Without it the store is required and never read.
    */
   rebuild?: () => Adapter<Channel>;
+  /**
+   * The values the queue locks on this login's tasks -- a party's number or email -- as the run's
+   * author knows them. A task whose party stands locked may carry none of them anywhere else
+   * (`task.locked.leak`). Required once any task locks a party field: a run that cannot ask the
+   * question is not a pass, and says so by throwing rather than passing.
+   */
+  lockedValues?: readonly string[];
 }
 
 /**
@@ -239,6 +246,7 @@ export async function exerciseAdapter<C extends Channel>(
   const breaks = new BreakStream();
   let seeded = false;
   const duringRead: ProviderEventEnvelope<C>[] = [];
+  let lockedPartySeen = false;
 
   const storedSecrets = new Map<string, string>();
   const authenticationSecrets: SecretStore = {
@@ -285,6 +293,7 @@ export async function exerciseAdapter<C extends Channel>(
       capabilities: current().capabilities,
       loginId: context.loginId,
       autoAcceptTasks: context.autoAcceptTasks,
+      locked: options.lockedValues,
     });
 
     // The optional methods are optional only until something declares a need for them. Each
@@ -412,6 +421,7 @@ export async function exerciseAdapter<C extends Channel>(
           message: `the provider reported a diagnostic: expected ${String(envelope.event.expected)}; observed ${String(envelope.event.observed)}` });
       }
       violations.push(...undeterminedTasks(eventTasks(envelope), "event"));
+      lockedPartySeen ||= eventTasks(envelope).some(locksParty);
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
       // Work is pulled, never pushed: an offer before the host stated capacity is an allocation
       // against nothing, and an offer beyond the count is one too many -- unless the task is the
@@ -478,6 +488,7 @@ export async function exerciseAdapter<C extends Channel>(
       if (broken.length > 0) tellRefused({ artefact: "snapshot", violations: broken });
     }
     violations.push(...undeterminedTasks(Array.isArray(snapshot?.tasks) ? snapshot.tasks : [], "snapshot.tasks"));
+    lockedPartySeen ||= (Array.isArray(snapshot?.tasks) ? snapshot.tasks : []).some(locksParty);
     stream.seed(snapshot);
     breaks.seed(snapshot);
     seeded = true;
@@ -612,6 +623,12 @@ export async function exerciseAdapter<C extends Channel>(
       path: "connection.disconnect",
       message: "an unsubscribe, disconnect(), or close() threw during shutdown",
     });
+  }
+  // A task locked a party field and the run was not told the value: task.locked.leak was never
+  // asked, and a result that cannot say is not returned as one that passed.
+  if (lockedPartySeen && options.lockedValues === undefined) {
+    stopObserving();
+    throw new TypeError("a task locks its party's number or email and the run states no lockedValues: task.locked.leak cannot be evaluated; pass the values the queue locked in options.lockedValues");
   }
   if (!options.collectOnly) assertNoViolations(violations);
 
@@ -749,6 +766,13 @@ export function assertAuthenticationRestoreAndExpiry(
 }
 
 /** The tasks an envelope carries: the one a task event names, or a snapshot event's list. */
+/** Whether a task's party stands locked on its number or email, which is what obliges a run to state the locked values. */
+function locksParty(task: unknown): boolean {
+  if (!isRecord(task) || !isRecord(task.party)) return false;
+  const locked = (value: unknown) => isRecord(value) && value.lockedBy !== undefined;
+  return locked(task.party.number) || locked(task.party.email);
+}
+
 function eventTasks(envelope: unknown): unknown[] {
   if (!isRecord(envelope) || !isRecord(envelope.event)) return [];
   const event = envelope.event;

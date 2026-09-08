@@ -1068,6 +1068,20 @@ describe("exerciseAdapter", () => {
     expect(await rules({ emit: l => l(ended("call-77", "alloc-77")) })).toEqual([]);
   });
 
+  it("holds a locked party's value to appearing nowhere else on the task, and refuses to run without the values once a task locks one", async () => {
+    const lockedTask = { ...conformingSnapshot.tasks[0]!, party: { name: "Asha", number: { lockedBy: "team" } } };
+    const leaking = { ...conformingSnapshot, tasks: [{ ...lockedTask, title: "Call from +91 98765 43210" }] };
+    const kept = { ...conformingSnapshot, tasks: [lockedTask] };
+    const run = (snapshot: unknown, lockedValues?: readonly string[]) =>
+      exerciseAdapter(makeAdapter({ snapshot }).adapter, context, { collectOnly: true, lockedValues });
+    expect((await run(leaking, ["+919876543210"])).violations.map(v => v.rule)).toEqual(["task.locked.leak"]);
+    expect((await run(kept, ["+919876543210"])).violations).toEqual([]);
+    // A run that cannot ask the question does not pass: it says what it was not told.
+    await expect(run(kept)).rejects.toThrow(/lockedValues/);
+    // And a run whose tasks lock nothing needs no values.
+    expect((await run(conformingSnapshot)).violations).toEqual([]);
+  });
+
   it("collects delivered events and deduplicates repeated ids", async () => {
     const good = { id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } } as ProviderEventEnvelope<"voice">;
     const { adapter } = makeAdapter({ emit: listener => { listener(good); listener(good); } });

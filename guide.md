@@ -831,7 +831,14 @@ lock, so nothing that can be locked — a directory, a number — may carry that
 contact's number and email are the same, since each identifies a person: where the queue says
 the agent may not see it, the provider sends `{ lockedBy }` in its place — the last digits or
 nothing — and a CRM link carries a token, never the value with a flag the desk is asked to honour.
-A name is not locked. What the queue provides rather than permits — browsers, dispositions, custom
+**What the queue locks is locked on the whole task.** A number the agent may not see appears
+nowhere else they read — not in the title, the reference, an attribute, a custom control's label,
+or a browser URL the desk shows; a browser whose URL must carry it says `urlVisibility: "hidden"`.
+The adapter is the one that knows the value, so it is the one held to it: given the values the
+queue locked, the validator refuses any other field carrying one, digits compared as digits so no
+formatting hides them (`task.locked.leak`), and a conformance run whose tasks lock a party's number
+or email states those values in `lockedValues`, since a run that cannot ask the question is not a
+pass. A host never has the value and never asks. A name is not locked. What the queue provides rather than permits — browsers, dispositions, custom
 controls — is content, and is never locked.
 
 **A lead sets the team's policy from their roster.** A login that declares
@@ -4624,7 +4631,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | Function | Validates |
 | --- | --- |
 | `validateManifest(manifest)` | Identity, protocol-version interoperability, authentication methods, and idle-capability shapes. |
-| `validateTask(task, { channel })` | Identity, channel agreement, phase, wrap allowance, capability shapes, custom controls, and browsers. |
+| `validateTask(task, { channel, locked? })` | Identity, channel agreement, phase, wrap allowance, capability shapes, custom controls, and browsers. Given `locked`, the values the queue locked, a task whose party stands locked carries none of them anywhere else (`task.locked.leak`). |
 | `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team roster, the stated `taskCount` reconciled against the tasks carried, and every task, contact, and activity, including idle-capability gating both ways: a contribution the manifest never declared is refused, and one it declares is required, `[]` included. |
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
