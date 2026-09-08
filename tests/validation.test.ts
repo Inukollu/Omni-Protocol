@@ -259,6 +259,11 @@ describe("validateTask", () => {
     expect(over([answered, openMute], { media: "started" })).toEqual([]);
     expect(over([answered, openMute], { media: "ended" })).toEqual(["task.handlingHistory.muted.open"]);
     expect(over([answered, openMute], { phase: "completing", onCall: [] })).toEqual(["task.handlingHistory.muted.open"]);
+    // A completing task's audio has ended or never started: stated as started, it is a call that never ended.
+    expect(rules(validateTask(task({ phase: "completing", onCall: [], media: "ended" }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: [] }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: [], media: "started" }), { channel: "voice" }))).toEqual(["task.media.completing"]);
+    expect(rules(validateTask(task({ phase: "in-progress", media: "started" }), { channel: "voice" }))).toEqual([]);
     expect(over([answered, { ...openMute, seconds: 4 }], { media: "ended" })).toEqual([]);
     expect(paused([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
     expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17", mutedBy: "host" }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9, by: "a-17", mutedBy: "station" }])).toEqual([]);

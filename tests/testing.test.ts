@@ -274,6 +274,14 @@ describe("assertMediaFollowsTheTask", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), connectingBack("e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [{ ...call("in-progress"), media: "started" }], taskCount: 1 }))).toEqual([]);
   });
 
+  it("refuses a task that completes around its audio: completing while the media the stream holds is still started", () => {
+    // The stream holds the audio from the events, so an update that omits media and moves to completing is caught too.
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), updated("completing", "e5")]))).toEqual(["stream.taskUpdated.mediaOpen", "stream.taskUpdated.media"]);
+    // The control: media ended first, as the guide orders it, and a completing task that never had audio.
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), ended]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), updated("completing", "e5"), ended]))).toEqual([]);
+  });
+
   it("refuses media that moves before the work began, arrives twice, or ends where none arrived", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), mediaReady()]))).toEqual(["stream.taskMediaStarted.beforeWork"]);
     // A completing task's call is over: a connect-back returns it to in-progress before any audio arrives.
@@ -1134,6 +1142,8 @@ describe("exerciseAdapter drives one call", () => {
     leavesHoldOpen?: boolean;
     /** A provider that restates the host's muted leg without its duration after the call is over. */
     leavesMuteOpen?: boolean;
+    /** End-call moves the task to completing and publishes no task-media-ended: the audio stays up through the wrap-up. */
+    completesAroundAudio?: boolean;
     /** Where the adapter throws instead of answering, so each catch in the drive is seen to name it. */
     throwsOn?: "execute" | "recordStep" | "setMuted" | "close" | "rebuild" }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
@@ -1235,6 +1245,10 @@ describe("exerciseAdapter drives one call", () => {
               if (held !== undefined && !script.leavesHoldOpen) held = { ...held, seconds: 5 };
               emit({ type: "task-updated", task: t({ phase: "in-progress", media: "started", onCall: room }) }); return { status: "applied" };
             case "end-call":
+              if (script.completesAroundAudio) {
+                emit({ type: "task-updated", task: t({ phase: "completing", media: "started", onCall: room }) });
+                return { status: "applied" };
+              }
               emit({ type: "task-media-ended", taskId: "call-77", allocationId: myAllocation });
               // t() restates the record after it has taken the phase, so what the record says of a leg follows the phase it is published under.
               emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
@@ -1467,6 +1481,15 @@ describe("exerciseAdapter drives one call", () => {
   it("sends hold once more after the call has ended, past the validator, and names an adapter that applies it", async () => {
     // The conforming fixture refuses it and the run is clean (the first test); this one applies it.
     expect((await drive(driveable({ holdAfterEnd: true }))).violations.map(v => v.rule)).toEqual(["drive.command.handling"]);
+  });
+
+  it("names an adapter whose end-call moves the task to completing with the audio still up, by the rule and not by the clock", async () => {
+    // The conforming fixture ends the media first and the run is clean (the first test); this one never ends it.
+    // The task contradicts itself (media, and the room still on a completing task), the stream names the
+    // update that did it, and the complete command lands on a task that fails validation. The drive does
+    // not also wait out the clock for an ending the rule has already named as missing: no drive.timeout.
+    const rules = (await drive(driveable({ completesAroundAudio: true }))).violations.map(v => v.rule);
+    expect(rules).toEqual(["task.media.completing", "task.onCall.ended", "stream.taskUpdated.mediaOpen", "command.task"]);
   });
 
   it("sends hold in confirmed too, where the provider publishes it, and names an adapter that applies it there", async () => {
