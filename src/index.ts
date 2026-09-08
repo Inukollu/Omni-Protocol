@@ -225,6 +225,13 @@ export interface Manifest<C extends Channel = Channel> {
    * when it ended, and a running report is refused: what a provider never asked for never crosses.
    */
   runningStepReports?: true;
+  /**
+   * How long after an applied disposal -- `complete`, `transfer` `complete`, `lead-assist`
+   * `take-over` -- the provider's `task-ended` is owed, in milliseconds. `applied` says the provider
+   * has disposed of the task; the ending follows within this, or the host resyncs and shows the
+   * task as unsettled. Stated per provider, since platforms settle at different speeds.
+   */
+  disposalSettleMs: number;
 }
 
 // ---------------------------------------------------------------------------

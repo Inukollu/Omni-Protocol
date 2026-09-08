@@ -538,6 +538,9 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
     into.require(manifest.runningStepReports === true, "manifest.runningStepReports", `${path}.runningStepReports`,
       "runningStepReports is declared by presence, as true; a provider that takes begin and end only omits it");
   }
+  into.require(typeof manifest.disposalSettleMs === "number" && Number.isInteger(manifest.disposalSettleMs) && manifest.disposalSettleMs > 0,
+    "manifest.disposalSettleMs", `${path}.disposalSettleMs`,
+    "disposalSettleMs is how long after an applied disposal the task-ended is owed, a positive whole number of milliseconds, stated by every provider");
   if (manifest.orgLevels !== undefined) {
     if (!Array.isArray(manifest.orgLevels)) {
       into.add("manifest.orgLevels.shape", `${path}.orgLevels`, "orgLevels must be an array when present");

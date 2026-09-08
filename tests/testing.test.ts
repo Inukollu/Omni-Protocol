@@ -74,7 +74,7 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
 describe("assertCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
-    supportedProtocolVersions: [1], authenticationMethods: ["credentials"],
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], disposalSettleMs: 150,
   } satisfies Manifest<"voice">;
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, team: { breakControl: true } } } satisfies AuthenticationState;
@@ -127,7 +127,7 @@ describe("assertCapabilityWithdrawal", () => {
 describe("assertTaskCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
-    supportedProtocolVersions: [1], authenticationMethods: ["credentials"],
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], disposalSettleMs: 150,
   } satisfies Manifest<"voice">;
   const withHold = { ...voiceTask, capabilities: { hold: true, recording: true } } satisfies Task<"voice">;
   const withoutHold = { ...voiceTask, capabilities: { recording: true } } satisfies Task<"voice">;
@@ -744,6 +744,7 @@ const conformingManifest = {
   channel: "voice",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
   authenticationMethods: ["browser-sso"],
+  disposalSettleMs: 150,
   idleCapabilities: {
     dial: { destinations: "any-number" },
     contacts: true,
@@ -1144,6 +1145,8 @@ describe("exerciseAdapter drives one call", () => {
     leavesMuteOpen?: boolean;
     /** End-call moves the task to completing and publishes no task-media-ended: the audio stays up through the wrap-up. */
     completesAroundAudio?: boolean;
+    /** Complete is answered applied and no task-ended follows: the platform still holds the task, or has dropped it without a word. */
+    neverEnds?: "held" | "dropped";
     /** Where the adapter throws instead of answering, so each catch in the drive is seen to name it. */
     throwsOn?: "execute" | "recordStep" | "setMuted" | "close" | "rebuild" }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
@@ -1170,6 +1173,7 @@ describe("exerciseAdapter drives one call", () => {
     const history = () => script.restateHistory === undefined ? undefined
       : { steps: [{ step: "answered" as const, at }, ...(held === undefined ? [] : [{ step: "held" as const, ...held, by: "1042" }]), ...(muted !== undefined && script.restateHistory !== "without-mute" ? [legEntry(muted)] : [])] };
     // What a second instance knows: the platform's open task, and the legs it can reach -- the store's, or its own empty memory.
+    let disposed = false;
     const reloaded = async () => {
       if (script.platform?.open !== true) return { ...conformingSnapshot, tasks: [], taskCount: 0 };
       if (script.reofferOnReload) script.platform!.firstListener?.({ id: `diag-${Date.now()}`, loginId: "session-1", occurredAt: at,
@@ -1204,6 +1208,9 @@ describe("exerciseAdapter drives one call", () => {
       onConnect: connectContext => { given = connectContext.store; },
       connection: {
         ...(script.platform === undefined ? {} : { snapshot: reloaded }),
+        ...(script.neverEnds === undefined ? {} : { snapshot: async () => disposed && script.neverEnds === "held"
+          ? { ...conformingSnapshot, tasks: [t({ phase: "completing", media: "ended", onCall: [] })], taskCount: 1 }
+          : { ...conformingSnapshot, tasks: [], taskCount: 0 } }),
         setCapacity: async ({ count }: { count: number }) => {
           // A provider allocates while it holds room and has work: this platform has one call, offered
           // once the first positive count arrives. Zero, and every restatement, is answered applied.
@@ -1254,6 +1261,7 @@ describe("exerciseAdapter drives one call", () => {
               emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
               return { status: "applied" };
             case "complete":
+              if (script.neverEnds !== undefined) { disposed = true; return { status: "applied" }; }
               if (script.platform !== undefined) script.platform.open = false;
               // A task's keys go with the task, before its end is published.
               if (script.legsIn === "store" && given !== undefined && !script.leavesKeys) await given.delete("legs:call-77");
@@ -1476,6 +1484,16 @@ describe("exerciseAdapter drives one call", () => {
     // The control: the same adapter on a clean store, writing nothing late, is clean (the test above holds it).
     const clean = memoryStore();
     expect((await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store" }), { ...context, store: clean }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
+  });
+
+  it("holds an applied disposal to the manifest's bound: the task-ended follows within it, or the resync says what the provider did", async () => {
+    // The conforming fixture ends the task on complete and the run is clean (the first test). These two say applied and never end it.
+    const held = (await drive(driveable({ neverEnds: "held" }))).violations;
+    expect(held.map(v => v.rule)).toEqual(["drive.disposal.unsettled"]);
+    expect(held[0]!.message).toContain("a snapshot still carries call-77");
+    const dropped = (await drive(driveable({ neverEnds: "dropped" }))).violations;
+    expect(dropped.map(v => v.rule)).toEqual(["drive.disposal.unsettled"]);
+    expect(dropped[0]!.message).toContain("a snapshot no longer carries call-77");
   });
 
   it("sends hold once more after the call has ended, past the validator, and names an adapter that applies it", async () => {
