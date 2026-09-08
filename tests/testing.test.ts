@@ -282,6 +282,25 @@ describe("assertMediaFollowsTheTask", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), updated("completing", "e5"), ended]))).toEqual([]);
   });
 
+  it("holds a conversation the provider completes itself to publishing completing first, where it stated an allowance to run", () => {
+    const chat = (over: Record<string, unknown>) => {
+      const { onCall: _room, media: _media, ...rest } = voiceTask as Record<string, unknown>;
+      return { ...rest, id: "chat-7", allocationId: "alloc-c7", channel: "chat", capabilities: {}, completionMode: "provider-automatic", wrapAllowance: 60, ...over };
+    };
+    const env = (id: string, event: Record<string, unknown>) => ({ id, loginId: "session-1", occurredAt: at, event }) as unknown as ProviderEventEnvelope;
+    const chatOffered = (over: Record<string, unknown> = {}) => env("c1", { type: "task-offered", task: chat({ phase: "pending", acceptance: "consent", ...over }) });
+    const chatUpdated = (phase: string, over: Record<string, unknown> = {}, id = "c2") => env(id, { type: "task-updated", task: chat({ phase, ...over }) });
+    const chatEnded = (outcome: Record<string, unknown>) => env("c9", { type: "task-ended", taskId: "chat-7", allocationId: "alloc-c7", outcome });
+    const completed = { type: "completed", by: "provider" };
+    // Completed straight from in-progress, the sixty seconds it stated were never given.
+    expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatEnded(completed)]))).toEqual(["stream.taskEnded.unwrapped"]);
+    // The controls: completing published first; nothing to wrap; the agent completes; the ending is not a completion.
+    expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatUpdated("completing", {}, "c3"), chatEnded(completed)]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered({ wrapAllowance: 0 }), chatUpdated("in-progress", { wrapAllowance: 0 }), chatEnded(completed)]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered({ completionMode: "agent-command" }), chatUpdated("in-progress", { completionMode: "agent-command" }), chatEnded({ type: "completed", by: "agent" })]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatEnded({ type: "cancelled", by: "party" })]))).toEqual([]);
+  });
+
   it("refuses media that moves before the work began, arrives twice, or ends where none arrived", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), mediaReady()]))).toEqual(["stream.taskMediaStarted.beforeWork"]);
     // A completing task's call is over: a connect-back returns it to in-progress before any audio arrives.

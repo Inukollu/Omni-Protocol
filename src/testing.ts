@@ -952,7 +952,7 @@ const REACHABLE_PHASES: Record<string, Set<string>> = {
 };
 
 export class TaskStream {
-  private readonly tasks = new Map<string, { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string }>();
+  private readonly tasks = new Map<string, ReturnType<typeof TaskStream.stated>>();
   // Every allocation this login has seen, and the ones whose task has ended: an offer never reuses
   // one, an event about a task names the life that is open, and a late event for a life that ended
   // is recognised as that rather than landing on the next customer under the same id.
@@ -1024,7 +1024,7 @@ export class TaskStream {
     return [...was].filter(key => !now.has(key));
   }
 
-  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string } {
+  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string; channel: string; completionMode: string; wrapAllowance: number | undefined } {
     const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
     // The stage of every dialled entry the room names by its dial, so an update can be held to the
     // outcome that moves it.
@@ -1034,7 +1034,9 @@ export class TaskStream {
         if (isRecord(entry) && typeof entry.dialId === "string" && typeof entry.stage === "string") stages.set(entry.dialId, entry.stage);
       }
     }
-    return { phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task), allocation: String(isRecord(task) ? task.allocationId : undefined) };
+    return { channel: String(isRecord(task) ? task.channel : undefined), completionMode: String(isRecord(task) ? task.completionMode : undefined),
+      wrapAllowance: isRecord(task) && typeof task.wrapAllowance === "number" ? task.wrapAllowance : undefined,
+      phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task), allocation: String(isRecord(task) ? task.allocationId : undefined) };
   }
 
   /** Replaces what is known with a snapshot's tasks, as a snapshot replaces Omni's state. */
@@ -1226,6 +1228,16 @@ export class TaskStream {
         }
         // A late ending for a life that is over must not end the life that is open under the same id.
         if (!this.namesTheOpenLife(event, known, at, refuse)) break;
+        // Off voice there is no media event, so the update that moves a task to completing is the
+        // provider's word that handling ended and the moment the wrap allowance starts. A provider
+        // that completes the task itself with an allowance to run has to have started the clock:
+        // completed from in-progress, the allowance it stated was never given.
+        ruleEvaluated("stream.taskEnded.unwrapped");
+        if (known.channel !== "voice" && known.completionMode === "provider-automatic" && known.wrapAllowance !== undefined && known.wrapAllowance > 0
+          && known.phase !== "completing" && isRecord(event.outcome) && event.outcome.type === "completed") {
+          refuse("stream.taskEnded.unwrapped", `${at}.outcome`,
+            `${id} was completed from ${known.phase} with a wrap allowance of ${known.wrapAllowance}s under provider-automatic: off voice, completing is the provider's word that handling ended and the allowance's start, and it was never published`);
+        }
         this.endedAllocations.add(known.allocation);
         this.tasks.delete(id);
         break;
