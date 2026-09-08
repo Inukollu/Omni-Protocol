@@ -2432,9 +2432,18 @@ whether the channel carries real-time media:
 | Channel | Wrap allowance starts at |
 | --- | --- |
 | Voice and any channel with real-time media | The `task-media-ended` event |
-| Chat | When the conversation ends and the task enters `completing` |
-| Email | After the message is sent and the task enters `completing` |
-| Other non-media channels | The moment the task enters `completing` |
+| Chat | The `task-updated` that moves the task to `completing`: the provider's word that the conversation is closed on its side, the allowance running from that publication's `occurredAt` |
+| Email | The `task-updated` that moves the task to `completing`: the provider's word that the platform has accepted the outgoing message, the allowance running from that publication's `occurredAt` |
+| Other non-media channels | The `task-updated` that moves the task to `completing` |
+
+**Off voice, `completing` is the provider's word that handling ended.** There is no media event to
+carry it, so the phase does; a host starts the wrap clock at that publication and nowhere else. It
+is optional: a conversation with nothing to wrap moves from `in-progress` to `task-ended` and
+`completing` is never published. Under `provider-automatic` with a non-zero `wrapAllowance` it is
+required, because the clock has to start somewhere: a chat or email task the provider completes
+from `in-progress` with an allowance to run gave the agent none of it, and the stream refuses the
+ending (`stream.taskEnded.unwrapped`). Under `agent-command` the agent's `complete` is the end,
+from `in-progress` or from `completing` alike.
 
 ```ts
 const emailCompletion = {
