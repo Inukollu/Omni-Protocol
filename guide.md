@@ -2888,7 +2888,10 @@ last statement stands and the failure is a `diagnostic`, and a task that was pub
 `queue` or `ungoverned` never returns to `undetermined`, on an update (`stream.taskUpdated.capabilitySource`)
 or on a resync snapshot (`stream.snapshot.capabilitySource`); a record once read never loses an
 entry the same two ways (`stream.taskUpdated.handlingHistory`, `stream.snapshot.handlingHistory`);
-and a task does not go backwards (`stream.taskUpdated.phase`): the stream sees publications, not
+a snapshot carrying a task still at work does not forget the audio the stream held up, since media
+ends on `task-media-ended` and the call moves on (`stream.snapshot.media`); and a task does not go
+backwards, on an update or on a resync (`stream.taskUpdated.phase`, `stream.snapshot.phase`): the
+stream sees publications, not
 transitions, and a task may pass through a phase between two, so `pending` to `in-progress` stands
 with `confirmed` between them, and what is refused is a phase unreachable from the last one read by
 the transition table -- back to `pending`, back to `confirmed` or `preview` once work began, out of
@@ -4781,7 +4784,11 @@ built and connected for the same login with the same context and the same `store
 must carry the task with that leg and the host's word, and the run goes on with the second as its
 connection to the end. A platform that holds the record hands it back, and an adapter that composed
 the record in memory has nothing and is named (`drive.reload.snapshot`, `drive.reload.history`,
-`.rejected`). The second adapter is held to what the first was: the same provider
+`.rejected`). The second adapter's snapshot is taken as any resync is: held to what the stream knew
+before it replaces it, so a phase gone backwards, a record that shrank or audio forgotten on a task
+still at work is named by the stream's own rules (`stream.snapshot.phase`, `.handlingHistory`,
+`.media`) and a reload is a place those rules keep working, not one where they stop. The second
+adapter is held to what the first was: the same provider
 (`drive.reload.manifest`), a snapshot that stands as any snapshot must, and a record that lost none
 of the entries the first had published -- a record once read is not unread across a reload either.
 A reconnect on the same adapter object would prove nothing, since an in-process adapter's memory
