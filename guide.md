@@ -4641,7 +4641,9 @@ A refusal has an aftermath on the desk and a report to the provider, and both ar
   vanish from the desk while the call is up.
 - **A refused event is dropped and counted.** The state the host holds does not move for it. The
   provider is told, and may republish a corrected state or raise a `diagnostic`; the host retries
-  nothing.
+  nothing. The desk shows nothing for it: the view kept moving for every other event, so "last
+  update refused" would be false of it, and a chip that said nothing would be right about the
+  transport. Counted, and the provider told, is all a host can truthfully do for one event.
 - **The provider is told, every time.** `refused(report)` carries the artefact, the envelope id for
   an event, and every violation with its rule and path. An adapter logs it at error and treats it as
   its own defect until shown otherwise: what the host refused never reached the agent, and a
