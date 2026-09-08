@@ -245,9 +245,11 @@ export async function exerciseAdapter<C extends Channel>(
     set: async (key, value) => { storedSecrets.set(key, value); },
     delete: async key => { storedSecrets.delete(key); },
   };
-  const authentication = await adapter.createAuthenticationSession({ ...context, secrets: authenticationSecrets });
+  let authentication = await adapter.createAuthenticationSession({ ...context, secrets: authenticationSecrets });
 
   let connection: Connection<C> | undefined;
+  /** Whether the run holds a client at all: false between a reload's first client going down and its second standing, and after a reload that failed. */
+  let clientLive = true;
   let unsubscribe: (() => void) | undefined;
   let unsubscribeAuthentication: (() => void) | undefined;
   let unsubscribeHost: (() => void) | undefined;
@@ -390,10 +392,9 @@ export async function exerciseAdapter<C extends Channel>(
 
     const eventPayloads = new Map<string, string>();
     let capacityStated: number | undefined;
-    const reloading = { now: false };
     // The drive waits on events: each waiter is offered every envelope as it lands.
     const waiters = new Set<(envelope: ProviderEventEnvelope<C>) => void>();
-    unsubscribe = connection.subscribe(envelope => {
+    const onEnvelope = (envelope: ProviderEventEnvelope<C>): void => {
       observeEvent(envelope, seen);
       const broken = validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader());
       violations.push(...broken);
@@ -405,7 +406,7 @@ export async function exerciseAdapter<C extends Channel>(
       // client pushes it to the old one too, and an adapter that calls a re-offer of answered work a
       // defect is right to. That diagnostic is the drive's own artefact, and is not counted while the
       // second adapter is up; every other moment it is.
-      if (isRecord(envelope?.event) && envelope.event.type === "diagnostic" && !reloading.now) {
+      if (isRecord(envelope?.event) && envelope.event.type === "diagnostic") {
         violations.push({ rule: "diagnostic.raised", path: "event.diagnostic",
           message: `the provider reported a diagnostic: expected ${String(envelope.event.expected)}; observed ${String(envelope.event.observed)}` });
       }
@@ -441,7 +442,30 @@ export async function exerciseAdapter<C extends Channel>(
       if (seeded) violations.push(...stream.apply(envelope), ...breaks.apply(envelope));
       events.push(envelope);
       for (const waiter of waiters) waiter(envelope);
-    });
+    };
+    unsubscribe = connection.subscribe(onEnvelope);
+    // A host reload is the first client dying and a second coming up in its place. The drive hands
+    // the run over: the first connection is unsubscribed, disconnected and its session closed before
+    // the second connects, and the run continues on the second -- so there is no first client for a
+    // platform to push the open task back to, and nothing to exempt.
+    const handOver = {
+      isLive: (): boolean => clientLive,
+      down: async (): Promise<boolean> => {
+        let clean = true;
+        try { unsubscribe?.(); } catch { clean = false; }
+        unsubscribe = undefined;
+        try { await connection?.disconnect(); } catch { clean = false; }
+        try { await authentication.close(); } catch { clean = false; }
+        clientLive = false;
+        return clean;
+      },
+      up: (session: Awaited<ReturnType<Adapter<C>["createAuthenticationSession"]>>, second: Connection<C>): void => {
+        authentication = session;
+        connection = second;
+        unsubscribe = second.subscribe(onEnvelope);
+        clientLive = true;
+      },
+    };
 
     const snapshot = await connection.snapshot() as Snapshot;
     observeSnapshot(snapshot, seen);
@@ -517,7 +541,8 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push(...await driveOneCall({
         connection: live, manifest: adapter.manifest, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
         timeoutMs: options.driveTimeoutMs ?? 5000,
-        context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held, reloading,
+        context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held, handOver,
+        streams: { stream, breaks },
       }));
     }
     // Capacity supersedes rather than accumulates, so a decrease is as ordinary as an increase: the
@@ -527,9 +552,9 @@ export async function exerciseAdapter<C extends Channel>(
     // capacity is elsewhere, and the provider allocates nothing and refuses nothing for it. Any offer
     // after a lower count is caught against it (stream.taskOffered.overCapacity).
     ruleEvaluated("connection.setCapacity.lowered", "connection.setCapacity.zero");
-    for (const count of [2, 1, 0]) {
+    for (const count of clientLive ? [2, 1, 0] : []) {
       capacityStated = count;
-      const restated = await live.setCapacity({ count });
+      const restated = await connection.setCapacity({ count });
       const shape = validateResult(restated, "setCapacity", "connection.setCapacity");
       violations.push(...shape);
       if (shape.length === 0 && restated.status === "failed") {
@@ -545,8 +570,11 @@ export async function exerciseAdapter<C extends Channel>(
     try { unsubscribe?.(); } catch { clean = false; }
     try { unsubscribeAuthentication?.(); } catch { clean = false; }
     try { unsubscribeHost?.(); } catch { clean = false; }
-    try { await connection?.disconnect(); } catch { clean = false; }
-    try { await authentication.close(); } catch { clean = false; }
+    // A run whose reload took the first client down and stood no second holds nothing to close.
+    if (clientLive) {
+      try { await connection?.disconnect(); } catch { clean = false; }
+      try { await authentication.close(); } catch { clean = false; }
+    }
     disconnectWasClean = clean;
   }
 
@@ -1230,8 +1258,10 @@ interface Drive<C extends Channel> {
   rebuild: (() => Adapter<Channel>) | undefined;
   /** Every key the watched store currently holds. */
   held: ReadonlySet<string>;
-  /** Set while a rebuilt adapter is up beside the first: a diagnostic the first raises then is the drive's artefact. */
-  reloading: { now: boolean };
+  /** Takes the first client down and brings the second up in its place: what a host reload is. */
+  handOver: { isLive: () => boolean; down: () => Promise<boolean>; up: (session: Awaited<ReturnType<Adapter<C>["createAuthenticationSession"]>>, second: Connection<C>) => void };
+  /** The streams the run holds its events to, re-seeded from the reloaded client's snapshot. */
+  streams: { stream: TaskStream; breaks: BreakStream };
   channel: Channel;
   softphone: boolean;
   snapshot: unknown;
@@ -1277,25 +1307,26 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     });
 
   const recordSurvivesReload = async (at: string): Promise<void> => {
-    ruleEvaluated("drive.reload.rejected", "drive.reload.manifest", "drive.reload.login", "drive.reload.snapshot", "drive.reload.allocation", "drive.reload.history");
-    let again: Adapter<Channel>;
+    ruleEvaluated("drive.reload.rejected", "drive.reload.manifest", "drive.reload.login", "drive.reload.snapshot", "drive.reload.allocation", "drive.reload.history", "drive.reload.handover");
+    let again: Adapter<C>;
     try {
-      again = drive.rebuild!();
+      again = drive.rebuild!() as Adapter<C>;
     } catch (error) {
       refuse("drive.reload.rejected", "drive.reload", `building the adapter again threw: ${String(error)}`);
       return;
     }
-    let session: { close(): Promise<void> } | undefined;
-    let second: Connection<Channel> | undefined;
+    // The same provider, built again: a different manifest is a different adapter, and proves nothing about this one.
+    if (again.manifest.id !== drive.manifest.id) {
+      refuse("drive.reload.manifest", "drive.reload.manifest",
+        `rebuild returned an adapter for ${String(again.manifest.id)}; the reload is of ${String(drive.manifest.id)}`);
+      return;
+    }
+    // The first client dies first, as it does on a reload: from here the run has no connection until the second stands.
+    if (!await drive.handOver.down()) {
+      refuse("drive.reload.handover", "drive.reload", "taking the first client down threw: an unsubscribe, disconnect() or close() failed");
+    }
     try {
-      // The same provider, built again: a different manifest is a different adapter, and proves nothing about this one.
-      if (again.manifest.id !== drive.manifest.id) {
-        refuse("drive.reload.manifest", "drive.reload.manifest",
-          `rebuild returned an adapter for ${String(again.manifest.id)}; the reload is of ${String(drive.manifest.id)}`);
-        return;
-      }
-      drive.reloading.now = true;
-      session = await again.createAuthenticationSession({ ...drive.context, secrets: drive.secrets });
+      const session = await again.createAuthenticationSession({ ...drive.context, secrets: drive.secrets });
       // The reload is a restore before it is anything else: the second session stands authenticated
       // as the same person, from the secrets alone, or nothing it reads afterwards is this login's.
       const restored = await (session as unknown as { state(): Promise<unknown> }).state();
@@ -1304,12 +1335,19 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       if (!same) {
         refuse("drive.reload.login", "drive.reload.login",
           `a second adapter built from the same login and secrets did not restore it: the session says ${String(isRecord(restored) ? restored.status : restored)}${isRecord(restored) && isRecord(restored.identity) ? ` as ${String(restored.identity.id)}` : ""}, and the login is ${String(drive.reader().self)}`);
+        // A reload that cannot restore the login is a sign-in screen, not a connection: the run ends here.
+        try { await session.close(); } catch { /* the session that would not restore is closed as far as it can be */ }
         return;
       }
-      second = await again.connect(drive.context);
+      const second = await again.connect(drive.context);
+      // From here the second client is the run's connection: what it publishes is validated as before.
+      drive.handOver.up(session, second);
+      drive.connection = second;
       const snapshot = await second.snapshot() as unknown;
-      // The second adapter's snapshot is held to everything a first one is.
+      // The second adapter's snapshot is held to everything a first one is, and the streams take it as the state now.
       found.push(...validateSnapshot(snapshot, again.manifest, "drive.reload.snapshot", drive.reader()));
+      drive.streams.stream.seed(snapshot);
+      drive.streams.breaks.seed(snapshot);
       const carried = isRecord(snapshot) && Array.isArray(snapshot.tasks)
         ? snapshot.tasks.find(task => isRecord(task) && task.id === taskId) as Record<string, unknown> | undefined : undefined;
       if (carried === undefined) {
@@ -1341,12 +1379,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         refuse("drive.reload.history", "drive.reload.history",
           `the reloaded record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host`);
       }
+      // The drive goes on with the task as the reloaded client holds it.
+      task = carried;
     } catch (error) {
       refuse("drive.reload.rejected", "drive.reload", `the second adapter rejected rather than answered: ${String(error)}`);
-    } finally {
-      try { await second?.disconnect(); } catch (error) { refuse("drive.reload.rejected", "drive.reload", `the second adapter's disconnect threw: ${String(error)}`); }
-      try { await session?.close(); } catch (error) { refuse("drive.reload.rejected", "drive.reload", `the second adapter's session threw on close: ${String(error)}`); }
-      drive.reloading.now = false;
     }
   };
 
@@ -1527,7 +1563,11 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     // 3c. A host reload destroys the adapter object and keeps the login's store. Built again from
     // the same login, a second adapter carries the task and the leg -- from its platform, or from
     // the store -- or it composed the record in memory and the record died with it.
-    if (drive.rebuild !== undefined) await recordSurvivesReload(at);
+    if (drive.rebuild !== undefined) {
+      await recordSurvivesReload(at);
+      // A reload that stood no client ends the run: there is nothing left to drive.
+      if (!drive.handOver.isLive()) return found;
+    }
   }
   // 4. Hold and resume, where offered.
   if (latestTask().phase === "in-progress" && offers("hold")) {
