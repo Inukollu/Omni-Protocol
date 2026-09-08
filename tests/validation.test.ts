@@ -284,6 +284,25 @@ describe("validateTask", () => {
     expect(paused([answered, { step: "held", at: "soon", by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual(["task.handlingHistory.at"]);
   });
 
+  it("holds a task whose party is locked to carrying the locked value nowhere else, given the values", () => {
+    const locked = ["+91 98765 43210", "Asha.Rao@example.com"];
+    const withLocked = (over: Record<string, unknown>) =>
+      rules(validateTask(task({ party: { name: "Asha", number: { lockedBy: "team" }, email: { lockedBy: "team" } }, ...over }), { channel: "voice", locked }));
+    // The digits leak whatever the formatting; the address leaks whatever the case; a hidden browser URL may carry it.
+    expect(withLocked({ title: "Customer call" })).toEqual([]);
+    expect(withLocked({ title: "Call from +91-98765-43210" })).toEqual(["task.locked.leak"]);
+    expect(withLocked({ reference: "asha.rao@EXAMPLE.com" })).toEqual(["task.locked.leak"]);
+    expect(withLocked({ attributes: [{ key: "cli", type: "text", value: "919876543210" }] })).toEqual(["task.locked.leak"]);
+    expect(withLocked({ attributes: [{ key: "cli", type: "text", value: "last four 3210" }] })).toEqual([]);
+    const crm = { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/?ani=919876543210", sharedSession: false };
+    expect(withLocked({ browsers: [crm] })).toEqual(["task.locked.leak"]);
+    expect(withLocked({ browsers: [{ ...crm, urlVisibility: "hidden" }] })).toEqual([]);
+    // Nothing locked, nothing held: the same title on a task whose number the agent may see is content. And a caller
+    // without the values -- a host -- does not ask.
+    expect(rules(validateTask(task({ party: { name: "Asha", number: "+919876543210" }, title: "Call from +91 98765 43210" }), { channel: "voice", locked }))).toEqual([]);
+    expect(rules(validateTask(task({ party: { name: "Asha", number: { lockedBy: "team" } }, title: "Call from +91 98765 43210" }), { channel: "voice" }))).toEqual([]);
+  });
+
   it("refuses the task words the contract renamed, beside the words that replaced them", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
     const media = (value: unknown) => rules(validateTask(task({ media: value }), { channel: "voice" }));

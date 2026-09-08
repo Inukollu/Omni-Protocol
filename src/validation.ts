@@ -715,6 +715,47 @@ const isLocked = (value: unknown): value is Record<string, unknown> => isPlainOb
 /** The level ids in force: the manifest's, or the defaults when the caller holds no manifest. */
 const levelIds = (levels: readonly string[] | undefined): readonly string[] => levels ?? DEFAULT_LEVEL_IDS;
 
+/**
+ * What the queue locks is locked on the whole task. Given the locked values, every other field an
+ * agent reads -- the title, the reference, an attribute, a custom control's label, a browser URL the
+ * desk shows -- is held to carrying none of them. A number is compared by its digits, so no
+ * formatting hides it; anything else by its text, case aside.
+ */
+function validateNothingLeaksInto(task: Record<string, unknown>, locked: readonly string[], path: string, into: Collector): void {
+  ruleEvaluated("task.locked.leak");
+  const carries = (text: unknown, value: string): boolean => {
+    if (typeof text !== "string") return false;
+    const digits = value.replace(/[\s+().-]/g, "");
+    if (/^\d+$/.test(digits)) return text.replace(/\D/g, "").includes(digits);
+    return text.toLowerCase().includes(value.trim().toLowerCase());
+  };
+  const hold = (text: unknown, at: string) => {
+    for (const value of locked) {
+      if (carries(text, value)) into.add("task.locked.leak", at, "carries a value the queue locked: what the queue locks is locked on the whole task, and appears nowhere the agent reads");
+    }
+  };
+  hold(task.title, `${path}.title`);
+  hold(task.reference, `${path}.reference`);
+  if (Array.isArray(task.attributes)) {
+    task.attributes.forEach((attribute, index) => {
+      if (!isPlainObject(attribute)) return;
+      hold(attribute.label, `${path}.attributes[${index}].label`);
+      hold(attribute.value, `${path}.attributes[${index}].value`);
+      if (isPlainObject(attribute.party)) {
+        hold(attribute.party.number, `${path}.attributes[${index}].party.number`);
+        hold(attribute.party.email, `${path}.attributes[${index}].party.email`);
+      }
+    });
+  }
+  const custom = isPlainObject(task.capabilities) ? task.capabilities.custom : undefined;
+  if (Array.isArray(custom)) custom.forEach((control, index) => { if (isPlainObject(control)) hold(control.label, `${path}.capabilities.custom[${index}].label`); });
+  if (Array.isArray(task.browsers)) {
+    task.browsers.forEach((browser, index) => {
+      if (isPlainObject(browser) && browser.urlVisibility !== "hidden") hold(browser.url, `${path}.browsers[${index}].url`);
+    });
+  }
+}
+
 /** `lockedBy`: a declared level other than `person`, who never locks their own value. */
 function validateLockedByInto(value: unknown, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
   if (!into.filled(value, rule, path, "lockedBy names the level that locked it")) return;
@@ -1076,6 +1117,12 @@ export interface TaskValidationContext {
   autoAcceptTasks?: boolean;
   /** Whether the manifest declares `dialOutcomes`. A task that may dial needs it to; absent, the question is not asked. */
   dialOutcomesDeclared?: boolean;
+  /**
+   * The values the queue locked on this login's tasks -- a party's number or email -- as whoever
+   * runs the validator knows them. Where a task's party stands locked, no other field of it may
+   * carry one of these. Unknown to a host, which never sees the value, and then unchecked.
+   */
+  locked?: readonly string[];
 }
 
 export function validateTask(task: unknown, context: TaskValidationContext, path = "task"): ProtocolViolation[] {
@@ -1151,6 +1198,9 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.filled(task.reference, "task.reference", `${path}.reference`, "a reference must not be empty when present");
   }
   if (task.party !== undefined) validateContactInto(task.party, `${path}.party`, into, context.levels);
+  if (context.locked !== undefined && isPlainObject(task.party) && (isLocked(task.party.number) || isLocked(task.party.email))) {
+    validateNothingLeaksInto(task, context.locked, path, into);
+  }
 
   validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into, context.levels);
@@ -1351,6 +1401,12 @@ export interface ReaderContext {
   levels?: readonly string[];
   /** The login's `loginId`. A snapshot or event naming another belongs to a login that is gone. */
   loginId?: string;
+  /**
+   * The values the queue locked on this login's tasks, as whoever runs the validator knows them:
+   * a conformance run states them, a host never has them. Where a task's party stands locked, no
+   * other field of it may carry one (`task.locked.leak`). Absent, unchecked.
+   */
+  locked?: readonly string[];
   /** `ConnectContext.autoAcceptTasks` as sent: whether a pending task states its `acceptance`. Unknown to a caller without the context, and then unchecked. */
   autoAcceptTasks?: boolean;
 }
@@ -1485,7 +1541,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     let assisting: number | undefined;
     let monitoring: number | undefined;
     snapshot.tasks.forEach((task: unknown, index: number) => {
-      validateTaskInto(task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest) }, `${path}.tasks[${index}]`, into);
+      validateTaskInto(task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${path}.tasks[${index}]`, into);
       // A lead assists one call at a time, and listens to one at a time.
       if (isPlainObject(task) && task.assisting !== undefined) {
         if (assisting !== undefined) into.add("snapshot.assisting.single", `${path}.tasks[${index}].assisting`, "a lead assists one call at a time");
@@ -1711,7 +1767,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       validateBreakState(event.break, `${at}.break`, into);
       break;
     case "task-offered":
-      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest) }, `${at}.task`, into);
+      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${at}.task`, into);
       // An offer introduces work that is not yet under way; work in progress arrives only on a snapshot.
       if (isPlainObject(event.task) && typeof event.task.phase === "string") {
         into.require((OFFERABLE_PHASES as readonly string[]).includes(event.task.phase), "event.taskOffered.phase", `${at}.task.phase`,
@@ -1720,7 +1776,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       if (event.allocationExpiresAt !== undefined) into.timestamp(event.allocationExpiresAt, "event.taskOffered.allocationExpiresAt", `${at}.allocationExpiresAt`);
       break;
     case "task-updated":
-      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest) }, `${at}.task`, into);
+      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${at}.task`, into);
       break;
     case "task-media-started":
       into.require(isTaskId(event.taskId), "event.taskMediaStarted.taskId", `${at}.taskId`, "a task id is required");
