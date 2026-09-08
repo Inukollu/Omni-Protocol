@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakApproval, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
-import type { LoginStore } from "../src/index.js";
+import type { LoginStore, Refusal } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
 import { memoryStore, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
@@ -863,6 +863,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
           return unsubscribe;
         },
         setCapacity: async () => { if (subscribed !== undefined) overrides.emitOnCapacity?.(subscribed); return { status: "applied" }; },
+        refused: () => undefined,
         execute: async () => ({ status: "applied" }),
         disconnect,
         describeUsers: async ids => ids.map(id => ({ id, displayName: `User ${id}`, timeZone: "Pacific/Chatham" })),
@@ -1351,6 +1352,28 @@ describe("exerciseAdapter drives one call", () => {
     expect((await exerciseAdapter(driveable({ ...script, leavesKeys: false }), { ...context, store: kept }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
     expect(await kept.get("legs:call-77")).toBeUndefined();
     expect(await store.get("legs:call-77")).toBeDefined();
+  });
+
+  it("tells the adapter what it refused, snapshot or event, with the rules, and names one that will not be told", async () => {
+    const told: Refusal[] = [];
+    const listening = { refused: (report: Refusal) => { told.push(report); } };
+    // A snapshot the harness would not take: the adapter hears the artefact and every rule.
+    const broken = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, wrapAllowance: -5 }] };
+    expect((await exerciseAdapter(makeAdapter({ snapshot: broken, connection: listening }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["task.wrapAllowance"]);
+    expect(told).toEqual([{ artefact: "snapshot", violations: [expect.objectContaining({ rule: "task.wrapAllowance" })] }]);
+    // An event it dropped: told with the envelope id.
+    told.length = 0;
+    const bad: ProviderEventEnvelope<"voice"> = { id: "evt-bad", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z", event: { type: "task-media-ended", taskId: "", allocationId: "alloc-42" } };
+    const result = await exerciseAdapter(makeAdapter({ emitOnCapacity: listener => listener(bad), connection: listening }).adapter, context, { collectOnly: true });
+    expect(result.violations.map(v => v.rule)).toContain("event.taskMediaEnded.taskId");
+    expect(told.map(r => [r.artefact, r.envelopeId])).toEqual([["event", "evt-bad"]]);
+    // The control: a clean run tells nothing, and a conforming adapter with the method is clean.
+    told.length = 0;
+    expect((await exerciseAdapter(makeAdapter({ connection: listening }).adapter, context, { collectOnly: true })).violations).toEqual([]);
+    expect(told).toEqual([]);
+    // Without the method, or throwing when told, the adapter is named.
+    expect((await exerciseAdapter(makeAdapter({ connection: { refused: undefined } }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["connection.refused.required"]);
+    expect((await exerciseAdapter(makeAdapter({ snapshot: broken, connection: { refused: () => { throw new Error("no logger"); } } }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["task.wrapAllowance", "connection.refused.rejected"]);
   });
 
   it("says which rules it evaluated, so a rule never looked at is a visible gap rather than a pass", async () => {

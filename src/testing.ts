@@ -17,6 +17,7 @@ import {
   type HostGuarantees,
   type HostMute,
   type LoginStore,
+  type Refusal,
   type UserId,
   type SecretStore,
   type HostReport,
@@ -367,6 +368,17 @@ export async function exerciseAdapter<C extends Channel>(
     const connected = { ...context, host, store: watched.store } as ConnectContext;
     connection = await adapter.connect(connected);
     const live = connection;
+    // A refusal is visible on both sides: what the host would not take, the adapter is told, with the rules.
+    requireMethod(live, "refused", "every connection is told what the host refused");
+    const tellRefused = (report: Refusal): void => {
+      if (typeof live.refused !== "function") return;
+      ruleEvaluated("connection.refused.rejected");
+      try {
+        live.refused(report);
+      } catch (error) {
+        violations.push({ rule: "connection.refused.rejected", path: "connection.refused", message: `told of a refusal, the adapter threw: ${String(error)}` });
+      }
+    };
     // Dial is declared by presence: the capability object carries a destination policy rather
     // than an `enabled` flag, so its presence is the declaration.
     if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod(live, "dial", "the manifest declares dial");
@@ -383,7 +395,9 @@ export async function exerciseAdapter<C extends Channel>(
     const waiters = new Set<(envelope: ProviderEventEnvelope<C>) => void>();
     unsubscribe = connection.subscribe(envelope => {
       observeEvent(envelope, seen);
-      violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader()));
+      const broken = validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader());
+      violations.push(...broken);
+      if (broken.length > 0) tellRefused({ artefact: "event", envelopeId: typeof envelope?.id === "string" ? envelope.id : undefined, violations: broken });
       // A diagnostic is informational to a host and a failure to a conformance run: the platform
       // under test broke a rule the adapter relies on, and a green result must not paper over it.
       // A reload in life has no first connection: the page is gone. The drive keeps its first
@@ -431,7 +445,11 @@ export async function exerciseAdapter<C extends Channel>(
 
     const snapshot = await connection.snapshot() as Snapshot;
     observeSnapshot(snapshot, seen);
-    violations.push(...validateSnapshot(snapshot, adapter.manifest, "snapshot", reader()));
+    {
+      const broken = validateSnapshot(snapshot, adapter.manifest, "snapshot", reader());
+      violations.push(...broken);
+      if (broken.length > 0) tellRefused({ artefact: "snapshot", violations: broken });
+    }
     violations.push(...undeterminedTasks(Array.isArray(snapshot?.tasks) ? snapshot.tasks : [], "snapshot.tasks"));
     stream.seed(snapshot);
     breaks.seed(snapshot);

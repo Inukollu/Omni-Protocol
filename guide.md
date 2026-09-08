@@ -1066,9 +1066,16 @@ adapter compiled against the browser lib.
 ### Adapter and connection
 
 ```ts
+type Refusal = {
+  artefact: "snapshot" | "event";
+  envelopeId?: string;
+  violations: ProtocolViolation[];
+};
+
 type Connection<C extends Channel = Channel> = {
   snapshot(): Snapshot<C> | Promise<Snapshot<C>>;
   subscribe(listener: (envelope: ProviderEventEnvelope<C>) => void): Unsubscribe;
+  refused(report: Refusal): void;
   setCapacity(capacity: AgentCapacity): Promise<CapacityResult>;
   execute(request: TaskCommandRequest<C>): Promise<TaskCommandResult>;
   disconnect(): Promise<void>;
@@ -2028,6 +2035,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `snapshot()` | Always. |
 | `subscribe(listener)` | Always. |
 | `disconnect()` | Always. |
+| `refused(report)` | Always. The host tells the adapter what it would not take -- a snapshot it did not replace its state with, an event it dropped -- with every rule broken, so a refusal is visible on both sides. See **What the host does with what it refuses**. |
 | `setCapacity(capacity)` | Always. Nothing may be allocated until a capacity is stated, so there is no connection that does not receive it. |
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability**. |
 | `describeUsers(ids)` | The adapter publishes any `UserId`: on `ImposedBreak.by`, a roster, or `handlingHistory[].by`. Each `User` carries its `timeZone` where the provider knows it. |
@@ -2358,9 +2366,10 @@ Reaching the instant is not itself a transition: the provider reports what it di
 
 **Drop both fields when the phase moves.** A provider that builds the `in-progress` task by
 spreading the `preview` one carries `previewEndsAt` and `atDeadline` with it, and the host refuses
-the update (`task.preview.deadline.unexpected`) while the provider's own state looks right: the
-desk hears nothing and the provider sees nothing wrong. The task past preview has no deadline to
-wait for, so it carries neither field.
+the update (`task.preview.deadline.unexpected`): the desk keeps the task as it last stood, and the
+provider is told through `refused` exactly which rule, so the state that looked right on its side
+is named on its side. The task past preview has no deadline to wait for, so it carries neither
+field.
 
 **A task is never its audio.** A voice task is the allocation: the call is offered when it is
 routed to the agent and accepted as its `acceptance` dictates, and its presence and phase follow
@@ -4604,6 +4613,25 @@ reports `team.unentitled`, `requests` on a roster whose login lacks `team.leadAs
 and may be compiled against a different protocol version, so its output is untrusted input.
 Validating a snapshot before it replaces provider state is what stops a malformed task from
 reaching the workspace.
+
+### What the host does with what it refuses
+
+A refusal has an aftermath on the desk and a report to the provider, and both are stated.
+
+- **A refused snapshot replaces nothing.** The host keeps the last state it took from this
+  provider whole, and shows the provider as faulted -- the transport as it stands, and the words
+  "last update refused" with the rule -- so the agent knows the view is standing still rather than
+  believing it current. It does not adopt the good half of a snapshot: a task the agent is on would
+  vanish from the desk while the call is up.
+- **A refused event is dropped and counted.** The state the host holds does not move for it. The
+  provider is told, and may republish a corrected state or raise a `diagnostic`; the host retries
+  nothing.
+- **The provider is told, every time.** `refused(report)` carries the artefact, the envelope id for
+  an event, and every violation with its rule and path. An adapter logs it at error and treats it as
+  its own defect until shown otherwise: what the host refused never reached the agent, and a
+  provider that hears nothing runs a whole shift beside a frozen desk with nothing wrong on its
+  side. The harness tells an adapter under test exactly as a host does
+  (`connection.refused.required`, `connection.refused.rejected`).
 
 ## Conformance helpers
 
