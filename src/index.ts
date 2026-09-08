@@ -1462,10 +1462,25 @@ export type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
 // The live connection.
 // ---------------------------------------------------------------------------
 
+/**
+ * What the host refused, told to the adapter that published it: a snapshot the host would not
+ * replace its state with, or an event it dropped, and every rule it broke. A refusal the provider
+ * never hears of is a desk frozen at its last good state for a shift with nothing wrong on the
+ * provider's side; this is how both sides see it.
+ */
+export interface Refusal {
+  artefact: "snapshot" | "event";
+  /** The envelope refused, where the artefact is an event. */
+  envelopeId?: string;
+  violations: ProtocolViolation[];
+}
+
 export interface Connection<C extends Channel = Channel> {
   snapshot(): Snapshot<C> | Promise<Snapshot<C>>;
   /** Delivery order must match the order the provider observes changes. Never replay. */
   subscribe(listener: (envelope: ProviderEventEnvelope<C>) => void): Unsubscribe;
+  /** Told what the host refused, snapshot or event, with every rule broken. Always; a refusal is visible on both sides. */
+  refused(report: Refusal): void;
   /** Nothing may be allocated until a capacity is stated, so every connection receives it. */
   setCapacity(capacity: AgentCapacity): Promise<CapacityResult>;
   execute(request: TaskCommandRequest<C>): Promise<TaskCommandResult>;

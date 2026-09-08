@@ -186,6 +186,7 @@ describe("Omni protocol", () => {
           },
           setCapacity: async capacity => (expect(capacity.count).toBeGreaterThanOrEqual(1), { status: "applied" as const }),
           execute: async () => ({ status: "applied" as const }),
+          refused: () => undefined,
           disconnect,
         };
       },
