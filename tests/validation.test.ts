@@ -1078,6 +1078,29 @@ describe("the other direction, everywhere", () => {
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ phase: "pending", acceptance: "consent" })] }), manifest(), "snapshot", { autoAcceptTasks: true }))).toEqual([]);
   });
 
+  it("holds work the agent originated to acceptance: automatic, whatever the provisioning says", () => {
+    const at = "2026-08-21T09:00:00Z";
+    const dialled = { onCall: [{ role: "party", dialId: "dial-3", stage: "ringing", since: at }] };
+    const originated = (over: Record<string, unknown>, autoAcceptTasks?: boolean) =>
+      rules(validateTask(task({ phase: "pending", ...over }), { channel: "voice", dialOutcomesDeclared: true, ...(autoAcceptTasks === undefined ? {} : { autoAcceptTasks }) }));
+    // The agent's own dial: automatic under either provisioning and with none stated; anything else, or nothing, is refused.
+    expect(originated({ ...dialled, acceptance: "automatic" }, false)).toEqual([]);
+    expect(originated({ ...dialled, acceptance: "automatic" }, true)).toEqual([]);
+    expect(originated({ ...dialled, acceptance: "automatic" })).toEqual([]);
+    expect(originated({ ...dialled, acceptance: "consent" }, false)).toEqual(["task.acceptance.originated"]);
+    expect(originated({ ...dialled }, false)).toEqual(["task.acceptance.originated"]);
+    expect(originated({ ...dialled }, true)).toEqual(["task.acceptance.originated"]);
+    // A lead's join and a lead's monitor are the agent's doing too.
+    expect(originated({ capabilities: {}, assisting: { memberId: "A-1", since: at }, acceptance: "automatic" }, false)).toEqual([]);
+    expect(originated({ capabilities: {}, assisting: { memberId: "A-1", since: at } }, false)).toEqual(["task.acceptance.originated"]);
+    expect(originated({ capabilities: {}, monitoring: { memberId: "A-1", taskId: "call-9", allocationId: "alloc-9", mode: "monitor", since: at }, acceptance: "automatic" }, false)).toEqual([]);
+    // The control: work the queue routes keeps the provisioning's rule, on the same task without the dial.
+    expect(originated({ acceptance: "automatic" }, false)).toEqual(["task.acceptance.unexpected"]);
+    expect(originated({}, false)).toEqual([]);
+    // Past pending the word has nothing to say of a dialled task either.
+    expect(originated({ ...dialled, phase: "in-progress" }, false)).toEqual([]);
+  });
+
   it("keeps summary metric ids unique", () => {
     const summary = (metrics: unknown[]) => rules(validateEventEnvelope(envelope({ type: "queue-summary", summary: { title: "Voice", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z", metrics } }), manifest()));
     const waiting = { id: "waiting", label: "Waiting", value: "3" };
@@ -1684,7 +1707,8 @@ describe("validateTaskCommand", () => {
       [{ type: "lead-assist", action: "leave" }, { assisting: { memberId: "a-17", note: "Angry customer", since } }],
     ];
     for (const [command, state] of controls) {
-      const on = (phase: string) => task({ ...voice, ...state, phase, ...(phase === "completing" ? { onCall: [] } : {}) });
+      // A lead's join is the lead's own doing, and pending says so.
+      const on = (phase: string) => task({ ...voice, ...state, phase, ...(phase === "completing" ? { onCall: [] } : {}), ...(phase === "pending" && state.assisting !== undefined ? { acceptance: "automatic" } : {}) });
       expect(cmd(command, on("in-progress")), `${JSON.stringify(command)} in-progress`).toEqual([]);
       expect(cmd(command, on("paused")), `${JSON.stringify(command)} paused`).toEqual([]);
       // Once the call is over, what a warm step put on it is gone too: the phase names the gap first.

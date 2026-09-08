@@ -1075,6 +1075,12 @@ export interface TaskValidationContext {
   dialOutcomesDeclared?: boolean;
 }
 
+/** Whether a task is the agent's own doing: a dial the host placed on its onCall, a lead's join, a lead's monitor. */
+function originatedByTheAgent(task: Record<string, unknown>): boolean {
+  if (Array.isArray(task.onCall) && task.onCall.some(entry => isPlainObject(entry) && typeof entry.dialId === "string")) return true;
+  return task.assisting !== undefined || task.monitoring !== undefined;
+}
+
 export function validateTask(task: unknown, context: TaskValidationContext, path = "task"): ProtocolViolation[] {
   const into = new Collector();
   validateTaskInto(task, context, path, into);
@@ -1116,14 +1122,26 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   }
   // Acceptance is the offer's word, carried on the pending task so a snapshot can say it: it
   // travels exactly when Omni said tasks may be auto-accepted, and only while the task is pending.
+  // Work the agent originated -- a dial or connect-back, carrying the host's dialId on onCall; a
+  // lead's join, carrying assisting; a monitor, carrying monitoring -- was accepted by the command
+  // that created it, and says so whatever the provisioning: the desk shows no Accept for a call
+  // the agent placed. The provisioning governs work the queue routes, and nothing else.
+  const originated = task.phase === "pending" && originatedByTheAgent(task);
+  ruleEvaluated("task.acceptance.originated");
   if (task.acceptance !== undefined) {
     into.oneOf(task.acceptance, ACCEPTANCE_MODES, "task.acceptance", `${path}.acceptance`);
     if (task.phase !== "pending") {
       into.add("task.acceptance.unexpected", `${path}.acceptance`, "acceptance is an offer's word; a task past pending has been accepted");
+    } else if (originated) {
+      into.require(task.acceptance === "automatic", "task.acceptance.originated", `${path}.acceptance`,
+        "work the agent originated -- a dial, a connect-back, a join, a monitor -- was accepted by the command that created it, and says automatic whatever the provisioning");
     } else if (context.autoAcceptTasks === false) {
       into.add("task.acceptance.unexpected", `${path}.acceptance`,
-        "autoAcceptTasks is off, so every task requires agent acceptance and a pending task carries no acceptance");
+        "autoAcceptTasks is off, so every task the queue routes requires agent acceptance and a pending task carries no acceptance");
     }
+  } else if (originated) {
+    into.add("task.acceptance.originated", `${path}.acceptance`,
+      "work the agent originated -- a dial, a connect-back, a join, a monitor -- says acceptance: automatic whatever the provisioning: the command that created it accepted it");
   } else if (task.phase === "pending" && context.autoAcceptTasks === true) {
     into.add("task.acceptance.required", `${path}.acceptance`, "autoAcceptTasks is on, so a pending task states how it is accepted");
   }
