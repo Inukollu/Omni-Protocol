@@ -823,7 +823,7 @@ function validateTaskAttributes(value: unknown, path: string, into: Collector): 
   });
 }
 
-function validateHandlingHistory(value: unknown, path: string, into: Collector): void {
+function validateHandlingHistory(value: unknown, path: string, into: Collector, task: { phase?: unknown; media?: unknown } = {}): void {
   if (value === undefined) return;
   if (!isPlainObject(value)) {
     into.add("task.handlingHistory.shape", path, "handlingHistory must be an object with its steps when present");
@@ -867,6 +867,18 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector):
       into.require(isDurationSeconds(entry.seconds) && (entry.seconds as number) > 0,
         "task.handlingHistory.seconds", `${at}.seconds`,
         "seconds must be a positive whole number; omit it while the step is still running");
+    } else {
+      // An open leg is one still running, and the task says whether it can be: a hold runs only while
+      // the task is paused, and a mute only while its media is up. An open entry after that is a leg
+      // nobody closed, which reads exactly like a leg running now.
+      if (entry.step === "held") {
+        into.require(task.phase === "paused", "task.handlingHistory.held.open", `${at}.seconds`,
+          `a held entry without seconds is a hold still running, and the task is ${String(task.phase)}: the hold has ended, and its duration is stated`);
+      }
+      if (entry.step === "muted") {
+        into.require(task.media !== "ended" && task.phase !== "completing", "task.handlingHistory.muted.open", `${at}.seconds`,
+          "a muted entry without seconds is a mute still running, and the call is over: the host ends its legs when the media ends, and the duration is stated");
+      }
     }
     // A muted entry carries whose the silence was, as the host reported it; no other step has it.
     // And it names the agent: the host has exactly one, the provider knows who, so an unattributed
@@ -1095,7 +1107,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
 
   validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into);
-  validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into);
+  validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into, { phase: task.phase, media: task.media });
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
   // The room is who is on the call now, and a task outlives its call by the whole of wrap-up: a
   // task whose call has ended -- completing, or media ended -- carries nobody, or the last thing the
