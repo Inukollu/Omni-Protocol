@@ -75,6 +75,17 @@ jobs:
             process.exit(1);
           }
 
+          // The registry lists a version minutes after it is staged, and a run queued behind another
+          // reads it before then: two merges a minute apart both allocated 0.1.75, and the second
+          // failed with E409 at publish. The branch head records a version the moment it is
+          // allocated, so what the head says is taken too, whether or not npm lists it yet.
+          const fetched = spawnSync("git", ["fetch", "--quiet", "--depth=1", "origin", "main"], { encoding: "utf8" });
+          if (fetched.status !== 0) { console.error(fetched.stderr); process.exit(1); }
+          const head = spawnSync("git", ["show", "origin/main:package.json"], { encoding: "utf8" });
+          if (head.status !== 0) { console.error(head.stderr); process.exit(1); }
+          const recorded = JSON.parse(head.stdout).version;
+          if (!versions.includes(recorded)) versions.push(recorded);
+
           const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(manifest.version);
           if (!match) throw new Error(`Automatic releases require a stable semver version; got ${manifest.version}`);
           let version = manifest.version;
@@ -83,7 +94,7 @@ jobs:
           }
           manifest.version = version;
           fs.writeFileSync("package.json", `${JSON.stringify(manifest, null, 2)}\n`);
-          console.error(`${name}@${version}: allocated from ${versions.length} published version${versions.length === 1 ? "" : "s"}`);
+          console.error(`${name}@${version}: allocated past ${versions.length} taken version${versions.length === 1 ? "" : "s"}, the branch head's ${recorded} among them`);
           console.log(`name=${name}`);
           console.log(`version=${version}`);
           JS
