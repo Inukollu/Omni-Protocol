@@ -2375,6 +2375,27 @@ export function validateTimeZone(value: unknown, path = "context.timeZone"): Pro
   return into.violations;
 }
 
+/**
+ * What `describeUsers(ids)` answered: an array of users, each one asked for, each a valid identity.
+ * The provider may answer fewer than asked, which is what "unknown to it" looks like; it never
+ * answers somebody nobody asked about.
+ */
+export function validateDescribedUsers(users: unknown, asked: readonly string[], path = "describeUsers"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!Array.isArray(users)) {
+    into.add("describeUsers.shape", path, "describeUsers answers an array of users, empty when it knows none of them");
+    return into.violations;
+  }
+  users.forEach((user: unknown, index: number) => {
+    const at = `${path}[${index}]`;
+    validateUser(user, "describeUsers.user", at, into);
+    if (isPlainObject(user) && typeof user.id === "string") {
+      into.require(asked.includes(user.id), "describeUsers.unasked", `${at}.id`, `${user.id} was not among the ids asked for`);
+    }
+  });
+  return into.violations;
+}
+
 function validateUser(value: unknown, rule: string, path: string, into: Collector): void {
   if (!isPlainObject(value)) {
     into.add(rule, path, "an identity must be an object");

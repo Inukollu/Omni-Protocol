@@ -17,6 +17,7 @@ import {
   type HostGuarantees,
   type HostMute,
   type LoginStore,
+  type UserId,
   type SecretStore,
   type HostReport,
   type Manifest,
@@ -29,6 +30,7 @@ import {
   validateEventEnvelope,
   validateHostGuarantees,
   validateHostReport,
+  validateDescribedUsers,
   observeRules,
   ruleEvaluated,
   validateHostMute,
@@ -375,6 +377,7 @@ export async function exerciseAdapter<C extends Channel>(
     if (softphone) requireMethod(live, "recordStep", "the login is on a softphone, whose microphone the host mutes");
 
     const eventPayloads = new Map<string, string>();
+    let capacityStated: number | undefined;
     // The drive waits on events: each waiter is offered every envelope as it lands.
     const waiters = new Set<(envelope: ProviderEventEnvelope<C>) => void>();
     unsubscribe = connection.subscribe(envelope => {
@@ -388,6 +391,18 @@ export async function exerciseAdapter<C extends Channel>(
       }
       violations.push(...undeterminedTasks(eventTasks(envelope), "event"));
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
+      // Work is pulled, never pushed: an offer before the host stated capacity is an allocation
+      // against nothing, and an offer beyond the count is one too many -- unless the task is the
+      // host's own dial arriving, which counts against nothing.
+      if (isRecord(envelope?.event) && envelope.event.type === "task-offered") {
+        if (capacityStated === undefined) {
+          violations.push({ rule: "stream.taskOffered.beforeCapacity", path: "event.task",
+            message: "a task was offered before the host stated any capacity: work is pulled, and nothing is allocated against a capacity nobody stated" });
+        } else if (seeded && stream.openCount() >= capacityStated && !TaskStream.carriesDial(envelope.event.task)) {
+          violations.push({ rule: "stream.taskOffered.overCapacity", path: "event.task",
+            message: `a task was offered with ${stream.openCount()} already open against a stated capacity of ${capacityStated}` });
+        }
+      }
       // A re-delivered envelope is harmless and applied once; the same id carrying a different
       // payload is a reused id, which no dedupe can make harmless, and is named.
       if (typeof envelope?.id === "string") {
@@ -416,7 +431,25 @@ export async function exerciseAdapter<C extends Channel>(
     breaks.seed(snapshot);
     seeded = true;
     requireCapabilityMethods(live, current().capabilities);
-    if (publishesUserIds(snapshot)) requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
+    if (publishesUserIds(snapshot)) {
+      requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
+      // Required by presence is not enough: the names the snapshot published are looked up, and what
+      // comes back is held to the shape -- an empty answer to a roster of colleagues is named.
+      const named = userIdsIn(snapshot);
+      if (typeof live.describeUsers === "function" && named.length > 0) {
+        let described: unknown;
+        try {
+          described = await live.describeUsers(named as UserId[]);
+          violations.push(...validateDescribedUsers(described, named, "connection.describeUsers"));
+          if (Array.isArray(described) && described.length === 0) {
+            violations.push({ rule: "connection.describeUsers.empty", path: "connection.describeUsers",
+              message: `asked about ${named.join(", ")}, whom the snapshot itself named, the provider described nobody` });
+          }
+        } catch (error) {
+          violations.push({ rule: "connection.describeUsers.rejected", path: "connection.describeUsers", message: `describeUsers rejected rather than answered: ${String(error)}` });
+        }
+      }
+    }
 
     // Capacity is stated, not requested: nothing may be allocated until it is, so a connection
     // that will not accept one is a connection nothing can be given to.
@@ -429,7 +462,8 @@ export async function exerciseAdapter<C extends Channel>(
         message: "a voice adapter consults the host's report before declaring the agent ready, and this one never asked",
       });
     }
-    const capacity = await connection.setCapacity({ count: 1 });
+    capacityStated = 1;
+    const capacity = await connection.setCapacity({ count: capacityStated });
     const malformed = validateResult(capacity, "setCapacity", "connection.setCapacity");
     violations.push(...malformed);
     // The provider republishes the agent's day: once connected, the identity carries the zone the
@@ -503,6 +537,27 @@ function publishesUserIds(snapshot: Snapshot | undefined): boolean {
   if (teamNamesUsers(snapshot?.team)) return true;
   if (!Array.isArray(snapshot?.tasks)) return false;
   return snapshot.tasks.some(taskNamesUsers);
+}
+
+/** Every UserId a snapshot publishes: on the record, the room, a lead request, an imposed break, the roster. */
+function userIdsIn(snapshot: Snapshot | undefined): string[] {
+  const ids = new Set<string>();
+  const add = (value: unknown) => { if (typeof value === "string" && value.length > 0) ids.add(value); };
+  add(snapshot?.break?.imposed?.by);
+  const team = snapshot?.team as Record<string, unknown> | undefined;
+  if (isRecord(team)) {
+    for (const member of Array.isArray(team.members) ? team.members : []) if (isRecord(member)) add(member.id);
+    for (const request of Array.isArray(team.requests) ? team.requests : []) if (isRecord(request)) add(request.memberId);
+  }
+  for (const task of Array.isArray(snapshot?.tasks) ? snapshot.tasks : []) {
+    const t = task as unknown as Record<string, unknown>;
+    if (isRecord(t.handlingHistory) && Array.isArray(t.handlingHistory.steps)) for (const step of t.handlingHistory.steps) if (isRecord(step)) add(step.by);
+    if (Array.isArray(t.onCall)) for (const entry of t.onCall) if (isRecord(entry)) add(entry.userId);
+    if (isRecord(t.leadAssist)) add(t.leadAssist.leadId);
+    if (isRecord(t.assisting)) add(t.assisting.memberId);
+    if (isRecord(t.monitoring)) { add(t.monitoring.memberId); add(t.monitoring.agentId); }
+  }
+  return [...ids];
 }
 
 const teamNamesUsers = (team: unknown): boolean =>
@@ -809,6 +864,8 @@ export function assertDeniedAndRetriedBreak(approvals: readonly BreakApproval[])
 // ---------------------------------------------------------------------------
 
 const WORK_BEGUN = new Set(["in-progress", "paused", "completing"]);
+/** Where audio can arrive: a task at work. A completing task's call is over; a connect-back returns it to in-progress before any media. */
+const AT_WORK = new Set(["in-progress", "paused"]);
 
 /** What a stream has said about the tasks it carries, and the rules across events. */
 const TASK_PHASES_ORDERED = ["pending", "confirmed", "preview", "in-progress", "paused", "completing"] as const;
@@ -843,6 +900,15 @@ export class TaskStream {
     for (const entry of entries) {
       if (isRecord(entry) && typeof entry.dialId === "string") this.dialled(entry.dialId);
     }
+  }
+
+  /** How many tasks the stream currently holds open. */
+  openCount(): number { return this.tasks.size; }
+
+  /** Whether an offered task is a dial arriving -- the host's own call, a connect-back -- which counts against no capacity: an entry on its call carrying a dial. */
+  static carriesDial(task: unknown): boolean {
+    if (!isRecord(task) || !Array.isArray(task.onCall)) return false;
+    return task.onCall.some(entry => isRecord(entry) && typeof entry.dialId === "string");
   }
 
   /** Whether the update shows the party being dialled again -- a connect-back, a platform's callback -- the one thing that brings a completing task back. */
@@ -1001,7 +1067,7 @@ export class TaskStream {
           refuse("stream.taskMediaStarted.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
           break;
         }
-        if (!WORK_BEGUN.has(known.phase)) {
+        if (!AT_WORK.has(known.phase)) {
           refuse("stream.taskMediaStarted.beforeWork", `${at}.taskId`,
             `media cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
@@ -1128,6 +1194,16 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         return;
       }
       session = await again.createAuthenticationSession({ ...drive.context, secrets: drive.secrets });
+      // The reload is a restore before it is anything else: the second session stands authenticated
+      // as the same person, from the secrets alone, or nothing it reads afterwards is this login's.
+      const restored = await (session as unknown as { state(): Promise<unknown> }).state();
+      found.push(...validateAuthenticationState(restored, "drive.reload.login"));
+      const same = isRecord(restored) && restored.status === "authenticated" && isRecord(restored.identity) && restored.identity.id === drive.reader().self;
+      if (!same) {
+        refuse("drive.reload.login", "drive.reload.login",
+          `a second adapter built from the same login and secrets did not restore it: the session says ${String(isRecord(restored) ? restored.status : restored)}${isRecord(restored) && isRecord(restored.identity) ? ` as ${String(restored.identity.id)}` : ""}, and the login is ${String(drive.reader().self)}`);
+        return;
+      }
       second = await again.connect(drive.context);
       const snapshot = await second.snapshot() as unknown;
       // The second adapter's snapshot is held to everything a first one is.

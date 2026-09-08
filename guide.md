@@ -2816,7 +2816,9 @@ the transition table -- back to `pending`, back to `confirmed` or `preview` once
 `completing` except by the party being dialled again, a connect-back or a platform's callback,
 which the update itself shows: the party on the call carrying a `stage`. A completing task
 republished as `in-progress` from a stale copy carries no such stage, and that is the ending the
-agent never saw.
+agent never saw. Audio arrives only on a task at work: `task-media-started` on a `completing` task
+is refused as it is on a pending one (`stream.taskMediaStarted.beforeWork`), since a connect-back
+returns the task to `in-progress` before any media.
 
 What the agent is told differs by source, and only one source tells them anything. Under `queue`
 and `ungoverned` the agent sees controls and nothing about where they came from: both are facts,
@@ -4619,7 +4621,14 @@ complete it with a disposition where the agent completes -- and holds every step
 host holds a provider to. Each command is validated against the task as published
 (`drive.command.*`), each answer for its method, a refusal of a control the task offered is a
 violation (`drive.command.failed`), and an event the provider owes and never sends is one too
-(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). The result also says which rules the
+(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). Around the drive the exercise holds
+the run to what a host holds a provider to between commands: an offer before the host stated
+capacity, or beyond the count with nothing dialled on it, is named
+(`stream.taskOffered.beforeCapacity`, `.overCapacity`); every user the snapshot names is looked up
+through `describeUsers` and the answer held to the shape, nobody unasked, nobody described as
+nothing (`describeUsers.user.*`, `describeUsers.unasked`, `connection.describeUsers.empty`); and
+the second adapter a `rebuild` gives comes up signed in as the same login from the secrets alone
+before it reads anything (`drive.reload.login`). The result also says which rules the
 run evaluated, pass or fail, in `rulesEvaluated`: the validators' as each was applied, the stream's
 as each case was considered, so a test that needs a rule to have run asserts it there rather than
 inferring it from an empty `violations`, and a rule absent from it was never looked at, which is a
