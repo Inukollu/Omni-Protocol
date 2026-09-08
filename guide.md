@@ -2546,7 +2546,13 @@ only while its media is up, so a `held` entry without `seconds` on a task that i
 (`task.handlingHistory.held.open`, `.muted.open`). Whoever performs the leg closes it — the
 provider whose platform parks the caller, the host whose microphone it is — by restating the entry
 with its duration, and **an entry that cannot be closed is not written**: open for ever is a
-plausible nought one level down from a total. There is no resumed step; a resume is the end of a
+plausible nought one level down from a total. **A leg still open when the media ends is closed by
+the provider**, at that instant, in the same publication that says the media ended: the provider
+is the one that knows the instant, and the host can only learn of it afterwards. Agents end calls
+muted, so the host's leg is routinely open at media end; the provider closes it with the duration
+from the leg's `at` to the media's end, and the host's own closing report for that leg, which
+follows what it hears, is answered `recorded` and changes nothing, the entry standing as the
+provider closed it. One publisher of the closed leg, and no order between them to get right. There is no resumed step; a resume is the end of a
 hold, at the entry's `at` plus its `seconds`, and nothing is lost by not naming it twice. The same goes for every step: two mutes are two
 `muted` entries, and a call that joined two queues -- a menu's, then this one -- has two `queued`
 entries, one per join. Order is enforced: an entry earlier than the one before it is refused
@@ -4735,8 +4741,11 @@ as each case was considered, so a test that needs a rule to have run asserts it 
 inferring it from an empty `violations`, and a rule absent from it was never looked at, which is a
 gap and not a pass. With the audio open on a softphone,
 the drive mutes it for one second and reports the leg through `recordStep`, begun and then ended,
-expecting each report `recorded` (`drive.recordStep.failed`, `.rejected`); and where the provider
-restates the task's record afterwards, the leg is in it or the hole is named
+expecting each report `recorded` (`drive.recordStep.failed`, `.rejected`); then it mutes again and
+ends the call muted, as agents do, so the leg is open when the media ends, the provider closes it
+in the completing publication or the open entry is refused (`task.handlingHistory.muted.open`),
+and the drive's closing report after the media ended is expected `recorded` and to change nothing.
+Where the provider restates the task's record afterwards, each leg is in it or the hole is named
 (`drive.recordStep.history`). Given `rebuild`, a way to build the adapter again as a host reload
 does, the drive reloads the host as a reload happens: the first client is unsubscribed,
 disconnected and its session closed (`drive.reload.handover`), and only then is a second adapter

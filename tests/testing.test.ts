@@ -1165,6 +1165,10 @@ describe("exerciseAdapter drives one call", () => {
     completesAroundAudio?: boolean;
     /** Complete is answered applied and no task-ended follows: the platform still holds the task, or has dropped it without a word. */
     neverEnds?: "held" | "dropped";
+    /** A provider that ends the media and leaves the host's still-open leg as it found it, for the host to close. */
+    leavesHostLegOpen?: boolean;
+    /** A provider that will not record the host's closing report once the call is over. */
+    refusesLateClose?: boolean;
     /** Where the adapter throws instead of answering, so each catch in the drive is seen to name it. */
     throwsOn?: "execute" | "recordStep" | "setMuted" | "close" | "rebuild" }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
@@ -1182,6 +1186,9 @@ describe("exerciseAdapter drives one call", () => {
     let phase = "pending";
     let offeredOnce = false;
     let muted: { at: string; seconds: number; mutedBy: "host" | "station" } | undefined;
+    // The host's leg still open when the media ends, and the same leg as the provider closed it at that instant.
+    let openLeg: { at: string; mutedBy: "host" | "station" } | undefined;
+    let closedAtEnd: { at: string; seconds?: number; mutedBy: "host" | "station" } | undefined;
     // The store as the host handed it on connect: an adapter writes through what it was given, never a copy the test holds.
     let given: LoginStore | undefined;
     const legEntry = (leg: { at: string; seconds: number; mutedBy: "host" | "station" }) =>
@@ -1189,7 +1196,8 @@ describe("exerciseAdapter drives one call", () => {
     // The hold as the record carries it: open while the task is paused, closed with its duration on resume, unless the provider forgets.
     let held: { at: string; seconds?: number } | undefined;
     const history = () => script.restateHistory === undefined ? undefined
-      : { steps: [{ step: "answered" as const, at }, ...(held === undefined ? [] : [{ step: "held" as const, ...held, by: "1042" }]), ...(muted !== undefined && script.restateHistory !== "without-mute" ? [legEntry(muted)] : [])] };
+      : { steps: [{ step: "answered" as const, at }, ...(held === undefined ? [] : [{ step: "held" as const, ...held, by: "1042" }]), ...(muted !== undefined && script.restateHistory !== "without-mute" ? [legEntry(muted)] : []),
+        ...(closedAtEnd !== undefined && script.restateHistory !== "without-mute" ? [{ step: "muted" as const, ...closedAtEnd, by: "1042" }] : [])] };
     // What a second instance knows: the platform's open task, and the legs it can reach -- the store's, or its own empty memory.
     let disposed = false;
     const reloaded = async () => {
@@ -1274,6 +1282,8 @@ describe("exerciseAdapter drives one call", () => {
                 emit({ type: "task-updated", task: t({ phase: "completing", media: "started", onCall: room }) });
                 return { status: "applied" };
               }
+              // The media ends, and the provider closes the host's open leg at that instant, at the record's grain.
+              if (openLeg !== undefined) { closedAtEnd = { ...openLeg, seconds: script.leavesHostLegOpen ? undefined : 1 }; openLeg = undefined; }
               emit({ type: "task-media-ended", taskId: "call-77", allocationId: myAllocation });
               // t() restates the record after it has taken the phase, so what the record says of a leg follows the phase it is published under.
               emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
@@ -1297,7 +1307,13 @@ describe("exerciseAdapter drives one call", () => {
           if (script.throwsOn === "recordStep") throw new Error("record store down");
           if (report.allocationId !== myAllocation) return { status: "failed", failure: { code: "omni.task-not-found", message: `no allocation ${String(report.allocationId)}`, retryable: false } };
           if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
+          // A closing report for a leg the provider already closed at media end is answered recorded and changes nothing.
+          if (report.step === "muted" && closedAtEnd !== undefined && report.at === closedAtEnd.at) {
+            return script.refusesLateClose ? { status: "failed", failure: { code: "provider.call-ended", message: "The call is over", retryable: false } } : { status: "recorded" };
+          }
+          if (report.step === "muted" && report.ended !== true && report.mutedBy !== undefined) { openLeg = { at: report.at, mutedBy: report.mutedBy }; return { status: "recorded" }; }
           if (report.step === "muted" && report.ended === true && report.seconds !== undefined && report.mutedBy !== undefined) {
+            openLeg = undefined;
             muted = { at: report.at, seconds: report.seconds, mutedBy: report.mutedBy };
             // The store write is part of recording: what the platform cannot hold goes there first.
             if (script.legsIn === "store" && given !== undefined) await given.set("legs:call-77", JSON.stringify(muted));
@@ -1339,11 +1355,22 @@ describe("exerciseAdapter drives one call", () => {
   it("mutes the open audio for a moment and reports the leg, expecting it recorded and, where the record is restated, present", async () => {
     // The conforming fixture records it and the run is clean (the first test). The provider may
     // restate the record afterwards; when it does, the host's leg is in it or the hole is named.
-    expect((await drive(driveable({ refuseRecordStep: true }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.failed", "drive.recordStep.failed"]);
+    // The drive reports two legs, each begun and ended: the mid-call one it closes itself, and the one it leaves open into end-call.
+    expect((await drive(driveable({ refuseRecordStep: true }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.failed", "drive.recordStep.failed", "drive.recordStep.failed", "drive.recordStep.failed"]);
     expect((await drive(driveable({ restateHistory: "with-mute" }))).violations).toEqual([]);
-    expect((await drive(driveable({ restateHistory: "without-mute" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.history"]);
+    expect((await drive(driveable({ restateHistory: "without-mute" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.history", "drive.recordStep.history"]);
     // The record keeps the host's word on whose the silence was.
     expect((await drive(driveable({ restateHistory: "with-mute-by-station" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.history"]);
+  });
+
+  it("ends the call with the microphone muted, and holds the provider to closing that leg at media end and taking the late report", async () => {
+    // The conforming fixture closes the leg when the media ends and answers the host's later report recorded (the first test).
+    // One that leaves the leg as it found it publishes a completing task with a mute still running; one that will not take the
+    // late report refuses a report the contract says changes nothing.
+    const open = (await drive(driveable({ restateHistory: "with-mute", leavesHostLegOpen: true }))).violations.map(v => v.rule);
+    expect(open).toEqual(["task.handlingHistory.muted.open", "command.task"]);
+    const refused = (await drive(driveable({ refusesLateClose: true }))).violations.map(v => v.rule);
+    expect(refused).toEqual(["drive.recordStep.failed"]);
   });
 
   it("builds the adapter again as a host reload does, and names one whose record died with it", async () => {
@@ -1390,8 +1417,9 @@ describe("exerciseAdapter drives one call", () => {
     // Each catch was deletable with the suite green; each is now seen to name the throw, and the same adapter answering is clean.
     // hold is sent twice, once on the call and once past the validator after it, and both throws are named.
     expect((await drive(driveable({ throwsOn: "execute" }))).violations.map(v => v.rule)).toEqual(["drive.command.rejected", "drive.command.rejected"]);
-    expect((await drive(driveable({ throwsOn: "recordStep" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.rejected", "drive.recordStep.rejected"]);
-    expect((await drive(driveable({ throwsOn: "setMuted" }))).violations.map(v => v.rule)).toEqual(["drive.openMedia.setMuted", "drive.openMedia.setMuted"]);
+    // Two legs, each begun and ended, are four reports and four turns of the microphone.
+    expect((await drive(driveable({ throwsOn: "recordStep" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.rejected", "drive.recordStep.rejected", "drive.recordStep.rejected", "drive.recordStep.rejected"]);
+    expect((await drive(driveable({ throwsOn: "setMuted" }))).violations.map(v => v.rule)).toEqual(["drive.openMedia.setMuted", "drive.openMedia.setMuted", "drive.openMedia.setMuted", "drive.openMedia.setMuted"]);
     expect((await drive(driveable({ throwsOn: "close" }))).violations.map(v => v.rule)).toEqual(["drive.openMedia.close"]);
     const store = memoryStore();
     const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } };
