@@ -153,6 +153,7 @@ const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
 const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, monitorControl: true });
 const MONITOR_MODES = membersOf<MonitorMode>({ monitor: true, whisper: true, barge: true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
+const CANCELLED_BY = membersOf<Extract<TaskOutcome, { type: "cancelled" }>["by"]>({ agent: true, provider: true, party: true });
 const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
   pending: true, confirmed: true, preview: true,
 });
@@ -1677,6 +1678,9 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
       }
       break;
     case "cancelled":
+      // One word covered the agent declining, the provider withdrawing and the party abandoning the
+      // ring; a record that cannot tell them apart is not a record. by says who, as completed does.
+      into.oneOf(value.by, CANCELLED_BY, "event.taskEnded.outcome.cancelled.by", `${path}.by`);
       if (value.reason !== undefined) {
         into.filled(value.reason, "event.taskEnded.outcome.cancelled", `${path}.reason`,
           "a reason must not be empty when present");
