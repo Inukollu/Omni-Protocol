@@ -1359,7 +1359,16 @@ describe("who is on the call", () => {
     expect(onCall([{ ...conferenced, stage: "answered" }])).toEqual(["task.onCall.stage"]);
     expect(onCall([{ ...conferenced, stage: "ringing", held: true }])).toEqual(["task.onCall.held.ringing"]);
     expect(onCall([{ ...conferenced, stage: "joined", held: true }])).toEqual([]);
-    expect(onCall([{ ...party, stage: "joined" }])).toEqual(["task.onCall.stage.unexpected"]);
+    // The party carries a dial and a stage on a connect-back alone, and together: the one person a connect-back dials.
+    expect(onCall([{ ...party, dialId: "dial-9", stage: "ringing" }])).toEqual([]);
+    expect(onCall([{ ...party, dialId: "dial-9", stage: "joined" }, agent])).toEqual([]);
+    // A callback the platform places carries the stage and no host dial; a dial with no stage is half a claim.
+    expect(onCall([{ ...party, stage: "ringing" }])).toEqual([]);
+    expect(onCall([{ ...party, stage: "joined" }])).toEqual([]);
+    expect(onCall([{ ...party, dialId: "dial-9" }])).toEqual(["task.onCall.party.dial"]);
+    expect(onCall([{ ...party, dialId: "dial-9", stage: "ringing", held: true }])).toEqual(["task.onCall.held.ringing"]);
+    expect(onCall([{ ...party, dialId: "dial-9", stage: "parked" }])).toEqual(["task.onCall.stage"]);
+    expect(onCall([{ ...party, dialId: "dial-9", stage: "ringing", label: "Maya" }])).toEqual(["task.onCall.label.unexpected"]);
     expect(onCall([{ ...agent, stage: "ringing" }])).toEqual(["task.onCall.stage.unexpected"]);
     // Two conferenced people are ordinary; the singular rules are party and consulted.
     expect(onCall([conferenced, { ...conferenced, destinationId: "tier3", dialId: "dial-3c9" }])).toEqual([]);

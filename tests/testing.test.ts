@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakApproval, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
 import type { LoginStore } from "../src/index.js";
+import { validateTask } from "../src/validation.js";
 import { memoryStore, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const voiceTask = {
@@ -258,6 +259,9 @@ describe("assertMediaFollowsTheTask", () => {
   const call = (phase: Task<"voice">["phase"]): Task<"voice"> => ({ ...voiceTask, phase });
   const offered = (): ProviderEventEnvelope<"voice"> => ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...call("pending"), acceptance: "consent" } } });
   const updated = (phase: Task<"voice">["phase"], id = "e2"): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: call(phase) } });
+  // A connect-back brings a completing task back, and the update shows it: the party being dialled, ringing with the host's dial.
+  const connectingBack = (id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at,
+    event: { type: "task-updated", task: { ...call("in-progress"), onCall: [{ role: "party", dialId: "dial-9", stage: "ringing", since: at }] } } });
   const mediaReady = (id = "e2b"): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-media-started", taskId: voiceTask.id } });
   const mediaEnded: ProviderEventEnvelope<"voice"> = { id: "e3", loginId: "session-1", occurredAt: at, event: { type: "task-media-ended", taskId: voiceTask.id } };
   const ended: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-ended", taskId: voiceTask.id, outcome: { type: "completed", by: "agent" } } };
@@ -266,7 +270,7 @@ describe("assertMediaFollowsTheTask", () => {
   it("accepts a call offered, started, made ready, whose media ends, completing, then ending", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), ended]))).toEqual([]);
     // A snapshot may carry the task in with its media ready; connecting back puts media back and it ends again.
-    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), updated("in-progress", "e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [{ ...call("in-progress"), media: "started" }], taskCount: 1 }))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), connectingBack("e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [{ ...call("in-progress"), media: "started" }], taskCount: 1 }))).toEqual([]);
   });
 
   it("refuses media that moves before the work began, arrives twice, or ends where none arrived", () => {
@@ -297,6 +301,50 @@ describe("assertMediaFollowsTheTask", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([ended]))).toEqual(["stream.taskEnded.unknown"]);
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), { ...offered(), id: "e9" }]))).toEqual(["stream.taskOffered.duplicate"]);
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), ended, { ...offered(), id: "e9" }]))).toEqual([]);
+  });
+});
+
+describe("TaskStream holds a task to the table: it does not go backwards", () => {
+  const at = "2026-08-21T09:00:00Z";
+  const rulesOf = (violations: { rule: string }[]) => violations.map(v => v.rule);
+  const room = [{ role: "party" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
+  const inPhase = (phase: Task["phase"], over: Record<string, unknown> = {}): Task<"voice"> =>
+    ({ ...voiceTask, phase, onCall: phase === "completing" ? [] : room, ...over }) as unknown as Task<"voice">;
+  const seeded = (phase: Task["phase"]) => { const s = new TaskStream(); s.seed({ tasks: [inPhase(phase)] }); return s; };
+  const update = (phase: Task["phase"], over: Record<string, unknown> = {}): ProviderEventEnvelope<"voice"> =>
+    ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: inPhase(phase, over) } });
+
+  it("lets a task move forward by any number of steps, and stand where it is", () => {
+    for (const [from, to] of [["pending", "confirmed"], ["pending", "in-progress"], ["pending", "completing"], ["confirmed", "preview"], ["confirmed", "in-progress"],
+      ["preview", "in-progress"], ["preview", "completing"], ["in-progress", "paused"], ["paused", "in-progress"], ["in-progress", "completing"], ["paused", "completing"],
+      ["in-progress", "in-progress"], ["completing", "completing"]] as const) {
+      expect(rulesOf(seeded(from).apply(update(to))), `${from} -> ${to}`).toEqual([]);
+    }
+  });
+
+  it("refuses a phase unreachable from the one last read", () => {
+    for (const [from, to] of [["confirmed", "pending"], ["in-progress", "pending"], ["in-progress", "confirmed"], ["in-progress", "preview"], ["paused", "pending"],
+      ["paused", "confirmed"], ["completing", "pending"], ["completing", "confirmed"], ["completing", "preview"], ["completing", "in-progress"], ["completing", "paused"]] as const) {
+      expect(rulesOf(seeded(from).apply(update(to))), `${from} -> ${to}`).toContain("stream.taskUpdated.phase");
+    }
+  });
+
+  it("lets a completing task come back through a connect-back, which the update shows on the party", () => {
+    // The party being dialled back, ringing with the host's dial, is what brings a completing task to in-progress.
+    const dialled = [{ role: "party" as const, dialId: "dial-9", stage: "ringing" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
+    expect(rulesOf(seeded("completing").apply(update("in-progress", { onCall: dialled })))).toEqual([]);
+    // A callback the platform places on the same task shows the same thing without a host dial.
+    const callingBack = [{ role: "party" as const, stage: "ringing" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
+    expect(rulesOf(seeded("completing").apply(update("in-progress", { onCall: callingBack })))).toEqual([]);
+    // The control: the same move with nobody being dialled is a stale republish, the ending the agent never saw.
+    expect(rulesOf(seeded("completing").apply(update("in-progress")))).toEqual(["stream.taskUpdated.phase"]);
+    // And the party joins only on an answered outcome for that dial, as consulted and conferenced do.
+    const ringing = new TaskStream(); ringing.seed({ tasks: [inPhase("in-progress", { onCall: dialled })] });
+    const joined = [{ ...dialled[0]!, stage: "joined" as const }, dialled[1]!];
+    expect(rulesOf(ringing.apply(update("in-progress", { onCall: joined })))).toEqual(["stream.taskUpdated.stage"]);
+    const answered = new TaskStream(); answered.seed({ tasks: [inPhase("in-progress", { onCall: dialled })] });
+    answered.apply({ id: "d1", loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId: "dial-9", outcome: "answered" } } as ProviderEventEnvelope<"voice">);
+    expect(rulesOf(answered.apply(update("in-progress", { onCall: joined })))).toEqual([]);
   });
 });
 
@@ -1196,6 +1244,23 @@ describe("exerciseAdapter drives one call", () => {
     expect((await exerciseAdapter(driveable({ ...script, leavesKeys: false }), { ...context, store: kept }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
     expect(await kept.get("legs:call-77")).toBeUndefined();
     expect(await store.get("legs:call-77")).toBeDefined();
+  });
+
+  it("says which rules it evaluated, so a rule never looked at is a visible gap rather than a pass", async () => {
+    const result = await exerciseAdapter(makeAdapter().adapter, context, { collectOnly: true });
+    expect(result.violations).toEqual([]);
+    // The validators' rules as each was applied: the manifest's, the snapshot's, the task's.
+    expect(result.rulesEvaluated).toContain("manifest.id");
+    expect(result.rulesEvaluated).toContain("task.phase");
+    // A rule whose predicate never ran is not in the set: no entry without seconds, so held.open was never evaluated.
+    expect(result.rulesEvaluated).not.toContain("task.handlingHistory.held.open");
+    // With the drive, the stream's rules are considered on every update it reads, and the open hold is evaluated while paused.
+    const driven = await drive(driveable({ restateHistory: "with-mute" }));
+    expect(driven.rulesEvaluated).toContain("stream.taskUpdated.phase");
+    expect(driven.rulesEvaluated).toContain("task.handlingHistory.held.open");
+    // The observer is released with the run: nothing after it is counted.
+    expect(validateTask({ ...conformingSnapshot.tasks[0]!, onCall: [{ role: "party", dialId: "dial-9", since: "2026-08-21T09:05:00Z" }] } as unknown as Task, { channel: "voice" }).map(v => v.rule)).toEqual(["task.onCall.party.dial"]);
+    expect(result.rulesEvaluated).not.toContain("task.onCall.party.dial");
   });
 
   it("names a provider that writes the hold into its record and never closes it on resume, or the mute once the call is over", async () => {

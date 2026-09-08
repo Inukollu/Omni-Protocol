@@ -772,10 +772,16 @@ export const ON_CALL_ROLES = ["party", "agent", "consulted", "conferenced"] as c
  * either way, and the `stage` it has reached: `ringing` until the dial is answered, `joined` after,
  * stated so a snapshot says who is present without anyone having seen the outcome. Nobody ringing is
  * held. `label` names a destination -- a person, a queue -- not a phrase. At most one `party` and
- * one `consulted`: the consult commands name neither because there is exactly one.
+ * one `consulted`: the consult commands name neither because there is exactly one. The `party`
+ * carries a `stage` only while being dialled again on the same task -- a connect-back the host
+ * placed, carrying its `dialId`, or a callback the platform places itself, carrying none --
+ * `ringing` from the moment the dial is placed and `joined` on its answered outcome, so a host can
+ * show a call being placed rather than assert one that is still ringing. A party with no stage is
+ * on the call.
  */
 export type OnCall = { since: IsoTimestamp; held?: true } & (
-  | { role: "party" }
+  | { role: "party"; dialId?: never; stage?: never }
+  | { role: "party"; stage: OnCallStage; dialId?: DialId }
   | { role: "agent"; userId: UserId }
   | { role: "consulted" | "conferenced"; destinationId: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );

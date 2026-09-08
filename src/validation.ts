@@ -212,15 +212,34 @@ const isDurationSeconds = (value: unknown): boolean =>
 const isUserId = isFilled;
 const isTaskId = isFilled;
 
+const ruleListeners = new Set<(rule: string) => void>();
+
+/**
+ * Hears every rule a validator evaluates, pass or fail, until the returned function is called. A
+ * green run can then say which rules it looked at rather than only which subjects it reached: a
+ * rule never evaluated is a visible gap, not a pass. The harness registers one for each exercise.
+ */
+export function observeRules(listener: (rule: string) => void): () => void {
+  ruleListeners.add(listener);
+  return () => { ruleListeners.delete(listener); };
+}
+
+/** Says a rule was evaluated, for code that decides outside a collector: the stream, the drive. */
+export function ruleEvaluated(...rules: readonly string[]): void {
+  for (const rule of rules) for (const listener of ruleListeners) listener(rule);
+}
+
 class Collector {
   readonly violations: ProtocolViolation[] = [];
 
   add(rule: string, path: string, message: string): void {
+    ruleEvaluated(rule);
     this.violations.push({ rule, path, message });
   }
 
   require(condition: unknown, rule: string, path: string, message: string): boolean {
-    if (!condition) this.add(rule, path, message);
+    ruleEvaluated(rule);
+    if (!condition) this.violations.push({ rule, path, message });
     return Boolean(condition);
   }
 
@@ -961,10 +980,25 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
       }
       if (entry.dialId !== undefined) into.filled(entry.dialId, "task.onCall.dialId", `${at}.dialId`, "dialId must not be empty when present");
       if (entry.label !== undefined) into.filled(entry.label, "task.onCall.label", `${at}.label`, "a label must not be empty when present");
+    } else if (role === "party" && (entry.dialId !== undefined || entry.stage !== undefined)) {
+      // The party is dialled again on the same task -- a connect-back the host placed, a callback the
+      // platform placed -- and then carries the stage the dial has reached; a dial with no stage is
+      // half a claim, and the host's dialId is present where a host placed it, as on any dialled entry.
+      into.require(entry.stage !== undefined, "task.onCall.party.dial", at,
+        "a party being dialled again carries the stage the dial has reached; the host's dialId beside it where a host placed the dial");
+      if (entry.dialId !== undefined) into.filled(entry.dialId, "task.onCall.dialId", `${at}.dialId`, "dialId must not be empty when present");
+      if (entry.stage !== undefined && into.oneOf(entry.stage, ON_CALL_STAGES, "task.onCall.stage", `${at}.stage`)) {
+        into.require(!(entry.stage === "ringing" && entry.held === true), "task.onCall.held.ringing", `${at}.held`,
+          "nobody ringing is held; held belongs to somebody who has joined");
+      }
+      for (const field of ["destinationId", "label"] as const) {
+        into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
+          `a party is not a directory item; ${field} belongs on consulted or conferenced`);
+      }
     } else {
       for (const field of ["destinationId", "dialId", "label", "stage"] as const) {
         into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
-          `a ${role} was dialled from nowhere; ${field} belongs on consulted or conferenced`);
+          role === "party" ? `a party carries ${field} on a connect-back alone, with its dial and stage together` : `a ${role} was dialled from nowhere; ${field} belongs on consulted or conferenced`);
       }
     }
   });
