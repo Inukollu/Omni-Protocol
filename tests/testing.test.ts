@@ -1382,6 +1382,17 @@ describe("exerciseAdapter drives one call", () => {
     expect((await exerciseAdapter(makeAdapter({ snapshot: broken, connection: { refused: () => { throw new Error("no logger"); } } }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["task.wrapAllowance", "connection.refused.rejected"]);
   });
 
+  it("states a capacity of zero after the run, host-stopped, and names a provider that will not take it", async () => {
+    const stated: number[] = [];
+    const counting = { setCapacity: async ({ count }: { count: number }) => { stated.push(count); return { status: "applied" as const }; } };
+    expect((await exerciseAdapter(makeAdapter({ connection: counting }).adapter, context, { collectOnly: true })).violations).toEqual([]);
+    expect(stated).toEqual([1, 0]);
+    const refusing = { setCapacity: async ({ count }: { count: number }) => count === 0
+      ? { status: "failed" as const, failure: { code: "provider.capacity", message: "Capacity must be at least one", retryable: false } }
+      : { status: "applied" as const } };
+    expect((await exerciseAdapter(makeAdapter({ connection: refusing }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["connection.setCapacity.zero"]);
+  });
+
   it("says which rules it evaluated, so a rule never looked at is a visible gap rather than a pass", async () => {
     const result = await exerciseAdapter(makeAdapter().adapter, context, { collectOnly: true });
     expect(result.violations).toEqual([]);
