@@ -520,16 +520,25 @@ export async function exerciseAdapter<C extends Channel>(
         context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held, reloading,
       }));
     }
-    // The agent is one person on several providers, and the host divides their capacity: a
-    // provider is told zero while the agent's capacity is elsewhere, and takes it as any other count.
-    ruleEvaluated("connection.setCapacity.zero");
-    capacityStated = 0;
-    const stopped = await live.setCapacity({ count: 0 });
-    const stoppedShape = validateResult(stopped, "setCapacity", "connection.setCapacity");
-    violations.push(...stoppedShape);
-    if (stoppedShape.length === 0 && stopped.status === "failed") {
-      violations.push({ rule: "connection.setCapacity.zero", path: "connection.setCapacity",
-        message: `the provider would not take a capacity of zero: ${stopped.failure.code}; zero is host-stopped, the agent's capacity being elsewhere, and a provider allocates nothing and refuses nothing for it` });
+    // Capacity supersedes rather than accumulates, so a decrease is as ordinary as an increase: the
+    // host raises it, lowers it, and takes it away, and the provider takes each as the ceiling it is.
+    // A provider whose ceiling can only rise passes a zero it special-cases and still cannot go from
+    // five to three, so the exercise moves the axis both ways. Zero is host-stopped: the agent's
+    // capacity is elsewhere, and the provider allocates nothing and refuses nothing for it. Any offer
+    // after a lower count is caught against it (stream.taskOffered.overCapacity).
+    ruleEvaluated("connection.setCapacity.lowered", "connection.setCapacity.zero");
+    for (const count of [2, 1, 0]) {
+      capacityStated = count;
+      const restated = await live.setCapacity({ count });
+      const shape = validateResult(restated, "setCapacity", "connection.setCapacity");
+      violations.push(...shape);
+      if (shape.length === 0 && restated.status === "failed") {
+        violations.push({ rule: count === 0 ? "connection.setCapacity.zero" : "connection.setCapacity.lowered", path: "connection.setCapacity",
+          message: count === 0
+            ? `the provider would not take a capacity of zero: ${restated.failure.code}; zero is host-stopped, the agent's capacity being elsewhere, and a provider allocates nothing and refuses nothing for it`
+            : `the provider would not take a capacity of ${count} after a higher one: ${restated.failure.code}; capacity supersedes, and a decrease is as ordinary as an increase` });
+        break;
+      }
     }
   } finally {
     let clean = true;
