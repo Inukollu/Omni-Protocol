@@ -184,7 +184,7 @@ describe("Omni protocol", () => {
             listener({ id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
             return () => undefined;
           },
-          setCapacity: async capacity => (expect(capacity.count).toBeGreaterThanOrEqual(1), { status: "applied" as const }),
+          setCapacity: async capacity => (expect(capacity.count).toBeGreaterThanOrEqual(0), { status: "applied" as const }),
           execute: async () => ({ status: "applied" as const }),
           refused: () => undefined,
           disconnect,

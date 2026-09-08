@@ -1895,6 +1895,18 @@ const HOST_MUTES = membersOf<HostMute>({ stream: true, station: true });
  * phone the microphone is the phone's, and off voice there is none. Neither the value nor its
  * absence is inferred from what kind of application the host is.
  */
+/** What the host states as capacity: a whole number, zero or more, zero being host-stopped. */
+export function validateCapacity(capacity: unknown, path = "capacity"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(capacity)) {
+    into.add("capacity.shape", path, "a capacity is an object carrying count");
+    return into.violations;
+  }
+  into.require(typeof capacity.count === "number" && Number.isInteger(capacity.count) && capacity.count >= 0, "capacity.count", `${path}.count`,
+    "count is a whole number, zero or more: how many tasks this provider may allocate at once, zero while the agent's capacity is elsewhere");
+  return into.violations;
+}
+
 /** The login's store, which the host provides on every connection: three functions, and nothing else is a store. */
 export function validateLoginStore(store: unknown, path = "store"): ProtocolViolation[] {
   const into = new Collector();

@@ -862,7 +862,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
           overrides.emit?.(listener);
           return unsubscribe;
         },
-        setCapacity: async () => { if (subscribed !== undefined) overrides.emitOnCapacity?.(subscribed); return { status: "applied" }; },
+        setCapacity: async ({ count }) => { if (count > 0 && subscribed !== undefined) overrides.emitOnCapacity?.(subscribed); return { status: "applied" }; },
         refused: () => undefined,
         execute: async () => ({ status: "applied" }),
         disconnect,
@@ -1178,7 +1178,13 @@ describe("exerciseAdapter drives one call", () => {
       onConnect: connectContext => { given = connectContext.store; },
       connection: {
         ...(script.platform === undefined ? {} : { snapshot: reloaded }),
-        setCapacity: async () => { if (script.platform !== undefined) script.platform.open = true; emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) }); return { status: "applied" }; },
+        setCapacity: async ({ count }: { count: number }) => {
+          // Zero is host-stopped: the provider allocates nothing for it and answers applied like any other count.
+          if (count === 0) return { status: "applied" };
+          if (script.platform !== undefined) script.platform.open = true;
+          emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) });
+          return { status: "applied" };
+        },
         execute: async ({ command, allocationId }: { command: { type: string }; allocationId?: string }) => {
           if (allocationId !== "alloc-77") return { status: "failed", failure: { code: "omni.task-not-found", message: `no allocation ${String(allocationId)}`, retryable: false } };
           if (script.throwsOn === "execute" && command.type === "hold") throw new Error("hub unreachable");

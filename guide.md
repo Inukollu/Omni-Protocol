@@ -425,7 +425,7 @@ type Snapshot = {
 };
 
 type AgentCapacity = {
-  count: number; // absolute ceiling, at least 1
+  count: number; // absolute ceiling, zero or more; zero is host-stopped
 };
 
 type CapacityResult =
@@ -3370,9 +3370,10 @@ hold applied. A `held` result would repeat the discriminant that travelled with 
 
 States how many tasks this provider may have allocated to the agent **at once**.
 
-`count` is an absolute ceiling, not an increment and never less than 1. An agent's capacity is a
-property of the agent, not of the moment: it is stated when the agent is set up and restated only
-when it genuinely changes, which is a provisioning change rather than a task starting or ending.
+`count` is an absolute ceiling, not an increment, a whole number of zero or more
+(`capacity.count`). An agent's capacity is a property of the agent, not of the moment: it is
+stated when the agent is set up and restated only when it genuinely changes, which is a
+provisioning change rather than a task starting or ending -- with one exception below.
 
 **The provider counts its own outstanding tasks against it.** Allocate while you hold fewer than
 `count` tasks for this agent, and stop when you hold that many; when one of yours ends you have
@@ -3380,7 +3381,13 @@ room again and need no new signal to know it. Omni does not re-state capacity as
 go, and a provider that waits for it will stall.
 
 Your own tasks are the only ones you count. What the agent holds at other providers is not your
-concern — Omni set `count` knowing it.
+concern — Omni set `count` knowing it, and this is how: the agent is one person on several
+providers, and the host divides their capacity among them rather than telling each the whole. A
+provider that has none of it for now is told **`count: 0`, host-stopped**: allocate nothing, show
+the member as `on-task` on the roster, since the agent is working, and take the next count as any
+other when the host has capacity for this provider again. Zero is not a refusal to state, and a
+provider that answers it `failed` is named (`connection.setCapacity.zero`); it is the one restatement
+that follows work rather than provisioning.
 
 Capacity supersedes rather than accumulates: the latest value is the ceiling.
 
@@ -3974,10 +3981,12 @@ anything to become available.
 | Omni commits a break | `commitBreak`. The break stops allocation, not the ceiling. |
 | Agent returns from break | `endBreak` |
 
-**Stopping is a break, not a capacity of zero.** Capacity says how much this agent can carry at
-once; a break says they are not working. Collapsing the two would leave a provider unable to tell
-an agent at their limit from an agent who has gone to lunch, and only one of those needs a reason,
-a decision and a return.
+**A break is not a capacity of zero, and neither is the reverse.** Capacity says how much of this
+agent this provider may carry; a break says they are not working at all. A provider told
+`count: 0` shows an agent whose capacity is elsewhere, `on-task`; a provider told a break shows
+`on-break`. Collapsing the two would leave a provider unable to tell an agent working on another
+provider from an agent who has gone to lunch, and only one of those needs a reason, a decision and
+a return.
 
 ### How the agent hears the call
 

@@ -520,6 +520,17 @@ export async function exerciseAdapter<C extends Channel>(
         context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held, reloading,
       }));
     }
+    // The agent is one person on several providers, and the host divides their capacity: a
+    // provider is told zero while the agent's capacity is elsewhere, and takes it as any other count.
+    ruleEvaluated("connection.setCapacity.zero");
+    capacityStated = 0;
+    const stopped = await live.setCapacity({ count: 0 });
+    const stoppedShape = validateResult(stopped, "setCapacity", "connection.setCapacity");
+    violations.push(...stoppedShape);
+    if (stoppedShape.length === 0 && stopped.status === "failed") {
+      violations.push({ rule: "connection.setCapacity.zero", path: "connection.setCapacity",
+        message: `the provider would not take a capacity of zero: ${stopped.failure.code}; zero is host-stopped, the agent's capacity being elsewhere, and a provider allocates nothing and refuses nothing for it` });
+    }
   } finally {
     let clean = true;
     try { unsubscribe?.(); } catch { clean = false; }
