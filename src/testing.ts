@@ -278,7 +278,7 @@ export async function exerciseAdapter<C extends Channel>(
       self: current().identity.id,
       capabilities: current().capabilities,
       loginId: context.loginId,
-      autoAcceptTasks: context.autoAcceptTasks ?? true,
+      autoAcceptTasks: context.autoAcceptTasks,
     });
 
     // The optional methods are optional only until something declares a need for them. Each
@@ -374,7 +374,7 @@ export async function exerciseAdapter<C extends Channel>(
     // record of that leg is the provider's to take; on a desk phone the host holds no microphone.
     if (softphone) requireMethod(live, "recordStep", "the login is on a softphone, whose microphone the host mutes");
 
-    const eventIds = new Set<string>();
+    const eventPayloads = new Map<string, string>();
     // The drive waits on events: each waiter is offered every envelope as it lands.
     const waiters = new Set<(envelope: ProviderEventEnvelope<C>) => void>();
     unsubscribe = connection.subscribe(envelope => {
@@ -388,12 +388,22 @@ export async function exerciseAdapter<C extends Channel>(
       }
       violations.push(...undeterminedTasks(eventTasks(envelope), "event"));
       if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
+      // A re-delivered envelope is harmless and applied once; the same id carrying a different
+      // payload is a reused id, which no dedupe can make harmless, and is named.
+      if (typeof envelope?.id === "string") {
+        const payload = JSON.stringify(envelope.event);
+        const earlier = eventPayloads.get(envelope.id);
+        if (earlier !== undefined) {
+          if (earlier !== payload) {
+            violations.push({ rule: "event.id.reused", path: "event.id",
+              message: `envelope ${envelope.id} was delivered again with a different event: an id names one event for the life of the login` });
+          }
+          return;
+        }
+        eventPayloads.set(envelope.id, payload);
+      }
       // Cross-event rules apply once the stream has a beginning: the connect snapshot.
       if (seeded) violations.push(...stream.apply(envelope), ...breaks.apply(envelope));
-      if (typeof envelope?.id === "string") {
-        if (eventIds.has(envelope.id)) return;
-        eventIds.add(envelope.id);
-      }
       events.push(envelope);
       for (const waiter of waiters) waiter(envelope);
     });

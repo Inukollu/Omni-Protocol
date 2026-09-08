@@ -314,7 +314,7 @@ type LoginStore = {
 type ConnectContext = {
   protocolVersion: number;
   loginId: string;
-  autoAcceptTasks?: boolean;
+  autoAcceptTasks: boolean;
   timeZone: TimeZone;
   store: LoginStore;
   phone?: Phone;
@@ -1944,7 +1944,7 @@ Creates one live provider connection for the signed-in agent.
 | --- | --- |
 | `protocolVersion` | Version negotiated before authentication. Fixed for this login. |
 | `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
-| `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login. Treated as `true` when omitted. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
+| `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login, stated by the host on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
 | `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's host states what its Mute does, and a desk-phone or conversation login's host cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the host's**. |
 | `store` | The login's operational store, kept by the host for the life of the login, across a reload of the host, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the handling legs a host reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store a host may clear aggressively. **A task's keys carry the task id and go with the task**: a key written about a task names the task's id in the key, and is deleted before the task's end is published, because a platform retires a task id minutes after closing it and a requeue takes seconds, so a key that outlives its task is inherited by the next offer of the same id -- a record with legs the host never reported against it. A login-scoped key carries no task id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`drive.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`drive.store.late`). The ordinary late write is the host's, not the adapter's: a host reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.task-not-found` and writes nothing -- the host ends its own open legs at the task's end, so such a report is the host's error to see, and a host reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
@@ -2145,12 +2145,11 @@ provider's requirement, stated on a wire where Omni was willing to accept for th
 no-auto-accept policy puts no word on the wire at all — the field is absent, and the **Accept**
 press is Omni's doing, not the provider's.
 
-**An absent value means `true`**, as `readyOnLogin` does, because an agent who has signed in and
-gone ready is telling the deployment they are working. Requiring a press before every contact is
-the exception a provisioning file asks for, not the state it falls into when a flag is missing.
-
-Nothing is given away by that default. `acceptance` is the provider's own control and outranks
-it: `consent` puts the decision back in the agent's hands for any task where it
+**The value is stated, never assumed.** `autoAcceptTasks` is required of every connection: a
+host says which policy the deployment provisioned, and a validator that is not told checks
+neither rule rather than guess the permissive one (`task.acceptance.required` and
+`.unexpected` fire only against a stated value). `acceptance` is the provider's own control and
+outranks the policy: `consent` puts the decision back in the agent's hands for any task where it
 belongs, whatever the host was configured with.
 
 An automatically accepted task still arrives through `task-offered`.
@@ -2231,7 +2230,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
 | `party` | The person or entity on the other end of this task, as a `Contact`: often a name and one address; a withheld caller ID may leave nothing to send at all. Optional. The party is who the task is *with*; `contacts` is the directory. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preview`, `in-progress`, `paused`, or `completing`. `preview` is voice only. |
-| `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. |
+| `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. Media names a task whose work has begun: on a `pending`, `confirmed` or `preview` task it is refused (`task.media.beforeWork`), on a snapshot as on the event, since a host opens the microphone on it. |
 | `acceptance` | How this offer is accepted — `no-preference`, `consent`, or `automatic` — stated on the pending task so a reconnect snapshot says it too. Required while `pending` when `autoAcceptTasks` was `true`, forbidden when it was `false`, and absent past `pending`. See **Acceptance modes**. |
 | `previewEndsAt` | Voice only, in `preview`: when the system stops waiting for the agent to press Call. Absent, the agent has as long as they need. Always with `atDeadline`. See **Preview: the agent presses Call**. |
 | `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` places the call itself, `expires` takes the record back and the task ends `expired`. |
@@ -2872,8 +2871,10 @@ See **Which commands need a capability**.
 
 ### Publishing codes and destinations
 
-Four capabilities accept an object instead of `true` when the provider wants Omni to render real
-choices. `true` remains valid and means "offer the control with nothing published".
+Four capabilities accept an object when the provider wants Omni to render real choices. For
+`dispositions` alone, `true` remains valid and means "offer the control with nothing published";
+the three directory controls -- `coldTransfer`, `warmTransfer`, `conference` -- carry their
+directory or are refused, since once nothing is typed the directory is the control.
 
 #### `dispositions`
 
@@ -3720,7 +3721,7 @@ choice that is no command at all:
 
 | The lead | The agent's task | The lead's task |
 | --- | --- | --- |
-| `{ type: "lead-assist", action: "take-over" }` | `task-ended` with `{ type: "transferred", destination: leadId }`, straight from `in-progress`: **no `completing` window**, the agent is idle at once | Continues alone, and ends as any call does |
+| `{ type: "lead-assist", action: "take-over" }` | `task-ended` with `{ type: "transferred", destinationId: leadId }`, straight from `in-progress`: **no `completing` window**, the agent is idle at once | Continues alone, and ends as any call does |
 | `{ type: "lead-assist", action: "leave" }` | Continues; `leadAssist` is cleared | `task-ended` with `{ type: "left" }` -- the call goes on without them |
 | Stays until the customer hangs up | `task-media-ended`, `completing`, its own disposition | The same, independently: **both have the disposal window** |
 
@@ -4156,12 +4157,14 @@ declared:
 | `conference` with `action: "remove"` | The `conference` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
 | `decline` | The `decline` capability on any channel, **and** Omni provisioning permitting it. One word for refusing an offer, whatever the channel. |
 | `call` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
-| `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. |
+| `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. What travels is what the capability published: a code from its list where it has one (`command.complete.disposition.unknown`), a code at all where it requires one (`.disposition.required`), notes as it said (`.notes.required`, `.notes.unexpected`), and neither where the task declares no dispositions (`.disposition.unexpected`). |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | `transfer` with `action: "warm"` | The `warmTransfer` capability. `action: "cold"` is gated by `coldTransfer`; the two are declared and offered separately. |
 | `transfer` with `action: "complete"` or `"cancel"` | A consultation in progress -- a `consulted` entry on `Task.onCall`. Without one there is nothing to complete or cancel, and a provider that receives either answers `failed`. |
 | `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with status `requested`. |
 | `lead-assist` with `action: "take-over"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |
+| `transfer` with a destination, `conference` with `action: "add"` | Its capability, and a `destinationId` the directory offered: the id Omni sends is the id the provider published (`command.destination.unknown`). |
+| `custom` | A control the task published under `capabilities.custom`, by its `id` (`command.capability.custom`), carrying every field the control's `prompt` asked for (`command.custom.prompt`). |
 | Everything else | Its own named capability. |
 
 **A control on the contact belongs to the handling phases**, `in-progress` and `paused`:
@@ -4172,7 +4175,7 @@ call with nobody on it, a conversation closed -- and a wrap-up that still shows 
 for nothing. The capability stays declared, because it is a property of the task and the task is
 still open; the phase says there is nothing to use it on. Omni shows none of these controls outside
 the two phases, and `validateTaskCommand` refuses each of them there (`command.phase.handling`).
-The commands with a phase of their own -- `answer`, `accept`, `decline` and `reject` in `pending`,
+The commands with a phase of their own -- `answer`, `accept` and `decline` in `pending`,
 `call` in `preview`, `connect-back` in `completing`, `complete` in any -- are not among them.
 
 `validateTaskCommand(command, task)` holds a command to this table at runtime, both ways: the
