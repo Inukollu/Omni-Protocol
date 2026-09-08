@@ -2170,8 +2170,8 @@ person's behalf for want of a word:
 | `consent` | The provider requires the person's explicit consent: Omni presents **Accept** and waits, whatever its own policy would have done. A host that declares `guarantees.personConsent` promises exactly this; a provider checks it before offering work only a person may take. |
 | `automatic` | Omni accepts immediately without agent interaction. |
 
-When Omni sent `autoAcceptTasks: false`, the provider omits `acceptance` and every task
-requires agent acceptance. The two are never confused on the wire: `consent` is always the
+When Omni sent `autoAcceptTasks: false`, the provider omits `acceptance` and every task the
+queue routes requires agent acceptance. The two are never confused on the wire: `consent` is always the
 provider's requirement, stated on a wire where Omni was willing to accept for the agent; Omni's own
 no-auto-accept policy puts no word on the wire at all — the field is absent, and the **Accept**
 press is Omni's doing, not the provider's.
@@ -2185,8 +2185,13 @@ belongs, whatever the host was configured with.
 
 An automatically accepted task still arrives through `task-offered`.
 
-Agent-initiated work arrives through `task-offered` with the task's
-`acceptance: "automatic"`.
+**Work the agent originated is accepted by the command that created it.** A task born of the
+agent's own act — a dialpad call or a connect-back, recognisable by the host's `dialId` on
+`onCall`; a lead's join, carrying `assisting`; a lead's monitor, carrying `monitoring` — arrives
+through `task-offered` with `acceptance: "automatic"` whatever `autoAcceptTasks` says, and the
+validator holds it there under either provisioning and under none (`task.acceptance.originated`):
+the desk shows no **Accept** for a call the agent placed. The provisioning governs work the queue
+routes to the agent, and nothing else.
 
 ### Pending
 
