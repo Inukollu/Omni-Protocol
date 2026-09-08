@@ -318,6 +318,12 @@ describe("validateTask", () => {
     expect(rules(validateTask(task({ channel: "chat", capabilities: { hold: true } }), { channel: "chat" }))).toEqual([]);
   });
 
+  it("requires a task to name this life of itself, the allocation minted per offer", () => {
+    expect(rules(validateTask(task(), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ allocationId: undefined }), { channel: "voice" }))).toEqual(["task.allocationId"]);
+    expect(rules(validateTask(task({ allocationId: "" }), { channel: "voice" }))).toEqual(["task.allocationId"]);
+  });
+
   it("requires the words a task and a manifest are shown by, and refuses a repeated browser id", () => {
     // Each of these was deletable with the suite green: asserted here with its control.
     expect(rules(validateTask(task({ taskType: "" }), { channel: "voice" }))).toEqual(["task.taskType"]);
