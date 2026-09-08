@@ -1107,12 +1107,24 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // A task's keys are gone with the task. A task-scoped key carries the task id, so the watched
   // store says which keys were the task's; one still held after task-ended is a key about to be
   // inherited by the next offer of the same id, since a platform retires an id minutes after closing it.
+  let retainedAtEnd: Set<string> | undefined;
   const storeReleased = async (): Promise<void> => {
     await Promise.resolve(); await Promise.resolve();
     const retained = [...drive.held].filter(key => key.includes(taskId));
+    retainedAtEnd = new Set(retained);
     if (retained.length > 0) {
       refuse("drive.store.retained", "drive.store",
         `${taskId} has ended and the login's store still holds ${retained.join(", ")}: a task's keys go with the task, or the next offer of the same id inherits them`);
+    }
+  };
+  // A key written about the task after its end -- a persist hung off a timer, a late command -- is the
+  // same hazard arriving later, so the store is read once more when the drive is done.
+  const nothingLate = (): void => {
+    if (retainedAtEnd === undefined) return;
+    const late = [...drive.held].filter(key => key.includes(taskId) && !retainedAtEnd!.has(key));
+    if (late.length > 0) {
+      refuse("drive.store.late", "drive.store",
+        `${taskId} had ended with its keys gone, and the login's store now holds ${late.join(", ")}: something wrote about the task after its end`);
     }
   };
 
@@ -1319,6 +1331,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       }
     }
   }
+  // A timer fires after the microtasks: one turn of the loop is what a late persist needs to show itself.
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
+  nothingLate();
   return found;
 }
 
