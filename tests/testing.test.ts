@@ -108,6 +108,18 @@ describe("assertCapabilityWithdrawal", () => {
     expect(() => assertCapabilityWithdrawal([lead, { status: "expired", identity: ada }, demoted], bare, manifest)).toThrow(/usable states/);
   });
 
+  it("counts a withdrawn policy control, and a withdrawn preference, as withdrawals", () => {
+    // Every capability field counts, so a demotion that only takes the policy panel away is a scenario the helper can test.
+    const policing = { ...lead, capabilities: { team: { policyControl: true as const } } } satisfies AuthenticationState;
+    const watching = { ...lead, capabilities: { team: {} } } satisfies AuthenticationState;
+    const members = [{ id: "A-2", availability: "on-task" as const }];
+    expect(() => assertCapabilityWithdrawal([policing, watching], { ...bare, team: { members } }, manifest)).not.toThrow();
+    const hold = { id: "hold" as const, label: "Hold", enabled: true, setBy: "team" as const };
+    const preferring = { status: "authenticated", identity: ada, capabilities: { preferences: [hold] } } satisfies AuthenticationState;
+    const plain = { status: "authenticated", identity: ada, capabilities: {} } satisfies AuthenticationState;
+    expect(() => assertCapabilityWithdrawal([preferring, plain], bare, manifest)).not.toThrow();
+  });
+
   it("rejects a sequence that withdraws nothing", () => {
     expect(() => assertCapabilityWithdrawal([lead, lead], bare, manifest)).toThrow(/withdrawn/);
   });
@@ -299,6 +311,45 @@ describe("assertMediaFollowsTheTask", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered({ wrapAllowance: 0 }), chatUpdated("in-progress", { wrapAllowance: 0 }), chatEnded(completed)]))).toEqual([]);
     expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered({ completionMode: "agent-command" }), chatUpdated("in-progress", { completionMode: "agent-command" }), chatEnded({ type: "completed", by: "agent" })]))).toEqual([]);
     expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatEnded({ type: "cancelled", by: "party" })]))).toEqual([]);
+  });
+
+  it("refuses a voice ending with the media still started, whatever the outcome: the audio ends first", () => {
+    const takenOver: ProviderEventEnvelope<"voice"> = { id: "e9", loginId: "session-1", occurredAt: at, event: { type: "task-ended", taskId: voiceTask.id, allocationId: voiceTask.allocationId, outcome: { type: "taken-over", leadId: "L-9" } } };
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), ended]))).toEqual(["stream.taskEnded.mediaOpen"]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), takenOver]))).toEqual(["stream.taskEnded.mediaOpen"]);
+    // The controls: the media ended first, and a task that never had audio.
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, takenOver]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), ended]))).toEqual([]);
+  });
+
+  it("gives a host-placed dial audio from dialling: media on a task whose party the host is ringing, and on no other task not at work", () => {
+    const dialled = (id: string, phase: Task<"voice">["phase"]): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at,
+      event: { type: "task-offered", task: { ...call(phase), acceptance: "automatic", onCall: [{ role: "party", dialId: "dial-3", stage: "ringing", since: at }] } } });
+    expect(rulesOf(() => assertMediaFollowsTheTask([dialled("d1", "pending"), mediaReady("d2")]))).toEqual([]);
+    // The control: an offered task nobody is dialling has no audio yet.
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), mediaReady()]))).toEqual(["stream.taskMediaStarted.beforeWork"]);
+  });
+
+  it("holds the party's stage to its life: joined once after the answered outcome, then no stage, and only a dial it saw brings a completing task back", () => {
+    const outcome = (id: string, dialId: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId, taskId: voiceTask.id, allocationId: voiceTask.allocationId, outcome: "answered" } });
+    const party = (id: string, entry: Record<string, unknown>): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), onCall: [{ role: "party", since: at, ...entry }] } } });
+    const joined = { stage: "joined", dialId: "dial-9" };
+    const back = [offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), connectingBack("e6"), outcome("e7", "dial-9")];
+    // joined is transient: stated once on the publication after the answered outcome, and a party with no stage is on the call.
+    expect(rulesOf(() => assertMediaFollowsTheTask([...back, party("e8", joined), party("e9", {})]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([...back, party("e8", joined), party("e9", joined)]))).toEqual(["stream.taskUpdated.stage.lingering"]);
+    // A completing task comes back on a party ringing, or joined by a dial whose answered outcome the stream saw: a stale copy
+    // carrying joined from a dial it never saw answered is the ending the agent never saw.
+    expect(rulesOf(() => assertMediaFollowsTheTask([...back, party("e8", joined)]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), party("e6", { stage: "joined", dialId: "dial-old" })])))
+      .toEqual(["stream.taskUpdated.phase"]);
+  });
+
+  it("lets a connect-back release ended media on the way back: the follow rule keeps the same exception as the phase rule", () => {
+    const completingEnded: ProviderEventEnvelope<"voice"> = { id: "e5", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("completing"), media: "ended" } } };
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, completingEnded, connectingBack("e6")]))).toEqual([]);
+    // The control: after ended media, a phase that is not completing and not a connect-back is still refused.
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, completingEnded, updated("in-progress", "e6")]))).toEqual(["stream.taskUpdated.phase", "stream.taskMediaEnded.follow"]);
   });
 
   it("holds a resync snapshot to what the stream knew: no phase backwards, and no audio forgotten on a task still at work", () => {
@@ -783,7 +834,7 @@ const conformingManifest = {
     dial: { destinations: "any-number" },
     contacts: true,
     calendar: true,
-    personalBrowser: { access: { mode: "block-all", allowList: ["https://*.example.com/*"], blockList: [] } },
+    personalBrowser: { access: { mode: "block-all", allowList: ["https://*.example.com/*"], blockList: [] }, accessAppliesTo: "all-navigation" },
   },
   dialOutcomes: ["answered", "no-answer"],
   phones: ["softphone", "deskPhone"],
@@ -805,7 +856,7 @@ const conformingSnapshot = {
       hold: true,
       dispositions: { required: true, notes: "optional", codes: [{ id: "resolved", label: "Resolved" }, { id: "callback", label: "Callback needed" }] },
       coldTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] },
-      custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } }],
+      custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary", render: "inline" } }],
     },
     capabilitySource: "queue",
     allocationId: "alloc-42",
@@ -847,6 +898,8 @@ interface AdapterOverrides {
   connect?: () => Promise<never>;
   /** An adapter that never asks the host anything. */
   ignoresHost?: boolean;
+  /** An adapter that does one half of consulting the host: reads the report and never subscribes, or subscribes and never reads. */
+  consultsHost?: "report-only" | "subscribe-only";
   /** Sees the context connect() was handed, for a fixture that must use what the host gave it rather than what the test holds. */
   onConnect?: (connectContext: ConnectContext) => void;
   /** Publishes once the host has stated capacity, which is when a provider may allocate: where a fixture's offers belong. */
@@ -894,7 +947,9 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
       let subscribed: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
       let emittedOnCapacity = false;
       // A voice adapter consults the host before it declares the agent ready to its platform.
-      if (overrides.ignoresHost !== true) connectContext.host.report();
+      // A voice adapter reads the host's report before it declares the agent ready, and subscribes so it hears of every change.
+      if (overrides.ignoresHost !== true && overrides.consultsHost !== "subscribe-only") connectContext.host.report();
+      if (overrides.ignoresHost !== true && overrides.consultsHost !== "report-only") connectContext.host.subscribe(() => undefined);
       overrides.onConnect?.(connectContext);
       const connection: Connection<"voice"> = {
         snapshot: async () => {
@@ -1177,13 +1232,16 @@ describe("exerciseAdapter", () => {
   it("validates the capacity result as it does a snapshot", async () => {
     // An adapter compiled against another version may answer a shape the host does not know.
     expect(await rules({ connection: { setCapacity: async () => ({ status: "ok" }) } })).toContain("result.status");
-    expect(await rules({ connection: { setCapacity: async () => ({ status: "failed" }) } })).toContain("result.failure.required");
+    // failed is a status setCapacity does not give, so a bare failed is refused as one, not as a failure lacking its cause.
+    expect(await rules({ connection: { setCapacity: async () => ({ status: "failed" }) } })).toContain("result.status");
     expect(await rules({})).not.toContain("result.status");
   });
 
-  it("flags a provider that will not accept a capacity", async () => {
+  it("holds a capacity to being taken: failed is a status setCapacity does not give", async () => {
+    // A statement is not refused. The conforming fixture answers applied (the first test); one that answers failed has answered a status the method has not.
     const failed = { status: "failed", failure: { code: "omni.unavailable", message: "down", retryable: true } };
-    expect(await rules({ connection: { setCapacity: async () => failed } })).toContain("connection.setCapacity.failed");
+    let statements = 0;
+    expect(await rules({ connection: { setCapacity: async () => (statements++ === 0 ? failed : { status: "applied" }) } })).toEqual(["result.status"]);
   });
 });
 
@@ -1192,11 +1250,15 @@ describe("exerciseAdapter drives one call", () => {
   type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
   interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute";
     /** A platform shared between instances of the adapter, as a host reload shares it: which task is open, and the first client's listener. */
-    platform?: { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean };
+    platform?: { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean; secondStated?: number };
     /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
     legsIn?: "memory" | "store";
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
-    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-media" | "gone-backwards";
+    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-media" | "gone-backwards" | "media-unavailable" | "without-refused";
+    /** A provider that takes the host's late closing report as the leg's duration, overwriting what it closed at media end, and restates the record. */
+    overwritesLateClose?: boolean;
+    /** A provider whose store keys never name the task, or name it only as a run of characters inside another id: the harness can see nothing of them, and says so. */
+    keyShape?: "unrelated" | "run-on";
     /** The platform pushes the open task to every client of the login: the first connection sees a re-offer and says so. */
     reofferOnReload?: boolean;
     /** The reloaded client itself raises a diagnostic once it stands: a live client's shout, counted. */
@@ -1223,6 +1285,10 @@ describe("exerciseAdapter drives one call", () => {
   let drvSeq = 0;
   const driveable = (script: Script = {}) => {
     let listener: Listener | undefined;
+    // Whether this instance is the reloaded second: built while the platform already holds the open task.
+    const isSecond = script.platform?.open === true;
+    // The store key the legs live under: naming the task, or, for a provider whose keys name nothing the harness can see, not.
+    const legKey = script.keyShape === "unrelated" ? "legs:alloc-77" : script.keyShape === "run-on" ? "legs:call-771" : "legs:call-77";
     // The allocation this instance publishes and answers to: a reloaded instance that reminted one is at least consistent with itself.
     const myAllocation = script.reloadAs === "reminted" && script.platform?.open === true ? "alloc-77.2" : "alloc-77";
     // Envelope ids are unique within the login, across every client of it: a reloaded adapter carries on, never restarts.
@@ -1248,6 +1314,14 @@ describe("exerciseAdapter drives one call", () => {
         ...(closedAtEnd !== undefined && script.restateHistory !== "without-mute" ? [{ step: "muted" as const, ...closedAtEnd, by: "1042" }] : [])] };
     // What a second instance knows: the platform's open task, and the legs it can reach -- the store's, or its own empty memory.
     let disposed = false;
+    // Whether the call's audio is up on this instance's account: it ends, closing the host's open leg at that
+    // instant, before any ending the provider publishes, since a voice task ends after its audio and never around it.
+    let mediaUp = false;
+    const endMedia = () => {
+      if (openLeg !== undefined) { closedAtEnd = { ...openLeg, seconds: script.leavesHostLegOpen ? undefined : 1 }; openLeg = undefined; }
+      emit({ type: "task-media-ended", taskId: "call-77", allocationId: myAllocation });
+      mediaUp = false;
+    };
     const reloaded = async () => {
       if (script.platform?.open !== true) return { ...conformingSnapshot, tasks: [], taskCount: 0 };
       if (script.reofferOnReload) script.platform!.firstListener?.({ id: `diag-${Date.now()}`, loginId: "session-1", occurredAt: at,
@@ -1255,7 +1329,7 @@ describe("exerciseAdapter drives one call", () => {
       if (script.shoutsAfterReload) listener?.({ id: `diag-live-${Date.now()}`, loginId: "session-1", occurredAt: at,
         event: { type: "diagnostic", expected: "a state read answers with the agent's tasks", observed: "the read answered late" } });
       offeredOnce = true;
-      const kept = script.legsIn === "store" && given !== undefined ? await given.get("legs:call-77") : undefined;
+      const kept = script.legsIn === "store" && given !== undefined ? await given.get(legKey) : undefined;
       if (kept !== undefined) muted = JSON.parse(kept) as { at: string; seconds: number; mutedBy: "host" | "station" };
       const legs = muted === undefined ? [] : [legEntry(muted)];
       const steps = [...(script.reloadAs === "without-answered" ? [] : [{ step: "answered" as const, at }]), ...legs];
@@ -1285,13 +1359,18 @@ describe("exerciseAdapter drives one call", () => {
       onConnect: connectContext => { given = connectContext.store; },
       connection: {
         ...(script.platform === undefined ? {} : { snapshot: reloaded }),
+        // A second instance built without a method the first had: held to the connect obligations as the first was.
+        ...(script.reloadAs === "without-refused" && isSecond ? { refused: undefined } : {}),
         ...(script.neverEnds === undefined ? {} : { snapshot: async () => disposed && script.neverEnds === "held"
           ? { ...conformingSnapshot, tasks: [t({ phase: "completing", media: "ended", onCall: [] })], taskCount: 1 }
           : { ...conformingSnapshot, tasks: [], taskCount: 0 } }),
         setCapacity: async ({ count }: { count: number }) => {
           // A provider allocates while it holds room and has work: this platform has one call, offered
           // once the first positive count arrives. Zero, and every restatement, is answered applied.
-          if (count === 0 || offeredOnce) return { status: "applied" };
+          // A platform with its one call already open offers nothing to a client stating capacity: a reloaded second is not offered the task it holds.
+          // The platform counts the capacity the reloaded second is told, as a host tells it on connect.
+          if (isSecond && script.platform !== undefined && script.platform.secondStated === undefined) script.platform.secondStated = count;
+          if (count === 0 || offeredOnce || script.platform?.open === true) return { status: "applied" };
           offeredOnce = true;
           if (script.platform !== undefined) script.platform.open = true;
           emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) });
@@ -1308,7 +1387,7 @@ describe("exerciseAdapter drives one call", () => {
               // A provider that acknowledges before it starts says so: confirmed first, then work begins.
               if (script.confirmFirst) { emit({ type: "task-updated", task: t({ phase: "confirmed" }) }); return { status: "applied" }; }
               emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
-              if (!script.skipMediaStart) emit({ type: "task-media-started", taskId: "call-77", allocationId: myAllocation });
+              if (!script.skipMediaStart) { emit({ type: "task-media-started", taskId: "call-77", allocationId: myAllocation }); mediaUp = true; }
               return { status: "applied" };
             case "hold":
               if (script.refuseHold) return { status: "failed", failure: { code: "provider.busy", message: "No hold today", retryable: false } };
@@ -1320,7 +1399,7 @@ describe("exerciseAdapter drives one call", () => {
                 // Work begins once the probe has been answered: the drive is still in confirmed when it sends.
                 const answer = script.holdBeforeStart ? { status: "applied" as const } : { status: "failed" as const, failure: { code: "provider.not-started", message: "Nothing to hold yet", retryable: false } };
                 emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
-                emit({ type: "task-media-started", taskId: "call-77", allocationId: myAllocation });
+                emit({ type: "task-media-started", taskId: "call-77", allocationId: myAllocation }); mediaUp = true;
                 return answer;
               }
               held = { at: "2026-08-21T09:01:00Z" };
@@ -1334,24 +1413,27 @@ describe("exerciseAdapter drives one call", () => {
                 return { status: "applied" };
               }
               // The media ends, and the provider closes the host's open leg at that instant, at the record's grain.
-              if (openLeg !== undefined) { closedAtEnd = { ...openLeg, seconds: script.leavesHostLegOpen ? undefined : 1 }; openLeg = undefined; }
-              emit({ type: "task-media-ended", taskId: "call-77", allocationId: myAllocation });
+              endMedia();
               // t() restates the record after it has taken the phase, so what the record says of a leg follows the phase it is published under.
               emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
               return { status: "applied" };
             case "complete":
               if (script.neverEnds !== undefined) { disposed = true; return { status: "applied" }; }
               if (script.platform !== undefined) script.platform.open = false;
+              // A call the agent completes from in-progress ends its audio first, as before every voice ending.
+              if (mediaUp) endMedia();
               // A task's keys go with the task, before its end is published.
-              if (script.legsIn === "store" && given !== undefined && !script.leavesKeys) await given.delete("legs:call-77");
+              if (script.legsIn === "store" && given !== undefined && !script.leavesKeys) await given.delete(legKey);
               emit({ type: "task-ended", taskId: "call-77", allocationId: myAllocation, outcome: { type: "completed", by: "agent" } });
               // A persist hung off a timer sees the task as it was and writes it back after the end.
-              if (script.writesLate && given !== undefined) setTimeout(() => { void given!.set("legs:call-77", JSON.stringify(muted)); }, 0);
+              if (script.writesLate && given !== undefined) setTimeout(() => { void given!.set(legKey, JSON.stringify(muted)); }, 0);
               return { status: "applied" };
             default: return { status: "failed", failure: { code: "omni.capability-not-enabled", message: command.type, retryable: false } };
           }
         },
-        openMedia: async () => ({ status: "opened", session: { remoteAudio: {} as MediaStream,
+        openMedia: async () => script.reloadAs === "media-unavailable" && isSecond
+          ? { status: "unavailable" as const, failure: { code: "provider.media", message: "No media on this instance", retryable: false } }
+          : ({ status: "opened", session: { remoteAudio: {} as MediaStream,
           setMuted: () => { if (script.throwsOn === "setMuted") throw new Error("no mixer"); },
           close: () => { if (script.throwsOn === "close") throw new Error("already closed"); } } }),
         recordStep: async (report: { step: string; at: string; seconds?: number; ended?: boolean; mutedBy?: "host" | "station"; allocationId?: string }) => {
@@ -1360,14 +1442,20 @@ describe("exerciseAdapter drives one call", () => {
           if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
           // A closing report for a leg the provider already closed at media end is answered recorded and changes nothing.
           if (report.step === "muted" && closedAtEnd !== undefined && report.at === closedAtEnd.at) {
-            return script.refusesLateClose ? { status: "failed", failure: { code: "provider.call-ended", message: "The call is over", retryable: false } } : { status: "recorded" };
+            if (script.refusesLateClose) return { status: "failed", failure: { code: "provider.call-ended", message: "The call is over", retryable: false } };
+            // One that takes the host's word over its own overwrites the duration it closed with, and restates the record.
+            if (script.overwritesLateClose && report.seconds !== undefined) {
+              closedAtEnd = { ...closedAtEnd, seconds: report.seconds + 5 };
+              emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: [] }) });
+            }
+            return { status: "recorded" };
           }
           if (report.step === "muted" && report.ended !== true && report.mutedBy !== undefined) { openLeg = { at: report.at, mutedBy: report.mutedBy }; return { status: "recorded" }; }
           if (report.step === "muted" && report.ended === true && report.seconds !== undefined && report.mutedBy !== undefined) {
             openLeg = undefined;
             muted = { at: report.at, seconds: report.seconds, mutedBy: report.mutedBy };
             // The store write is part of recording: what the platform cannot hold goes there first.
-            if (script.legsIn === "store" && given !== undefined) await given.set("legs:call-77", JSON.stringify(muted));
+            if (script.legsIn === "store" && given !== undefined) await given.set(legKey, JSON.stringify(muted));
           }
           return { status: "recorded" };
         },
@@ -1424,6 +1512,36 @@ describe("exerciseAdapter drives one call", () => {
     expect(refused).toEqual(["drive.recordStep.failed"]);
   });
 
+  it("names a provider that overwrites the leg it closed at media end with the host's late report", async () => {
+    // The conforming fixture answers the late report recorded and changes nothing (the first test); this one takes the host's
+    // word over its own and restates the record.
+    expect((await drive(driveable({ restateHistory: "with-mute", overwritesLateClose: true }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.overwritten"]);
+  });
+
+  it("evaluates the store rule only where the store was seen to hold a key naming the task, and says so otherwise", async () => {
+    // Keys that name the task, left behind, are named (the leavesKeys test). Keys the harness cannot tell are the task's are a
+    // gap the result states: the rule is absent from rulesEvaluated, and nothing passes for want of a look.
+    const store = memoryStore();
+    const unseen = await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store", leavesKeys: true, keyShape: "unrelated" }), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+    expect(unseen.violations).toEqual([]);
+    expect(unseen.rulesEvaluated).not.toContain("drive.store.retained");
+    // A key naming the task only as a run of characters inside another id is not the task's key either.
+    const runOn = await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store", leavesKeys: true, keyShape: "run-on" }), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+    expect(runOn.violations).toEqual([]);
+    expect(runOn.rulesEvaluated).not.toContain("drive.store.retained");
+    const seen = await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store" }), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+    expect(seen.violations).toEqual([]);
+    expect(seen.rulesEvaluated).toContain("drive.store.retained");
+  });
+
+  it("marks a rule evaluated only where its predicate ran: a rebuild that throws has looked at nothing after it", async () => {
+    const thrown = await exerciseAdapter(driveable({ restateHistory: "with-mute" }), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => { throw new Error("no second"); } });
+    expect(thrown.violations.map(v => v.rule)).toEqual(["drive.reload.rejected"]);
+    expect(thrown.rulesEvaluated).toContain("drive.reload.rejected");
+    expect(thrown.rulesEvaluated).not.toContain("drive.reload.history");
+    expect(thrown.rulesEvaluated).not.toContain("drive.reload.login");
+  });
+
   it("builds the adapter again as a host reload does, and names one whose record died with it", async () => {
     // Two instances share the platform and the store, as a reloaded host's do; the first's closure is gone.
     const run = async (legsIn: "memory" | "store", sharesPlatform = true) => {
@@ -1443,7 +1561,7 @@ describe("exerciseAdapter drives one call", () => {
   }, 20000);
 
   it("holds the second adapter to what the first was: the same provider, a snapshot that stands, a record that lost nothing", async () => {
-    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-media" | "gone-backwards") => {
+    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-media" | "gone-backwards" | "media-unavailable" | "without-refused") => {
       const store = memoryStore();
       const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, reloadAs };
       return (await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations.map(v => v.rule);
@@ -1460,6 +1578,16 @@ describe("exerciseAdapter drives one call", () => {
     // nor read the task as not yet begun. Named by the stream, as any resync is, not by a reload twin.
     expect(await misbehaving("without-media")).toContain("stream.snapshot.media");
     expect(await misbehaving("gone-backwards")).toContain("stream.snapshot.phase");
+    // The first client's media session died with it: the second opens the audio again on a task its snapshot carries
+    // started, and one that cannot is named; the conforming reload above reopens it and is clean.
+    expect(await misbehaving("media-unavailable")).toEqual(["drive.reload.openMedia"]);
+    // And to the connect obligations every connection owes: a second built without refused is named as the first would be.
+    expect(await misbehaving("without-refused")).toEqual(["connection.refused.required"]);
+    // The second is told the capacity in force, as a host tells every connection on connect.
+    const platform = { open: false } as { open: boolean; secondStated?: number };
+    const stating = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform };
+    expect((await exerciseAdapter(driveable(stating), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(stating) })).violations).toEqual([]);
+    expect(platform.secondStated).toBe(1);
     // A reload is the first client dying: the platform's push to it goes nowhere, so a re-offer it would have shouted about never reaches a client. Nothing is exempted; there is nobody to hear it.
     const store = memoryStore();
     const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } as { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean }, reofferOnReload: true };
@@ -1537,11 +1665,12 @@ describe("exerciseAdapter drives one call", () => {
     expect(stated).toEqual([1, 2, 1, 0]);
     let highest = 0;
     const accumulating = { setCapacity: async ({ count }: { count: number }) => { if (count < highest) return { status: "failed" as const, failure: { code: "provider.capacity", message: "Capacity can only rise", retryable: false } }; highest = Math.max(highest, count); return { status: "applied" as const }; } };
-    expect((await exerciseAdapter(makeAdapter({ connection: accumulating }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["connection.setCapacity.lowered"]);
+    // A capacity is taken, never refused: a provider that answers failed to a lower count, or to zero, has answered a status the method does not give, once per refusal.
+    expect((await exerciseAdapter(makeAdapter({ connection: accumulating }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["result.status", "result.status"]);
     const refusing = { setCapacity: async ({ count }: { count: number }) => count === 0
       ? { status: "failed" as const, failure: { code: "provider.capacity", message: "Capacity must be at least one", retryable: false } }
       : { status: "applied" as const } };
-    expect((await exerciseAdapter(makeAdapter({ connection: refusing }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["connection.setCapacity.zero"]);
+    expect((await exerciseAdapter(makeAdapter({ connection: refusing }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["result.status"]);
   });
 
   it("says which rules it evaluated, so a rule never looked at is a visible gap rather than a pass", async () => {
@@ -1627,7 +1756,8 @@ describe("exerciseAdapter drives one call", () => {
     // for: the agent completes it from in-progress, and the run reaches the end.
     const result = await drive(driveable({ noEndCall: true }));
     expect(result.violations).toEqual([]);
-    expect(result.notExercised).toContain("event.task-media-ended");
+    // The provider ends the audio before the ending it publishes for the agent's complete, as before every voice ending.
+    expect(result.notExercised).not.toContain("event.task-media-ended");
     expect(result.notExercised).not.toContain("event.task-ended");
   });
 });
@@ -1896,7 +2026,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await run(chat, stillHost({ online: true }))).toEqual([]);
     expect(await run(chat, stillHost(speaking, {}, "stream"))).toEqual(["context.host.audio.unexpected", "host.mute.unexpected"]);
     // The obligation: a voice adapter asks. A chat adapter has nothing to ask about and is not held to it.
-    expect(await rules({ ignoresHost: true })).toEqual(["connection.host.consulted"]);
+    expect(await rules({ ignoresHost: true })).toEqual(["connection.host.consulted", "connection.host.subscribed"]);
+    // The obligation has two halves, each held: one half done is not the other.
+    expect(await rules({ consultsHost: "report-only" })).toEqual(["connection.host.subscribed"]);
+    expect(await rules({ consultsHost: "subscribe-only" })).toEqual(["connection.host.consulted"]);
     expect(await rules({ ...chat, ignoresHost: true })).toEqual([]);
   });
 

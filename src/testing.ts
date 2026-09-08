@@ -324,7 +324,7 @@ export async function exerciseAdapter<C extends Channel>(
       if (some(capabilities.preferences)) requireMethod(on, "setPreference", "the login declares capabilities.preferences");
     };
 
-    unsubscribeAuthentication = authentication.subscribe(state => {
+    const onAuthenticationState = (state: AuthenticationState): void => {
       const own = validateAuthenticationState(state, "authentication", { levels });
       violations.push(...own);
       if (own.length > 0) return;
@@ -335,7 +335,8 @@ export async function exerciseAdapter<C extends Channel>(
         // A capability granted later requires its methods just as one declared at sign-in does.
         if (connection !== undefined) requireCapabilityMethods(connection, state.capabilities);
       }
-    });
+    };
+    unsubscribeAuthentication = authentication.subscribe(onAuthenticationState);
 
     // The host's report is Omni's output, and a test that hands the adapter a malformed one is
     // testing a host that cannot exist. Its first report and every later one are validated, a
@@ -364,24 +365,38 @@ export async function exerciseAdapter<C extends Channel>(
     const storeShape = validateLoginStore((context as { store?: unknown }).store, "context.store");
     violations.push(...storeShape);
     // The harness watches the store it hands over, so what an adapter leaves behind is seen rather than asked for.
-    const watched = storeShape.length === 0 ? watchStore(context.store) : { store: context.store, held: new Set<string>() };
+    const watched = storeShape.length === 0 ? watchStore(context.store) : { store: context.store, held: new Set<string>(), everHeld: new Set<string>() };
     unsubscribeHost = context.host.subscribe(report => {
       violations.push(...validateHostReport(report, "context.host"));
     });
-    let consulted = false;
+    const consulted = { report: false, subscribe: false };
     // The wrapped host carries the mute kind the test's host stated, so the arms of ConnectContext still hold.
     const host = {
       guarantees: context.host.guarantees,
       ...(context.host.mute === undefined ? {} : { mute: context.host.mute }),
-      report: () => { consulted = true; return context.host.report(); },
-      subscribe: listener => { consulted = true; return context.host.subscribe(listener); },
+      report: () => { consulted.report = true; return context.host.report(); },
+      subscribe: listener => { consulted.subscribe = true; return context.host.subscribe(listener); },
     } as ConnectContext["host"];
 
     const connected = { ...context, host, store: watched.store } as ConnectContext;
     connection = await adapter.connect(connected);
-    const live = connection;
-    // A refusal is visible on both sides: what the host would not take, the adapter is told, with the rules.
-    requireMethod(live, "refused", "every connection is told what the host refused");
+    // The standing client: the first connection, then the second after a hand-over. Everything the
+    // harness asks of a connection it asks of the one that stands.
+    let live = connection;
+    // What every connection owes on connect, the first and a reloaded second alike.
+    const connectObligations = (on: Connection<C>): void => {
+      // A refusal is visible on both sides: what the host would not take, the adapter is told, with the rules.
+      requireMethod(on, "refused", "every connection is told what the host refused");
+      // Dial is declared by presence: the capability object carries a destination policy rather
+      // than an `enabled` flag, so its presence is the declaration.
+      if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod(on, "dial", "the manifest declares dial");
+      // On a softphone the call's audio lands in Omni, so the adapter has to open it; on a desk phone the host opens nothing.
+      if (softphone) requireMethod(on, "openMedia", "the login is on a softphone");
+      // The microphone is the host's, so on a softphone every call can be muted by it, and the
+      // record of that leg is the provider's to take; on a desk phone the host holds no microphone.
+      if (softphone) requireMethod(on, "recordStep", "the login is on a softphone, whose microphone the host mutes");
+    };
+    connectObligations(live);
     const tellRefused = (report: Refusal): void => {
       if (typeof live.refused !== "function") return;
       ruleEvaluated("connection.refused.rejected");
@@ -391,14 +406,6 @@ export async function exerciseAdapter<C extends Channel>(
         violations.push({ rule: "connection.refused.rejected", path: "connection.refused", message: `told of a refusal, the adapter threw: ${String(error)}` });
       }
     };
-    // Dial is declared by presence: the capability object carries a destination policy rather
-    // than an `enabled` flag, so its presence is the declaration.
-    if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod(live, "dial", "the manifest declares dial");
-    // On a softphone the call's audio lands in Omni, so the adapter has to open it; on a desk phone the host opens nothing.
-    if (softphone) requireMethod(live, "openMedia", "the login is on a softphone");
-    // The microphone is the host's, so on a softphone every call can be muted by it, and the
-    // record of that leg is the provider's to take; on a desk phone the host holds no microphone.
-    if (softphone) requireMethod(live, "recordStep", "the login is on a softphone, whose microphone the host mutes");
 
     const eventPayloads = new Map<string, string>();
     let capacityStated: number | undefined;
@@ -472,23 +479,57 @@ export async function exerciseAdapter<C extends Channel>(
         clientLive = false;
         return clean;
       },
-      up: (session: Awaited<ReturnType<Adapter<C>["createAuthenticationSession"]>>, second: Connection<C>): void => {
+      up: async (session: Awaited<ReturnType<Adapter<C>["createAuthenticationSession"]>>, second: Connection<C>): Promise<void> => {
         authentication = session;
         connection = second;
+        live = second;
+        // The second client is held to everything the first was on connect: its methods, its login's
+        // methods, the login it publishes from here, and a capacity stated to it, since the first's
+        // statement died with the first and nothing may be allocated against a count nobody stated to it.
+        connectObligations(second);
+        requireCapabilityMethods(second, current().capabilities);
+        try { unsubscribeAuthentication?.(); } catch { /* the closed first session's subscription */ }
+        unsubscribeAuthentication = session.subscribe(onAuthenticationState);
         unsubscribe = second.subscribe(onEnvelope);
         clientLive = true;
+        const restated = await second.setCapacity({ count: capacityStated ?? 1 });
+        violations.push(...validateResult(restated, "setCapacity", "drive.reload.setCapacity"));
       },
     };
 
-    const snapshot = await connection.snapshot() as Snapshot;
-    observeSnapshot(snapshot, seen);
-    {
-      const broken = validateSnapshot(snapshot, adapter.manifest, "snapshot", reader());
+    // Every snapshot the run reads, the connect snapshot and a reloaded client's, is read the same
+    // way: observed, validated and refused back, its terms and locks noted, and every user it names
+    // looked up and the answer held to the shape.
+    const snapshotRead = async (source: Connection<C>, read: unknown, path: string): Promise<void> => {
+      observeSnapshot(read as Snapshot, seen);
+      const broken = validateSnapshot(read, adapter.manifest, path, reader());
       violations.push(...broken);
       if (broken.length > 0) tellRefused({ artefact: "snapshot", violations: broken });
-    }
-    violations.push(...undeterminedTasks(Array.isArray(snapshot?.tasks) ? snapshot.tasks : [], "snapshot.tasks"));
-    lockedPartySeen ||= (Array.isArray(snapshot?.tasks) ? snapshot.tasks : []).some(locksParty);
+      const tasks = isRecord(read) && Array.isArray(read.tasks) ? read.tasks : [];
+      violations.push(...undeterminedTasks(tasks, `${path}.tasks`));
+      lockedPartySeen ||= tasks.some(locksParty);
+      if (publishesUserIds(read as Snapshot)) {
+        requireMethod(source, "describeUsers", "the snapshot publishes a UserId");
+        // Required by presence is not enough: the names the snapshot published are looked up, and what
+        // comes back is held to the shape -- an empty answer to a roster of colleagues is named.
+        const named = userIdsIn(read as Snapshot);
+        if (typeof source.describeUsers === "function" && named.length > 0) {
+          let described: unknown;
+          try {
+            described = await source.describeUsers(named as UserId[]);
+            violations.push(...validateDescribedUsers(described, named, "connection.describeUsers"));
+            if (Array.isArray(described) && described.length === 0) {
+              violations.push({ rule: "connection.describeUsers.empty", path: "connection.describeUsers",
+                message: `asked about ${named.join(", ")}, whom the snapshot itself named, the provider described nobody` });
+            }
+          } catch (error) {
+            violations.push({ rule: "connection.describeUsers.rejected", path: "connection.describeUsers", message: `describeUsers rejected rather than answered: ${String(error)}` });
+          }
+        }
+      }
+    };
+    const snapshot = await connection.snapshot() as Snapshot;
+    await snapshotRead(live, snapshot, "snapshot");
     stream.seed(snapshot);
     breaks.seed(snapshot);
     seeded = true;
@@ -496,7 +537,6 @@ export async function exerciseAdapter<C extends Channel>(
     // a state-replacing kind is dropped, since the snapshot carries that state and must account for
     // it; the rest -- a dial's outcome, a diagnostic, an announcement, a queue summary -- report
     // transactions no snapshot carries, and are applied after it, in order.
-    ruleEvaluated("snapshot.accounts.task", "snapshot.accounts.ended");
     const carried = new Set<string>();
     for (const task of Array.isArray(snapshot?.tasks) ? snapshot.tasks : []) {
       if (isRecord(task) && typeof task.allocationId === "string") carried.add(task.allocationId);
@@ -507,6 +547,8 @@ export async function exerciseAdapter<C extends Channel>(
         violations.push(...stream.apply(held), ...breaks.apply(held));
         continue;
       }
+      // Evaluated where a superseded event was held: with none, the question was never asked.
+      ruleEvaluated("snapshot.accounts.task", "snapshot.accounts.ended");
       if ((event.type === "task-offered" || event.type === "task-updated") && isRecord(event.task) && typeof event.task.allocationId === "string" && !carried.has(event.task.allocationId)) {
         violations.push({ rule: "snapshot.accounts.task", path: "snapshot.tasks",
           message: `${String(event.task.id)} (${event.task.allocationId}) was published while the snapshot was read and the snapshot does not carry it: a snapshot accounts for everything the adapter emitted before it resolved` });
@@ -518,36 +560,21 @@ export async function exerciseAdapter<C extends Channel>(
     }
     duringRead.length = 0;
     requireCapabilityMethods(live, current().capabilities);
-    if (publishesUserIds(snapshot)) {
-      requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
-      // Required by presence is not enough: the names the snapshot published are looked up, and what
-      // comes back is held to the shape -- an empty answer to a roster of colleagues is named.
-      const named = userIdsIn(snapshot);
-      if (typeof live.describeUsers === "function" && named.length > 0) {
-        let described: unknown;
-        try {
-          described = await live.describeUsers(named as UserId[]);
-          violations.push(...validateDescribedUsers(described, named, "connection.describeUsers"));
-          if (Array.isArray(described) && described.length === 0) {
-            violations.push({ rule: "connection.describeUsers.empty", path: "connection.describeUsers",
-              message: `asked about ${named.join(", ")}, whom the snapshot itself named, the provider described nobody` });
-          }
-        } catch (error) {
-          violations.push({ rule: "connection.describeUsers.rejected", path: "connection.describeUsers", message: `describeUsers rejected rather than answered: ${String(error)}` });
-        }
-      }
-    }
 
     // Capacity is stated, not requested: nothing may be allocated until it is, so a connection
     // that will not accept one is a connection nothing can be given to.
     // The guide's obligation on a voice adapter: consult the host before declaring the agent
     // ready, and on every change. An adapter that never asked cannot have.
-    if (adapter.manifest.channel === "voice" && !consulted) {
-      violations.push({
-        rule: "connection.host.consulted",
-        path: "connection.host",
-        message: "a voice adapter consults the host's report before declaring the agent ready, and this one never asked",
-      });
+    // The obligation has two halves: read the report before declaring the agent ready, and hear of
+    // every change after. An adapter that did one and not the other consulted the host once, or never.
+    ruleEvaluated("connection.host.consulted", "connection.host.subscribed");
+    if (adapter.manifest.channel === "voice" && !consulted.report) {
+      violations.push({ rule: "connection.host.consulted", path: "connection.host",
+        message: "a voice adapter reads the host's report before it declares the agent ready to its platform, and this one never asked" });
+    }
+    if (adapter.manifest.channel === "voice" && !consulted.subscribe) {
+      violations.push({ rule: "connection.host.subscribed", path: "connection.host",
+        message: "a voice adapter subscribes to the host's report so it hears of every change, and this one never did" });
     }
     capacityStated = 1;
     const capacity = await connection.setCapacity({ count: capacityStated });
@@ -565,20 +592,13 @@ export async function exerciseAdapter<C extends Channel>(
         message: `the host sent ${context.timeZone} at connect and the identity says ${String(current().identity.timeZone)}: the provider republishes the agent's time zone on the identity`,
       });
     }
-    // A refusal is read only from a result that has the shape of one.
-    if (malformed.length === 0 && capacity.status === "failed") {
-      violations.push({
-        rule: "connection.setCapacity.failed",
-        path: "connection.setCapacity",
-        message: `the provider would not accept a capacity: ${capacity.failure.code}`,
-      });
-    }
 
     if (options.drive) {
       const localAudio = isRecord(first) && isRecord(first.audio) && isRecord(first.audio.input) && first.audio.input.status === "available"
         ? first.audio.input.localAudio as MediaStream : undefined;
       violations.push(...await driveOneCall({
         connection: live, manifest: adapter.manifest, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
+        everHeldForTask: (taskId: string) => [...watched.everHeld].some(key => namesTask(key, taskId)), snapshotRead,
         timeoutMs: options.driveTimeoutMs ?? 5000,
         context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held, handOver,
         streams: { stream, breaks },
@@ -590,19 +610,12 @@ export async function exerciseAdapter<C extends Channel>(
     // five to three, so the exercise moves the axis both ways. Zero is host-stopped: the agent's
     // capacity is elsewhere, and the provider allocates nothing and refuses nothing for it. Any offer
     // after a lower count is caught against it (stream.taskOffered.overCapacity).
-    ruleEvaluated("connection.setCapacity.lowered", "connection.setCapacity.zero");
+    // A capacity is taken, never refused: each restatement is answered applied and nothing else
+    // (validateResult), and any offer after a lower count is caught against it.
     for (const count of clientLive ? [2, 1, 0] : []) {
       capacityStated = count;
       const restated = await connection.setCapacity({ count });
-      const shape = validateResult(restated, "setCapacity", "connection.setCapacity");
-      violations.push(...shape);
-      if (shape.length === 0 && restated.status === "failed") {
-        violations.push({ rule: count === 0 ? "connection.setCapacity.zero" : "connection.setCapacity.lowered", path: "connection.setCapacity",
-          message: count === 0
-            ? `the provider would not take a capacity of zero: ${restated.failure.code}; zero is host-stopped, the agent's capacity being elsewhere, and a provider allocates nothing and refuses nothing for it`
-            : `the provider would not take a capacity of ${count} after a higher one: ${restated.failure.code}; capacity supersedes, and a decrease is as ordinary as an increase` });
-        break;
-      }
+      violations.push(...validateResult(restated, "setCapacity", "connection.setCapacity"));
     }
   } finally {
     let clean = true;
@@ -766,6 +779,11 @@ export function assertAuthenticationRestoreAndExpiry(
 }
 
 /** The tasks an envelope carries: the one a task event names, or a snapshot event's list. */
+/** Whether a store key names the task: the id as a delimited token, never as a run of characters inside another id. */
+function namesTask(key: string, taskId: string): boolean {
+  return key.split(/[^A-Za-z0-9_-]+/).includes(taskId);
+}
+
 /** Whether a task's party stands locked on its number or email, which is what obliges a run to state the locked values. */
 function locksParty(task: unknown): boolean {
   if (!isRecord(task) || !isRecord(task.party)) return false;
@@ -827,7 +845,9 @@ export function assertCapabilityWithdrawal(
     (before.team !== undefined && after.team === undefined) ||
     (before.team?.breakControl === true && after.team?.breakControl !== true) ||
     (before.team?.leadAssistControl === true && after.team?.leadAssistControl !== true) ||
-    (before.team?.monitorControl !== undefined && after.team?.monitorControl === undefined);
+    (before.team?.monitorControl !== undefined && after.team?.monitorControl === undefined) ||
+    (before.team?.policyControl === true && after.team?.policyControl !== true) ||
+    (before.preferences ?? []).some(was => !(after.preferences ?? []).some(now => now.id === was.id));
   if (!withdrawn) {
     throw new Error("Capability withdrawal must end with at least one capability the first login declared withdrawn");
   }
@@ -1066,10 +1086,15 @@ export class TaskStream {
     return task.onCall.some(entry => isRecord(entry) && typeof entry.dialId === "string");
   }
 
-  /** Whether the update shows the party being dialled again -- a connect-back, a platform's callback -- the one thing that brings a completing task back. */
-  private static partyDialled(task: unknown): boolean {
-    return isRecord(task) && Array.isArray(task.onCall)
-      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && typeof entry.stage === "string");
+  /**
+   * Whether the update shows the party being dialled again -- a connect-back, a platform's callback --
+   * the one thing that brings a completing task back: the party ringing, or joined by a dial whose
+   * answered outcome this stream saw. A stale copy carrying `joined` from a dial long over is not that.
+   */
+  private partyDialled(task: unknown): boolean {
+    if (!isRecord(task) || !Array.isArray(task.onCall)) return false;
+    return task.onCall.some(entry => isRecord(entry) && entry.role === "party"
+      && (entry.stage === "ringing" || (entry.stage === "joined" && typeof entry.dialId === "string" && this.dials.get(entry.dialId) === "answered")));
   }
 
   /** The entries of a task's record, each by step and instant, or undefined where the task carries no record. */
@@ -1085,7 +1110,7 @@ export class TaskStream {
     return [...was].filter(key => !now.has(key));
   }
 
-  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string; channel: string; completionMode: string; wrapAllowance: number | undefined } {
+  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string; channel: string; completionMode: string; wrapAllowance: number | undefined; partyRingingByHost: boolean } {
     const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
     // The stage of every dialled entry the room names by its dial, so an update can be held to the
     // outcome that moves it.
@@ -1095,7 +1120,9 @@ export class TaskStream {
         if (isRecord(entry) && typeof entry.dialId === "string" && typeof entry.stage === "string") stages.set(entry.dialId, entry.stage);
       }
     }
-    return { channel: String(isRecord(task) ? task.channel : undefined), completionMode: String(isRecord(task) ? task.completionMode : undefined),
+    const partyRingingByHost = isRecord(task) && Array.isArray(task.onCall)
+      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && entry.stage === "ringing" && typeof entry.dialId === "string");
+    return { partyRingingByHost, channel: String(isRecord(task) ? task.channel : undefined), completionMode: String(isRecord(task) ? task.completionMode : undefined),
       wrapAllowance: isRecord(task) && typeof task.wrapAllowance === "number" ? task.wrapAllowance : undefined,
       phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task), allocation: String(isRecord(task) ? task.allocationId : undefined) };
   }
@@ -1130,7 +1157,7 @@ export class TaskStream {
         const to = String(task.phase);
         const reachable = REACHABLE_PHASES[was.phase];
         if (reachable !== undefined && (TASK_PHASES_ORDERED as readonly string[]).includes(to) && !reachable.has(to)) {
-          const connectingBack = was.phase === "completing" && TaskStream.partyDialled(task) && (to === "in-progress" || to === "paused");
+          const connectingBack = was.phase === "completing" && this.partyDialled(task) && (to === "in-progress" || to === "paused");
           if (!connectingBack) {
             refuse("stream.snapshot.phase", `${at}.tasks[${index}].phase`,
               `${task.id} was ${was.phase} and the snapshot says ${to}: a task does not go backwards, on an update or on a resync`);
@@ -1190,12 +1217,14 @@ export class TaskStream {
       }
       case "task-updated":
         if (id === undefined) break;
-        ruleEvaluated("stream.taskUpdated.unknown", "stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.allocation", "stream.taskUpdated.mediaOpen",
-          "stream.taskUpdated.handlingHistory", "stream.taskMediaEnded.follow", "stream.taskUpdated.media", "stream.taskUpdated.stage");
+        ruleEvaluated("stream.taskUpdated.unknown");
         if (known === undefined) {
           refuse("stream.taskUpdated.unknown", `${at}.task.id`, `${id} was never offered or carried on a snapshot`);
           break;
         }
+        // The rules about a known task are evaluated only once there is one.
+        ruleEvaluated("stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.allocation", "stream.taskUpdated.mediaOpen",
+          "stream.taskUpdated.handlingHistory", "stream.taskMediaEnded.follow", "stream.taskUpdated.media", "stream.taskUpdated.stage", "stream.taskUpdated.stage.lingering");
         // Terms once read stay read. A re-read that fails is not a new fact about the task, so the
         // last statement stands and the failure is a diagnostic; undetermined is a place a task
         // starts from, never one it returns to.
@@ -1219,7 +1248,7 @@ export class TaskStream {
           const to = isRecord(event.task) ? String(event.task.phase) : "";
           const reachable = REACHABLE_PHASES[from];
           if (reachable !== undefined && (TASK_PHASES_ORDERED as readonly string[]).includes(to) && !reachable.has(to)) {
-            const connectingBack = from === "completing" && TaskStream.partyDialled(event.task) && (to === "in-progress" || to === "paused");
+            const connectingBack = from === "completing" && this.partyDialled(event.task) && (to === "in-progress" || to === "paused");
             if (!connectingBack) {
               refuse("stream.taskUpdated.phase", `${at}.task.phase`,
                 `${id} was ${from} and the update says ${to}: a task does not go backwards, and ${from === "completing" ? "only the party being dialled again, a connect-back or a callback, with its stage on the call, brings a completing task back" : `${to} is not reachable from ${from}`}`);
@@ -1244,9 +1273,10 @@ export class TaskStream {
               `${id} moves to completing with its media still started: the audio ends first, on task-media-ended, and a wrap-up with the call still up is audio that never ended`);
           }
         }
+        // The connect-back that brings a completing task back is the one exception here too.
         if (known.media === "ended") {
           const phase = isRecord(event.task) ? String(event.task.phase) : "";
-          if (phase !== "completing") {
+          if (phase !== "completing" && !(known.phase === "completing" && this.partyDialled(event.task))) {
             refuse("stream.taskMediaEnded.follow", `${at}.task.phase`,
               `after its media ended, ${id} completes or ends; ${phase} is a phase the audio does not decide`);
           }
@@ -1268,6 +1298,12 @@ export class TaskStream {
               refuse("stream.taskUpdated.stage", `${at}.task.onCall`,
                 `a task-updated re-states a stage, it does not move it: ${dialId} was ringing and the update says joined before any answered dial-outcome for it`);
             }
+            // joined is transient: it appears on the publication that follows the answered outcome and
+            // on no later one, so a stale copy still carrying it cannot pass as a connect-back.
+            if (stage === "joined" && known.stages.get(dialId) === "joined") {
+              refuse("stream.taskUpdated.stage.lingering", `${at}.task.onCall`,
+                `${dialId} was already published joined and the update says it again: joined is transient, stated once on the publication after the answered outcome, and a party with no stage is on the call`);
+            }
           }
           this.tasks.set(id, next);
         }
@@ -1281,7 +1317,9 @@ export class TaskStream {
           break;
         }
         if (!this.namesTheOpenLife(event, known, at, refuse)) break;
-        if (!AT_WORK.has(known.phase)) {
+        // Ring-back is audio: a task whose party the host is dialling has media from dialling on,
+        // whatever its phase; every other task not at work has none.
+        if (!AT_WORK.has(known.phase) && !known.partyRingingByHost) {
           refuse("stream.taskMediaStarted.beforeWork", `${at}.taskId`,
             `media cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
@@ -1317,6 +1355,14 @@ export class TaskStream {
         }
         // A late ending for a life that is over must not end the life that is open under the same id.
         if (!this.namesTheOpenLife(event, known, at, refuse)) break;
+        // A voice task ends after its audio ends, never around it, whatever the outcome: a take-over
+        // and a lead leaving included. An ending with the audio still up leaves the host holding an
+        // open media session and an open leg on a task that no longer exists.
+        ruleEvaluated("stream.taskEnded.mediaOpen");
+        if (known.media === "started") {
+          refuse("stream.taskEnded.mediaOpen", `${at}.taskId`,
+            `${id} ended with its media still started: the audio ends first, on task-media-ended, whatever the outcome`);
+        }
         // Off voice there is no media event, so the update that moves a task to completing is the
         // provider's word that handling ended and the moment the wrap allowance starts. A provider
         // that completes the task itself with an allowance to run has to have started the clock:
@@ -1369,8 +1415,12 @@ interface Drive<C extends Channel> {
   rebuild: (() => Adapter<Channel>) | undefined;
   /** Every key the watched store currently holds. */
   held: ReadonlySet<string>;
-  /** Takes the first client down and brings the second up in its place: what a host reload is. */
-  handOver: { isLive: () => boolean; down: () => Promise<boolean>; up: (session: Awaited<ReturnType<Adapter<C>["createAuthenticationSession"]>>, second: Connection<C>) => void };
+  /** Whether the store was ever seen to hold a key naming the task, which is what makes drive.store.retained evaluable. */
+  everHeldForTask: (taskId: string) => boolean;
+  /** Takes the first client down and brings the second up in its place: what a host reload is. Coming up holds the second to everything the first was on connect. */
+  handOver: { isLive: () => boolean; down: () => Promise<boolean>; up: (session: Awaited<ReturnType<Adapter<C>["createAuthenticationSession"]>>, second: Connection<C>) => Promise<void> };
+  /** Reads a snapshot as the connect snapshot was read: observed, validated, its users described, its locks and terms noted. */
+  snapshotRead: (source: Connection<C>, snapshot: unknown, path: string) => Promise<void>;
   /** The streams the run holds its events to, re-seeded from the reloaded client's snapshot. */
   streams: { stream: TaskStream; breaks: BreakStream };
   channel: Channel;
@@ -1418,8 +1468,11 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       drive.waiters.add(waiter);
     });
 
+  // The call's media session, opened on the first client and opened again on a reloaded second.
+  let session: Record<string, unknown> | undefined;
   const recordSurvivesReload = async (at: string): Promise<void> => {
-    ruleEvaluated("drive.reload.rejected", "drive.reload.manifest", "drive.reload.login", "drive.reload.snapshot", "drive.reload.allocation", "drive.reload.history", "drive.reload.handover");
+    // Each reload rule is marked where it is decided, never up front: a rebuild that throws has looked at nothing else.
+    ruleEvaluated("drive.reload.rejected");
     let again: Adapter<C>;
     try {
       again = drive.rebuild!() as Adapter<C>;
@@ -1428,48 +1481,54 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       return;
     }
     // The same provider, built again: a different manifest is a different adapter, and proves nothing about this one.
+    ruleEvaluated("drive.reload.manifest");
     if (again.manifest.id !== drive.manifest.id) {
       refuse("drive.reload.manifest", "drive.reload.manifest",
         `rebuild returned an adapter for ${String(again.manifest.id)}; the reload is of ${String(drive.manifest.id)}`);
       return;
     }
     // The first client dies first, as it does on a reload: from here the run has no connection until the second stands.
+    ruleEvaluated("drive.reload.handover");
     if (!await drive.handOver.down()) {
       refuse("drive.reload.handover", "drive.reload", "taking the first client down threw: an unsubscribe, disconnect() or close() failed");
     }
     try {
-      const session = await again.createAuthenticationSession({ ...drive.context, secrets: drive.secrets });
+      const restoredSession = await again.createAuthenticationSession({ ...drive.context, secrets: drive.secrets });
       // The reload is a restore before it is anything else: the second session stands authenticated
       // as the same person, from the secrets alone, or nothing it reads afterwards is this login's.
-      const restored = await (session as unknown as { state(): Promise<unknown> }).state();
+      const restored = await (restoredSession as unknown as { state(): Promise<unknown> }).state();
       found.push(...validateAuthenticationState(restored, "drive.reload.login"));
+      ruleEvaluated("drive.reload.login");
       const same = isRecord(restored) && restored.status === "authenticated" && isRecord(restored.identity) && restored.identity.id === drive.reader().self;
       if (!same) {
         refuse("drive.reload.login", "drive.reload.login",
           `a second adapter built from the same login and secrets did not restore it: the session says ${String(isRecord(restored) ? restored.status : restored)}${isRecord(restored) && isRecord(restored.identity) ? ` as ${String(restored.identity.id)}` : ""}, and the login is ${String(drive.reader().self)}`);
         // A reload that cannot restore the login is a sign-in screen, not a connection: the run ends here.
-        try { await session.close(); } catch { /* the session that would not restore is closed as far as it can be */ }
+        try { await restoredSession.close(); } catch { /* the session that would not restore is closed as far as it can be */ }
         return;
       }
       const second = await again.connect(drive.context);
-      // From here the second client is the run's connection: what it publishes is validated as before.
-      drive.handOver.up(session, second);
+      // From here the second client is the run's connection, held to everything the first was on
+      // connect: what it publishes is validated as before.
+      await drive.handOver.up(restoredSession, second);
       drive.connection = second;
       const snapshot = await second.snapshot() as unknown;
-      // The second adapter's snapshot is held to everything a first one is, and the streams take it
+      // The second adapter's snapshot is read as the connect snapshot was, and the streams take it
       // as the state now the way they take any resync: held to what they knew, then replaced. A reload
       // is a place the stream's rules keep working, not one where they all stop.
-      found.push(...validateSnapshot(snapshot, again.manifest, "drive.reload.snapshot", drive.reader()));
+      await drive.snapshotRead(second, snapshot, "drive.reload.snapshot");
       found.push(...drive.streams.stream.resync(snapshot, "drive.reload.snapshot"));
       drive.streams.breaks.seed(snapshot);
       const carried = isRecord(snapshot) && Array.isArray(snapshot.tasks)
         ? snapshot.tasks.find(task => isRecord(task) && task.id === taskId) as Record<string, unknown> | undefined : undefined;
+      ruleEvaluated("drive.reload.snapshot");
       if (carried === undefined) {
         refuse("drive.reload.snapshot", "drive.reload.snapshot",
           `a second adapter built from the same login does not carry ${taskId} on its snapshot, and the task is still open`);
         return;
       }
       // The allocation is part of the task, not memory beside it: a reload brings the same life back.
+      ruleEvaluated("drive.reload.allocation", "drive.reload.history");
       if (carried.allocationId !== allocationOf()) {
         refuse("drive.reload.allocation", "drive.reload.allocation",
           `a second adapter built from the same login carries ${taskId} as allocation ${String(carried.allocationId)}; the first published ${allocationOf()}, and a life does not change its name on a reload`);
@@ -1493,8 +1552,22 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         refuse("drive.reload.history", "drive.reload.history",
           `the reloaded record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host`);
       }
-      // The drive goes on with the task as the reloaded client holds it.
+      // The drive goes on with the task as the reloaded client holds it. The first client's media
+      // session died with it: a host opens media on a task arriving with media started on a
+      // snapshot, so the drive opens it again on the second and holds the answer as it held the first.
       task = carried;
+      if (drive.softphone && carried.media === "started") {
+        if (session !== undefined && typeof session.close === "function") {
+          try { (session.close as () => void)(); } catch { refuse("drive.openMedia.close", "drive.openMedia", "the first client's media session threw on close"); }
+        }
+        session = undefined;
+        ruleEvaluated("drive.reload.openMedia");
+        const reopened = await second.openMedia?.({ taskId, allocationId: allocationOf(), localAudio: drive.localAudio });
+        found.push(...validateResult(reopened, "openMedia", "drive.reload.openMedia"));
+        if (isRecord(reopened) && reopened.status === "opened") session = reopened.session as unknown as Record<string, unknown>;
+        else refuse("drive.reload.openMedia", "drive.reload.openMedia",
+          `a second adapter built from the same login could not open the audio of ${taskId}, which its own snapshot carries with media started`);
+      }
     } catch (error) {
       refuse("drive.reload.rejected", "drive.reload", `the second adapter rejected rather than answered: ${String(error)}`);
     }
@@ -1505,10 +1578,13 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // inherited by the next offer of the same id, since a platform retires an id minutes after closing it.
   let retainedAtEnd: Set<string> | undefined;
   const storeReleased = async (): Promise<void> => {
-    ruleEvaluated("drive.store.retained");
     await Promise.resolve(); await Promise.resolve();
-    const retained = [...drive.held].filter(key => key.includes(taskId));
+    // A task's key names the task delimited, not as a run of characters inside another id, and the
+    // rule is evaluated only where the store was ever seen to hold such a key: an adapter whose keys
+    // name nothing the harness can see leaves the rule unasked, which the result says.
+    const retained = [...drive.held].filter(key => namesTask(key, taskId));
     retainedAtEnd = new Set(retained);
+    if (drive.everHeldForTask(taskId)) ruleEvaluated("drive.store.retained");
     if (retained.length > 0) {
       refuse("drive.store.retained", "drive.store",
         `${taskId} has ended and the login's store still holds ${retained.join(", ")}: a task's keys go with the task, or the next offer of the same id inherits them`);
@@ -1519,7 +1595,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   const nothingLate = (): void => {
     if (retainedAtEnd === undefined) return;
     ruleEvaluated("drive.store.late");
-    const late = [...drive.held].filter(key => key.includes(taskId) && !retainedAtEnd!.has(key));
+    const late = [...drive.held].filter(key => namesTask(key, taskId) && !retainedAtEnd!.has(key));
     if (late.length > 0) {
       refuse("drive.store.late", "drive.store",
         `${taskId} had ended with its keys gone, and the login's store now holds ${late.join(", ")}: something wrote about the task after its end`);
@@ -1558,10 +1634,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // Every command the drive sends is validated against the task as published, and its answer for its method.
   ruleEvaluated("drive.timeout");
   const send = async (command: Record<string, unknown>, dialId?: string): Promise<Record<string, unknown> | undefined> => {
-    ruleEvaluated("drive.command.rejected", "drive.command.failed");
     const own = validateTaskCommand(command, latestTask(), `drive.command.${String(command.type)}`);
     found.push(...own);
     if (own.length > 0) return undefined;
+    ruleEvaluated("drive.command.rejected");
     let result: unknown;
     try {
       result = await drive.connection.execute({ taskId, allocationId: allocationOf(), command } as never);
@@ -1569,6 +1645,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       refuse("drive.command.rejected", `drive.command.${String(command.type)}`, `execute rejected rather than answered: ${String(error)}`);
       return undefined;
     }
+    ruleEvaluated("drive.command.failed");
     found.push(...validateResult(result, "execute", `drive.command.${String(command.type)}.result`, dialId));
     if (isRecord(result) && result.status === "failed") {
       refuse("drive.command.failed", `drive.command.${String(command.type)}`,
@@ -1621,7 +1698,6 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (await updated(t => t.phase !== "confirmed", "the task leaving confirmed") === undefined) return found;
   }
   // 3. On a softphone, the audio arrives and the host opens it.
-  let session: Record<string, unknown> | undefined;
   if (drive.softphone && latestTask().phase === "in-progress") {
     if (latestTask().media !== "started") {
       const started = await waitFor("task-media-started for the driven task", envelope => {
@@ -1639,7 +1715,14 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // 3b. The microphone is the host's. With the audio open, the drive mutes it for a moment and
   // reports the leg the provider's record would otherwise miss -- begun, then ended -- and
   // expects each report recorded. If the provider restates the task's record afterwards, the leg is in it.
-  const reportedLegs: { at: string; task: Record<string, unknown> }[] = [];
+  const reportedLegs: { at: string; task: Record<string, unknown>; closedAs?: number }[] = [];
+  /** The duration the provider's record states for the leg at `at`, as the task stands now. */
+  const closedAs = (at: string): number | undefined => {
+    const history = latestTask().handlingHistory;
+    const leg = isRecord(history) && Array.isArray(history.steps)
+      ? history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined : undefined;
+    return typeof leg?.seconds === "number" ? leg.seconds : undefined;
+  };
   const canRecordMute = session !== undefined && typeof session.setMuted === "function" && typeof drive.connection.recordStep === "function";
   const report = async (body: Record<string, unknown>): Promise<void> => {
       ruleEvaluated("drive.recordStep.rejected", "drive.recordStep.failed");
@@ -1662,7 +1745,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       }
     };
   const setMuted = (muted: boolean) => {
-      try { (session!.setMuted as (muted: boolean) => void)(muted); }
+      // No session, nothing to mute: a reload whose second client could not open the audio has been named already.
+      if (session === undefined) return;
+      try { (session.setMuted as (muted: boolean) => void)(muted); }
       catch { refuse("drive.openMedia.setMuted", "drive.openMedia", `the media session threw on setMuted(${String(muted)})`); }
     };
   if (canRecordMute) {
@@ -1700,9 +1785,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // changes nothing. So the drive mutes, does not report the end before end-call, and reports it
   // after the media has ended.
   if (drive.channel === "voice" && latestTask().phase === "in-progress" && offers("endCall")) {
-    let openLeg: { at: string; began: number } | undefined;
-    if (canRecordMute) {
-      openLeg = { at: new Date().toISOString(), began: Date.now() };
+    let openLeg: { at: string; began: number; task: Record<string, unknown> } | undefined;
+    if (canRecordMute && session !== undefined) {
+      // The task as published before the call ends: the completing publication that follows is the restatement held to carrying this leg.
+      openLeg = { at: new Date().toISOString(), began: Date.now(), task: latestTask() };
       setMuted(true);
       await report({ at: openLeg.at });
     }
@@ -1717,13 +1803,17 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         return undefined;
       }, cursor);
       if (mediaEnded?.found === "ended") cursor = mediaEnded.at;
+      const completing = await updated(t => t.phase === "completing", "the task completing after its media ended");
       if (openLeg !== undefined) {
         setMuted(false);
-        // Stated at the record's grain: a leg that rounds to nought is 1.
+        // The provider closed this leg at media end, in the completing publication; the host's report,
+        // stated at the record's grain (a leg that rounds to nought is 1), changes nothing, and the
+        // record as it stands now is what every later restatement is held to.
+        const before = closedAs(openLeg.at);
         await report({ at: openLeg.at, seconds: Math.max(1, Math.round((Date.now() - openLeg.began) / 1000)), ended: true });
-        reportedLegs.push({ at: openLeg.at, task: latestTask() });
+        reportedLegs.push({ at: openLeg.at, task: openLeg.task, closedAs: before });
       }
-      if (await updated(t => t.phase === "completing", "the task completing after its media ended") !== undefined && offers("hold")) {
+      if (completing !== undefined && offers("hold")) {
         await holdRefusedOutsideHandling();
       }
     }
@@ -1763,10 +1853,19 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   } else if (latestTask().phase === "completing") {
     if (await ended() !== undefined) await storeReleased();
   }
-  // The record kept by the provider has every leg the host reported, wherever the provider restated it.
+  // The record kept by the provider has every leg the host reported, wherever the provider restated it:
+  // the last publication of the task is read, whether or not the drive was waiting on it.
+  const lastPublished = (): Record<string, unknown> => {
+    for (let index = drive.events.length - 1; index >= 0; index -= 1) {
+      const event = drive.events[index]!.event as Record<string, unknown>;
+      if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.id === taskId) return event.task;
+    }
+    return latestTask();
+  };
   for (const reported of reportedLegs) {
-    if (latestTask() === reported.task) continue;
-    const history = latestTask().handlingHistory;
+    const published = lastPublished();
+    if (published === reported.task) continue;
+    const history = published.handlingHistory;
     if (isRecord(history) && Array.isArray(history.steps)) {
       const { at } = reported;
       const leg = history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined;
@@ -1776,6 +1875,12 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       } else if (leg.mutedBy !== "host") {
         refuse("drive.recordStep.history", "drive.recordStep",
           `the record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host, and the record keeps the host's word`);
+      } else if (reported.closedAs !== undefined) {
+        ruleEvaluated("drive.recordStep.overwritten");
+        if (leg.seconds !== reported.closedAs) {
+          refuse("drive.recordStep.overwritten", "drive.recordStep",
+            `the provider closed the leg at ${at} with ${reported.closedAs}s at media end and the record now says ${String(leg.seconds)}s: the host's closing report changes nothing`);
+        }
       }
     }
   }
@@ -1865,13 +1970,15 @@ export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvel
 }
 
 /** The store as handed to the adapter, and the keys it holds at any moment, seen rather than reported. */
-function watchStore(store: LoginStore): { store: LoginStore; held: Set<string> } {
+function watchStore(store: LoginStore): { store: LoginStore; held: Set<string>; everHeld: Set<string> } {
   const held = new Set<string>();
+  const everHeld = new Set<string>();
   return {
     held,
+    everHeld,
     store: {
       get: key => store.get(key),
-      set: async (key, value) => { await store.set(key, value); held.add(key); },
+      set: async (key, value) => { await store.set(key, value); held.add(key); everHeld.add(key); },
       delete: async key => { await store.delete(key); held.delete(key); },
     },
   };

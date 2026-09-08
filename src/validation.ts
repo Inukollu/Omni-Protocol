@@ -118,7 +118,7 @@ const BREAK_APPROVALS = membersOf<BreakApproval>({
   "not-requested": true, "awaiting-decision": true, granted: true, "starting-after-task": true, "in-effect": true,
 });
 const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
-  ready: true, "on-task": true, "on-break": true, "signed-out": true,
+  ready: true, "on-task": true, "on-break": true, reserved: true, "signed-out": true,
 });
 const HANDLING_STEPS = membersOf<HandlingStep>({
   queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
@@ -145,8 +145,8 @@ const SESSION_CAPABILITIES = membersOf<keyof UserCapabilities>({ breaks: true, t
 const MEMBER_BREAKS = membersOf<Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">>({
   "awaiting-decision": true, granted: true, "starting-after-task": true,
 });
-const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending" | "confirmed" | "preview">>({
-  pending: true, confirmed: true, preview: true,
+const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
+  pending: true,
 });
 const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, expires: true });
 const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
@@ -373,10 +373,9 @@ function validateIdleCapabilities(value: unknown, channel: string, path: string,
       into.add("manifest.personalBrowser.shape", `${path}.personalBrowser`, "personalBrowser must be an object when present");
     } else {
       validateBrowserAccess(browser.access, `${path}.personalBrowser.access`, into);
-      if (browser.accessAppliesTo !== undefined) {
-        into.oneOf(browser.accessAppliesTo, ACCESS_APPLIES_TO,
-          "manifest.personalBrowser.accessAppliesTo", `${path}.personalBrowser.accessAppliesTo`);
-      }
+      // Stated, never defaulted: an absent value read as all-navigation was a second spelling of one fact.
+      into.oneOf(browser.accessAppliesTo, ACCESS_APPLIES_TO,
+        "manifest.personalBrowser.accessAppliesTo", `${path}.personalBrowser.accessAppliesTo`);
     }
   }
   if (value.dial !== undefined) {
@@ -684,7 +683,7 @@ function validateCustomCapabilities(value: unknown, path: string, into: Collecto
     into.oneOf(custom.ui.control, CUSTOM_UI_CONTROLS, "task.custom.ui.control", `${at}.ui.control`);
     into.filled(custom.ui.label, "task.custom.ui.label", `${at}.ui.label`, "a custom control needs a label");
     into.oneOf(custom.ui.placement, CUSTOM_UI_PLACEMENTS, "task.custom.ui.placement", `${at}.ui.placement`);
-    if (custom.ui.render !== undefined) into.oneOf(custom.ui.render, CUSTOM_RENDERS, "task.custom.ui.render", `${at}.ui.render`);
+    into.oneOf(custom.ui.render, CUSTOM_RENDERS, "task.custom.ui.render", `${at}.ui.render`);
     if (custom.prompt !== undefined) {
       if (!isPlainObject(custom.prompt) || !Array.isArray(custom.prompt.fields)) {
         into.add("task.custom.prompt.shape", `${at}.prompt`, "a prompt is an object with the fields the agent fills");
@@ -773,9 +772,9 @@ function validateLockedInto(value: Record<string, unknown>, rule: string, path: 
 
 /** What every resolved value carries: who set it, and who locked it if anyone. */
 function validateResolvedInto(value: Record<string, unknown>, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
-  if (into.filled(value.setBy, `${rule}.setBy`, `${path}.setBy`, "setBy names who stated the value: a level, or provisioning")) {
+  if (into.filled(value.setBy, `${rule}.setBy`, `${path}.setBy`, "setBy names who stated the value: a level, or provider")) {
     into.require(value.setBy === "provider" || levelIds(levels).includes(value.setBy as string), `${rule}.setBy.unknown`, `${path}.setBy`,
-      `${String(value.setBy)} is neither provisioning nor a level this manifest declares`);
+      `${String(value.setBy)} is neither provider nor a level this manifest declares`);
   }
   if (value.lockedBy !== undefined) validateLockedByInto(value.lockedBy, `${rule}.lockedBy`, `${path}.lockedBy`, levels, into);
   if (value.reason !== undefined) {
@@ -979,15 +978,23 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector, 
 const TASK_MEDIA_STATES = membersOf<TaskMediaState>({ started: true, ended: true });
 
 /** Real-time media is a voice affair, and its state is one of two words. */
-function validateTaskMedia(value: unknown, channel: string, phase: unknown, path: string, into: Collector): void {
+/** Whether a host dial is ringing the party: the party entry carries `stage: "ringing"` and the host's `dialId`. */
+function partyRingingByHost(task: Record<string, unknown>): boolean {
+  return Array.isArray(task.onCall) && task.onCall.some(entry =>
+    isPlainObject(entry) && entry.role === "party" && entry.stage === "ringing" && typeof entry.dialId === "string");
+}
+
+function validateTaskMedia(task: Record<string, unknown>, value: unknown, channel: string, phase: unknown, path: string, into: Collector): void {
   if (value === undefined) return;
   if (!into.require(channel === "voice", "task.media.channel", path,
     `a ${channel} task carries no real-time media state`)) return;
   if (into.oneOf(value, TASK_MEDIA_STATES, "task.media", path)) {
     // Nothing is acquired while pending, and a preview has placed no call: media names a task whose
     // work has begun, on a snapshot as on the event, or a host would open the microphone on an offer.
-    into.require(!(WORK_NOT_BEGUN as readonly unknown[]).includes(phase), "task.media.beforeWork", path,
-      `a ${String(phase)} task has no media: audio arrives once its work has begun`);
+    // The one task not yet at work that has audio is one whose party the host is dialling: ring-back
+    // is audio, and every host-placed dial's media starts on dialling.
+    into.require(!(WORK_NOT_BEGUN as readonly unknown[]).includes(phase) || partyRingingByHost(task), "task.media.beforeWork", path,
+      `a ${String(phase)} task has no media: audio arrives once its work has begun, or once the host is dialling its party`);
   }
 }
 const WORK_NOT_BEGUN = ["pending", "confirmed", "preview"] as const;
@@ -1239,7 +1246,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.add("task.onCall.ended", `${path}.onCall`,
       `the call has ended (${task.phase === "completing" ? "the task is completing" : "its media ended"}) and onCall still names people on it: the room is who is on the call now, and now nobody is`);
   }
-  validateTaskMedia(task.media, context.channel, task.phase, `${path}.media`, into);
+  validateTaskMedia(task, task.media, context.channel, task.phase, `${path}.media`, into);
   validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
   validateAssisting(task.assisting, context.channel, `${path}.assisting`, into);
   validateMonitoring(task.monitoring, context.channel, `${path}.monitoring`, into);
@@ -1363,8 +1370,10 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   if (value.imposed !== undefined) {
     validateImposedBreak(value.imposed, `${path}.imposed`, into);
     // An imposed break is a break somebody placed; beside `not-requested` there is no break.
-    into.require(value.approval !== "not-requested", "break.imposed.approval", `${path}.imposed`,
-      "an imposed break is a break in progress; not-requested says there is none");
+    // An imposed break is a break in progress or about to be: it travels with in-effect or
+    // starting-after-task and nothing else. Beside granted, the host would commit a break nobody asked for.
+    into.require(value.approval === "in-effect" || value.approval === "starting-after-task", "break.imposed.approval", `${path}.imposed`,
+      `an imposed break is in effect or starting after the task; ${String(value.approval)} says the agent asked, or that there is none`);
   }
 
   if (value.reasons === undefined) return;
@@ -1398,6 +1407,14 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   if (typeof value.activeReasonId === "string" && value.activeReasonId.length > 0) {
     into.require(seen.has(value.activeReasonId), "break.activeReasonId.known", `${path}.activeReasonId`,
       `activeReasonId names a reason the provider did not publish: ${value.activeReasonId}`);
+  }
+  // A break in effect, or about to be, on a provider that publishes reasons is on one of them: an
+  // imposed one included, since the lead's place named it. A break of no kind is a break whose
+  // rules -- who may monitor through it, whether it counts -- nobody can apply.
+  ruleEvaluated("break.activeReasonId.required");
+  if (seen.size > 0 && (value.approval === "in-effect" || value.approval === "starting-after-task")) {
+    into.require(typeof value.activeReasonId === "string" && value.activeReasonId.length > 0, "break.activeReasonId.required", `${path}.activeReasonId`,
+      `a break ${String(value.approval)} on a provider that publishes reasons names the one it is on`);
   }
 }
 
@@ -1589,6 +1606,15 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   // describes a state the agent cannot be in, whichever half is stale. The one exception is a
   // lead listening to a call during a break that is work of another sort -- coaching,
   // administrative, training -- and on no other.
+  // The converse: a committed break with nothing outstanding has begun. starting-after-task beside
+  // no task is a break waiting on work that does not exist, and an empty list reading as "still
+  // finishing" is the plausible nought.
+  ruleEvaluated("break.starting-after-task.tasks");
+  if (isPlainObject(snapshot.break) && snapshot.break.approval === "starting-after-task"
+    && Array.isArray(snapshot.tasks) && snapshot.tasks.length === 0) {
+    into.add("break.starting-after-task.tasks", `${path}.break.approval`,
+      "a break starting after the task waits on a task, and the snapshot carries none: with nothing outstanding the break is in-effect");
+  }
   if (isPlainObject(snapshot.break) && snapshot.break.approval === "in-effect"
     && Array.isArray(snapshot.tasks) && snapshot.tasks.length > 0) {
     const listening = snapshot.tasks.every((task: unknown) => isPlainObject(task) && task.monitoring !== undefined);
@@ -1676,6 +1702,10 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
         into.filled(value.destinationId, "event.taskEnded.outcome.transferred", `${path}.destinationId`,
           "a destinationId must not be empty when present");
       }
+      break;
+    case "taken-over":
+      // A lead is not a directory item: the ending names the lead, and the host resolves the name.
+      into.require(isUserId(value.leadId), "event.taskEnded.outcome.takenOver", `${path}.leadId`, "a take-over names the lead who took the call, by user id");
       break;
     case "cancelled":
       // One word covered the agent declining, the provider withdrawing and the party abandoning the
@@ -2403,10 +2433,11 @@ export type ResultMethod =
 
 // Pinned to the result unions: each method's one success status, and the status that carries a
 // failure. A method added to `Connection` without a row here is a compile error at the call site.
-const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string }> = {
+const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string | undefined }> = {
   execute: { success: "applied", failure: "failed" },
   dial: { success: "dialling", failure: "failed" },
-  setCapacity: { success: "applied", failure: "failed" },
+  // A statement, not a request: taken, never refused.
+  setCapacity: { success: "applied", failure: undefined },
   requestBreak: { success: "requested", failure: "failed" },
   commitBreak: { success: "committed", failure: "failed" },
   cancelBreak: { success: "cancelled", failure: "failed" },
@@ -2450,7 +2481,7 @@ export function validateResult(result: unknown, method: ResultMethod, path = "re
     } else {
       into.require(result.dialId === undefined, "result.dialId.unexpected", `${path}.dialId`, `${statuses.success} dialled nothing and names no dial`);
     }
-  } else if (result.status === statuses.failure) {
+  } else if (statuses.failure !== undefined && result.status === statuses.failure) {
     if (result.failure === undefined) {
       into.add("result.failure.required", `${path}.failure`, `${statuses.failure} carries the failure that says why`);
     } else {

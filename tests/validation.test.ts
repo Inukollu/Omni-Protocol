@@ -215,7 +215,7 @@ describe("validateTask", () => {
     expect(contact({ name: "Asha", number: "" })).toEqual(["contact.number"]);
   });
   it("lets a custom action ask for what it needs and say where it renders", () => {
-    const custom = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { custom: [{ id: "transfer-out", ui: { control: "button", label: "Transfer out", placement: "secondary" }, ...over }] } }), { channel: "voice" }));
+    const custom = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { custom: [{ id: "transfer-out", ui: { control: "button", label: "Transfer out", placement: "secondary", render: "inline" }, ...over }] } }), { channel: "voice" }));
     const destination = { name: "destination", label: "Number", type: "text" };
     expect(custom({})).toEqual([]);
     expect(custom({ prompt: { fields: [destination] } })).toEqual([]);
@@ -282,6 +282,16 @@ describe("validateTask", () => {
     expect(paused([answered, { step: "held", at: "2026-08-21T00:59:41Z", by: "a-17" }])).toEqual([]);
     // A malformed instant is its own violation and takes no part in the ordering.
     expect(paused([answered, { step: "held", at: "soon", by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual(["task.handlingHistory.at"]);
+  });
+
+  it("gives a task whose party the host is dialling its audio from dialling, and no other task not at work", () => {
+    const ringing = { onCall: [{ role: "party", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:00:00Z" }] };
+    const voice = { channel: "voice", dialOutcomesDeclared: true };
+    expect(rules(validateTask(task({ phase: "pending", acceptance: "automatic", media: "started", ...ringing }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "preview", capabilities: {}, media: "started", ...ringing }), voice))).toEqual([]);
+    // The controls: nobody ringing, and a platform's own callback without the host's dial, have no audio before the work begins.
+    expect(rules(validateTask(task({ phase: "pending", media: "started" }), voice))).toEqual(["task.media.beforeWork"]);
+    expect(rules(validateTask(task({ phase: "preview", capabilities: {}, media: "started", onCall: [{ role: "party", stage: "ringing", since: "2026-08-21T09:00:00Z" }] }), voice))).toEqual(["task.media.beforeWork"]);
   });
 
   it("holds a task whose party is locked to carrying the locked value nowhere else, given the values", () => {
@@ -454,8 +464,14 @@ describe("break state", () => {
   });
 
   it("accepts each approval and rejects one the contract dropped", () => {
-    for (const approval of ["not-requested", "awaiting-decision", "granted", "starting-after-task", "in-effect"]) {
+    for (const approval of ["not-requested", "awaiting-decision", "granted", "in-effect"]) {
       expect(check({ approval })).toEqual([]);
+    }
+    // A break starting after the task waits on a task: beside one it stands, beside none it is refused, since with
+    // nothing outstanding the break is in effect.
+    expect(rules(validateSnapshot(snapshot({ break: { approval: "starting-after-task", mayAsk: true }, tasks: [task()] }), manifest()))).toEqual([]);
+    expect(check({ approval: "starting-after-task" })).toEqual(["break.starting-after-task.tasks"]);
+    {
     }
     // "approved" and "denied" were the previous vocabulary. Accepting them would let two
     // providers mean different things by the same state.
@@ -488,6 +504,26 @@ describe("break state", () => {
     expect(reasons([{ id: "a", label: "A" }, { id: "a", label: "Again" }])).toContain("break.reason.unique");
     expect(reasons([{ id: "rest", label: "Rest", alwaysAvailable: false }])).toContain("break.reason.alwaysAvailable");
     expect(reasons([{ id: "rest", label: "Rest", alwaysAvailable: true }])).toEqual([]);
+  });
+
+  it("lets an imposed break travel with in-effect or starting-after-task, and nothing else", () => {
+    const placed = { by: "lead-3", endsAutomatically: false };
+    expect(check({ approval: "in-effect", imposed: placed })).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ break: { approval: "starting-after-task", mayAsk: false, imposed: placed }, tasks: [task()] }), manifest()))).toEqual([]);
+    // Beside granted or awaiting-decision the host would commit a break nobody asked for.
+    expect(check({ approval: "granted", imposed: placed })).toEqual(["break.imposed.approval"]);
+    expect(check({ approval: "awaiting-decision", imposed: placed })).toEqual(["break.imposed.approval"]);
+    expect(check({ approval: "not-requested", imposed: placed })).toEqual(["break.imposed.approval"]);
+  });
+
+  it("requires a break in effect on a provider that publishes reasons to name the one it is on, an imposed one included", () => {
+    const reasons = [{ id: "meal", label: "Meal", kind: "meal" }, { id: "coach", label: "Coaching", kind: "coaching" }];
+    expect(check({ approval: "in-effect", reasons, activeReasonId: "meal" })).toEqual([]);
+    expect(check({ approval: "in-effect", reasons })).toEqual(["break.activeReasonId.required"]);
+    expect(check({ approval: "in-effect", reasons, imposed: { by: "lead-3", endsAutomatically: false } })).toEqual(["break.activeReasonId.required"]);
+    // No reasons published, nothing to name; not in effect, nothing to name yet.
+    expect(check({ approval: "in-effect" })).toEqual([]);
+    expect(check({ approval: "granted", reasons })).toEqual([]);
   });
 
   it("keeps who placed an imposed break whether or not it ends on a clock", () => {
@@ -545,6 +581,8 @@ describe("validateTeamRoster", () => {
   it("accepts a conforming roster", () => {
     expect(validateTeamRoster(roster())).toEqual([]);
     expect(validateTeamRoster({ members: [{ id: "A-2", availability: "on-task", since: "2026-08-21T09:00:00Z", break: "starting-after-task" }] })).toEqual([]);
+    // Host-stopped is a stated availability of its own: signed in here, capacity held by the host for elsewhere.
+    expect(validateTeamRoster({ members: [{ id: "A-2", availability: "reserved", since: "2026-08-21T09:00:00Z" }] })).toEqual([]);
   });
 
   it.each([
@@ -943,7 +981,8 @@ describe("validateResult", () => {
     ] as const;
     for (const [method, status] of pairs) {
       expect(rules(validateResult({ status }, method))).toEqual([]);
-      expect(rules(validateResult({ status: "failed", failure }, method))).toEqual([]);
+      // A capacity is taken, never refused: setCapacity has no failure status, and failed is a status it does not give.
+      expect(rules(validateResult({ status: "failed", failure }, method))).toEqual(method === "setCapacity" ? ["result.status"] : []);
     }
     expect(rules(validateResult({ status: "applied" }, "dial"))).toEqual(["result.status"]);
     // renamed away: dialled overstated what happened; a dial is accepted and being placed, and its outcome comes later.
@@ -1093,9 +1132,10 @@ describe("the other direction, everywhere", () => {
     const offer = (over: Record<string, unknown>, context: Record<string, unknown> = {}) =>
       rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending", acceptance: "consent", ...over }) }), manifest(), "event", context));
     expect(offer({})).toEqual([]);
-    expect(offer({ phase: "confirmed", acceptance: undefined })).toEqual([]);
-    // A preview may be offered too, under a manifest that says how the Call it leads to ends.
-    expect(rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ capabilities: {}, phase: "preview" }) }), manifest({ dialOutcomes: ["answered", "no-answer"] })))).toEqual([]);
+    // An offer introduces work nobody has accepted: pending is the only phase it introduces.
+    expect(offer({ phase: "confirmed", acceptance: undefined })).toEqual(["event.taskOffered.phase"]);
+    // A preview record is offered pending and moved to preview once accepted: offered at preview, it skipped acceptance.
+    expect(rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ capabilities: {}, phase: "preview" }) }), manifest({ dialOutcomes: ["answered", "no-answer"] })))).toEqual(["event.taskOffered.phase"]);
     for (const phase of ["in-progress", "paused", "completing"]) expect(offer({ phase, acceptance: undefined })).toEqual(["event.taskOffered.phase"]);
     expect(offer({}, { autoAcceptTasks: true })).toEqual([]);
     expect(offer({ acceptance: undefined }, { autoAcceptTasks: true })).toEqual(["task.acceptance.required"]);
@@ -1103,7 +1143,7 @@ describe("the other direction, everywhere", () => {
     expect(offer({}, { autoAcceptTasks: false })).toEqual(["task.acceptance.unexpected"]);
     expect(offer({ acceptance: undefined })).toEqual([]);
     // Past pending the task has been accepted; the word has nothing left to say.
-    expect(offer({ phase: "confirmed" })).toEqual(["task.acceptance.unexpected"]);
+    expect(offer({ phase: "confirmed" })).toEqual(["task.acceptance.unexpected", "event.taskOffered.phase"]);
     // The same rule on a snapshot, where a reconnect carries a pending task the host was never offered.
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ phase: "pending" })] }), manifest(), "snapshot", { autoAcceptTasks: true }))).toEqual(["task.acceptance.required"]);
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ phase: "pending", acceptance: "consent" })] }), manifest(), "snapshot", { autoAcceptTasks: true }))).toEqual([]);
@@ -1164,8 +1204,10 @@ describe("rules that had no test", () => {
     expect(m({ phaseLabels: { pending: "" } })).toEqual(["manifest.phaseLabels.label"]);
     expect(m({ idleCapabilities: { dial: { destinations: "any-number" } }, dialOutcomes: ["answered", "no-answer"] })).toEqual([]);
     expect(m({ idleCapabilities: { dial: {} }, dialOutcomes: ["answered", "no-answer"] })).toEqual(["manifest.dial.destinations"]);
-    expect(m({ idleCapabilities: { personalBrowser: { access: { mode: "block-all", allowList: [], blockList: [] } } } })).toEqual([]);
-    expect(m({ idleCapabilities: { personalBrowser: { access: "block-all" } } })).toEqual(["manifest.personalBrowser.access.shape"]);
+    // Stated, never defaulted: which navigations the access applies to is required.
+    expect(m({ idleCapabilities: { personalBrowser: { access: { mode: "block-all", allowList: [], blockList: [] }, accessAppliesTo: "initial-url" } } })).toEqual([]);
+    expect(m({ idleCapabilities: { personalBrowser: { access: { mode: "block-all", allowList: [], blockList: [] } } } })).toEqual(["manifest.personalBrowser.accessAppliesTo"]);
+    expect(m({ idleCapabilities: { personalBrowser: { access: "block-all" } } })).toEqual(["manifest.personalBrowser.access.shape", "manifest.personalBrowser.accessAppliesTo"]);
   });
 
   it("disposition policies and codes", () => {
@@ -1182,8 +1224,10 @@ describe("rules that had no test", () => {
 
   it("custom controls", () => {
     const custom = (over: unknown) => rules(validateTask(task({ capabilities: { custom: over } }), voice));
-    const control = { id: "supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } };
+    const control = { id: "supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary", render: "inline" } };
     expect(custom([control])).toEqual([]);
+    // Where the control's work renders is stated on every control, never defaulted.
+    expect(custom([{ ...control, ui: { control: "button", label: "Request supervisor", placement: "secondary" } }])).toEqual(["task.custom.ui.render"]);
     expect(custom("supervisor")).toEqual(["task.custom.shape"]);
     expect(custom(["supervisor"])).toEqual(["task.custom.entry"]);
     expect(custom([{ ui: control.ui }])).toEqual(["task.custom.id"]);
@@ -1219,6 +1263,9 @@ describe("rules that had no test", () => {
     const ended = (outcome: unknown) => check({ type: "task-ended", taskId: "call-42", allocationId: "alloc-42", outcome });
     expect(ended({ type: "transferred", destinationId: "tier2" })).toEqual([]);
     expect(ended({ type: "transferred", destinationId: "" })).toEqual(["event.taskEnded.outcome.transferred"]);
+    // A take-over names the lead who took the call, by user id: a lead is not a directory item.
+    expect(ended({ type: "taken-over", leadId: "L-9" })).toEqual([]);
+    expect(ended({ type: "taken-over" })).toEqual(["event.taskEnded.outcome.takenOver"]);
     // cancelled says who called the work off, as completed does: the agent, the provider, the party; nobody else, and never nobody.
     expect(ended({ type: "cancelled", by: "party", reason: "Caller hung up" })).toEqual([]);
     expect(ended({ type: "cancelled", by: "agent" })).toEqual([]);
@@ -1361,7 +1408,7 @@ describe("the validators accept exactly what the contract publishes", () => {
   it("every published idle capability on voice, and dial on nothing else", () => {
     const declaring = (name: string, channel: string) => {
       const value = name === "dial" ? { destinations: "any-number" }
-        : name === "personalBrowser" ? { access: { mode: "allow-all" } }
+        : name === "personalBrowser" ? { access: { mode: "allow-all" }, accessAppliesTo: "all-navigation" }
         : true;
       // A dialpad dials, so declaring it declares how a dial ends; off voice, dial is the only violation looked for.
       return manifest({ channel, idleCapabilities: { [name]: value }, ...(name === "dial" && channel === "voice" ? { dialOutcomes: ["answered", "no-answer"] } : {}) });
@@ -1703,7 +1750,7 @@ describe("validateTaskCommand", () => {
   });
 
   it("holds a custom command to a control the task published, with what the control asked for", () => {
-    const control = { id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } };
+    const control = { id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary", render: "inline" } };
     const asking = { ...control, id: "escalate", prompt: { fields: [{ name: "reason", label: "Reason", type: "text" }] } };
     const withControls = task({ capabilities: { custom: [control, asking] } });
     expect(cmd({ type: "custom", name: "request-supervisor" }, withControls)).toEqual([]);

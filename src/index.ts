@@ -130,7 +130,8 @@ export interface BrowserAccess {
 
 export interface PersonalBrowserCapability {
   access: BrowserAccess;
-  accessAppliesTo?: "initial-url" | "all-navigation";
+  /** Which navigations the access policy is checked against: every redirect and navigation, or the starting URL alone. Stated, never defaulted. */
+  accessAppliesTo: "initial-url" | "all-navigation";
 }
 
 export type DialDestinations = "contacts-only" | "any-number";
@@ -226,8 +227,9 @@ export interface Manifest<C extends Channel = Channel> {
    */
   runningStepReports?: true;
   /**
-   * How long after an applied disposal -- `complete`, `transfer` `complete`, `lead-assist`
-   * `take-over` -- the provider's `task-ended` is owed, in milliseconds. `applied` says the provider
+   * How long after an applied disposal -- `complete`, or a lead's `take-over` -- the provider's
+   * `task-ended` is owed, in milliseconds. A warm transfer's `complete` is not one: the agent's
+   * wrap runs after it as after any call. `applied` says the provider
    * has disposed of the task; the ending follows within this, or the host resyncs and shows the
    * task as unsettled. Stated per provider, since platforms settle at different speeds.
    */
@@ -574,8 +576,8 @@ export interface CustomCapability {
     control: "button" | "toggle" | "menu-item";
     label: string;
     placement: "primary" | "secondary" | "overflow";
-    /** Where the control's work renders: inline in the workspace, or as a page of its own. Inline when absent. */
-    render?: "inline" | "page";
+    /** Where the control's work renders: inline in the workspace, or as a page of its own. Stated, never defaulted. */
+    render: "inline" | "page";
   };
   /** What the agent supplies before the action runs; the values travel on the custom command. */
   prompt?: { fields: CredentialField[] };
@@ -788,11 +790,12 @@ export const ON_CALL_ROLES = ["party", "agent", "consulted", "conferenced"] as c
  * stated so a snapshot says who is present without anyone having seen the outcome. Nobody ringing is
  * held. `label` names a destination -- a person, a queue -- not a phrase. At most one `party` and
  * one `consulted`: the consult commands name neither because there is exactly one. The `party`
- * carries a `stage` only while being dialled again on the same task -- a connect-back the host
- * placed, carrying its `dialId`, or a callback the platform places itself, carrying none --
- * `ringing` from the moment the dial is placed and `joined` on its answered outcome, so a host can
- * show a call being placed rather than assert one that is still ringing. A party with no stage is
- * on the call.
+ * carries a `stage` while being dialled -- by any host dial, a dialpad call, a preview Call or a
+ * connect-back, carrying its `dialId`, or by a callback the platform places itself, carrying none --
+ * `ringing` from the moment the dial is placed, `joined` on the publication that follows its
+ * answered outcome, and no stage from the next publication on, so a host can show a call being
+ * placed rather than assert one that is still ringing, and a stale copy carrying `joined` cannot
+ * pass as a connect-back. A party with no stage is on the call.
  */
 export type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party"; dialId?: never; stage?: never }
@@ -805,12 +808,10 @@ export type OnCall = { since: IsoTimestamp; held?: true } & (
  * The agent's request for a lead, from asking until the lead leaves or the request ends.
  * `requested` while nobody has joined; `joined`, with `leadId`, once somebody has.
  */
-export interface TaskLeadAssist {
-  stage: "requested" | "joined";
-  leadId?: UserId;
-  note?: string;
-  since: IsoTimestamp;
-}
+export type TaskLeadAssist = { note?: string; since: IsoTimestamp } & (
+  | { stage: "requested"; leadId?: never }
+  | { stage: "joined"; leadId: UserId }
+);
 
 /**
  * On the lead's own task for a call they joined: which member asked, with their note. Its
@@ -915,7 +916,9 @@ export type Task<C extends Channel = Channel> = {
    * How this offer is accepted, stated on the pending task rather than the offer so a reconnect
    * snapshot says it too: an offer the host never received is not accepted on the person's behalf
    * for want of a word. Required while `pending` when Omni said it may auto-accept
-   * (`autoAcceptTasks: true`), forbidden when it said not, and absent past `pending`.
+   * (`autoAcceptTasks: true`) or the work is the agent's own -- a dial, a connect-back, a join, a
+   * monitor, which then say `automatic` under either provisioning -- forbidden on routed work when
+   * Omni said not, and absent past `pending`.
    */
   acceptance?: AcceptanceMode;
   /**
@@ -936,10 +939,10 @@ export type Task<C extends Channel = Channel> = {
     : { onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never });
 
 /**
- * What the provider wants of Omni's acceptance policy for one offer. Present only where Omni was
- * willing to accept for the agent (`autoAcceptTasks: true`): `consent` is therefore always the
- * provider's requirement of an explicit acceptance, never Omni's own policy, which travels as an
- * absent field.
+ * What the provider wants of Omni's acceptance policy for one offer. On routed work, present only
+ * where Omni was willing to accept for the agent (`autoAcceptTasks: true`): `consent` is therefore
+ * always the provider's requirement of an explicit acceptance, never Omni's own policy, which
+ * travels as an absent field. Work the agent originated says `automatic` whatever the provisioning.
  */
 export type AcceptanceMode =
   | "no-preference"
@@ -948,7 +951,10 @@ export type AcceptanceMode =
 
 export type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
+  /** A cold transfer to a destination the agent chose: a directory item's id. */
   | { type: "transferred"; destinationId?: string }
+  /** A lead took the call over: the agent's task ends and the lead's continues. Named by the lead, since a lead is not a directory item. */
+  | { type: "taken-over"; leadId: UserId }
   /** Who called the work off: the agent declining, the provider withdrawing or re-routing, the party abandoning. */
   | { type: "cancelled"; by: "agent" | "provider" | "party"; reason?: string }
   /** Only the phases in which somebody is still being waited on can expire; an offer that lapses at `allocationExpiresAt` names `pending`. */
@@ -1152,14 +1158,13 @@ export interface BreakState {
   retryAfterMs?: number;
   /** Not-ready codes this provider offers. Omitted when it defines none. */
   reasons?: BreakReason[];
-  /** Which reason the current break is on. Omitted when there is no break. */
+  /** Which reason the current break is on, a published `BreakReason.id`. Omitted when there is no break; required on a break in effect or starting after the task where the provider publishes `reasons`, an imposed one included. */
   activeReasonId?: string;
   imposed?: ImposedBreak;
 }
 
-export type CapacityResult =
-  | { status: "applied" }
-  | { status: "failed"; failure: ProtocolFailure };
+/** Capacity is a statement, not a request: it is taken, never refused. A provider that cannot carry the count allocates within what it can and says so on a `diagnostic`. */
+export type CapacityResult = { status: "applied" };
 
 /** Succeeding is not the outcome: `requested` says the provider holds it, not that it was granted. */
 export type BreakRequestResult =
@@ -1183,14 +1188,16 @@ export type BreakEndResult =
 // Team.
 // ---------------------------------------------------------------------------
 
-export type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "signed-out";
+/** `reserved`: signed in here, and the host holds this agent's capacity for another provider (`count: 0`, host-stopped); not receiving this provider's work. */
+export type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "reserved" | "signed-out";
 
 export interface TeamMember {
   id: UserId;
   availability: TeamMemberAvailability;
   /** Omitted rather than invented: Omni renders it as a duration. */
   since?: IsoTimestamp;
-  break?: BreakApproval;
+  /** A request in flight or a grant not yet in effect. `not-requested` is absence, and `in-effect` is `availability: "on-break"`. */
+  break?: Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">;
 }
 
 /** A member asking this lead to join their call. */
@@ -1265,7 +1272,8 @@ export interface TeamMonitorCommandRequest {
 export type TeamBreakCommand =
   | { type: "decide"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "policy"; policy: "ask" | "auto-approve" | "suspended" }
-  | { type: "place"; memberId: UserId; reason?: string }
+  /** `reasonId` names a published `BreakReason.id`, required whenever the provider publishes reasons: the member's imposed break carries it as `activeReasonId`. */
+  | { type: "place"; memberId: UserId; reasonId?: string; reason?: string }
   | { type: "release"; memberId: UserId };
 
 export type TeamCommandResult =
@@ -1281,7 +1289,7 @@ export interface TeamBreakCommandRequest {
 // ---------------------------------------------------------------------------
 
 /**
- * The task's real-time audio as the provider holds it: `ready` while audio should be attached,
+ * The task's real-time audio as the provider holds it: `started` while audio should be attached,
  * `ended` once primary handling's audio ended, and the field omitted while none should be. The
  * provider's word -- a desk attaches and renders audio from it, never from its own senses.
  */
@@ -1318,7 +1326,7 @@ export type OpenMediaResult =
 export type PreferenceId = "hold" | `skill:${string}`;
 
 /**
- * Who stated a value as it stands: a level -- `person` among them -- or `provisioning`, the
+ * Who stated a value as it stands: a level -- `person` among them -- or `provider`, the
  * protocol's own word for "no level has said anything and the provider's default applies".
  * Nothing is hidden for want of a row.
  */
@@ -1393,7 +1401,7 @@ export interface Snapshot<C extends Channel = Channel> {
  * tasks against it and needs no new signal when one ends. The agent is one person on several
  * providers, and the host divides their capacity among them: `0` is host-stopped -- the agent's
  * capacity is elsewhere for now, this provider allocates nothing and shows the member as
- * `on-task` -- and is not a break, which is the agent not working at all. The host restates a
+ * `reserved` -- and is not a break, which is the agent not working at all. The host restates a
  * count of one or more when this provider has the agent's capacity again.
  */
 export interface AgentCapacity {
@@ -1632,11 +1640,17 @@ export interface BrowserSessionKeyInput {
 export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): boolean {
   const modes = (team: TeamCapabilities | undefined): string | undefined =>
     team?.monitorControl === undefined ? undefined : [...team.monitorControl].sort().join(",");
+  // Every field, so a capability added later cannot be missed here: `satisfies` pins the field
+  // lists to the types, and a new key is a compile error until it is compared.
+  const teamKeys = { breakControl: true, leadAssistControl: true, monitorControl: true, policyControl: true } satisfies Record<keyof TeamCapabilities, true>;
+  void ({ breaks: true, preferences: true, team: true } satisfies Record<keyof UserCapabilities, true>);
+  const preferences = (list: AgentPreference[] | undefined): string | undefined =>
+    list === undefined ? undefined : list.map(p => [p.id, p.label, p.enabled, p.setBy, p.lockedBy ?? "", p.reason ?? ""].join("\u0000")).sort().join("\u0001");
   return a.breaks === b.breaks &&
     (a.team === undefined) === (b.team === undefined) &&
-    a.team?.breakControl === b.team?.breakControl &&
-    a.team?.leadAssistControl === b.team?.leadAssistControl &&
-    modes(a.team) === modes(b.team);
+    (Object.keys(teamKeys) as (keyof TeamCapabilities)[]).every(key => key === "monitorControl" || a.team?.[key] === b.team?.[key]) &&
+    modes(a.team) === modes(b.team) &&
+    preferences(a.preferences) === preferences(b.preferences);
 }
 
 /**
