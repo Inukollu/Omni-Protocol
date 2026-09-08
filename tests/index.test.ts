@@ -214,6 +214,15 @@ describe("sameCapabilities", () => {
     expect(sameCapabilities({ team: { monitorControl: ["monitor", "whisper"] } }, { team: { monitorControl: ["whisper", "monitor"] } })).toBe(true);
     expect(sameCapabilities({ team: { monitorControl: ["monitor", "whisper"] } }, { team: { monitorControl: ["monitor"] } })).toBe(false);
     expect(sameCapabilities({ team: { monitorControl: ["monitor"] } }, { team: {} })).toBe(false);
+    // Every field: a lead's policy control, and the preferences the login declares, by id, label, enabled and who set or locked them.
+    expect(sameCapabilities({ team: { policyControl: true } }, { team: {} })).toBe(false);
+    expect(sameCapabilities({ team: { policyControl: true } }, { team: { policyControl: true } })).toBe(true);
+    const hold = { id: "hold" as const, label: "Hold", enabled: true, setBy: "team" as const };
+    expect(sameCapabilities({ preferences: [hold] }, { preferences: [hold] })).toBe(true);
+    expect(sameCapabilities({ preferences: [hold] }, {})).toBe(false);
+    expect(sameCapabilities({ preferences: [hold] }, { preferences: [{ ...hold, enabled: false }] })).toBe(false);
+    expect(sameCapabilities({ preferences: [hold] }, { preferences: [{ ...hold, setBy: "person" }] })).toBe(false);
+    expect(sameCapabilities({ preferences: [hold] }, { preferences: [{ ...hold, lockedBy: "team", reason: "Policy" }] })).toBe(false);
   });
 });
 
