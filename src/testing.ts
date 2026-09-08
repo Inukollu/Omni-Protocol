@@ -1573,13 +1573,12 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // 3b. The microphone is the host's. With the audio open, the drive mutes it for a moment and
   // reports the leg the provider's record would otherwise miss -- begun, then ended -- and
   // expects each report recorded. If the provider restates the task's record afterwards, the leg is in it.
-  let mutedLeg: { at: string; task: Record<string, unknown> } | undefined;
-  if (session !== undefined && typeof session.setMuted === "function" && typeof drive.connection.recordStep === "function") {
-    const at = new Date().toISOString();
-    const report = async (body: Record<string, unknown>): Promise<void> => {
+  const reportedLegs: { at: string; task: Record<string, unknown> }[] = [];
+  const canRecordMute = session !== undefined && typeof session.setMuted === "function" && typeof drive.connection.recordStep === "function";
+  const report = async (body: Record<string, unknown>): Promise<void> => {
       ruleEvaluated("drive.recordStep.rejected", "drive.recordStep.failed");
       // The drive holds its own report to the contract before it crosses, as a host must.
-      const leg = { taskId, allocationId: allocationOf(), step: "muted", at, mutedBy: "host", ...body };
+      const leg = { taskId, allocationId: allocationOf(), step: "muted", mutedBy: "host", ...body };
       const own = validateHandlingReport(leg, "drive.recordStep.report", drive.manifest);
       found.push(...own);
       if (own.length > 0) return;
@@ -1596,18 +1595,20 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
           `the provider refused to record the host's muted leg: ${String(isRecord(answer.failure) ? answer.failure.code : answer.failure)}`);
       }
     };
-    const setMuted = (muted: boolean) => {
+  const setMuted = (muted: boolean) => {
       try { (session!.setMuted as (muted: boolean) => void)(muted); }
       catch { refuse("drive.openMedia.setMuted", "drive.openMedia", `the media session threw on setMuted(${String(muted)})`); }
     };
+  if (canRecordMute) {
+    const at = new Date().toISOString();
     const began = Date.now();
     setMuted(true);
-    await report({});
+    await report({ at });
     // A leg's duration is whole seconds and a leg shorter than one cannot be stated, so the mute holds for one.
     await new Promise<void>(resolve => setTimeout(resolve, 1000));
     setMuted(false);
-    await report({ seconds: Math.round((Date.now() - began) / 1000), ended: true });
-    mutedLeg = { at, task: latestTask() };
+    await report({ at, seconds: Math.round((Date.now() - began) / 1000), ended: true });
+    reportedLegs.push({ at, task: latestTask() });
     // 3c. A host reload destroys the adapter object and keeps the login's store. Built again from
     // the same login, a second adapter carries the task and the leg -- from its platform, or from
     // the store -- or it composed the record in memory and the record died with it.
@@ -1627,8 +1628,18 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       }
     }
   }
-  // 5. End the call, where the agent may.
+  // 5. End the call, where the agent may -- with the microphone muted, as agents do. The leg left
+  // open at media end is the provider's to close, since the provider knows the instant the media
+  // ended; the host's own closing report can only follow what it hears, is answered recorded, and
+  // changes nothing. So the drive mutes, does not report the end before end-call, and reports it
+  // after the media has ended.
   if (drive.channel === "voice" && latestTask().phase === "in-progress" && offers("endCall")) {
+    let openLeg: { at: string; began: number } | undefined;
+    if (canRecordMute) {
+      openLeg = { at: new Date().toISOString(), began: Date.now() };
+      setMuted(true);
+      await report({ at: openLeg.at });
+    }
     if (await send({ type: "end-call" }) !== undefined) {
       // A task that completes with its audio still up is refused by the stream as it passes
       // (stream.taskUpdated.mediaOpen); the drive does not also wait out the clock for an ending
@@ -1640,6 +1651,12 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         return undefined;
       }, cursor);
       if (mediaEnded?.found === "ended") cursor = mediaEnded.at;
+      if (openLeg !== undefined) {
+        setMuted(false);
+        // Stated at the record's grain: a leg that rounds to nought is 1.
+        await report({ at: openLeg.at, seconds: Math.max(1, Math.round((Date.now() - openLeg.began) / 1000)), ended: true });
+        reportedLegs.push({ at: openLeg.at, task: latestTask() });
+      }
       if (await updated(t => t.phase === "completing", "the task completing after its media ended") !== undefined && offers("hold")) {
         await holdRefusedOutsideHandling();
       }
@@ -1680,11 +1697,12 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   } else if (latestTask().phase === "completing") {
     if (await ended() !== undefined) await storeReleased();
   }
-  // The record kept by the provider has the leg the host reported, wherever the provider restated it.
-  if (mutedLeg !== undefined && latestTask() !== mutedLeg.task) {
+  // The record kept by the provider has every leg the host reported, wherever the provider restated it.
+  for (const reported of reportedLegs) {
+    if (latestTask() === reported.task) continue;
     const history = latestTask().handlingHistory;
     if (isRecord(history) && Array.isArray(history.steps)) {
-      const { at } = mutedLeg;
+      const { at } = reported;
       const leg = history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined;
       if (leg === undefined) {
         refuse("drive.recordStep.history", "drive.recordStep",
