@@ -2854,7 +2854,12 @@ which the update itself shows: the party on the call carrying a `stage`. A compl
 republished as `in-progress` from a stale copy carries no such stage, and that is the ending the
 agent never saw. Audio arrives only on a task at work: `task-media-started` on a `completing` task
 is refused as it is on a pending one (`stream.taskMediaStarted.beforeWork`), since a connect-back
-returns the task to `in-progress` before any media.
+returns the task to `in-progress` before any media. And a task completes after its audio ends,
+never around it: an update moving a task to `completing` while the stream holds its media as
+started is refused (`stream.taskUpdated.mediaOpen`), whoever caused the ending, and a task stating
+`completing` with `media: "started"` contradicts itself on any snapshot or update
+(`task.media.completing`). The consequence the rule exists for is concrete: the customer's audio
+keeps playing through the agent's wrap-up.
 
 What the agent is told differs by source, and only one source tells them anything. Under `queue`
 and `ungoverned` the agent sees controls and nothing about where they came from: both are facts,

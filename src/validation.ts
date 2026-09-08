@@ -1156,6 +1156,13 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   // The room is who is on the call now, and a task outlives its call by the whole of wrap-up: a
   // task whose call has ended -- completing, or media ended -- carries nobody, or the last thing the
   // wire said about the call stays true for ever. Empty and absent both say nobody.
+  // A completing task's call is over: its media has ended, or it never started. Audio still stated
+  // as started on a task in wrap-up is a call whose audio never ended -- the customer heard through
+  // the agent's notes -- and a task stating it contradicts itself.
+  if (task.phase === "completing" && task.media === "started") {
+    into.add("task.media.completing", `${path}.media`,
+      "a completing task's media has ended or never started: the call is over, and media still started is audio that never ended");
+  }
   if (Array.isArray(task.onCall) && task.onCall.length > 0 && (task.phase === "completing" || task.media === "ended")) {
     into.add("task.onCall.ended", `${path}.onCall`,
       `the call has ended (${task.phase === "completing" ? "the task is completing" : "its media ended"}) and onCall still names people on it: the room is who is on the call now, and now nobody is`);

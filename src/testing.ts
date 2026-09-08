@@ -1099,7 +1099,7 @@ export class TaskStream {
       }
       case "task-updated":
         if (id === undefined) break;
-        ruleEvaluated("stream.taskUpdated.unknown", "stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.allocation",
+        ruleEvaluated("stream.taskUpdated.unknown", "stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.allocation", "stream.taskUpdated.mediaOpen",
           "stream.taskUpdated.handlingHistory", "stream.taskMediaEnded.follow", "stream.taskUpdated.media", "stream.taskUpdated.stage");
         if (known === undefined) {
           refuse("stream.taskUpdated.unknown", `${at}.task.id`, `${id} was never offered or carried on a snapshot`);
@@ -1141,6 +1141,16 @@ export class TaskStream {
           if (lost.length > 0) {
             refuse("stream.taskUpdated.handlingHistory", `${at}.task.handlingHistory`,
               `${id}'s record lost ${lost.join(", ")} on the update: an entry read by the host stays in the record until the task ends`);
+          }
+        }
+        // A task completes after its media ends, never around it: an update that moves a task to
+        // completing while the stream holds its audio as started is a call whose audio never ended,
+        // whoever caused the ending -- the drive's end-call, a transfer, the provider's own hand.
+        {
+          const to = isRecord(event.task) ? String(event.task.phase) : "";
+          if (to === "completing" && known.media === "started" && known.phase !== "completing") {
+            refuse("stream.taskUpdated.mediaOpen", `${at}.task.phase`,
+              `${id} moves to completing with its media still started: the audio ends first, on task-media-ended, and a wrap-up with the call still up is audio that never ended`);
           }
         }
         if (known.media === "ended") {
@@ -1582,11 +1592,16 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // 5. End the call, where the agent may.
   if (drive.channel === "voice" && latestTask().phase === "in-progress" && offers("endCall")) {
     if (await send({ type: "end-call" }) !== undefined) {
+      // A task that completes with its audio still up is refused by the stream as it passes
+      // (stream.taskUpdated.mediaOpen); the drive does not also wait out the clock for an ending
+      // that is not coming, so the run reads by the rule and not by its timeout.
       const mediaEnded = await waitFor("task-media-ended after end-call", envelope => {
         const event = envelope.event as Record<string, unknown>;
-        return event.type === "task-media-ended" && event.taskId === taskId ? event : undefined;
+        if (event.type === "task-media-ended" && event.taskId === taskId) return "ended" as const;
+        if (event.type === "task-updated" && isTask(event.task) && event.task.id === taskId && event.task.phase === "completing") return "completing" as const;
+        return undefined;
       }, cursor);
-      if (mediaEnded !== undefined) cursor = mediaEnded.at;
+      if (mediaEnded?.found === "ended") cursor = mediaEnded.at;
       if (await updated(t => t.phase === "completing", "the task completing after its media ended") !== undefined && offers("hold")) {
         await holdRefusedOutsideHandling();
       }
