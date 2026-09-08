@@ -49,6 +49,14 @@ export type UserId = string;
 
 /** A non-empty, opaque task identifier unique within one provider. Scope it with `taskKey()`. */
 export type TaskId = string;
+/**
+ * One life of a task on the wire. A platform retires a task id minutes after closing it and a
+ * requeue takes seconds, so the same `TaskId` comes back for another customer while a late dial
+ * outcome or a late handling report for the first is still in flight. The allocation id is minted
+ * once per offer and never reused for the life of the login, and every event, command and report
+ * that names a task names its allocation too, so nothing lands on the next life of the id.
+ */
+export type AllocationId = string;
 
 /**
  * The host's identity for one dial, minted before the command leaves and unique across the
@@ -817,6 +825,7 @@ export interface TaskAssisting {
 export interface TaskMonitoring {
   memberId: UserId;
   taskId: TaskId;
+  allocationId: AllocationId;
   mode: MonitorMode;
   since: IsoTimestamp;
 }
@@ -877,6 +886,8 @@ export const CAPABILITY_SOURCES = ["queue", "ungoverned", "undetermined"] as con
 
 export type Task<C extends Channel = Channel> = {
   id: TaskId;
+  /** This life of the task: minted once per offer, never reused for the life of the login. See `AllocationId`. */
+  allocationId: AllocationId;
   title: string;
   channel: C;
   /** The provider's own name for a category of work. Finer-grained than a channel. */
@@ -1021,6 +1032,7 @@ export type TaskCommand<C extends Channel = Channel> =
 
 export interface TaskCommandRequest<C extends Channel = Channel> {
   taskId: TaskId;
+  allocationId: AllocationId;
   command: TaskCommand<C>;
 }
 
@@ -1178,6 +1190,7 @@ export interface LeadRequest {
   id: string;
   memberId: UserId;
   taskId: TaskId;
+  allocationId: AllocationId;
   note?: string;
   since: IsoTimestamp;
 }
@@ -1274,6 +1287,7 @@ export interface VoiceMediaSession {
 
 export interface OpenMediaRequest {
   taskId: TaskId;
+  allocationId: AllocationId;
   /** The agent's microphone as Omni captured it, `HostReport.audio.input.localAudio`; absent while that input is `unavailable`. */
   localAudio?: MediaStream;
 }
@@ -1334,7 +1348,7 @@ export type SetPreferenceRequest =
  * legs it performs, so `seconds` may say how long so far at any time; the end is stated, never
  * inferred from a number's presence. What the adapter forwards upstream, and how often, is its own.
  */
-export type HandlingReport = { taskId: TaskId; at: IsoTimestamp } & (
+export type HandlingReport = { taskId: TaskId; allocationId: AllocationId; at: IsoTimestamp } & (
   /** A muted leg says whose the silence was: the host's own Mute, or the station's slider or system. */
   | { step: "muted"; mutedBy: MutedBy }
   | { step: Exclude<HandlingStep, "muted">; mutedBy?: never }
@@ -1400,9 +1414,9 @@ export type ProviderEvent<C extends Channel = Channel> =
       allocationExpiresAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task<C> }
-  | { type: "task-media-started"; taskId: TaskId }
-  | { type: "task-media-ended"; taskId: TaskId }
-  | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
+  | { type: "task-media-started"; taskId: TaskId; allocationId: AllocationId }
+  | { type: "task-media-ended"; taskId: TaskId; allocationId: AllocationId }
+  | { type: "task-ended"; taskId: TaskId; allocationId: AllocationId; outcome: TaskOutcome }
   /**
    * How a dial the host placed ended, once, either way -- `answered` is stated, never read off
    * somebody appearing on the call, and says what happened to the dial; who is on the call is
@@ -1410,10 +1424,10 @@ export type ProviderEvent<C extends Channel = Channel> =
    * from what the agent is looking at, and that task may already have ended: a dial placed late
    * routinely outlives its call. `reason` is the switch's own words, shown to the agent as such.
    */
-  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; destinationId?: string; reason?: string }
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; allocationId?: AllocationId; destinationId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
-  | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId }
+  | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId; allocationId?: AllocationId }
   | { type: "team-updated"; team: TeamRoster }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
@@ -1575,6 +1589,8 @@ export interface BrowserSessionKeyInput {
   /** `Manifest.id`, never `displayName`: only the id is unique across an installation and stable. */
   providerId: string;
   taskId: TaskId;
+  /** The task's allocation: a task-scoped session lives one life of the task, never the next customer's under a reused id. */
+  allocationId: AllocationId;
   /** `Task.taskType`. */
   taskType: string;
   browser: TaskBrowser;
@@ -1606,14 +1622,14 @@ export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): bool
  * cannot collide with a provider called `a` and a tab called `b`.
  */
 export function browserSessionKey(input: BrowserSessionKeyInput): string | undefined {
-  const { providerId, taskId, taskType, browser } = input;
+  const { providerId, allocationId, taskType, browser } = input;
   if (browser.sharedSession !== true) return undefined;
   // `encodeURIComponent` leaves `.` untouched, and `.` is the separator: a raw join would let
   // provider `Acme.Voice` with type `Support` forge the key of `Acme` with `Voice.Support`.
   const part = (value: string) => encodeURIComponent(value).replaceAll(".", "%2E");
   switch (browser.isolationScheme) {
     case BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_ID__TAB_NAME:
-      return `${part(providerId)}.${part(taskId)}.${part(browser.name)}`;
+      return `${part(providerId)}.${part(allocationId)}.${part(browser.name)}`;
     case BROWSER_ISOLATION_SCHEMES.TAB_NAME:
       return part(browser.name);
     case BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME:

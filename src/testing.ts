@@ -378,6 +378,7 @@ export async function exerciseAdapter<C extends Channel>(
 
     const eventPayloads = new Map<string, string>();
     let capacityStated: number | undefined;
+    const reloading = { now: false };
     // The drive waits on events: each waiter is offered every envelope as it lands.
     const waiters = new Set<(envelope: ProviderEventEnvelope<C>) => void>();
     unsubscribe = connection.subscribe(envelope => {
@@ -385,7 +386,12 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push(...validateEventEnvelope(envelope as ProviderEventEnvelope, adapter.manifest, "event", reader()));
       // A diagnostic is informational to a host and a failure to a conformance run: the platform
       // under test broke a rule the adapter relies on, and a green result must not paper over it.
-      if (isRecord(envelope?.event) && envelope.event.type === "diagnostic") {
+      // A reload in life has no first connection: the page is gone. The drive keeps its first
+      // connection up while the second reads, so a platform that pushes the open task to the new
+      // client pushes it to the old one too, and an adapter that calls a re-offer of answered work a
+      // defect is right to. That diagnostic is the drive's own artefact, and is not counted while the
+      // second adapter is up; every other moment it is.
+      if (isRecord(envelope?.event) && envelope.event.type === "diagnostic" && !reloading.now) {
         violations.push({ rule: "diagnostic.raised", path: "event.diagnostic",
           message: `the provider reported a diagnostic: expected ${String(envelope.event.expected)}; observed ${String(envelope.event.observed)}` });
       }
@@ -493,7 +499,7 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push(...await driveOneCall({
         connection: live, manifest: adapter.manifest, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
         timeoutMs: options.driveTimeoutMs ?? 5000,
-        context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held,
+        context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held, reloading,
       }));
     }
   } finally {
@@ -880,7 +886,12 @@ const REACHABLE_PHASES: Record<string, Set<string>> = {
 };
 
 export class TaskStream {
-  private readonly tasks = new Map<string, { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined }>();
+  private readonly tasks = new Map<string, { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string }>();
+  // Every allocation this login has seen, and the ones whose task has ended: an offer never reuses
+  // one, an event about a task names the life that is open, and a late event for a life that ended
+  // is recognised as that rather than landing on the next customer under the same id.
+  private readonly allocations = new Set<string>();
+  private readonly endedAllocations = new Set<string>();
   // Every dial the stream can place an outcome against: one the host said it placed, or one a
   // task carried on `onCall` or in its record -- which is how a dial made before a transfer is known
   // to whoever holds the task now. `answered` or `ended` once its outcome arrived, since it comes once.
@@ -900,6 +911,23 @@ export class TaskStream {
     for (const entry of entries) {
       if (isRecord(entry) && typeof entry.dialId === "string") this.dialled(entry.dialId);
     }
+  }
+
+  /**
+   * Whether an event about a task names the life that is open under its id. One naming a life that
+   * has ended is the late event the allocation exists to catch; one naming a life nobody has seen is
+   * a different fault. Either way it is not applied to the open task.
+   */
+  private namesTheOpenLife(event: Record<string, unknown>, known: { allocation: string }, at: string, refuse: (rule: string, where: string, message: string) => void): boolean {
+    const named = event.allocationId;
+    if (typeof named !== "string" || named === known.allocation) return true;
+    if (this.endedAllocations.has(named)) {
+      refuse("stream.allocation.ended", `${at}.allocationId`,
+        `${String(event.type)} names allocation ${named}, a life of ${String(event.taskId)} that has ended; the life open under that id is ${known.allocation}, and a late event lands on the life it names, never the next`);
+    } else {
+      refuse("stream.allocation.unknown", `${at}.allocationId`, `${named} is not an allocation this login has seen`);
+    }
+    return false;
   }
 
   /** How many tasks the stream currently holds open. */
@@ -930,7 +958,7 @@ export class TaskStream {
     return [...was].filter(key => !now.has(key));
   }
 
-  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined } {
+  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string } {
     const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
     // The stage of every dialled entry the room names by its dial, so an update can be held to the
     // outcome that moves it.
@@ -940,7 +968,7 @@ export class TaskStream {
         if (isRecord(entry) && typeof entry.dialId === "string" && typeof entry.stage === "string") stages.set(entry.dialId, entry.stage);
       }
     }
-    return { phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task) };
+    return { phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task), allocation: String(isRecord(task) ? task.allocationId : undefined) };
   }
 
   /** Replaces what is known with a snapshot's tasks, as a snapshot replaces Omni's state. */
@@ -948,7 +976,10 @@ export class TaskStream {
     this.tasks.clear();
     if (!isRecord(snapshot) || !Array.isArray(snapshot.tasks)) return;
     for (const task of snapshot.tasks) {
-      if (isRecord(task) && typeof task.id === "string") this.tasks.set(task.id, TaskStream.stated(task));
+      if (isRecord(task) && typeof task.id === "string") {
+        this.tasks.set(task.id, TaskStream.stated(task));
+        if (typeof task.allocationId === "string") this.allocations.add(task.allocationId);
+      }
       this.noteDials(task);
     }
   }
@@ -984,16 +1015,25 @@ export class TaskStream {
         }
         this.seed(event.snapshot);
         break;
-      case "task-offered":
-        ruleEvaluated("stream.taskOffered.duplicate");
+      case "task-offered": {
+        ruleEvaluated("stream.taskOffered.duplicate", "stream.taskOffered.allocation");
         if (id === undefined) break;
         if (known !== undefined) refuse("stream.taskOffered.duplicate", `${at}.task.id`, `${id} is already on the stream; an offer introduces a task once`);
+        const allocation = isRecord(event.task) ? event.task.allocationId : undefined;
+        if (typeof allocation === "string") {
+          if (this.allocations.has(allocation)) {
+            refuse("stream.taskOffered.allocation", `${at}.task.allocationId`,
+              `${allocation} was already an allocation on this login: an allocation is minted once per offer and never reused, whatever the task id does`);
+          }
+          this.allocations.add(allocation);
+        }
         this.tasks.set(id, TaskStream.stated(event.task));
         this.noteDials(event.task);
         break;
+      }
       case "task-updated":
         if (id === undefined) break;
-        ruleEvaluated("stream.taskUpdated.unknown", "stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase",
+        ruleEvaluated("stream.taskUpdated.unknown", "stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.allocation",
           "stream.taskUpdated.handlingHistory", "stream.taskMediaEnded.follow", "stream.taskUpdated.media", "stream.taskUpdated.stage");
         if (known === undefined) {
           refuse("stream.taskUpdated.unknown", `${at}.task.id`, `${id} was never offered or carried on a snapshot`);
@@ -1005,6 +1045,12 @@ export class TaskStream {
         if ((known.source === "queue" || known.source === "ungoverned") && isRecord(event.task) && event.task.capabilitySource === "undetermined") {
           refuse("stream.taskUpdated.capabilitySource", `${at}.task.capabilitySource`,
             `${id} was published under ${known.source} terms and now says undetermined: terms once read stay read, and a re-read that fails is a diagnostic, not a republish`);
+        }
+        // An update is of the life that is open. One carrying another allocation is a copy of a
+        // different life of this id -- a stale republish of the last customer's call, or the next one's.
+        if (isRecord(event.task) && String(event.task.allocationId) !== known.allocation) {
+          refuse("stream.taskUpdated.allocation", `${at}.task.allocationId`,
+            `${id} is open as allocation ${known.allocation} and the update says ${String(event.task.allocationId)}: an update restates the life that is open, never another`);
         }
         // A task does not go backwards. The stream sees publications, not transitions, and a task may
         // pass through a phase between two, so what is refused is a phase unreachable from the last
@@ -1061,12 +1107,13 @@ export class TaskStream {
         this.noteDials(event.task);
         break;
       case "task-media-started":
-        ruleEvaluated("stream.taskMediaStarted.unknown", "stream.taskMediaStarted.beforeWork", "stream.taskMediaStarted.duplicate");
+        ruleEvaluated("stream.taskMediaStarted.unknown", "stream.taskMediaStarted.beforeWork", "stream.taskMediaStarted.duplicate", "stream.allocation.ended", "stream.allocation.unknown");
         if (id === undefined) break;
         if (known === undefined) {
           refuse("stream.taskMediaStarted.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
           break;
         }
+        if (!this.namesTheOpenLife(event, known, at, refuse)) break;
         if (!AT_WORK.has(known.phase)) {
           refuse("stream.taskMediaStarted.beforeWork", `${at}.taskId`,
             `media cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
@@ -1077,12 +1124,13 @@ export class TaskStream {
         known.media = "started";
         break;
       case "task-media-ended":
-        ruleEvaluated("stream.taskMediaEnded.unknown", "stream.taskMediaEnded.beforeWork", "stream.taskMediaEnded.silent");
+        ruleEvaluated("stream.taskMediaEnded.unknown", "stream.taskMediaEnded.beforeWork", "stream.taskMediaEnded.silent", "stream.allocation.ended", "stream.allocation.unknown");
         if (id === undefined) break;
         if (known === undefined) {
           refuse("stream.taskMediaEnded.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
           break;
         }
+        if (!this.namesTheOpenLife(event, known, at, refuse)) break;
         if (!WORK_BEGUN.has(known.phase)) {
           refuse("stream.taskMediaEnded.beforeWork", `${at}.taskId`,
             `media cannot end on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
@@ -1094,13 +1142,25 @@ export class TaskStream {
         known.media = "ended";
         break;
       case "task-ended":
+        ruleEvaluated("stream.taskEnded.unknown", "stream.allocation.ended", "stream.allocation.unknown");
         if (id === undefined) break;
-        if (known === undefined) refuse("stream.taskEnded.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
+        if (known === undefined) {
+          refuse("stream.taskEnded.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
+          break;
+        }
+        // A late ending for a life that is over must not end the life that is open under the same id.
+        if (!this.namesTheOpenLife(event, known, at, refuse)) break;
+        this.endedAllocations.add(known.allocation);
         this.tasks.delete(id);
         break;
       case "dial-outcome": {
         // An outcome ends a dial somebody placed, once. The task it names may already have ended;
-        // a dial placed late routinely outlives its call, which is why the dial has its own identity.
+        // a dial placed late routinely outlives its call, which is why the dial has its own identity,
+        // and why the outcome names the allocation: the host routes it to that life, ended or not.
+        ruleEvaluated("stream.allocation.unknown");
+        if (typeof event.allocationId === "string" && !this.allocations.has(event.allocationId)) {
+          refuse("stream.allocation.unknown", `${at}.allocationId`, `${event.allocationId} is not an allocation this login has seen`);
+        }
         if (typeof event.dialId !== "string") break;
         const dial = this.dials.get(event.dialId);
         if (dial === undefined) {
@@ -1132,6 +1192,8 @@ interface Drive<C extends Channel> {
   rebuild: (() => Adapter<Channel>) | undefined;
   /** Every key the watched store currently holds. */
   held: ReadonlySet<string>;
+  /** Set while a rebuilt adapter is up beside the first: a diagnostic the first raises then is the drive's artefact. */
+  reloading: { now: boolean };
   channel: Channel;
   softphone: boolean;
   snapshot: unknown;
@@ -1177,6 +1239,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     });
 
   const recordSurvivesReload = async (at: string): Promise<void> => {
+    ruleEvaluated("drive.reload.rejected", "drive.reload.manifest", "drive.reload.login", "drive.reload.snapshot", "drive.reload.allocation", "drive.reload.history");
     let again: Adapter<Channel>;
     try {
       again = drive.rebuild!();
@@ -1193,6 +1256,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
           `rebuild returned an adapter for ${String(again.manifest.id)}; the reload is of ${String(drive.manifest.id)}`);
         return;
       }
+      drive.reloading.now = true;
       session = await again.createAuthenticationSession({ ...drive.context, secrets: drive.secrets });
       // The reload is a restore before it is anything else: the second session stands authenticated
       // as the same person, from the secrets alone, or nothing it reads afterwards is this login's.
@@ -1214,6 +1278,11 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         refuse("drive.reload.snapshot", "drive.reload.snapshot",
           `a second adapter built from the same login does not carry ${taskId} on its snapshot, and the task is still open`);
         return;
+      }
+      // The allocation is part of the task, not memory beside it: a reload brings the same life back.
+      if (carried.allocationId !== allocationOf()) {
+        refuse("drive.reload.allocation", "drive.reload.allocation",
+          `a second adapter built from the same login carries ${taskId} as allocation ${String(carried.allocationId)}; the first published ${allocationOf()}, and a life does not change its name on a reload`);
       }
       const history = carried.handlingHistory;
       const steps: unknown[] = isRecord(history) && Array.isArray(history.steps) ? history.steps : [];
@@ -1239,6 +1308,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     } finally {
       try { await second?.disconnect(); } catch (error) { refuse("drive.reload.rejected", "drive.reload", `the second adapter's disconnect threw: ${String(error)}`); }
       try { await session?.close(); } catch (error) { refuse("drive.reload.rejected", "drive.reload", `the second adapter's session threw on close: ${String(error)}`); }
+      drive.reloading.now = false;
     }
   };
 
@@ -1247,6 +1317,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // inherited by the next offer of the same id, since a platform retires an id minutes after closing it.
   let retainedAtEnd: Set<string> | undefined;
   const storeReleased = async (): Promise<void> => {
+    ruleEvaluated("drive.store.retained");
     await Promise.resolve(); await Promise.resolve();
     const retained = [...drive.held].filter(key => key.includes(taskId));
     retainedAtEnd = new Set(retained);
@@ -1259,6 +1330,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // same hazard arriving later, so the store is read once more when the drive is done.
   const nothingLate = (): void => {
     if (retainedAtEnd === undefined) return;
+    ruleEvaluated("drive.store.late");
     const late = [...drive.held].filter(key => key.includes(taskId) && !retainedAtEnd!.has(key));
     if (late.length > 0) {
       refuse("drive.store.late", "drive.store",
@@ -1279,6 +1351,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     task = offered.found; cursor = offered.at;
   }
   const taskId = task.id as string;
+  const allocationOf = (): string => String(latestTask().allocationId);
   const latestTask = (): Record<string, unknown> => task!;
   const updated = (until: (task: Record<string, unknown>) => boolean, what: string) =>
     waitFor(what, envelope => {
@@ -1295,13 +1368,15 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   }, cursor);
 
   // Every command the drive sends is validated against the task as published, and its answer for its method.
+  ruleEvaluated("drive.timeout");
   const send = async (command: Record<string, unknown>, dialId?: string): Promise<Record<string, unknown> | undefined> => {
+    ruleEvaluated("drive.command.rejected", "drive.command.failed");
     const own = validateTaskCommand(command, latestTask(), `drive.command.${String(command.type)}`);
     found.push(...own);
     if (own.length > 0) return undefined;
     let result: unknown;
     try {
-      result = await drive.connection.execute({ taskId, command } as never);
+      result = await drive.connection.execute({ taskId, allocationId: allocationOf(), command } as never);
     } catch (error) {
       refuse("drive.command.rejected", `drive.command.${String(command.type)}`, `execute rejected rather than answered: ${String(error)}`);
       return undefined;
@@ -1340,10 +1415,11 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // control still declared: a host holds it back (command.phase.handling), and an adapter that
   // receives it anyway must refuse it -- so the drive sends it past the validator and expects failed.
   const holdRefusedOutsideHandling = async (): Promise<void> => {
+    ruleEvaluated("drive.command.rejected", "drive.command.handling");
     const phase = String(latestTask().phase);
     let answer: unknown;
     try {
-      answer = await drive.connection.execute({ taskId, command: { type: "hold" } } as never);
+      answer = await drive.connection.execute({ taskId, allocationId: allocationOf(), command: { type: "hold" } } as never);
     } catch (error) {
       refuse("drive.command.rejected", "drive.command.hold", `execute rejected rather than answered: ${String(error)}`);
     }
@@ -1367,7 +1443,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       if (started === undefined) return found;
       cursor = Math.max(cursor, started.at);
     }
-    const opened = await drive.connection.openMedia?.({ taskId, localAudio: drive.localAudio });
+    const opened = await drive.connection.openMedia?.({ taskId, allocationId: allocationOf(), localAudio: drive.localAudio });
     found.push(...validateResult(opened, "openMedia", "drive.openMedia"));
     if (isRecord(opened) && opened.status === "opened") session = opened.session as unknown as Record<string, unknown>;
     else if (isRecord(opened)) refuse("drive.openMedia.unavailable", "drive.openMedia", "a softphone login's adapter could not open the call's audio");
@@ -1379,8 +1455,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   if (session !== undefined && typeof session.setMuted === "function" && typeof drive.connection.recordStep === "function") {
     const at = new Date().toISOString();
     const report = async (body: Record<string, unknown>): Promise<void> => {
+      ruleEvaluated("drive.recordStep.rejected", "drive.recordStep.failed");
       // The drive holds its own report to the contract before it crosses, as a host must.
-      const leg = { taskId, step: "muted", at, mutedBy: "host", ...body };
+      const leg = { taskId, allocationId: allocationOf(), step: "muted", at, mutedBy: "host", ...body };
       const own = validateHandlingReport(leg, "drive.recordStep.report", drive.manifest);
       found.push(...own);
       if (own.length > 0) return;

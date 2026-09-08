@@ -83,6 +83,7 @@ export const emailTask = {
   taskType: "Customer Support",
   capabilities: { browsers: true, dispositions: true },
   capabilitySource: "queue",
+  allocationId: "alloc-1",
   phase: "in-progress",
   browsers: [],
   completionMode: "agent-command",
@@ -99,6 +100,7 @@ export const invalidEmailTask = {
     hold: true,
   },
   capabilitySource: "queue",
+  allocationId: "alloc-1",
   phase: "in-progress",
   browsers: [],
   completionMode: "agent-command",
@@ -213,9 +215,9 @@ export const startCall: TaskCommand<"voice"> = { type: "start-call" };
 export const undecidedDeadline: Task<"voice">["atDeadline"] = "waits";
 
 // Monitoring: the lead's own task while they listen, voice only, in one of three modes.
-export const monitoringLeadTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, monitoring: { memberId: "A-1", taskId: "call-42", mode: "whisper", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
+export const monitoringLeadTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "whisper", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
 // @ts-expect-error Email has no call to listen to.
-export const monitoringEmailTask: Task<"email"> = { ...emailTask, id: "email-7", monitoring: { memberId: "A-1", taskId: "call-42", mode: "monitor", since: "2026-08-21T09:04:00Z" } };
+export const monitoringEmailTask: Task<"email"> = { ...emailTask, id: "email-7", monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "monitor", since: "2026-08-21T09:04:00Z" } };
 export const startMonitor: TeamMonitorCommand = { type: "monitor", memberId: "A-1" };
 export const whisper: TeamMonitorCommand = { type: "whisper" };
 // @ts-expect-error There is no take-over in monitoring; a lead who wants the call uses lead assist.
@@ -308,11 +310,11 @@ export const silencedByNobody: HostAudioInput = { status: "available", localAudi
 export const flowingYetMuted: HostAudioInput = { status: "available", localAudio: {} as MediaStream, flowing: true, mutedBy: "host" };
 export const speakerOff: HostAudioOutput = { status: "available", flowing: false, mutedBy: "station" };
 export const speakerUnknown: HostAudioOutput = { status: "available" };
-export const hostMutedLeg: HandlingReport = { taskId: "call-1", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
+export const hostMutedLeg: HandlingReport = { taskId: "call-1", allocationId: "alloc-1", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
 // @ts-expect-error A muted leg says whose the silence was.
-export const anonymousMutedLeg: HandlingReport = { taskId: "call-1", step: "muted", at: "2026-08-21T09:00:00Z" };
+export const anonymousMutedLeg: HandlingReport = { taskId: "call-1", allocationId: "alloc-1", step: "muted", at: "2026-08-21T09:00:00Z" };
 // @ts-expect-error Only a muted leg has anyone to name for the silence.
-export const mutedHold: HandlingReport = { taskId: "call-1", step: "held", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
+export const mutedHold: HandlingReport = { taskId: "call-1", allocationId: "alloc-1", step: "held", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
 export const lyingHost: Host = {
   // @ts-expect-error A guarantee is declared by presence; a host that does not make one omits it, never false.
   guarantees: { personConsent: false }, report: () => noAudioHere, subscribe: () => () => undefined };
@@ -356,7 +358,13 @@ export const roster: TeamRoster = { members: [], requests: [] };
 export const rosterWithControl: TeamRoster = { members: [], breakControl: true };
 
 // The host reports; a request may lack the microphone, and a ready input may not.
-export const openWithoutHostAudio: OpenMediaRequest = { taskId: "call-42" };
+export const openWithoutHostAudio: OpenMediaRequest = { taskId: "call-42", allocationId: "alloc-42" };
+// Everything that names a task after the fact names its life: a task id alone could land on the next customer under a reused id.
+export const endedEvent: ProviderEvent<"voice"> = { type: "task-ended", taskId: "call-42", allocationId: "alloc-42", outcome: { type: "completed", by: "agent" } };
+// @ts-expect-error An ending names the allocation it ends.
+export const endedByIdAlone: ProviderEvent<"voice"> = { type: "task-ended", taskId: "call-42", outcome: { type: "completed", by: "agent" } };
+// @ts-expect-error A command names the life it acts on.
+export const commandByIdAlone: TaskCommandRequest<"voice"> = { taskId: "call-42", command: { type: "hold" } };
 export const noMicrophone: HostReport = { online: true, audio: { input: { status: "unavailable", reason: "in-use", failure: { code: "host.in-use", message: "Another application holds the microphone", retryable: true } }, output: { status: "unavailable", reason: "no-device", failure: { code: "host.no-speaker", message: "No speaker", retryable: true } } } };
 export const noAudioHere: HostReport = { online: true };
 // @ts-expect-error An available input carries the microphone it captured and says whether audio flows.

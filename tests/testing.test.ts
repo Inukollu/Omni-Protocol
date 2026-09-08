@@ -11,6 +11,7 @@ const voiceTask = {
   taskType: "Customer Support",
   capabilities: { hold: true },
   capabilitySource: "queue",
+  allocationId: "alloc-42",
   phase: "in-progress",
   browsers: [],
   completionMode: "agent-command",
@@ -90,7 +91,7 @@ describe("assertCapabilityWithdrawal", () => {
     const consulting = { ...lead, capabilities: { team: { leadAssistControl: true as const } } } satisfies AuthenticationState;
     const watching = { ...lead, capabilities: { team: {} } } satisfies AuthenticationState;
     const members = [{ id: "A-2", availability: "on-task" as const }];
-    const asking: Snapshot<"voice"> = { ...bare, team: { members, requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] } };
+    const asking: Snapshot<"voice"> = { ...bare, team: { members, requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", allocationId: "alloc-42", since: "2026-08-21T09:04:00Z" }] } };
     const silent: Snapshot<"voice"> = { ...bare, team: { members } };
     expect(() => assertCapabilityWithdrawal([consulting, watching], silent, manifest)).not.toThrow();
     expect(() => assertCapabilityWithdrawal([consulting, watching], asking, manifest)).toThrow(/team\.requests\.capability/);
@@ -262,9 +263,9 @@ describe("assertMediaFollowsTheTask", () => {
   // A connect-back brings a completing task back, and the update shows it: the party being dialled, ringing with the host's dial.
   const connectingBack = (id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at,
     event: { type: "task-updated", task: { ...call("in-progress"), onCall: [{ role: "party", dialId: "dial-9", stage: "ringing", since: at }] } } });
-  const mediaReady = (id = "e2b"): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-media-started", taskId: voiceTask.id } });
-  const mediaEnded: ProviderEventEnvelope<"voice"> = { id: "e3", loginId: "session-1", occurredAt: at, event: { type: "task-media-ended", taskId: voiceTask.id } };
-  const ended: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-ended", taskId: voiceTask.id, outcome: { type: "completed", by: "agent" } } };
+  const mediaReady = (id = "e2b"): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-media-started", taskId: voiceTask.id, allocationId: voiceTask.allocationId } });
+  const mediaEnded: ProviderEventEnvelope<"voice"> = { id: "e3", loginId: "session-1", occurredAt: at, event: { type: "task-media-ended", taskId: voiceTask.id, allocationId: voiceTask.allocationId } };
+  const ended: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-ended", taskId: voiceTask.id, allocationId: voiceTask.allocationId, outcome: { type: "completed", by: "agent" } } };
   const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
 
   it("accepts a call offered, started, made ready, whose media ends, completing, then ending", () => {
@@ -301,8 +302,60 @@ describe("assertMediaFollowsTheTask", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([updated("in-progress")]))).toEqual(["stream.taskUpdated.unknown"]);
     expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded]))).toEqual(["stream.taskMediaEnded.unknown"]);
     expect(rulesOf(() => assertMediaFollowsTheTask([ended]))).toEqual(["stream.taskEnded.unknown"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), { ...offered(), id: "e9" }]))).toEqual(["stream.taskOffered.duplicate"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), ended, { ...offered(), id: "e9" }]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), { ...offered(), id: "e9" }]))).toEqual(["stream.taskOffered.duplicate", "stream.taskOffered.allocation"]);
+    // The same id offered again after its life ended is a new life, and says so with a new allocation.
+    const again: ProviderEventEnvelope<"voice"> = { ...offered(), id: "e9", event: { type: "task-offered", task: { ...call("pending"), allocationId: "alloc-43", acceptance: "consent" } } };
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), ended, again]))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), ended, { ...offered(), id: "e9" }]))).toEqual(["stream.taskOffered.allocation"]);
+  });
+});
+
+describe("TaskStream holds a task to its allocation: one life of an id at a time", () => {
+  const at = "2026-08-21T09:00:00Z";
+  const rulesOf = (violations: { rule: string }[]) => violations.map(v => v.rule);
+  const life = (allocationId: string, over: Record<string, unknown> = {}): Task<"voice"> => ({ ...voiceTask, allocationId, ...over }) as unknown as Task<"voice">;
+  const env = (id: string, event: unknown): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event } as ProviderEventEnvelope<"voice">);
+  const offered = (allocationId: string, id = "o1") => env(id, { type: "task-offered", task: life(allocationId, { phase: "pending", acceptance: "consent" }) });
+  const ended = (allocationId: string, id = "x1") => env(id, { type: "task-ended", taskId: voiceTask.id, allocationId, outcome: { type: "completed", by: "agent" } });
+  const mediaEnded = (allocationId: string, id = "m1") => env(id, { type: "task-media-ended", taskId: voiceTask.id, allocationId });
+  const outcome = (allocationId: string | undefined, id = "d1") => env(id, { type: "dial-outcome", dialId: "dial-1a0", outcome: "no-answer", taskId: voiceTask.id, ...(allocationId === undefined ? {} : { allocationId }) });
+  const seeded = (allocationId: string, over: Record<string, unknown> = {}) => { const s = new TaskStream(); s.seed({ tasks: [life(allocationId, over)] }); return s; };
+
+  it("lets the same id live again with a new allocation, and refuses an allocation offered twice", () => {
+    const s = new TaskStream(); s.seed({ tasks: [] });
+    expect(rulesOf(s.apply(offered("alloc-1")))).toEqual([]);
+    expect(rulesOf(s.apply(ended("alloc-1")))).toEqual([]);
+    expect(rulesOf(s.apply(offered("alloc-2", "o2")))).toEqual([]);
+    expect(rulesOf(s.apply(ended("alloc-2", "x2")))).toEqual([]);
+    expect(rulesOf(s.apply(offered("alloc-1", "o3")))).toEqual(["stream.taskOffered.allocation"]);
+  });
+
+  it("refuses an update restating another life of the id", () => {
+    const s = seeded("alloc-1");
+    expect(rulesOf(s.apply(env("u1", { type: "task-updated", task: life("alloc-1") })))).toEqual([]);
+    expect(rulesOf(s.apply(env("u2", { type: "task-updated", task: life("alloc-0") })))).toContain("stream.taskUpdated.allocation");
+  });
+
+  it("does not let a late ending or media event for a life that ended land on the life now open, and names a life nobody saw", () => {
+    const s = new TaskStream(); s.seed({ tasks: [] });
+    s.apply(offered("alloc-1")); s.apply(ended("alloc-1")); s.apply(offered("alloc-2", "o2"));
+    s.apply(env("u", { type: "task-updated", task: life("alloc-2", { phase: "in-progress", media: "started" }) }));
+    // The first customer's late ending must not end the second customer's call.
+    expect(rulesOf(s.apply(ended("alloc-1", "x9")))).toEqual(["stream.allocation.ended"]);
+    expect(rulesOf(s.apply(mediaEnded("alloc-1", "m9")))).toEqual(["stream.allocation.ended"]);
+    expect(rulesOf(s.apply(mediaEnded("alloc-7", "m8")))).toEqual(["stream.allocation.unknown"]);
+    // The control: the open life's own events stand, and the task is still open after the refused ending.
+    expect(rulesOf(s.apply(mediaEnded("alloc-2", "m2")))).toEqual([]);
+    expect(rulesOf(s.apply(ended("alloc-2", "x2")))).toEqual([]);
+  });
+
+  it("lets a dial outcome name a life that has ended, since a dial placed late outlives its call", () => {
+    const s = seeded("alloc-1", { onCall: [{ role: "party", since: at }, { role: "consulted", destinationId: "tier2", dialId: "dial-1a0", stage: "ringing", since: at }] });
+    s.apply(ended("alloc-1"));
+    expect(rulesOf(s.apply(outcome("alloc-1")))).toEqual([]);
+    const room = { onCall: [{ role: "party", since: at }, { role: "consulted", destinationId: "tier2", dialId: "dial-1a0", stage: "ringing", since: at }] };
+    expect(rulesOf(seeded("alloc-1", room).apply(outcome("alloc-9")))).toEqual(["stream.allocation.unknown"]);
+    expect(rulesOf(seeded("alloc-1", room).apply(outcome("alloc-1")))).toEqual([]);
   });
 });
 
@@ -457,7 +510,7 @@ describe("TaskStream places a dial outcome", () => {
     // The control: the same stream, a dial neither carried.
     expect(rulesOf(s.apply(outcome("dial-000", "e3")))).toEqual(["stream.dialOutcome.unknown"]);
     // And a dial arriving on an offer or an update counts the same way.
-    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, id: "call-99", phase: "pending", acceptance: "consent", onCall: [{ role: "consulted", destinationId: "tier2", dialId: "dial-off", stage: "ringing", since: at }] } } };
+    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, id: "call-99", allocationId: "alloc-99", phase: "pending", acceptance: "consent", onCall: [{ role: "consulted", destinationId: "tier2", dialId: "dial-off", stage: "ringing", since: at }] } } };
     expect(rulesOf(s.apply(offered))).toEqual([]);
     expect(rulesOf(s.apply(outcome("dial-off", "e5")))).toEqual([]);
   });
@@ -489,7 +542,7 @@ describe("TaskStream places a dial outcome", () => {
     const s = new TaskStream();
     s.seed({ tasks: [voiceTask] });
     s.dialled("dial-late");
-    expect(rulesOf(s.apply({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-ended", taskId: voiceTask.id, outcome: { type: "completed", by: "agent" } } }))).toEqual([]);
+    expect(rulesOf(s.apply({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-ended", taskId: voiceTask.id, allocationId: voiceTask.allocationId, outcome: { type: "completed", by: "agent" } } }))).toEqual([]);
     expect(rulesOf(s.apply(outcome("dial-late", "e2")))).toEqual([]);
   });
 });
@@ -616,37 +669,37 @@ describe("browser isolation", () => {
 
   it("shares one session across tasks under a task-type scheme", () => {
     expect(() => assertBrowserSessionIsolation(
-      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
-      { providerId: "voiceco", taskId: "call-2", taskType: "Support", browser: { ...browser, id: "crm-copy" } },
+      { providerId: "voiceco", taskId: "call-1", allocationId: "call-1-a", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-2", allocationId: "call-2-a", taskType: "Support", browser: { ...browser, id: "crm-copy" } },
       true,
     )).not.toThrow();
   });
 
   it("never shares a session when sharedSession is false", () => {
     expect(() => assertBrowserSessionIsolation(
-      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
-      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser: isolated },
+      { providerId: "voiceco", taskId: "call-1", allocationId: "call-1-a", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-1", allocationId: "call-1-a", taskType: "Support", browser: isolated },
       false,
     )).not.toThrow();
     // Two isolated browsers do not share with each other either: "no key" is not a matching key.
     expect(() => assertBrowserSessionIsolation(
-      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser: isolated },
-      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser: isolated },
+      { providerId: "voiceco", taskId: "call-1", allocationId: "call-1-a", taskType: "Support", browser: isolated },
+      { providerId: "voiceco", taskId: "call-1", allocationId: "call-1-a", taskType: "Support", browser: isolated },
       false,
     )).not.toThrow();
-    expect(browserSessionKey({ providerId: "voiceco", taskId: "c", taskType: "Support", browser: isolated })).toBeUndefined();
+    expect(browserSessionKey({ providerId: "voiceco", taskId: "c", allocationId: "c-a", taskType: "Support", browser: isolated })).toBeUndefined();
   });
 
   it("reports a mismatch between expected and derived sharing", () => {
     expect(() => assertBrowserSessionIsolation(
-      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
-      { providerId: "otherco", taskId: "call-1", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-1", allocationId: "call-1-a", taskType: "Support", browser },
+      { providerId: "otherco", taskId: "call-1", allocationId: "call-1-a", taskType: "Support", browser },
       true,
     )).toThrow(/Browser session sharing mismatch/);
     // And in the other direction, so the helper is known to check rather than to throw.
     expect(() => assertBrowserSessionIsolation(
-      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
-      { providerId: "voiceco", taskId: "call-2", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-1", allocationId: "call-1-a", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-2", allocationId: "call-2-a", taskType: "Support", browser },
       false,
     )).toThrow(/Browser session sharing mismatch/);
   });
@@ -655,15 +708,15 @@ describe("browser isolation", () => {
     const variants = ["Acme.Voice", "Acme", "acme", "Acme Voice", "Acme-Voice", "Acme%2EVoice"];
     expect(() => assertNoBrowserSessionKeyCollisions(
       variants.flatMap(providerId => ["Support", "Voice.Support", "support"].map(taskType => ({
-        providerId, taskId: "t1", taskType, browser,
+        providerId, taskId: "t1", allocationId: "t1-a", taskType, browser,
       }))),
     )).not.toThrow();
   });
 
   it("detects a genuine collision when one exists", () => {
     expect(() => assertNoBrowserSessionKeyCollisions([
-      { providerId: "voiceco", taskId: "call-1", taskType: "Support", browser },
-      { providerId: "voiceco", taskId: "call-2", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-1", allocationId: "call-1-a", taskType: "Support", browser },
+      { providerId: "voiceco", taskId: "call-2", allocationId: "call-2-a", taskType: "Support", browser },
     ])).toThrow(/collision/);
   });
 });
@@ -712,6 +765,7 @@ const conformingSnapshot = {
       custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } }],
     },
     capabilitySource: "queue",
+    allocationId: "alloc-42",
     phase: "in-progress",
     media: "started",
     completionMode: "agent-command",
@@ -946,7 +1000,7 @@ describe("exerciseAdapter", () => {
     const reached = {
       ...conformingSnapshot,
       break: { approval: "in-effect", mayAsk: true, reasons: [{ id: "lunch", label: "Lunch" }], imposed: { by: "M-1", endsAutomatically: false } },
-      team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" }] },
+      team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", allocationId: "alloc-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { leadAssistControl: true } }, snapshot: reached })))
       .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.monitoring", "task.acceptance", "task.locked", "team.policies"]);
@@ -1058,12 +1112,14 @@ describe("exerciseAdapter drives one call", () => {
   const at = "2026-08-21T09:00:00Z";
   type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
   interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute";
-    /** A platform shared between instances of the adapter, as a host reload shares it: which task is open. */
-    platform?: { open: boolean };
+    /** A platform shared between instances of the adapter, as a host reload shares it: which task is open, and the first client's listener. */
+    platform?: { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void };
     /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
     legsIn?: "memory" | "store";
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
-    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out";
+    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted";
+    /** The platform pushes the open task to every client of the login: the first connection sees a re-offer and says so. */
+    reofferOnReload?: boolean;
     /** An adapter that ends the task and leaves its key in the store, for the next offer of the id to inherit. */
     leavesKeys?: boolean;
     /** An adapter whose persist runs off a timer and writes about the task after its end was published. */
@@ -1080,7 +1136,7 @@ describe("exerciseAdapter drives one call", () => {
     let n = 0;
     const id = () => `drv-${n += 1}`;
     const base: Record<string, unknown> = {
-      ...conformingSnapshot.tasks[0]!, id: "call-77", capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), dispositions: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
+      ...conformingSnapshot.tasks[0]!, id: "call-77", allocationId: "alloc-77", capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), dispositions: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
       browsers: [], handlingHistory: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
     };
     let phase = "pending";
@@ -1096,10 +1152,12 @@ describe("exerciseAdapter drives one call", () => {
     // What a second instance knows: the platform's open task, and the legs it can reach -- the store's, or its own empty memory.
     const reloaded = async () => {
       if (script.platform?.open !== true) return { ...conformingSnapshot, tasks: [], taskCount: 0 };
+      if (script.reofferOnReload) script.platform!.firstListener?.({ id: `diag-${Date.now()}`, loginId: "session-1", occurredAt: at,
+        event: { type: "diagnostic", expected: "a task-offered introduces a task once", observed: "call-77 was offered again while the agent held it", taskId: "call-77", allocationId: "alloc-77" } });
       const kept = script.legsIn === "store" && given !== undefined ? await given.get("legs:call-77") : undefined;
       const legs = kept === undefined ? (muted === undefined ? [] : [legEntry(muted)]) : [legEntry(JSON.parse(kept) as { at: string; seconds: number; mutedBy: "host" | "station" })];
       const steps = [...(script.reloadAs === "without-answered" ? [] : [{ step: "answered" as const, at }]), ...legs];
-      return { ...conformingSnapshot, tasks: [t({ phase: "in-progress", media: "started", onCall: room, handlingHistory: { steps } })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
+      return { ...conformingSnapshot, tasks: [t({ phase: "in-progress", media: "started", onCall: room, handlingHistory: { steps }, ...(script.reloadAs === "reminted" ? { allocationId: "alloc-77.2" } : {}) })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
     };
     // A provider that restates its record does so on every publication once work has begun, never only at the end.
     const t = (over: Record<string, unknown>) => {
@@ -1115,12 +1173,13 @@ describe("exerciseAdapter drives one call", () => {
       snapshot: { ...conformingSnapshot, tasks: [], taskCount: 0 },
       ...(script.reloadAs === "another-provider" && script.platform?.open === true ? { manifest: { ...conformingManifest, id: "acme-voice-2" } } : {}),
       ...(script.reloadAs === "signed-out" && script.platform?.open === true ? { authenticated: false } : {}),
-      emit: l => { listener = l; },
+      emit: l => { listener = l; if (script.platform !== undefined && script.platform.firstListener === undefined) script.platform.firstListener = l; },
       onConnect: connectContext => { given = connectContext.store; },
       connection: {
         ...(script.platform === undefined ? {} : { snapshot: reloaded }),
         setCapacity: async () => { if (script.platform !== undefined) script.platform.open = true; emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) }); return { status: "applied" }; },
-        execute: async ({ command }: { command: { type: string } }) => {
+        execute: async ({ command, allocationId }: { command: { type: string }; allocationId?: string }) => {
+          if (allocationId !== "alloc-77") return { status: "failed", failure: { code: "omni.task-not-found", message: `no allocation ${String(allocationId)}`, retryable: false } };
           if (script.throwsOn === "execute" && command.type === "hold") throw new Error("hub unreachable");
           switch (command.type) {
             case "answer":
@@ -1130,7 +1189,7 @@ describe("exerciseAdapter drives one call", () => {
               // A provider that acknowledges before it starts says so: confirmed first, then work begins.
               if (script.confirmFirst) { emit({ type: "task-updated", task: t({ phase: "confirmed" }) }); return { status: "applied" }; }
               emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
-              if (!script.skipMediaStart) emit({ type: "task-media-started", taskId: "call-77" });
+              if (!script.skipMediaStart) emit({ type: "task-media-started", taskId: "call-77", allocationId: "alloc-77" });
               return { status: "applied" };
             case "hold":
               if (script.refuseHold) return { status: "failed", failure: { code: "provider.busy", message: "No hold today", retryable: false } };
@@ -1142,7 +1201,7 @@ describe("exerciseAdapter drives one call", () => {
                 // Work begins once the probe has been answered: the drive is still in confirmed when it sends.
                 const answer = script.holdBeforeStart ? { status: "applied" as const } : { status: "failed" as const, failure: { code: "provider.not-started", message: "Nothing to hold yet", retryable: false } };
                 emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
-                emit({ type: "task-media-started", taskId: "call-77" });
+                emit({ type: "task-media-started", taskId: "call-77", allocationId: "alloc-77" });
                 return answer;
               }
               held = { at: "2026-08-21T09:01:00Z" };
@@ -1151,7 +1210,7 @@ describe("exerciseAdapter drives one call", () => {
               if (held !== undefined && !script.leavesHoldOpen) held = { ...held, seconds: 5 };
               emit({ type: "task-updated", task: t({ phase: "in-progress", media: "started", onCall: room }) }); return { status: "applied" };
             case "end-call":
-              emit({ type: "task-media-ended", taskId: "call-77" });
+              emit({ type: "task-media-ended", taskId: "call-77", allocationId: "alloc-77" });
               // t() restates the record after it has taken the phase, so what the record says of a leg follows the phase it is published under.
               emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
               return { status: "applied" };
@@ -1159,7 +1218,7 @@ describe("exerciseAdapter drives one call", () => {
               if (script.platform !== undefined) script.platform.open = false;
               // A task's keys go with the task, before its end is published.
               if (script.legsIn === "store" && given !== undefined && !script.leavesKeys) await given.delete("legs:call-77");
-              emit({ type: "task-ended", taskId: "call-77", outcome: { type: "completed", by: "agent" } });
+              emit({ type: "task-ended", taskId: "call-77", allocationId: "alloc-77", outcome: { type: "completed", by: "agent" } });
               // A persist hung off a timer sees the task as it was and writes it back after the end.
               if (script.writesLate && given !== undefined) setTimeout(() => { void given!.set("legs:call-77", JSON.stringify(muted)); }, 0);
               return { status: "applied" };
@@ -1169,8 +1228,9 @@ describe("exerciseAdapter drives one call", () => {
         openMedia: async () => ({ status: "opened", session: { remoteAudio: {} as MediaStream,
           setMuted: () => { if (script.throwsOn === "setMuted") throw new Error("no mixer"); },
           close: () => { if (script.throwsOn === "close") throw new Error("already closed"); } } }),
-        recordStep: async (report: { step: string; at: string; seconds?: number; ended?: boolean; mutedBy?: "host" | "station" }) => {
+        recordStep: async (report: { step: string; at: string; seconds?: number; ended?: boolean; mutedBy?: "host" | "station"; allocationId?: string }) => {
           if (script.throwsOn === "recordStep") throw new Error("record store down");
+          if (report.allocationId !== "alloc-77") return { status: "failed", failure: { code: "omni.task-not-found", message: `no allocation ${String(report.allocationId)}`, retryable: false } };
           if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
           if (report.step === "muted" && report.ended === true && report.seconds !== undefined && report.mutedBy !== undefined) {
             muted = { at: report.at, seconds: report.seconds, mutedBy: report.mutedBy };
@@ -1238,7 +1298,7 @@ describe("exerciseAdapter drives one call", () => {
   }, 20000);
 
   it("holds the second adapter to what the first was: the same provider, a snapshot that stands, a record that lost nothing", async () => {
-    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out") => {
+    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted") => {
       const store = memoryStore();
       const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, reloadAs };
       return (await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations.map(v => v.rule);
@@ -1248,6 +1308,12 @@ describe("exerciseAdapter drives one call", () => {
     expect(await misbehaving("miscounted")).toEqual(["snapshot.taskCount.mismatch"]);
     // The reload is a restore before it is anything else: a second adapter that does not come up signed in as this login is named first.
     expect(await misbehaving("signed-out")).toEqual(["drive.reload.login"]);
+    // The allocation is part of the task: a rebuilt adapter that mints a new one has renamed the life.
+    expect(await misbehaving("reminted")).toEqual(["drive.reload.allocation"]);
+    // A first connection that shouts about the platform re-offering the task to the new client, while the second is up, is the drive's artefact and not counted.
+    const store = memoryStore();
+    const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, reofferOnReload: true };
+    expect((await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations).toEqual([]);
   }, 20000);
 
   it("names an adapter that throws where it should answer, at every catch in the drive", async () => {
@@ -1299,6 +1365,10 @@ describe("exerciseAdapter drives one call", () => {
     const driven = await drive(driveable({ restateHistory: "with-mute" }));
     expect(driven.rulesEvaluated).toContain("stream.taskUpdated.phase");
     expect(driven.rulesEvaluated).toContain("task.handlingHistory.held.open");
+    // The drive's own rules are in it too, so a collectOnly run can say whether the drive ran at all.
+    expect(driven.rulesEvaluated).toContain("drive.timeout");
+    expect(driven.rulesEvaluated).toContain("drive.command.failed");
+    expect(result.rulesEvaluated).not.toContain("drive.timeout");
     // The observer is released with the run: nothing after it is counted.
     expect(validateTask({ ...conformingSnapshot.tasks[0]!, onCall: [{ role: "party", dialId: "dial-9", since: "2026-08-21T09:05:00Z" }] } as unknown as Task, { channel: "voice" }).map(v => v.rule)).toEqual(["task.onCall.party.dial"]);
     expect(result.rulesEvaluated).not.toContain("task.onCall.party.dial");
@@ -1465,7 +1535,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
 
   it("requests follow the login's leadAssistControl both ways", async () => {
     const members = [{ id: "A-2", availability: "on-task" as const }];
-    const request = { id: "req-7", memberId: "A-2", taskId: "call-42", since: "2026-08-21T09:04:00Z" };
+    const request = { id: "req-7", memberId: "A-2", taskId: "call-42", allocationId: "call-42-a", since: "2026-08-21T09:04:00Z" };
     const asking = { ...minimalSnapshot, team: { members, requests: [request] } } satisfies Snapshot<"voice">;
     const silent = { ...minimalSnapshot, team: { members } } satisfies Snapshot<"voice">;
     const may = { team: { leadAssistControl: true as const } };
@@ -1519,7 +1589,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     // The conforming snapshot carries call-42 in progress; its media may end. A task the stream
     // never introduced may not; the same events before any snapshot are judged alone.
     const at = "2026-08-21T09:05:00Z";
-    const ended = (taskId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${taskId}`, loginId: "session-1", occurredAt: at, event: { type: "task-media-ended", taskId } });
+    const ended = (taskId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${taskId}`, loginId: "session-1", occurredAt: at, event: { type: "task-media-ended", taskId, allocationId: taskId === "call-42" ? "alloc-42" : `${taskId}-a` } });
     // Delivered from setCapacity, which the harness calls after the snapshot; before it, the
     // stream has no beginning and the same events are judged alone.
     const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
@@ -1538,7 +1608,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     // Informational to a host, a failure here: a green conformance result must not sit over a
     // platform that is breaking the rules the adapter relies on.
     const diagnostic: ProviderEventEnvelope<"voice"> = { id: "evt-diag", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
-      event: { type: "diagnostic", expected: "a task-ended names the task the agent holds", observed: "task-ended named call-99 while call-42 was held", taskId: "call-99" } };
+      event: { type: "diagnostic", expected: "a task-ended names the task the agent holds", observed: "task-ended named call-99 while call-42 was held", taskId: "call-99", allocationId: "alloc-99" } };
     const result = await exerciseAdapter(makeAdapter({ emit: listener => listener(diagnostic) }).adapter, context, { collectOnly: true });
     expect(result.violations.map(v => v.rule)).toEqual(["diagnostic.raised"]);
     expect(result.violations[0]?.message).toContain("task-ended named call-99");
@@ -1741,7 +1811,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   it("holds work to being pulled: no offer before capacity is stated, none beyond it, the host's own dial excepted", async () => {
     const idle = { ...conformingSnapshot, tasks: [], taskCount: 0 };
     const offer = (id: string, over: Record<string, unknown> = {}): ProviderEventEnvelope<"voice"> => ({ id: `offer-${id}`, loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
-      event: { type: "task-offered", task: { ...voiceTask, id, phase: "pending", acceptance: "consent", ...over } } });
+      event: { type: "task-offered", task: { ...voiceTask, id, allocationId: `${id}-a`, phase: "pending", acceptance: "consent", ...over } } });
     expect(await rules({ snapshot: idle, emitOnCapacity: listener => listener(offer("call-77")) })).toEqual([]);
     expect(await rules({ snapshot: idle, emit: listener => listener(offer("call-77")) })).toEqual(["stream.taskOffered.beforeCapacity"]);
     expect(await rules({ snapshot: idle, emitOnCapacity: listener => { listener(offer("call-77")); listener(offer("call-78")); } })).toEqual(["stream.taskOffered.overCapacity"]);

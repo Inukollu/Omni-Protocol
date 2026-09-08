@@ -97,6 +97,7 @@ the semantic name in every contract field rather than repeating the primitive ty
 type IsoTimestamp = string;
 type UserId = string;
 type TaskId = string;
+type AllocationId = string;
 type DialId = string;
 type DurationSeconds = number;
 ```
@@ -396,7 +397,7 @@ type SetPreferenceRequest =
   | { id: PreferenceId; enabled: boolean }
   | { id: PreferenceId; inherit: true };
 
-type HandlingReport = { taskId: TaskId; at: IsoTimestamp } & (
+type HandlingReport = { taskId: TaskId; allocationId: AllocationId; at: IsoTimestamp } & (
   | { step: "muted"; mutedBy: MutedBy }
   | { step: Exclude<HandlingStep, "muted">; mutedBy?: never }
 ) & (
@@ -552,6 +553,7 @@ type PersonalBrowser = Browser;
 type BrowserSessionKeyInput = {
   providerId: string;
   taskId: TaskId;
+  allocationId: AllocationId;
   taskType: string;
   browser: TaskBrowser;
 };
@@ -643,6 +645,7 @@ type TaskAssisting = {
 type TaskMonitoring = {
   memberId: UserId;
   taskId: TaskId;
+  allocationId: AllocationId;
   mode: MonitorMode;
   since: IsoTimestamp;
 };
@@ -667,6 +670,7 @@ type CapabilitySource = "queue" | "ungoverned" | "undetermined";
 
 type Task<C extends Channel = Channel> = {
   id: TaskId;
+  allocationId: AllocationId;
   title: string;
   channel: C;
   taskType: string;
@@ -772,6 +776,7 @@ type TaskCommand<C extends Channel = Channel> =
 
 type TaskCommandRequest<C extends Channel = Channel> = {
   taskId: TaskId;
+  allocationId: AllocationId;
   command: TaskCommand<C>;
 };
 
@@ -924,6 +929,7 @@ type LeadRequest = {
   id: string;
   memberId: UserId;
   taskId: TaskId;
+  allocationId: AllocationId;
   note?: string;
   since: IsoTimestamp;
 };
@@ -1003,6 +1009,7 @@ type OpenMediaResult =
 
 type OpenMediaRequest = {
   taskId: TaskId;
+  allocationId: AllocationId;
   localAudio?: MediaStream;
 };
 ```
@@ -1033,13 +1040,13 @@ type ProviderEvent =
       allocationExpiresAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task }
-  | { type: "task-media-started"; taskId: TaskId }
-  | { type: "task-media-ended"; taskId: TaskId }
-  | { type: "task-ended"; taskId: TaskId; outcome: TaskOutcome }
-  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; destinationId?: string; reason?: string }
+  | { type: "task-media-started"; taskId: TaskId; allocationId: AllocationId }
+  | { type: "task-media-ended"; taskId: TaskId; allocationId: AllocationId }
+  | { type: "task-ended"; taskId: TaskId; allocationId: AllocationId; outcome: TaskOutcome }
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; allocationId?: AllocationId; destinationId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
-  | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId }
+  | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId; allocationId?: AllocationId }
   | { type: "team-updated"; team: TeamRoster }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
@@ -2221,7 +2228,8 @@ time. Runtime conformance checks also require the task channel to match its prov
 
 | Field | Contract |
 | --- | --- |
-| `id` | Required `TaskId`, unique within the provider. Omni scopes it with the provider ID. |
+| `id` | Required `TaskId`, the platform's own identity for the task. Unique among the tasks open at once; a platform retires an id minutes after closing it, so the same id comes back for another customer. Omni scopes it with the provider ID. |
+| `allocationId` | Required `AllocationId`: this life of the task, minted once per offer and never reused for the life of the login, whatever the id does. Every event, command and report that names a task names its allocation too, so a late dial outcome or a late handling report for the first customer never lands on the next under the same id. The stream refuses an offer reusing one (`stream.taskOffered.allocation`), an update restating another life of the id (`stream.taskUpdated.allocation`), and a media or ending event naming a life that has ended or that nobody has seen (`stream.allocation.ended`, `.unknown`); a `dial-outcome` may name an ended life, since a dial placed late routinely outlives its call, and the host routes it there. See **A task's life on the wire**. |
 | `title` | Agent-facing task title. |
 | `channel` | Channel handling this task. It must equal the source provider's manifest channel. |
 | `taskType` | Required provider-defined source or category of work, such as a voice `Queue Name`, `Mailbox Folder`, `Chat Source`, `Support`, `Billing`, or `Returns`. |
@@ -2286,6 +2294,24 @@ The canonical task transitions are:
 | `in-progress` or `paused` | Contact handling ends and follow-up work remains | `completing` |
 | `completing` | Agent connects back to the party (`connect-back`) | `in-progress` |
 | Any phase | Provider emits `task-ended` | Removed |
+
+#### A task's life on the wire
+
+A task id is the platform's, and platforms reuse them: a closed id is retired minutes later, a
+requeue takes seconds, and on one platform a call was offered twice, thirteen seconds apart, under
+one id, through a close and a re-offer. Everything that names a task after the fact -- a dial
+outcome, a media event, an ending, a handling report, a command -- would land on whichever life of
+the id is open when it arrives. So every offer mints an `allocationId`, unique for the life of the
+login, and every one of those names it beside the `taskId`. The host keys its state on the pair, a
+late event finds the life it belongs to or is refused, and a task-scoped browser session
+(`PROVIDER_NAME__TASK_ID__TAB_NAME`) lives one allocation, never the next customer's cookies under
+a reused id. A dial the host placed was already safe, since its outcome is placed by the host's own
+`dialId`; where the allocation earns its place is everything the host does not mint --
+`task-media-started`, `task-media-ended`, `task-ended`, a `recordStep` naming a task -- any of which
+would otherwise find the new task under the old id and act on it. The allocation is part of the task
+the adapter keeps, not a field held in memory beside it: a rebuilt adapter comes back with the same
+allocation on the same task, or every late event it was minted to catch mismatches
+(`drive.reload.allocation`).
 
 Allocation, acceptance, and progress are distinct. Acceptance follows `autoAcceptTasks` and the
 task's `acceptance`, moving the task from `pending` to `confirmed`. The provider reports
@@ -2603,11 +2629,12 @@ writes it into its record as it writes every other leg:
 ```ts
 declare const connection: Connection<"voice">;
 declare const taskId: TaskId;
+declare const allocationId: AllocationId;
 declare const at: IsoTimestamp;
 
-void connection.recordStep?.({ taskId, step: "muted", at, mutedBy: "host" });                          // the moment the agent mutes
-void connection.recordStep?.({ taskId, step: "muted", at, mutedBy: "host", seconds: 15 });             // still running, if the host chooses to say
-void connection.recordStep?.({ taskId, step: "muted", at, mutedBy: "host", seconds: 42, ended: true }); // the moment they unmute
+void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy: "host" });                          // the moment the agent mutes
+void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy: "host", seconds: 15 });             // still running, if the host chooses to say
+void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy: "host", seconds: 42, ended: true }); // the moment they unmute
 ```
 
 The entry is keyed by `step` and `at`, so every report about one leg names the same instant. The
@@ -2724,7 +2751,7 @@ The supported `BrowserIsolationScheme` values, declared under **Shapes**, key as
 
 | Enum member | Example session key |
 | --- | --- |
-| `PROVIDER_NAME__TASK_ID__TAB_NAME` | `mailflow.EMAIL-829102.CRM` |
+| `PROVIDER_NAME__TASK_ID__TAB_NAME` | `mailflow.EMAIL-829102%2Ea1.CRM` -- the task's allocation, so one life of the id, never the next customer's cookies |
 | `TAB_NAME` | `CRM` |
 | `PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME` | `mailflow.Support.CRM` |
 | `PROVIDER_NAME__TAB_NAME` | `mailflow.CRM` |
@@ -3085,15 +3112,16 @@ across the installation, and it travels four ways so no leg is a lookup:
 ```ts
 declare const connection: Connection<"voice">;
 declare const taskId: TaskId;
+declare const allocationId: AllocationId;
 
 // 1. Out, minted by the host.
-const result = await connection.execute({ taskId, command: { type: "conference", action: "add", dialId: "dial-7f2", destinationId: "tier2" } });
+const result = await connection.execute({ taskId, allocationId, command: { type: "conference", action: "add", dialId: "dial-7f2", destinationId: "tier2" } });
 
 // 2. Back on the result, restated, so the host compares and confirms.
 expect(result).toEqual({ status: "dialling", dialId: "dial-7f2" });
 
 // 3. On the outcome, however late, against the task it belonged to.
-const outcome: ProviderEvent<"voice"> = { type: "dial-outcome", dialId: "dial-7f2", taskId, destinationId: "tier2", outcome: "no-answer", reason: "No route to destination" };
+const outcome: ProviderEvent<"voice"> = { type: "dial-outcome", dialId: "dial-7f2", taskId, allocationId, destinationId: "tier2", outcome: "no-answer", reason: "No route to destination" };
 
 // 4. In the record, so a dial made before a transfer is placeable by whoever holds the task now.
 const step: TaskHandlingStep = { step: "unanswered", at: "2026-08-21T09:15:30Z", by: "A-12", dialId: "dial-7f2", destinationId: "tier2" };
@@ -3769,7 +3797,7 @@ executeTeamMonitor({ command: { type: "monitor", memberId: "A-1" } })
 
 // 2. The lead's own task arrives -- task-offered with `automatic`, as a joined call does -- and
 //    carries `monitoring`; the task id is the lead's, the member's call is named inside it.
-//    monitoring: { memberId: "A-1", taskId: "call-42", mode: "monitor", since }
+//    monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "monitor", since }
 
 // 3. The lead changes how they are heard; the provider restates the task with the new mode.
 executeTeamMonitor({ command: { type: "whisper" } })
@@ -3806,7 +3834,7 @@ const monitoringLead = {
   channel: "voice",
   capabilities: {},
   phase: "in-progress",
-  monitoring: { memberId: "A-1", taskId: "call-42", mode: "whisper", since: "2026-08-21T09:04:00Z" },
+  monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "whisper", since: "2026-08-21T09:04:00Z" },
 } satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "monitoring">;
 ```
 
@@ -4438,7 +4466,8 @@ when a lead who joined it leaves -- see **Lead assist**.
 A successful `complete` or `transfer` command does not clear the task. Omni waits for `task-ended`.
 The `task-media-ended` event and the `completing` phase are likewise non-terminal. A replacement
 snapshot that no longer contains the task also clears it. Repeated `task-ended` delivery with the
-same envelope ID is harmless.
+same envelope ID is harmless, and a `task-ended` naming an allocation that has already ended is
+recognised as the late event it is, never applied to the life now open under the same id.
 
 ### `dial-outcome`
 
@@ -4475,7 +4504,7 @@ fails loudly rather than passing with a note. A task published under `capability
 | --- | --- |
 | `expected` | Required. The rule that was broken, as a sentence a person can read. |
 | `observed` | Required. What the platform answered instead. |
-| `taskId` | Optional. The task concerned, where there is one. |
+| `taskId` | Optional. The task concerned, where there is one, with its `allocationId` beside it: a task is named with its life, and an allocation never alone. |
 
 ### `queue-summary`
 

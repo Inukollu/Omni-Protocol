@@ -211,6 +211,7 @@ const isDurationSeconds = (value: unknown): boolean =>
 /** Opaque, non-empty, provider-issued. Never parsed and never compared across providers. */
 const isUserId = isFilled;
 const isTaskId = isFilled;
+const isAllocationId = isFilled;
 
 const ruleListeners = new Set<(rule: string) => void>();
 
@@ -1058,6 +1059,7 @@ function validateMonitoring(value: unknown, channel: string, path: string, into:
   }
   into.require(isUserId(value.memberId), "task.monitoring.memberId", `${path}.memberId`, "a monitored call names the member on it");
   into.require(isTaskId(value.taskId), "task.monitoring.taskId", `${path}.taskId`, "a monitored call names the member's task");
+  into.require(isAllocationId(value.allocationId), "task.monitoring.allocationId", `${path}.allocationId`, "a monitored call names the member's task by its allocation too");
   into.oneOf(value.mode, MONITOR_MODES, "task.monitoring.mode", `${path}.mode`);
   into.timestamp(value.since, "task.monitoring.since", `${path}.since`);
 }
@@ -1085,6 +1087,8 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     return;
   }
   into.require(isTaskId(task.id), "task.id", `${path}.id`, "a task needs a non-empty id");
+  into.require(isAllocationId(task.allocationId), "task.allocationId", `${path}.allocationId`,
+    "a task names this life of itself: an allocation id minted once per offer, never reused for the life of the login");
   into.filled(task.title, "task.title", `${path}.title`, "a task needs a title");
   into.filled(task.taskType, "task.taskType", `${path}.taskType`, "a task needs a task type");
   if (into.oneOf(task.phase, TASK_PHASES, "task.phase", `${path}.phase`) && task.phase === "preview") {
@@ -1402,6 +1406,7 @@ function validateTeamRosterInto(roster: unknown, path: string, context: ReaderCo
             "the roster carries the reader's own ask: an agent's request for a lead goes to whoever leads them");
         }
         into.require(isTaskId(request.taskId), "team.request.taskId", `${at}.taskId`, "a request names the task the lead would join");
+        into.require(isAllocationId(request.allocationId), "team.request.allocationId", `${at}.allocationId`, "a request names the task by its allocation too");
         if (request.note !== undefined) into.filled(request.note, "team.request.note", `${at}.note`, "a note must not be empty when present");
         into.timestamp(request.since, "team.request.since", `${at}.since`);
       });
@@ -1709,12 +1714,15 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       break;
     case "task-media-started":
       into.require(isTaskId(event.taskId), "event.taskMediaStarted.taskId", `${at}.taskId`, "a task id is required");
+      into.require(isAllocationId(event.allocationId), "event.taskMediaStarted.allocationId", `${at}.allocationId`, "an event about a task names its allocation");
       break;
     case "task-media-ended":
       into.require(isTaskId(event.taskId), "event.taskMediaEnded.taskId", `${at}.taskId`, "a task id is required");
+      into.require(isAllocationId(event.allocationId), "event.taskMediaEnded.allocationId", `${at}.allocationId`, "an event about a task names its allocation");
       break;
     case "task-ended":
       into.require(isTaskId(event.taskId), "event.taskEnded.taskId", `${at}.taskId`, "a task id is required");
+      into.require(isAllocationId(event.allocationId), "event.taskEnded.allocationId", `${at}.allocationId`, "an event about a task names its allocation");
       validateTaskOutcome(event.outcome, `${at}.outcome`, into);
       break;
     case "dial-outcome": {
@@ -1726,6 +1734,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
           `the manifest does not declare ${String(event.outcome)} among its dialOutcomes`);
       }
       if (event.taskId !== undefined) into.require(isTaskId(event.taskId), "event.dialOutcome.taskId", `${at}.taskId`, "taskId must be a task id when present");
+      allocationWithTask(event, "event.dialOutcome", at, into);
       if (event.destinationId !== undefined) into.filled(event.destinationId, "event.dialOutcome.destinationId", `${at}.destinationId`, "a destinationId must not be empty when present");
       if (event.reason !== undefined) into.filled(event.reason, "event.dialOutcome.reason", `${at}.reason`, "a reason must not be empty when present");
       break;
@@ -1742,6 +1751,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       into.filled(event.expected, "event.diagnostic.expected", `${at}.expected`, "a diagnostic states the rule that was broken, as a sentence");
       into.filled(event.observed, "event.diagnostic.observed", `${at}.observed`, "a diagnostic states what was observed instead");
       if (event.taskId !== undefined) into.require(isTaskId(event.taskId), "event.diagnostic.taskId", `${at}.taskId`, "taskId must be a task id when present");
+      allocationWithTask(event, "event.diagnostic", at, into);
       break;
     case "queue-summary":
       validateQueueSummary(event.summary, `${at}.summary`, into);
@@ -1940,6 +1950,7 @@ export function validateHandlingReport(report: unknown, path = "handlingReport",
     return into.violations;
   }
   into.require(isTaskId(report.taskId), "handlingReport.taskId", `${path}.taskId`, "a report names the task");
+  into.require(isAllocationId(report.allocationId), "handlingReport.allocationId", `${path}.allocationId`, "a report names the task's allocation, so a late one never lands on the next life of the id");
   into.oneOf(report.step, HANDLING_STEPS, "handlingReport.step", `${path}.step`);
   into.timestamp(report.at, "handlingReport.at", `${path}.at`);
   // A muted leg says whose the silence was; no other leg has anyone to name for it.
@@ -1972,6 +1983,15 @@ function validateMutedBy(device: Record<string, unknown>, rule: string, path: st
   } else {
     into.require(device.mutedBy === undefined, `${rule}.mutedBy.unexpected`, `${path}.mutedBy`,
       "mutedBy says who silenced a device that is not flowing; a flowing one names nobody");
+  }
+}
+
+/** An event that may name a task names its allocation with it, and never an allocation alone. */
+function allocationWithTask(event: Record<string, unknown>, rule: string, at: string, into: Collector): void {
+  if (event.taskId !== undefined) {
+    into.require(isAllocationId(event.allocationId), `${rule}.allocationId`, `${at}.allocationId`, "an event that names a task names its allocation too");
+  } else {
+    into.require(event.allocationId === undefined, `${rule}.allocationId.unexpected`, `${at}.allocationId`, "an allocation is named with its task, never alone");
   }
 }
 
