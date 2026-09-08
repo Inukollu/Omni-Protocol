@@ -622,7 +622,7 @@ type OnCallStage = "ringing" | "joined";
 
 type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party"; dialId?: never; stage?: never }
-  | { role: "party"; dialId: DialId; stage: OnCallStage }
+  | { role: "party"; stage: OnCallStage; dialId?: DialId }
   | { role: "agent"; userId: UserId }
   | { role: "consulted" | "conferenced"; destinationId: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );
@@ -2240,7 +2240,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `handlingHistory` | The call record: `steps` — the ordered handling history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `handleSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **How a task has been handled**. |
-| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying the host's `dialId` and a `stage` on a connect-back alone, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where a host placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
+| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the host's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where a host placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `leadAssist` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Lead assist**. |
 | `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead-assist` `take-over` and `leave` issuable. See **Lead assist**. |
 | `monitoring` | Voice only, on the lead's own task while they listen to a member's call: whose call, which call, and the `mode` they are heard in, restated on every change. Never on the member's task, and never together with `assisting`. See **Monitoring a call**. |
@@ -2423,13 +2423,15 @@ whose outcome says so and a call whose media ended: the task returns to `complet
 same event and the clock starts again from there. At no point is an agent dialling against a
 deadline.
 
-**The room shows the party being dialled.** From the moment the connect-back is placed the `party`
-entry carries the host's `dialId` and `stage: "ringing"`, exactly as a consulted or conferenced entry
-does from its dial, and `joined` on the answered `dial-outcome` and never before it
-(`stream.taskUpdated.stage`); a host shows a call being placed, not a party it asserts is on a call
-that is still ringing. This is the one place the party carries a dial, and the dial and the stage
-travel together or not at all (`task.onCall.party.dial`). It is also what lets the stream tell a
-connect-back from a task going backwards (`stream.taskUpdated.phase`).
+**The room shows the party being dialled again.** From the moment the connect-back is placed the
+`party` entry carries `stage: "ringing"` and the host's `dialId`, exactly as a consulted or
+conferenced entry does from its dial, and `joined` on the answered `dial-outcome` and never before
+it (`stream.taskUpdated.stage`); a host shows a call being placed, not a party it asserts is on a
+call that is still ringing. A callback the platform places itself on the same task -- the first
+call over, the platform dialling the party again without a command -- shows the same thing with no
+host `dialId`, as any platform-placed dial does. A party with no stage is on the call, and a dial
+with no stage is half a claim (`task.onCall.party.dial`). The stage is also what lets the stream
+tell a task coming back from one going backwards (`stream.taskUpdated.phase`).
 
 **The control exists only while there is a window to use it in.** Under `agent-command` the task
 stays `completing` until the agent completes it, so the window is open for as long as they need.
@@ -2812,9 +2814,10 @@ and a task does not go backwards (`stream.taskUpdated.phase`): the stream sees p
 transitions, and a task may pass through a phase between two, so `pending` to `in-progress` stands
 with `confirmed` between them, and what is refused is a phase unreachable from the last one read by
 the transition table -- back to `pending`, back to `confirmed` or `preview` once work began, out of
-`completing` except through a connect-back, which the update itself shows: the party on the call
-carrying the host's `dialId` and a `stage`. A completing task republished as `in-progress` from a
-stale copy carries no such dial, and that is the ending the agent never saw.
+`completing` except by the party being dialled again, a connect-back or a platform's callback,
+which the update itself shows: the party on the call carrying a `stage`. A completing task
+republished as `in-progress` from a stale copy carries no such stage, and that is the ending the
+agent never saw.
 
 What the agent is told differs by source, and only one source tells them anything. Under `queue`
 and `ungoverned` the agent sees controls and nothing about where they came from: both are facts,

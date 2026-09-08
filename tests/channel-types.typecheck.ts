@@ -174,9 +174,9 @@ export const consultingEmailTask: Task<"email"> = { ...emailTask, id: "email-6",
 export const misplacedParty: OnCall = { role: "party", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
 // The party being connected back carries the host's dial and its stage, together and only together.
 export const partyRinging: OnCall = { role: "party", dialId: "dial-9", stage: "ringing", since: "2026-08-21T09:05:00Z" };
-// @ts-expect-error A party ringing with no dial is half a claim.
-export const partyRingingFromNowhere: OnCall = { role: "party", stage: "ringing", since: "2026-08-21T09:05:00Z" };
-// @ts-expect-error A dial with no stage is the other half.
+// A callback the platform places on the same task: the party ringing, no host dial.
+export const partyCalledBack: OnCall = { role: "party", stage: "ringing", since: "2026-08-21T09:05:00Z" };
+// @ts-expect-error A dial with no stage is half a claim.
 export const partyDialledStageless: OnCall = { role: "party", dialId: "dial-9", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error An agent on the call is named by user id, not by a destination.
 export const misplacedAgent: OnCall = { role: "agent", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };

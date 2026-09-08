@@ -1362,7 +1362,9 @@ describe("who is on the call", () => {
     // The party carries a dial and a stage on a connect-back alone, and together: the one person a connect-back dials.
     expect(onCall([{ ...party, dialId: "dial-9", stage: "ringing" }])).toEqual([]);
     expect(onCall([{ ...party, dialId: "dial-9", stage: "joined" }, agent])).toEqual([]);
-    expect(onCall([{ ...party, stage: "joined" }])).toEqual(["task.onCall.party.dial"]);
+    // A callback the platform places carries the stage and no host dial; a dial with no stage is half a claim.
+    expect(onCall([{ ...party, stage: "ringing" }])).toEqual([]);
+    expect(onCall([{ ...party, stage: "joined" }])).toEqual([]);
     expect(onCall([{ ...party, dialId: "dial-9" }])).toEqual(["task.onCall.party.dial"]);
     expect(onCall([{ ...party, dialId: "dial-9", stage: "ringing", held: true }])).toEqual(["task.onCall.held.ringing"]);
     expect(onCall([{ ...party, dialId: "dial-9", stage: "parked" }])).toEqual(["task.onCall.stage"]);

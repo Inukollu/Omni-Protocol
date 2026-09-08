@@ -981,10 +981,11 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
       if (entry.dialId !== undefined) into.filled(entry.dialId, "task.onCall.dialId", `${at}.dialId`, "dialId must not be empty when present");
       if (entry.label !== undefined) into.filled(entry.label, "task.onCall.label", `${at}.label`, "a label must not be empty when present");
     } else if (role === "party" && (entry.dialId !== undefined || entry.stage !== undefined)) {
-      // The party is dialled on a connect-back alone, by the host, so the dial and its stage travel
-      // together: a party ringing with no dial, or a dial with no stage, is half a claim.
-      into.require(entry.dialId !== undefined && entry.stage !== undefined, "task.onCall.party.dial", at,
-        "a party being connected back carries the host's dialId and the stage the dial has reached, together");
+      // The party is dialled again on the same task -- a connect-back the host placed, a callback the
+      // platform placed -- and then carries the stage the dial has reached; a dial with no stage is
+      // half a claim, and the host's dialId is present where a host placed it, as on any dialled entry.
+      into.require(entry.stage !== undefined, "task.onCall.party.dial", at,
+        "a party being dialled again carries the stage the dial has reached; the host's dialId beside it where a host placed the dial");
       if (entry.dialId !== undefined) into.filled(entry.dialId, "task.onCall.dialId", `${at}.dialId`, "dialId must not be empty when present");
       if (entry.stage !== undefined && into.oneOf(entry.stage, ON_CALL_STAGES, "task.onCall.stage", `${at}.stage`)) {
         into.require(!(entry.stage === "ringing" && entry.held === true), "task.onCall.held.ringing", `${at}.held`,

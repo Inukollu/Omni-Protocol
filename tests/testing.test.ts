@@ -333,6 +333,9 @@ describe("TaskStream holds a task to the table: it does not go backwards", () =>
     // The party being dialled back, ringing with the host's dial, is what brings a completing task to in-progress.
     const dialled = [{ role: "party" as const, dialId: "dial-9", stage: "ringing" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
     expect(rulesOf(seeded("completing").apply(update("in-progress", { onCall: dialled })))).toEqual([]);
+    // A callback the platform places on the same task shows the same thing without a host dial.
+    const callingBack = [{ role: "party" as const, stage: "ringing" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
+    expect(rulesOf(seeded("completing").apply(update("in-progress", { onCall: callingBack })))).toEqual([]);
     // The control: the same move with nobody being dialled is a stale republish, the ending the agent never saw.
     expect(rulesOf(seeded("completing").apply(update("in-progress")))).toEqual(["stream.taskUpdated.phase"]);
     // And the party joins only on an answered outcome for that dial, as consulted and conferenced do.
@@ -1256,7 +1259,7 @@ describe("exerciseAdapter drives one call", () => {
     expect(driven.rulesEvaluated).toContain("stream.taskUpdated.phase");
     expect(driven.rulesEvaluated).toContain("task.handlingHistory.held.open");
     // The observer is released with the run: nothing after it is counted.
-    expect(validateTask({ ...conformingSnapshot.tasks[0]!, onCall: [{ role: "party", stage: "joined", since: "2026-08-21T09:05:00Z" }] } as unknown as Task, { channel: "voice" }).map(v => v.rule)).toEqual(["task.onCall.party.dial"]);
+    expect(validateTask({ ...conformingSnapshot.tasks[0]!, onCall: [{ role: "party", dialId: "dial-9", since: "2026-08-21T09:05:00Z" }] } as unknown as Task, { channel: "voice" }).map(v => v.rule)).toEqual(["task.onCall.party.dial"]);
     expect(result.rulesEvaluated).not.toContain("task.onCall.party.dial");
   });
 

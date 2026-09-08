@@ -835,10 +835,10 @@ export class TaskStream {
     }
   }
 
-  /** Whether the update shows the party being dialled: a connect-back, the one thing that brings a completing task back. */
+  /** Whether the update shows the party being dialled again -- a connect-back, a platform's callback -- the one thing that brings a completing task back. */
   private static partyDialled(task: unknown): boolean {
     return isRecord(task) && Array.isArray(task.onCall)
-      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && typeof entry.dialId === "string");
+      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && typeof entry.stage === "string");
   }
 
   /** The entries of a task's record, each by step and instant, or undefined where the task carries no record. */
@@ -943,7 +943,7 @@ export class TaskStream {
             const connectingBack = from === "completing" && TaskStream.partyDialled(event.task) && (to === "in-progress" || to === "paused");
             if (!connectingBack) {
               refuse("stream.taskUpdated.phase", `${at}.task.phase`,
-                `${id} was ${from} and the update says ${to}: a task does not go backwards, and ${from === "completing" ? "only a connect-back, with the party's dial on the call, brings a completing task back" : `${to} is not reachable from ${from}`}`);
+                `${id} was ${from} and the update says ${to}: a task does not go backwards, and ${from === "completing" ? "only the party being dialled again, a connect-back or a callback, with its stage on the call, brings a completing task back" : `${to} is not reachable from ${from}`}`);
             }
           }
         }
