@@ -808,6 +808,8 @@ interface AdapterOverrides {
   onConnect?: (connectContext: ConnectContext) => void;
   /** Publishes once the host has stated capacity, which is when a provider may allocate: where a fixture's offers belong. */
   emitOnCapacity?: (listener: (envelope: ProviderEventEnvelope<"voice">) => void) => void;
+  /** Told when the host unsubscribes, so a fixture stops speaking to a client that is gone. */
+  onUnsubscribe?: () => void;
   /** Publishes authentication states to the harness once it subscribes to the session. */
   emitAuthentication?: (listener: (state: AuthenticationState) => void) => void;
   /** Methods to replace, or to remove by passing `undefined`. */
@@ -861,7 +863,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         subscribe: listener => {
           subscribed = listener;
           overrides.emit?.(listener);
-          return unsubscribe;
+          return () => { overrides.onUnsubscribe?.(); unsubscribe(); };
         },
         setCapacity: async ({ count }) => { if (count > 0 && subscribed !== undefined && !emittedOnCapacity) { emittedOnCapacity = true; overrides.emitOnCapacity?.(subscribed); } return { status: "applied" }; },
         refused: () => undefined,
@@ -1115,13 +1117,15 @@ describe("exerciseAdapter drives one call", () => {
   type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
   interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute";
     /** A platform shared between instances of the adapter, as a host reload shares it: which task is open, and the first client's listener. */
-    platform?: { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void };
+    platform?: { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean };
     /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
     legsIn?: "memory" | "store";
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
     reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted";
     /** The platform pushes the open task to every client of the login: the first connection sees a re-offer and says so. */
     reofferOnReload?: boolean;
+    /** The reloaded client itself raises a diagnostic once it stands: a live client's shout, counted. */
+    shoutsAfterReload?: boolean;
     /** An adapter that ends the task and leaves its key in the store, for the next offer of the id to inherit. */
     leavesKeys?: boolean;
     /** An adapter whose persist runs off a timer and writes about the task after its end was published. */
@@ -1133,12 +1137,15 @@ describe("exerciseAdapter drives one call", () => {
     /** Where the adapter throws instead of answering, so each catch in the drive is seen to name it. */
     throwsOn?: "execute" | "recordStep" | "setMuted" | "close" | "rebuild" }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
+  let drvSeq = 0;
   const driveable = (script: Script = {}) => {
     let listener: Listener | undefined;
-    let n = 0;
-    const id = () => `drv-${n += 1}`;
+    // The allocation this instance publishes and answers to: a reloaded instance that reminted one is at least consistent with itself.
+    const myAllocation = script.reloadAs === "reminted" && script.platform?.open === true ? "alloc-77.2" : "alloc-77";
+    // Envelope ids are unique within the login, across every client of it: a reloaded adapter carries on, never restarts.
+    const id = () => `drv-${drvSeq += 1}`;
     const base: Record<string, unknown> = {
-      ...conformingSnapshot.tasks[0]!, id: "call-77", allocationId: "alloc-77", capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), dispositions: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
+      ...conformingSnapshot.tasks[0]!, id: "call-77", allocationId: myAllocation, capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), dispositions: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
       browsers: [], handlingHistory: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
     };
     let phase = "pending";
@@ -1156,11 +1163,15 @@ describe("exerciseAdapter drives one call", () => {
     const reloaded = async () => {
       if (script.platform?.open !== true) return { ...conformingSnapshot, tasks: [], taskCount: 0 };
       if (script.reofferOnReload) script.platform!.firstListener?.({ id: `diag-${Date.now()}`, loginId: "session-1", occurredAt: at,
-        event: { type: "diagnostic", expected: "a task-offered introduces a task once", observed: "call-77 was offered again while the agent held it", taskId: "call-77", allocationId: "alloc-77" } });
+        event: { type: "diagnostic", expected: "a task-offered introduces a task once", observed: "call-77 was offered again while the agent held it", taskId: "call-77", allocationId: myAllocation } });
+      if (script.shoutsAfterReload) listener?.({ id: `diag-live-${Date.now()}`, loginId: "session-1", occurredAt: at,
+        event: { type: "diagnostic", expected: "a state read answers with the agent's tasks", observed: "the read answered late" } });
+      offeredOnce = true;
       const kept = script.legsIn === "store" && given !== undefined ? await given.get("legs:call-77") : undefined;
-      const legs = kept === undefined ? (muted === undefined ? [] : [legEntry(muted)]) : [legEntry(JSON.parse(kept) as { at: string; seconds: number; mutedBy: "host" | "station" })];
+      if (kept !== undefined) muted = JSON.parse(kept) as { at: string; seconds: number; mutedBy: "host" | "station" };
+      const legs = muted === undefined ? [] : [legEntry(muted)];
       const steps = [...(script.reloadAs === "without-answered" ? [] : [{ step: "answered" as const, at }]), ...legs];
-      return { ...conformingSnapshot, tasks: [t({ phase: "in-progress", media: "started", onCall: room, handlingHistory: { steps }, ...(script.reloadAs === "reminted" ? { allocationId: "alloc-77.2" } : {}) })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
+      return { ...conformingSnapshot, tasks: [t({ phase: "in-progress", media: "started", onCall: room, handlingHistory: { steps }, allocationId: myAllocation })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
     };
     // A provider that restates its record does so on every publication once work has begun, never only at the end.
     const t = (over: Record<string, unknown>) => {
@@ -1176,7 +1187,10 @@ describe("exerciseAdapter drives one call", () => {
       snapshot: { ...conformingSnapshot, tasks: [], taskCount: 0 },
       ...(script.reloadAs === "another-provider" && script.platform?.open === true ? { manifest: { ...conformingManifest, id: "acme-voice-2" } } : {}),
       ...(script.reloadAs === "signed-out" && script.platform?.open === true ? { authenticated: false } : {}),
-      emit: l => { listener = l; if (script.platform !== undefined && script.platform.firstListener === undefined) script.platform.firstListener = l; },
+      // The platform remembers its first client alone: a later client is not the first, even once the first is gone.
+      emit: l => { listener = l; if (script.platform !== undefined && script.platform.firstTaken !== true) { script.platform.firstTaken = true; script.platform.firstListener = l; } },
+      // A client that is gone hears nothing: the platform's push to it goes nowhere, as on a reload.
+      onUnsubscribe: () => { listener = undefined; if (script.platform !== undefined) script.platform.firstListener = undefined; },
       onConnect: connectContext => { given = connectContext.store; },
       connection: {
         ...(script.platform === undefined ? {} : { snapshot: reloaded }),
@@ -1190,7 +1204,7 @@ describe("exerciseAdapter drives one call", () => {
           return { status: "applied" };
         },
         execute: async ({ command, allocationId }: { command: { type: string }; allocationId?: string }) => {
-          if (allocationId !== "alloc-77") return { status: "failed", failure: { code: "omni.task-not-found", message: `no allocation ${String(allocationId)}`, retryable: false } };
+          if (allocationId !== myAllocation) return { status: "failed", failure: { code: "omni.task-not-found", message: `no allocation ${String(allocationId)}`, retryable: false } };
           if (script.throwsOn === "execute" && command.type === "hold") throw new Error("hub unreachable");
           switch (command.type) {
             case "answer":
@@ -1200,7 +1214,7 @@ describe("exerciseAdapter drives one call", () => {
               // A provider that acknowledges before it starts says so: confirmed first, then work begins.
               if (script.confirmFirst) { emit({ type: "task-updated", task: t({ phase: "confirmed" }) }); return { status: "applied" }; }
               emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
-              if (!script.skipMediaStart) emit({ type: "task-media-started", taskId: "call-77", allocationId: "alloc-77" });
+              if (!script.skipMediaStart) emit({ type: "task-media-started", taskId: "call-77", allocationId: myAllocation });
               return { status: "applied" };
             case "hold":
               if (script.refuseHold) return { status: "failed", failure: { code: "provider.busy", message: "No hold today", retryable: false } };
@@ -1212,7 +1226,7 @@ describe("exerciseAdapter drives one call", () => {
                 // Work begins once the probe has been answered: the drive is still in confirmed when it sends.
                 const answer = script.holdBeforeStart ? { status: "applied" as const } : { status: "failed" as const, failure: { code: "provider.not-started", message: "Nothing to hold yet", retryable: false } };
                 emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
-                emit({ type: "task-media-started", taskId: "call-77", allocationId: "alloc-77" });
+                emit({ type: "task-media-started", taskId: "call-77", allocationId: myAllocation });
                 return answer;
               }
               held = { at: "2026-08-21T09:01:00Z" };
@@ -1221,7 +1235,7 @@ describe("exerciseAdapter drives one call", () => {
               if (held !== undefined && !script.leavesHoldOpen) held = { ...held, seconds: 5 };
               emit({ type: "task-updated", task: t({ phase: "in-progress", media: "started", onCall: room }) }); return { status: "applied" };
             case "end-call":
-              emit({ type: "task-media-ended", taskId: "call-77", allocationId: "alloc-77" });
+              emit({ type: "task-media-ended", taskId: "call-77", allocationId: myAllocation });
               // t() restates the record after it has taken the phase, so what the record says of a leg follows the phase it is published under.
               emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
               return { status: "applied" };
@@ -1229,7 +1243,7 @@ describe("exerciseAdapter drives one call", () => {
               if (script.platform !== undefined) script.platform.open = false;
               // A task's keys go with the task, before its end is published.
               if (script.legsIn === "store" && given !== undefined && !script.leavesKeys) await given.delete("legs:call-77");
-              emit({ type: "task-ended", taskId: "call-77", allocationId: "alloc-77", outcome: { type: "completed", by: "agent" } });
+              emit({ type: "task-ended", taskId: "call-77", allocationId: myAllocation, outcome: { type: "completed", by: "agent" } });
               // A persist hung off a timer sees the task as it was and writes it back after the end.
               if (script.writesLate && given !== undefined) setTimeout(() => { void given!.set("legs:call-77", JSON.stringify(muted)); }, 0);
               return { status: "applied" };
@@ -1241,7 +1255,7 @@ describe("exerciseAdapter drives one call", () => {
           close: () => { if (script.throwsOn === "close") throw new Error("already closed"); } } }),
         recordStep: async (report: { step: string; at: string; seconds?: number; ended?: boolean; mutedBy?: "host" | "station"; allocationId?: string }) => {
           if (script.throwsOn === "recordStep") throw new Error("record store down");
-          if (report.allocationId !== "alloc-77") return { status: "failed", failure: { code: "omni.task-not-found", message: `no allocation ${String(report.allocationId)}`, retryable: false } };
+          if (report.allocationId !== myAllocation) return { status: "failed", failure: { code: "omni.task-not-found", message: `no allocation ${String(report.allocationId)}`, retryable: false } };
           if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
           if (report.step === "muted" && report.ended === true && report.seconds !== undefined && report.mutedBy !== undefined) {
             muted = { at: report.at, seconds: report.seconds, mutedBy: report.mutedBy };
@@ -1300,9 +1314,11 @@ describe("exerciseAdapter drives one call", () => {
       return (await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations.map(v => v.rule);
     };
     expect(await run("store")).toEqual([]);
-    expect(await run("memory")).toEqual(["drive.reload.history"]);
+    // Composed in memory, the leg is gone on the reload and gone again when the reloaded client restates the record at the end.
+    expect(await run("memory")).toEqual(["drive.reload.history", "drive.recordStep.history"]);
     // A second instance that does not carry the open task at all is named for that first.
-    expect(await run("store", false)).toEqual(["drive.reload.snapshot"]);
+    // Without a platform behind it a second instance carries nothing, and is named for that first; what its fresh state does afterwards is the fixture's, not the rule's.
+    expect(await run("store", false)).toContain("drive.reload.snapshot");
     // The control: the same adapters without a rebuild pass either way, which is what the rebuild exists to end.
     const store = memoryStore();
     expect((await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "memory", platform: { open: false } }), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
@@ -1321,10 +1337,13 @@ describe("exerciseAdapter drives one call", () => {
     expect(await misbehaving("signed-out")).toEqual(["drive.reload.login"]);
     // The allocation is part of the task: a rebuilt adapter that mints a new one has renamed the life.
     expect(await misbehaving("reminted")).toEqual(["drive.reload.allocation"]);
-    // A first connection that shouts about the platform re-offering the task to the new client, while the second is up, is the drive's artefact and not counted.
+    // A reload is the first client dying: the platform's push to it goes nowhere, so a re-offer it would have shouted about never reaches a client. Nothing is exempted; there is nobody to hear it.
     const store = memoryStore();
-    const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, reofferOnReload: true };
+    const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } as { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean }, reofferOnReload: true };
     expect((await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations).toEqual([]);
+    // The control: a shout from the client that stands, the reloaded one, is a diagnostic and counted.
+    const loud = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, shoutsAfterReload: true };
+    expect((await exerciseAdapter(driveable(loud), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(loud) })).violations.map(v => v.rule)).toEqual(["diagnostic.raised"]);
   }, 20000);
 
   it("names an adapter that throws where it should answer, at every catch in the drive", async () => {
