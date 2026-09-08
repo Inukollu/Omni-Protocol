@@ -238,6 +238,7 @@ export async function exerciseAdapter<C extends Channel>(
   const stream = new TaskStream();
   const breaks = new BreakStream();
   let seeded = false;
+  const duringRead: ProviderEventEnvelope<C>[] = [];
 
   const storedSecrets = new Map<string, string>();
   const authenticationSecrets: SecretStore = {
@@ -438,8 +439,10 @@ export async function exerciseAdapter<C extends Channel>(
         }
         eventPayloads.set(envelope.id, payload);
       }
-      // Cross-event rules apply once the stream has a beginning: the connect snapshot.
+      // Cross-event rules apply once the stream has a beginning: the connect snapshot. An event
+      // delivered while that snapshot is read is held until it lands, and read then against it.
       if (seeded) violations.push(...stream.apply(envelope), ...breaks.apply(envelope));
+      else duringRead.push(envelope);
       events.push(envelope);
       for (const waiter of waiters) waiter(envelope);
     };
@@ -478,6 +481,31 @@ export async function exerciseAdapter<C extends Channel>(
     stream.seed(snapshot);
     breaks.seed(snapshot);
     seeded = true;
+    // A snapshot supersedes what it restates and nothing else. Of the events held during the read,
+    // a state-replacing kind is dropped, since the snapshot carries that state and must account for
+    // it; the rest -- a dial's outcome, a diagnostic, an announcement, a queue summary -- report
+    // transactions no snapshot carries, and are applied after it, in order.
+    ruleEvaluated("snapshot.accounts.task", "snapshot.accounts.ended");
+    const carried = new Set<string>();
+    for (const task of Array.isArray(snapshot?.tasks) ? snapshot.tasks : []) {
+      if (isRecord(task) && typeof task.allocationId === "string") carried.add(task.allocationId);
+    }
+    for (const held of duringRead) {
+      const event = held.event as Record<string, unknown>;
+      if (!SUPERSEDED_BY_A_SNAPSHOT.has(String(event.type))) {
+        violations.push(...stream.apply(held), ...breaks.apply(held));
+        continue;
+      }
+      if ((event.type === "task-offered" || event.type === "task-updated") && isRecord(event.task) && typeof event.task.allocationId === "string" && !carried.has(event.task.allocationId)) {
+        violations.push({ rule: "snapshot.accounts.task", path: "snapshot.tasks",
+          message: `${String(event.task.id)} (${event.task.allocationId}) was published while the snapshot was read and the snapshot does not carry it: a snapshot accounts for everything the adapter emitted before it resolved` });
+      }
+      if (event.type === "task-ended" && typeof event.allocationId === "string" && carried.has(event.allocationId)) {
+        violations.push({ rule: "snapshot.accounts.ended", path: "snapshot.tasks",
+          message: `${String(event.taskId)} (${event.allocationId}) ended while the snapshot was read and the snapshot still carries it: a snapshot accounts for everything the adapter emitted before it resolved` });
+      }
+    }
+    duringRead.length = 0;
     requireCapabilityMethods(live, current().capabilities);
     if (publishesUserIds(snapshot)) {
       requireMethod(live, "describeUsers", "the snapshot publishes a UserId");
@@ -950,6 +978,15 @@ const REACHABLE_PHASES: Record<string, Set<string>> = {
   paused: new Set(["paused", "in-progress", "completing"]),
   completing: new Set(["completing"]),
 };
+
+/**
+ * The event kinds a snapshot restates, and so supersedes when delivered while it is read. Every
+ * other kind reports a transaction no snapshot carries, and a host applies it after the snapshot.
+ */
+export const SUPERSEDED_BY_A_SNAPSHOT: ReadonlySet<string> = new Set([
+  "snapshot", "transport-status", "break-state", "task-offered", "task-updated", "task-ended",
+  "task-media-started", "task-media-ended", "team-updated", "contacts-updated", "calendar-updated",
+]);
 
 export class TaskStream {
   private readonly tasks = new Map<string, { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string }>();

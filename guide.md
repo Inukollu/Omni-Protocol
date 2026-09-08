@@ -2064,9 +2064,15 @@ report that: `granted` is a promise to honour a later commit.
 
 Returns the provider's complete authoritative state at one point in time.
 
-- Omni registers `subscribe()` before awaiting the initial snapshot and discards anything delivered
-  while the snapshot is read, because the snapshot accounts for it. Events after it are applied in
-  order.
+- Omni registers `subscribe()` before awaiting the initial snapshot. An event delivered while the
+  snapshot is read is held until it lands, and what happens to it then depends on what it is. A
+  snapshot restates state, so an event of a state-replacing kind -- `task-offered`, `task-updated`,
+  `task-ended`, `task-media-started`, `task-media-ended`, `break-state`, `team-updated`,
+  `contacts-updated`, `calendar-updated`, `transport-status`, `snapshot` -- is dropped, because the
+  snapshot accounts for it. An event that reports a transaction no snapshot carries --
+  `dial-outcome`, `diagnostic`, `announcement`, `queue-summary` -- is applied after the snapshot,
+  in order: a dial's outcome delivered during a resync still ends the dial, and **Every dial has an
+  outcome** holds through a snapshot. Events after it are applied in order.
 - `tasks` must contain every task currently owned by this agent for this provider.
 - A snapshot replaces Omni's state for this provider; it is not a partial patch.
 - The adapter may return synchronously when it already holds current live values, or
@@ -4347,9 +4353,13 @@ a backend that does not know the session yet — yields no snapshot, and the ada
 `connecting` holding what it holds. See **Snapshots establish state; events report transactions**.
 
 A snapshot must account for **everything the adapter has emitted before it resolves**, not merely
-everything emitted when it was requested. Omni discards events buffered during the read on that
-promise; an adapter that serves a stale snapshot and then lets an earlier event through will have
-Omni apply state the snapshot already superseded.
+everything emitted when it was requested. Omni drops the state-replacing events held during the
+read on that promise, and applies the rest after it (see **`Connection.snapshot()`**); an adapter
+that serves a stale snapshot and then lets an earlier event through will have Omni apply state the
+snapshot already superseded. The harness reads its connect snapshot the same way, and holds the
+snapshot to accounting for every task event it superseded: a task published during the read and
+missing from the snapshot, or ended during the read and still carried, is named
+(`snapshot.accounts.task`, `snapshot.accounts.ended`).
 
 #### Liveness
 
