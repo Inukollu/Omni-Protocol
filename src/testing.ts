@@ -29,6 +29,8 @@ import {
   validateEventEnvelope,
   validateHostGuarantees,
   validateHostReport,
+  observeRules,
+  ruleEvaluated,
   validateHostMute,
   validateLoginStore,
   validateHandlingReport,
@@ -177,6 +179,12 @@ export interface AdapterContractResult {
   notExercised: readonly ContractSubject[];
   /** Every violation observed. Non-empty only when `collectOnly` suppressed the throw. */
   violations: readonly ProtocolViolation[];
+  /**
+   * Every rule the run evaluated, pass or fail: the validators' as each was applied, the stream's
+   * and the drive's as each case was considered. A rule absent here was never looked at, which a
+   * clean `violations` says nothing about; a test that needs a rule to have run asserts it here.
+   */
+  rulesEvaluated: ReadonlySet<string>;
 }
 
 export interface ExerciseAdapterOptions {
@@ -219,6 +227,8 @@ export async function exerciseAdapter<C extends Channel>(
   context: ConnectContext,
   options: ExerciseAdapterOptions = {},
 ): Promise<AdapterContractResult> {
+  const rulesEvaluated = new Set<string>();
+  const stopObserving = observeRules(rule => { rulesEvaluated.add(rule); });
   const violations: ProtocolViolation[] = [...validateManifest(adapter.manifest)];
   const events: ProviderEventEnvelope<C>[] = [];
   const seen = new Set<ContractSubject>();
@@ -461,6 +471,7 @@ export async function exerciseAdapter<C extends Channel>(
   }
   if (!options.collectOnly) assertNoViolations(violations);
 
+  stopObserving();
   return {
     events: events as ProviderEventEnvelope[],
     authenticationState: authenticationState as AuthenticationState,
@@ -468,6 +479,7 @@ export async function exerciseAdapter<C extends Channel>(
     notExercised: CONTRACT_SUBJECTS.filter(subject => !seen.has(subject)),
     disconnectWasClean,
     violations,
+    rulesEvaluated,
   };
 }
 
@@ -789,6 +801,17 @@ export function assertDeniedAndRetriedBreak(approvals: readonly BreakApproval[])
 const WORK_BEGUN = new Set(["in-progress", "paused", "completing"]);
 
 /** What a stream has said about the tasks it carries, and the rules across events. */
+const TASK_PHASES_ORDERED = ["pending", "confirmed", "preview", "in-progress", "paused", "completing"] as const;
+/** Where a task may be next, by the guide's transition table, closed over the phases between two publications. */
+const REACHABLE_PHASES: Record<string, Set<string>> = {
+  pending: new Set(["pending", "confirmed", "preview", "in-progress", "paused", "completing"]),
+  confirmed: new Set(["confirmed", "preview", "in-progress", "paused", "completing"]),
+  preview: new Set(["preview", "in-progress", "paused", "completing"]),
+  "in-progress": new Set(["in-progress", "paused", "completing"]),
+  paused: new Set(["paused", "in-progress", "completing"]),
+  completing: new Set(["completing"]),
+};
+
 export class TaskStream {
   private readonly tasks = new Map<string, { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined }>();
   // Every dial the stream can place an outcome against: one the host said it placed, or one a
@@ -810,6 +833,12 @@ export class TaskStream {
     for (const entry of entries) {
       if (isRecord(entry) && typeof entry.dialId === "string") this.dialled(entry.dialId);
     }
+  }
+
+  /** Whether the update shows the party being dialled: a connect-back, the one thing that brings a completing task back. */
+  private static partyDialled(task: unknown): boolean {
+    return isRecord(task) && Array.isArray(task.onCall)
+      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && typeof entry.dialId === "string");
   }
 
   /** The entries of a task's record, each by step and instant, or undefined where the task carries no record. */
@@ -859,6 +888,7 @@ export class TaskStream {
     const known = id === undefined ? undefined : this.tasks.get(id);
     switch (event.type) {
       case "snapshot":
+        ruleEvaluated("stream.snapshot.capabilitySource", "stream.snapshot.handlingHistory");
         // A snapshot replaces what is known, and still may not say a task lost terms it had read.
         if (isRecord(event.snapshot) && Array.isArray(event.snapshot.tasks)) {
           event.snapshot.tasks.forEach((task, index) => {
@@ -879,6 +909,7 @@ export class TaskStream {
         this.seed(event.snapshot);
         break;
       case "task-offered":
+        ruleEvaluated("stream.taskOffered.duplicate");
         if (id === undefined) break;
         if (known !== undefined) refuse("stream.taskOffered.duplicate", `${at}.task.id`, `${id} is already on the stream; an offer introduces a task once`);
         this.tasks.set(id, TaskStream.stated(event.task));
@@ -886,6 +917,8 @@ export class TaskStream {
         break;
       case "task-updated":
         if (id === undefined) break;
+        ruleEvaluated("stream.taskUpdated.unknown", "stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase",
+          "stream.taskUpdated.handlingHistory", "stream.taskMediaEnded.follow", "stream.taskUpdated.media", "stream.taskUpdated.stage");
         if (known === undefined) {
           refuse("stream.taskUpdated.unknown", `${at}.task.id`, `${id} was never offered or carried on a snapshot`);
           break;
@@ -896,6 +929,23 @@ export class TaskStream {
         if ((known.source === "queue" || known.source === "ungoverned") && isRecord(event.task) && event.task.capabilitySource === "undetermined") {
           refuse("stream.taskUpdated.capabilitySource", `${at}.task.capabilitySource`,
             `${id} was published under ${known.source} terms and now says undetermined: terms once read stay read, and a re-read that fails is a diagnostic, not a republish`);
+        }
+        // A task does not go backwards. The stream sees publications, not transitions, and a task may
+        // pass through a phase between two, so what is refused is a phase unreachable from the last
+        // one read by the guide's table: back to pending, back to confirmed once work began, out of
+        // completing except through a connect-back -- which the update itself shows, the party
+        // carrying the host's dial.
+        {
+          const from = known.phase;
+          const to = isRecord(event.task) ? String(event.task.phase) : "";
+          const reachable = REACHABLE_PHASES[from];
+          if (reachable !== undefined && (TASK_PHASES_ORDERED as readonly string[]).includes(to) && !reachable.has(to)) {
+            const connectingBack = from === "completing" && TaskStream.partyDialled(event.task) && (to === "in-progress" || to === "paused");
+            if (!connectingBack) {
+              refuse("stream.taskUpdated.phase", `${at}.task.phase`,
+                `${id} was ${from} and the update says ${to}: a task does not go backwards, and ${from === "completing" ? "only a connect-back, with the party's dial on the call, brings a completing task back" : `${to} is not reachable from ${from}`}`);
+            }
+          }
         }
         // A record once read is not unread: an update restates it whole, or with more, never with less.
         {
@@ -935,6 +985,7 @@ export class TaskStream {
         this.noteDials(event.task);
         break;
       case "task-media-started":
+        ruleEvaluated("stream.taskMediaStarted.unknown", "stream.taskMediaStarted.beforeWork", "stream.taskMediaStarted.duplicate");
         if (id === undefined) break;
         if (known === undefined) {
           refuse("stream.taskMediaStarted.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
@@ -950,6 +1001,7 @@ export class TaskStream {
         known.media = "started";
         break;
       case "task-media-ended":
+        ruleEvaluated("stream.taskMediaEnded.unknown", "stream.taskMediaEnded.beforeWork", "stream.taskMediaEnded.silent");
         if (id === undefined) break;
         if (known === undefined) {
           refuse("stream.taskMediaEnded.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
