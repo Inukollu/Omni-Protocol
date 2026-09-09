@@ -1454,6 +1454,26 @@ connection is up nothing has been lost, and when it comes back the adapter sends
 
 Request/response polling does not have those properties and is not a transport for this contract.
 
+### 3. An adapter's memory is the platform's and the login's, never the connection's
+
+Everything an adapter publishes about a task is derived from what the platform states, or kept in
+the login's store where the platform cannot hold it. Per offer, the `allocationId` comes from what
+the offer itself states; per call, the media follows `task-media-started` and `task-media-ended`,
+never a flag set when the audio was opened; per session, the phone the agent holds is what the
+platform restates on activation, not a mapping read once over HTTP. What the platform cannot hold
+-- a host's muted leg -- goes in `ConnectContext.store`, keyed by the task and gone with it.
+
+A fact read once over a connection and kept in the adapter object dies with the client. A host
+reload is the first client dying and a second coming up for the same login, and the second
+publishes the same truth about the same task as the first did, or the first was publishing
+something it made up: an allocation minted for the connection, media remembered as a boolean, a
+phone the second never read. Three pieces of exactly that state were found in one adapter in an
+afternoon, and none of it was visible until the adapter was built twice. The drive's `rebuild` is the test of this
+principle: given a way to build the adapter again, the run hands the login over and holds the
+second to what the first published (`drive.reload.allocation`, `.history`, `.openMedia`, and the
+stream's own rules across the resync). An adapter that cannot be built twice against its platform
+and publish the same task is not a conformant adapter yet, whatever a single run says.
+
 ## Package entry points
 
 | Import | Purpose |
