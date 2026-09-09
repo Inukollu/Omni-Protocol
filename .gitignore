@@ -2,3 +2,6 @@ node_modules/
 dist/
 .DS_Store
 .chrome-local-profile/
+
+.worktrees/
+.agent-memory/runtime/

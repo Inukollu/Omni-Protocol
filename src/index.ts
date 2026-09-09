@@ -3,7 +3,7 @@
 // Where this file and guide.md disagree, the guide is right and this is a defect.
 
 /** The protocol version implemented by this package. */
-export const OMNI_PROTOCOL_VERSION = 1 as const;
+export const OMNI_PROTOCOL_VERSION = 2 as const;
 
 /** Every version this package can interoperate with. */
 export const OMNI_SUPPORTED_PROTOCOL_VERSIONS: readonly number[] = [OMNI_PROTOCOL_VERSION];
@@ -441,7 +441,67 @@ export type HostAudioOutput =
 /** What Omni's own chrome shows of a task browser's URL: nothing, the domain, or all of it. */
 export type UrlVisibility = "full" | "domain" | "hidden";
 
+/** Independent recorder owners. A command never targets both. */
+export type RecordingSource = "provider" | "host";
+export type RecordingAction = "start" | "pause" | "resume" | "stop" | "cancel";
+export const RECORDING_ACTIONS = ["start", "pause", "resume", "stop", "cancel"] as const satisfies readonly RecordingAction[];
+/** Cancel's captured-audio disposition is explicit; stop always retains captured audio. */
+export type RecordingCancelEffect = "retain" | "discard";
+export interface RecordingActions {
+  start?: true;
+  pause?: true;
+  resume?: true;
+  stop?: true;
+  cancel?: { effect: RecordingCancelEffect };
+}
+/** Per-task permission, not a provider-wide recording switch. Absence grants nothing. */
+export interface TaskRecordingPolicy {
+  provider?: RecordingActions;
+  host?: RecordingActions & { destinationId: string };
+}
+/** Current evidence only. Expiry/disconnect means unknown, never a historical stop. */
+export type RecordingState =
+  | { status: "unknown"; observationId?: never; observedAt?: never; validUntil?: never; recordingId?: never }
+  | ({ observationId: string; observedAt: IsoTimestamp; validUntil: IsoTimestamp } & (
+      | { status: "inactive"; recordingId?: never }
+      | { status: "active" | "paused"; recordingId: string }
+    ));
+/** Opaque IDs are scoped by login, task and recorder owner; preserved across pause/resume. */
+export type RecordingCommand = {
+  type: "recording";
+  source: RecordingSource;
+  requestId: string;
+  /** Compare-and-set against current evidence; never act on a replacement recording. */
+  observationId: string;
+} & (
+  | { action: "start"; recordingId?: never; cancelEffect?: never }
+  | { action: "pause" | "resume" | "stop"; recordingId: string; cancelEffect?: never }
+  | { action: "cancel"; recordingId: string; cancelEffect: RecordingCancelEffect }
+);
+export interface HostRecordingReport {
+  taskId: TaskId;
+  allocationId: AllocationId;
+  state: RecordingState;
+}
+/** Host declaration in ConnectContext, not the provider-owned Manifest. */
+export interface HostRecording {
+  actions: RecordingAction[];
+  cancelEffects: RecordingCancelEffect[];
+  /** Explicitly provisioned destinations. A task chooses one; no upload/storage fallback. */
+  destinationIds: string[];
+  execute(request: HostRecordingRequest): Promise<RecordingCommandResult>;
+}
+/** Recording applies or fails; it never dials. Rejection without result means unknown. */
+export type RecordingCommandResult = Exclude<TaskCommandResult, { status: "dialling" }>;
+export interface HostRecordingRequest {
+  taskId: TaskId;
+  allocationId: AllocationId;
+  command: RecordingCommand & { source: "host" };
+}
+
 export interface HostReport {
+  /** Full current host-owned recording view; never provider-owned state. */
+  recordings?: HostRecordingReport[];
   /** Whether the host has a network interface up. Not a claim that anything is reachable: the adapter knows its own platform's reachability better than the host does. */
   online: boolean;
   audio?: {
@@ -465,6 +525,8 @@ export interface HostGuarantees {
 }
 
 export interface Host {
+  /** Voice softphone recording support; policy and destination remain per task. */
+  recording?: HostRecording;
   guarantees: HostGuarantees;
   /** What pressing Mute does on this host. Stated on a softphone login, where the host holds the microphone; absent on a desk phone and off voice. */
   mute?: HostMute;
@@ -503,7 +565,7 @@ export type ConnectContext = {
    * where a live seat would otherwise be the first to find it.
    */
   | { phone: "softphone"; host: { mute: HostMute } }
-  | { phone?: "deskPhone"; host: { mute?: never } }
+  | { phone?: "deskPhone"; host: { mute?: never; recording?: never } }
 );
 
 export type TransportStatus = "connecting" | "active" | "error";
@@ -609,7 +671,7 @@ export type TaskCapabilities<C extends Channel = Channel> =
         /** Ask a lead to join this call, with a note. The lead's decision arrives on `Task.leadAssist`. */
         leadAssist?: Lockable<true>;
         conference?: Lockable<DestinationDirectory>;
-        recording?: Lockable<true>;
+        recording?: Lockable<TaskRecordingPolicy>;
       }
     : C extends "chat"
       ? SharedTaskCapabilities & { decline?: Lockable<true>; hold?: Lockable<true> }
@@ -935,8 +997,8 @@ export type Task<C extends Channel = Channel> = {
 } & TaskCompletion
   // Who is on the call, a lead on it or listening to it, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
   & (C extends "voice"
-    ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
-    : { onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never });
+    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
+    : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never });
 
 /**
  * What the provider wants of Omni's acceptance policy for one offer. On routed work, present only
@@ -1019,7 +1081,7 @@ export type VoiceTaskCommand =
    */
   | { type: "conference"; action: "remove"; destinationId: string; party?: never }
   | { type: "conference"; action: "remove"; party: true; destinationId?: never }
-  | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
+  | (RecordingCommand & { source: "provider" })
   | ({ type: "complete" } & DispositionPayload);
 
 export type ChatTaskCommand =

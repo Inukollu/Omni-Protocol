@@ -74,7 +74,7 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
 describe("assertCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
-    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], disposalSettleMs: 150,
+    supportedProtocolVersions: [2], authenticationMethods: ["credentials"], disposalSettleMs: 150,
   } satisfies Manifest<"voice">;
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, team: { breakControl: true } } } satisfies AuthenticationState;
@@ -139,36 +139,36 @@ describe("assertCapabilityWithdrawal", () => {
 describe("assertTaskCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
-    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], disposalSettleMs: 150,
+    supportedProtocolVersions: [2], authenticationMethods: ["credentials"], disposalSettleMs: 150,
   } satisfies Manifest<"voice">;
-  const withHold = { ...voiceTask, capabilities: { hold: true, recording: true } } satisfies Task<"voice">;
-  const withoutHold = { ...voiceTask, capabilities: { recording: true } } satisfies Task<"voice">;
+  const withHold = { ...voiceTask, capabilities: { hold: true, endCall: true } } satisfies Task<"voice">;
+  const withoutHold = { ...voiceTask, capabilities: { endCall: true } } satisfies Task<"voice">;
   const hold = { type: "hold" };
 
   it("accepts a control withdrawn by a republish, refusing the command it governed and nothing else", () => {
     expect(() => assertTaskCapabilityWithdrawal([withHold, withoutHold], manifest, hold)).not.toThrow();
     // The control: the same sequence, and a command under a capability that stayed, is not refused.
-    expect(() => assertTaskCapabilityWithdrawal([withHold, withoutHold], manifest, { type: "recording", action: "start" })).toThrow(/for want of hold; it was accepted/);
+    expect(() => assertTaskCapabilityWithdrawal([withHold, withoutHold], manifest, { type: "end-call" })).toThrow(/for want of hold; it was accepted/);
   });
 
   it("rejects a sequence that withdraws nothing, and does not count a lock as a withdrawal", () => {
     expect(() => assertTaskCapabilityWithdrawal([withHold, withHold], manifest, hold)).toThrow(/withdrawn/);
-    const locked = { ...voiceTask, capabilities: { hold: { lockedBy: "team" }, recording: true } } satisfies Task<"voice">;
+    const locked = { ...voiceTask, capabilities: { hold: { lockedBy: "team" }, endCall: true } } satisfies Task<"voice">;
     expect(() => assertTaskCapabilityWithdrawal([withHold, locked], manifest, hold)).toThrow(/locked control is present/);
   });
 
   it("requires the command to have been issuable before the withdrawal", () => {
-    const neverHeld = { ...voiceTask, capabilities: { recording: true } } satisfies Task<"voice">;
-    expect(() => assertTaskCapabilityWithdrawal([{ ...neverHeld, capabilities: { recording: true, endCall: true } }, neverHeld], manifest, hold)).toThrow(/issuable against the task as offered/);
+    const neverHeld = { ...voiceTask, capabilities: { endCall: true } } satisfies Task<"voice">;
+    expect(() => assertTaskCapabilityWithdrawal([{ ...neverHeld, capabilities: { endCall: true, decline: true } }, neverHeld], manifest, hold)).toThrow(/issuable against the task as offered/);
   });
 
   it("refuses a republish that changes more than the withdrawal", () => {
     const dials = { ...manifest, dialOutcomes: ["answered", "no-answer"] } satisfies Manifest<"voice">;
-    const wrappingUp = { ...voiceTask, phase: "completing", capabilities: { connectBack: true, recording: true } } satisfies Task<"voice">;
-    const backOnTheCall = { ...voiceTask, phase: "in-progress", capabilities: { recording: true } } satisfies Task<"voice">;
+    const wrappingUp = { ...voiceTask, phase: "completing", capabilities: { connectBack: true, endCall: true } } satisfies Task<"voice">;
+    const backOnTheCall = { ...voiceTask, phase: "in-progress", capabilities: { endCall: true } } satisfies Task<"voice">;
     const connectBack = { type: "connect-back", dialId: "dial-1" };
     expect(() => assertTaskCapabilityWithdrawal([wrappingUp, backOnTheCall], dials, connectBack)).toThrow(/more than the withdrawal/);
-    expect(() => assertTaskCapabilityWithdrawal([wrappingUp, { ...wrappingUp, capabilities: { recording: true } }], dials, connectBack)).not.toThrow();
+    expect(() => assertTaskCapabilityWithdrawal([wrappingUp, { ...wrappingUp, capabilities: { endCall: true } }], dials, connectBack)).not.toThrow();
   });
 
   it("keeps the task, and validates every task on the way", () => {

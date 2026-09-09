@@ -98,7 +98,7 @@ const manifest = (over: Record<string, unknown> = {}) => ({
   id: "acme-voice",
   displayName: "Acme Voice",
   channel: "voice",
-  supportedProtocolVersions: [1],
+  supportedProtocolVersions: [2],
   authenticationMethods: ["credentials"],
   disposalSettleMs: 5000,
   // A voice manifest says which phones it supports; any other channel says nothing.
@@ -1793,7 +1793,7 @@ describe("consulting a lead", () => {
 });
 
 describe("validateTaskCommand", () => {
-  const voice = task({ capabilities: { hold: true, endCall: true, recording: true, conference: { destinations: [{ id: "tier2", label: "Tier 2" }] }, warmTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } } });
+  const voice = task({ capabilities: { hold: true, endCall: true, recording: { provider: { start: true } }, conference: { destinations: [{ id: "tier2", label: "Tier 2" }] }, warmTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } } });
   const since = "2026-08-21T09:05:00Z";
   const cmd = (command: unknown, on: unknown = voice) => rules(validateTaskCommand(command, on));
 
@@ -1820,7 +1820,7 @@ describe("validateTaskCommand", () => {
     expect(rules(validateTaskCommand({ type: "conference", action: "remove", destinationId: "tier2" }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "conference", action: "remove" }))).toEqual(["command.conference.remove.target"]);
     expect(rules(validateTaskCommand({ type: "conference", action: "remove", party: true, destinationId: "tier2" }))).toEqual(["command.conference.remove.target"]);
-    expect(rules(validateTaskCommand({ type: "recording", action: "rewind" }))).toEqual(["command.recording.action"]);
+    expect(rules(validateTaskCommand({ type: "recording", source: "provider", requestId: "q", observationId: "o", recordingId: "r", action: "rewind" }))).toEqual(["recording.command.action"]);
     expect(rules(validateTaskCommand({ type: "lead-assist", action: "join" }))).toEqual(["command.leadAssist.action"]);
     expect(rules(validateTaskCommand({ type: "complete", disposition: "" }))).toEqual(["command.complete.disposition"]);
   });
@@ -1908,7 +1908,6 @@ describe("validateTaskCommand", () => {
       [{ type: "hold" }, {}],
       [{ type: "resume" }, {}],
       [{ type: "end-call" }, {}],
-      [{ type: "recording", action: "start" }, {}],
       [{ type: "transfer", action: "warm", dialId: "dial-2", destinationId: "tier2" }, {}],
       [{ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" }, { capabilities: { coldTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } } }],
       [{ type: "transfer", action: "complete" }, consulting],
@@ -2204,8 +2203,8 @@ describe("protocol-version interoperability", () => {
     expect(rules(validateManifest(manifest({ supportedProtocolVersions: [99] })))).toContain("manifest.supportedProtocolVersions.interoperable");
     // ...and the controls: declaring this version among others is fine, and a list with a bad
     // entry beside a good one is reported for the entry, not for interoperability.
-    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [99, 1] })))).toEqual([]);
-    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [1, 1.5] })))).toEqual(["manifest.supportedProtocolVersions.value"]);
+    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [99, 2] })))).toEqual([]);
+    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [2, 1.5] })))).toEqual(["manifest.supportedProtocolVersions.value"]);
   });
 });
 
