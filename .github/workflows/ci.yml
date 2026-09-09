@@ -50,13 +50,13 @@ jobs:
         env:
           EXPECTED_NODE_MAJOR: ${{ matrix.node }}
         run: |
-          pnpm exec node -e '
+          pnpm exec node <<'JS'
             const actual = process.versions.node;
             if (actual.split(".")[0] !== process.env.EXPECTED_NODE_MAJOR) {
               throw new Error(`Expected Node ${process.env.EXPECTED_NODE_MAJOR}, got ${actual}`);
             }
             console.log(`Testing with Node ${actual}`);
-          '
+          JS
 
       - name: Validate source, tests, guide, and package
         run: pnpm check
