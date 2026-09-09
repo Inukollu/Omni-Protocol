@@ -280,6 +280,16 @@ describe("assertMediaFollowsTheTask", () => {
   const ended: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-ended", taskId: voiceTask.id, allocationId: voiceTask.allocationId, outcome: { type: "completed", by: "agent" } } };
   const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
 
+  it("rejects media events on non-voice tasks without changing their state", () => {
+    for (const channel of ["chat", "email"] as const) {
+      const work: Task = { ...voiceTask, channel, capabilities: {}, browsers: [], phase: "in-progress" };
+      const initial: Snapshot = { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [work], taskCount: 1 };
+      expect(rulesOf(() => assertMediaFollowsTheTask([mediaReady(), mediaEnded, ended], initial))).toEqual([
+        "stream.taskMedia.channel", "stream.taskMedia.channel",
+      ]);
+    }
+  });
+
   it("accepts a call offered, started, made ready, whose media ends, completing, then ending", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), ended]))).toEqual([]);
     // A snapshot may carry the task in with its media ready; connecting back puts media back and it ends again.
@@ -1464,6 +1474,24 @@ describe("exerciseAdapter drives one call", () => {
     return adapter;
   };
   const drive = async (adapter: Adapter<"voice">) => exerciseAdapter(adapter, context, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+
+  it("refuses malformed media sessions before invoking their controls", async () => {
+    const setMuted = vi.fn();
+    const close = vi.fn();
+    for (const session of [null, { setMuted, close }]) {
+      const adapter = driveable();
+      const connect = adapter.connect.bind(adapter);
+      adapter.connect = async given => {
+        const connection = await connect(given);
+        connection.openMedia = async () => ({ status: "opened", session } as unknown as Awaited<ReturnType<NonNullable<Connection<"voice">["openMedia"]>>>);
+        return connection;
+      };
+      const result = await drive(adapter);
+      expect(result.violations.map(violation => violation.rule)).toEqual([session === null ? "result.session" : "result.session.remoteAudio"]);
+    }
+    expect(setMuted).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+  });
 
   it("takes the first offer through answer, media, hold, resume, end-call and complete, reaching what a static run never does", async () => {
     const result = await drive(driveable());

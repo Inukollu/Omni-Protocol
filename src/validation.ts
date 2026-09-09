@@ -23,6 +23,7 @@ import {
   negotiateProtocolVersion,
   type AcceptanceMode,
   type AuthenticationMethod,
+  type AuthenticationChallenge,
   type AuthenticationState,
   type BreakApproval,
   type BrowserAccess,
@@ -111,6 +112,7 @@ const ACCEPTANCE_MODES = membersOf<AcceptanceMode>({
 });
 const TRANSPORT_STATUSES = membersOf<TransportStatus>({ connecting: true, active: true, error: true });
 const AUTHENTICATION_METHODS = membersOf<AuthenticationMethod>({ "browser-sso": true, credentials: true });
+const AUTHENTICATION_BROWSERS = membersOf<Extract<AuthenticationChallenge, { method: "browser-sso" }>["browser"]>({ system: true, omni: true });
 const AUTHENTICATION_STATUSES = membersOf<AuthenticationState["status"]>({
   "signed-out": true, authenticating: true, authenticated: true, refreshing: true, expired: true,
 });
@@ -193,6 +195,14 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
 
 const isFilled = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 
+/** Error text must not invoke conversion methods supplied by an untrusted object or array. */
+function describeValue(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "object") return Array.isArray(value) ? "an array" : "an object";
+  if (typeof value === "function") return "a function";
+  return String(value);
+}
+
 /**
  * An RFC-3339 timestamp carrying a zone.
  *
@@ -200,10 +210,20 @@ const isFilled = (value: unknown): value is string => typeof value === "string" 
  * happens to be in, so two hosts would read the same wire value as two different instants. The
  * contract calls those invalid, and this is where that is enforced rather than assumed.
  */
-const isIsoTimestamp = (value: unknown): boolean =>
-  typeof value === "string"
-  && /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/.test(value)
-  && !Number.isNaN(Date.parse(value));
+const isIsoTimestamp = (value: unknown): boolean => {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/.exec(value);
+  if (match === null) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  // RFC 3339 sections 5.6–5.7: days depend on the month/year and hours are 00–23.
+  // Date.parse alone normalizes February 30 and 24:00 into different instants.
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return daysInMonth !== undefined && day >= 1 && day <= daysInMonth
+    && Number(match[4]) < 24 && !Number.isNaN(Date.parse(value));
+};
 
 /** A non-negative integer count of seconds. */
 const isDurationSeconds = (value: unknown): boolean =>
@@ -256,7 +276,7 @@ class Collector {
 
   oneOf(value: unknown, allowed: readonly string[], rule: string, path: string): boolean {
     return this.require(typeof value === "string" && allowed.includes(value), rule, path,
-      `must be one of ${allowed.join(", ")}; received ${String(value)}`);
+      `must be one of ${allowed.join(", ")}; received ${describeValue(value)}`);
   }
 }
 
@@ -408,14 +428,14 @@ function validateDialOutcomes(manifest: Record<string, unknown>, path: string, i
     return;
   }
   if (!into.require(manifest.channel === "voice", "manifest.dialOutcomes.channel", path,
-    `a ${String(manifest.channel)} provider dials nothing and declares no dial outcomes`)) return;
+    `a ${describeValue(manifest.channel)} provider dials nothing and declares no dial outcomes`)) return;
   if (!Array.isArray(declared) || declared.length === 0) {
     into.add("manifest.dialOutcomes.shape", path, "dialOutcomes is a non-empty array of the outcomes the platform distinguishes");
     return;
   }
   declared.forEach((outcome: unknown, index: number) => {
     if (into.oneOf(outcome, DIAL_OUTCOMES, "manifest.dialOutcome", `${path}[${index}]`) && declared.indexOf(outcome) !== index) {
-      into.add("manifest.dialOutcome.unique", `${path}[${index}]`, `duplicate dial outcome: ${String(outcome)}`);
+      into.add("manifest.dialOutcome.unique", `${path}[${index}]`, `duplicate dial outcome: ${describeValue(outcome)}`);
     }
   });
   into.require(declared.includes("answered"), "manifest.dialOutcomes.answered", path,
@@ -438,7 +458,7 @@ function validateDialOutcomes(manifest: Record<string, unknown>, path: string, i
 function validatePhones(manifest: Record<string, unknown>, path: string, into: Collector): void {
   const declared = manifest.phones;
   if (manifest.channel !== "voice") {
-    into.require(declared === undefined, "manifest.phones.channel", path, `a ${String(manifest.channel)} provider has no call to hear and declares no phones`);
+    into.require(declared === undefined, "manifest.phones.channel", path, `a ${describeValue(manifest.channel)} provider has no call to hear and declares no phones`);
     return;
   }
   if (!Array.isArray(declared) || declared.length === 0) {
@@ -447,7 +467,7 @@ function validatePhones(manifest: Record<string, unknown>, path: string, into: C
   }
   declared.forEach((phone: unknown, index: number) => {
     if (into.oneOf(phone, PHONES, "manifest.phone", `${path}[${index}]`) && declared.indexOf(phone) !== index) {
-      into.add("manifest.phone.unique", `${path}[${index}]`, `duplicate phone: ${String(phone)}`);
+      into.add("manifest.phone.unique", `${path}[${index}]`, `duplicate phone: ${describeValue(phone)}`);
     }
   });
 }
@@ -461,13 +481,13 @@ export function validatePhone(value: unknown, manifest: unknown, path = "context
   const channel = isPlainObject(manifest) ? manifest.channel : undefined;
   const phones = isPlainObject(manifest) && Array.isArray(manifest.phones) ? manifest.phones : [];
   if (channel !== "voice") {
-    into.require(value === undefined, "context.phone.unexpected", path, `a ${String(channel)} login has no call to hear and chooses no phone`);
+    into.require(value === undefined, "context.phone.unexpected", path, `a ${describeValue(channel)} login has no call to hear and chooses no phone`);
     return into.violations;
   }
   if (!into.require(value !== undefined, "context.phone.required", path, "a voice login says how the agent hears the call: one of the manifest's phones")) return into.violations;
   if (into.oneOf(value, PHONES, "context.phone", path)) {
     into.require(phones.includes(value), "context.phone.unsupported", path,
-      `the host chose ${String(value)} and the manifest lists ${phones.length === 0 ? "no phones" : phones.join(", ")}`);
+      `the host chose ${describeValue(value)} and the manifest lists ${phones.length === 0 ? "no phones" : phones.map(describeValue).join(", ")}`);
   }
   return into.violations;
 }
@@ -514,7 +534,7 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
       if (into.oneOf(method, AUTHENTICATION_METHODS, "manifest.authenticationMethod",
         `${path}.authenticationMethods[${index}]`) && methods.indexOf(method) !== index) {
         into.add("manifest.authenticationMethod.unique", `${path}.authenticationMethods[${index}]`,
-          `duplicate authentication method: ${String(method)}`);
+          `duplicate authentication method: ${describeValue(method)}`);
       }
     });
   }
@@ -698,6 +718,8 @@ function validateCustomCapabilities(value: unknown, path: string, into: Collecto
           into.filled(field.name, "task.custom.prompt.field.name", `${where}.name`, "a prompt field needs a name");
           into.filled(field.label, "task.custom.prompt.field.label", `${where}.label`, "a prompt field needs a label");
           into.oneOf(field.type, CREDENTIAL_FIELD_TYPES, "task.custom.prompt.field.type", `${where}.type`);
+          if (field.required !== undefined) into.require(typeof field.required === "boolean", "task.custom.prompt.field.required", `${where}.required`, "required must be a boolean when present");
+          if (field.autocomplete !== undefined) into.require(typeof field.autocomplete === "string", "task.custom.prompt.field.autocomplete", `${where}.autocomplete`, "autocomplete must be a string when present");
         });
       }
     }
@@ -761,7 +783,7 @@ function validateLockedByInto(value: unknown, rule: string, path: string, levels
   if (!into.filled(value, rule, path, "lockedBy names the level that locked it")) return;
   into.require(value !== "person", `${rule}.person`, path, "a person never locks their own value");
   into.require(levelIds(levels).includes(value as string), `${rule}.unknown`, path,
-    `${String(value)} is not a level this manifest declares: in force are ${levelIds(levels).join(", ")}`);
+    `${describeValue(value)} is not a level this manifest declares: in force are ${levelIds(levels).join(", ")}`);
 }
 
 /** `{ lockedBy, reason? }` standing in for a value: who locked it, and a reason if given. */
@@ -774,7 +796,7 @@ function validateLockedInto(value: Record<string, unknown>, rule: string, path: 
 function validateResolvedInto(value: Record<string, unknown>, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
   if (into.filled(value.setBy, `${rule}.setBy`, `${path}.setBy`, "setBy names who stated the value: a level, or provider")) {
     into.require(value.setBy === "provider" || levelIds(levels).includes(value.setBy as string), `${rule}.setBy.unknown`, `${path}.setBy`,
-      `${String(value.setBy)} is neither provider nor a level this manifest declares`);
+      `${describeValue(value.setBy)} is neither provider nor a level this manifest declares`);
   }
   if (value.lockedBy !== undefined) validateLockedByInto(value.lockedBy, `${rule}.lockedBy`, `${path}.lockedBy`, levels, into);
   if (value.reason !== undefined) {
@@ -882,7 +904,7 @@ function validateTaskAttributes(value: unknown, path: string, into: Collector, l
         into.timestamp(attribute.at, "task.attribute.timestamp", `${at}.at`);
         break;
       default:
-        into.add("task.attribute.type", `${at}.type`, `unsupported attribute type: ${String(attribute.type)}`);
+        into.add("task.attribute.type", `${at}.type`, `unsupported attribute type: ${describeValue(attribute.type)}`);
     }
   });
 }
@@ -937,7 +959,7 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector, 
       // nobody closed, which reads exactly like a leg running now.
       if (entry.step === "held") {
         into.require(task.phase === "paused", "task.handlingHistory.held.open", `${at}.seconds`,
-          `a held entry without seconds is a hold still running, and the task is ${String(task.phase)}: the hold has ended, and its duration is stated`);
+          `a held entry without seconds is a hold still running, and the task is ${describeValue(task.phase)}: the hold has ended, and its duration is stated`);
       }
       if (entry.step === "muted") {
         into.require(task.media !== "ended" && task.phase !== "completing", "task.handlingHistory.muted.open", `${at}.seconds`,
@@ -968,7 +990,7 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector, 
       if (entry[field] === undefined) continue;
       if (into.filled(entry[field], `task.handlingHistory.${field}`, `${at}.${field}`, `${field} must not be empty when present`)) {
         into.require(dialled, `task.handlingHistory.${field}.unexpected`, `${at}.${field}`,
-          `${String(entry.step)} dialled nothing; ${field} belongs on transferred, conferenced, or unanswered`);
+          `${describeValue(entry.step)} dialled nothing; ${field} belongs on transferred, conferenced, or unanswered`);
       }
     }
   });
@@ -994,7 +1016,7 @@ function validateTaskMedia(task: Record<string, unknown>, value: unknown, channe
     // The one task not yet at work that has audio is one whose party the host is dialling: ring-back
     // is audio, and every host-placed dial's media starts on dialling.
     into.require(!(WORK_NOT_BEGUN as readonly unknown[]).includes(phase) || partyRingingByHost(task), "task.media.beforeWork", path,
-      `a ${String(phase)} task has no media: audio arrives once its work has begun, or once the host is dialling its party`);
+      `a ${describeValue(phase)} task has no media: audio arrives once its work has begun, or once the host is dialling its party`);
   }
 }
 const WORK_NOT_BEGUN = ["pending", "confirmed", "preview"] as const;
@@ -1218,7 +1240,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   // The channel is fixed per provider by its manifest, so a task claiming another one is a
   // task Omni would render with the wrong controls.
   into.require(task.channel === context.channel, "task.channel", `${path}.channel`,
-    `a ${context.channel} provider may not publish a ${String(task.channel)} task`);
+    `a ${context.channel} provider may not publish a ${describeValue(task.channel)} task`);
 
   if (task.reference !== undefined) {
     into.filled(task.reference, "task.reference", `${path}.reference`, "a reference must not be empty when present");
@@ -1373,7 +1395,7 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     // An imposed break is a break in progress or about to be: it travels with in-effect or
     // starting-after-task and nothing else. Beside granted, the host would commit a break nobody asked for.
     into.require(value.approval === "in-effect" || value.approval === "starting-after-task", "break.imposed.approval", `${path}.imposed`,
-      `an imposed break is in effect or starting after the task; ${String(value.approval)} says the agent asked, or that there is none`);
+      `an imposed break is in effect or starting after the task; ${describeValue(value.approval)} says the agent asked, or that there is none`);
   }
 
   if (value.reasons === undefined) return;
@@ -1414,7 +1436,7 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   ruleEvaluated("break.activeReasonId.required");
   if (seen.size > 0 && (value.approval === "in-effect" || value.approval === "starting-after-task")) {
     into.require(typeof value.activeReasonId === "string" && value.activeReasonId.length > 0, "break.activeReasonId.required", `${path}.activeReasonId`,
-      `a break ${String(value.approval)} on a provider that publishes reasons names the one it is on`);
+      `a break ${describeValue(value.approval)} on a provider that publishes reasons names the one it is on`);
   }
 }
 
@@ -1553,11 +1575,11 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   const channel = isPlainObject(manifest) && typeof manifest.channel === "string" ? manifest.channel : "voice";
   const levels = context.levels ?? manifestLevels(manifest);
 
-  into.oneOf(snapshot.transport, TRANSPORT_STATUSES, "snapshot.transport", `${path}.status`);
+  into.oneOf(snapshot.transport, TRANSPORT_STATUSES, "snapshot.transport", `${path}.transport`);
   if (into.filled(snapshot.loginId, "snapshot.loginId", `${path}.loginId`, "a snapshot needs the login id it belongs to")
     && context.loginId !== undefined) {
     into.require(snapshot.loginId === context.loginId, "snapshot.loginId.mismatch", `${path}.loginId`,
-      `a snapshot for session ${String(snapshot.loginId)} on a login whose session is ${context.loginId}`);
+      `a snapshot for session ${describeValue(snapshot.loginId)} on a login whose session is ${context.loginId}`);
   }
 
   validateBreakState(snapshot.break, `${path}.break`, into);
@@ -1627,7 +1649,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       const active = reasons.find((reason: unknown) => isPlainObject(reason) && reason.id === state.activeReasonId);
       const kind = isPlainObject(active) ? active.kind : undefined;
       into.require(typeof kind === "string" && (MONITORING_BREAK_KINDS as readonly string[]).includes(kind), "snapshot.monitoring.break", `${path}.tasks`,
-        `a lead listens during a ${MONITORING_BREAK_KINDS.join(", ")} break and no other; the active reason is ${kind === undefined ? "unstated" : String(kind)}`);
+        `a lead listens during a ${MONITORING_BREAK_KINDS.join(", ")} break and no other; the active reason is ${kind === undefined ? "unstated" : describeValue(kind)}`);
     }
   }
 
@@ -1730,7 +1752,7 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
       }
       break;
     default:
-      into.add("event.taskEnded.outcome.type", `${path}.type`, `unsupported outcome: ${String(value.type)}`);
+      into.add("event.taskEnded.outcome.type", `${path}.type`, `unsupported outcome: ${describeValue(value.type)}`);
   }
 }
 
@@ -1782,7 +1804,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
   if (into.filled(envelope.loginId, "event.loginId", `${path}.loginId`, "an event needs the login id it belongs to")
     && context.loginId !== undefined) {
     into.require(envelope.loginId === context.loginId, "event.loginId.mismatch", `${path}.loginId`,
-      `an event for session ${String(envelope.loginId)} on a login whose session is ${context.loginId}`);
+      `an event for session ${describeValue(envelope.loginId)} on a login whose session is ${context.loginId}`);
   }
   const idle = isPlainObject(manifest) && isPlainObject(manifest.idleCapabilities) ? manifest.idleCapabilities : {};
   into.timestamp(envelope.occurredAt, "event.occurredAt", `${path}.occurredAt`);
@@ -1831,10 +1853,12 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${at}.task`, into);
       break;
     case "task-media-started":
+      into.require(channel === "voice", "event.media.channel", `${at}.type`, "only a voice provider publishes media transitions");
       into.require(isTaskId(event.taskId), "event.taskMediaStarted.taskId", `${at}.taskId`, "a task id is required");
       into.require(isAllocationId(event.allocationId), "event.taskMediaStarted.allocationId", `${at}.allocationId`, "an event about a task names its allocation");
       break;
     case "task-media-ended":
+      into.require(channel === "voice", "event.media.channel", `${at}.type`, "only a voice provider publishes media transitions");
       into.require(isTaskId(event.taskId), "event.taskMediaEnded.taskId", `${at}.taskId`, "a task id is required");
       into.require(isAllocationId(event.allocationId), "event.taskMediaEnded.allocationId", `${at}.allocationId`, "an event about a task names its allocation");
       break;
@@ -1849,7 +1873,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       const declared = isPlainObject(manifest) && Array.isArray(manifest.dialOutcomes) ? manifest.dialOutcomes : undefined;
       if (into.oneOf(event.outcome, DIAL_OUTCOMES, "event.dialOutcome.outcome", `${at}.outcome`)) {
         into.require(declared !== undefined && declared.includes(event.outcome), "event.dialOutcome.undeclared", `${at}.outcome`,
-          `the manifest does not declare ${String(event.outcome)} among its dialOutcomes`);
+          `the manifest does not declare ${describeValue(event.outcome)} among its dialOutcomes`);
       }
       if (event.taskId !== undefined) into.require(isTaskId(event.taskId), "event.dialOutcome.taskId", `${at}.taskId`, "taskId must be a task id when present");
       allocationWithTask(event, "event.dialOutcome", at, into);
@@ -1904,7 +1928,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       }
       break;
     default:
-      into.add("event.type", `${at}.type`, `unsupported event type: ${String(event.type)}`);
+      into.add("event.type", `${at}.type`, `unsupported event type: ${describeValue(event.type)}`);
   }
   return into.violations;
 }
@@ -2159,7 +2183,7 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
     into.require(input.mutedBy === undefined, "host.audio.input.mutedBy.unexpected", `${at}.mutedBy`,
       "an unavailable input was not silenced; it is absent");
   } else {
-    into.add("host.audio.input.status", `${at}.status`, `an input is available or unavailable, not ${String(input.status)}`);
+    into.add("host.audio.input.status", `${at}.status`, `an input is available or unavailable, not ${describeValue(input.status)}`);
   }
   const output = report.audio.output;
   const out = `${path}.audio.output`;
@@ -2182,7 +2206,7 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
     into.require(output.mutedBy === undefined, "host.audio.output.mutedBy.unexpected", `${out}.mutedBy`,
       "an unavailable output was not silenced; it is absent");
   } else {
-    into.add("host.audio.output.status", `${out}.status`, `an output is available or unavailable, not ${String(output.status)}`);
+    into.add("host.audio.output.status", `${out}.status`, `an output is available or unavailable, not ${describeValue(output.status)}`);
   }
   return into.violations;
 }
@@ -2216,26 +2240,9 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     : [...new Set([...TASK_COMMAND_NAMES.voice, ...TASK_COMMAND_NAMES.chat, ...TASK_COMMAND_NAMES.email])];
   if (type === "custom") {
     into.filled(command.name, "command.custom.name", `${path}.name`, "a custom command names the control it presses");
-    if (task === undefined) return into.violations;
-    // Held to the task: the control it presses is one the task published, and what the control asked for travels with it.
-    const custom = isPlainObject(task) && isPlainObject(task.capabilities) ? task.capabilities.custom : undefined;
-    const control = Array.isArray(custom) ? custom.filter(isPlainObject).find(entry => entry.id === command.name) : undefined;
-    if (control === undefined) {
-      into.add("command.capability.custom", path, `custom ${String(command.name)} presses a control the task never published`);
-      return into.violations;
-    }
-    if (isPlainObject(control.prompt) && Array.isArray(control.prompt.fields)) {
-      for (const field of control.prompt.fields.filter(isPlainObject)) {
-        if (typeof field.name === "string") {
-          into.require(typeof command[field.name] === "string" && (command[field.name] as string).length > 0, "command.custom.prompt", `${path}.${field.name}`,
-            `the control asked for ${field.name} and the command does not carry it`);
-        }
-      }
-    }
-    return into.violations;
   }
-  if (!into.require(typeof type === "string" && names.includes(type), "command.type", `${path}.type`,
-    channel === undefined ? `unsupported command: ${String(type)}` : `a ${channel} task has no ${String(type)} command`)) {
+  if (type !== "custom" && !into.require(typeof type === "string" && names.includes(type), "command.type", `${path}.type`,
+    channel === undefined ? `unsupported command: ${describeValue(type)}` : `a ${channel} task has no ${describeValue(type)} command`)) {
     return into.violations;
   }
   const dial = (rule: string) => into.filled(command.dialId, rule, `${path}.dialId`, "a command that dials carries the host's dialId");
@@ -2253,7 +2260,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
           into.filled(command.destinationId, "command.transfer.destinationId", `${path}.destinationId`, "a transfer names the directory item it goes to");
         } else {
           into.require(command.dialId === undefined && command.destinationId === undefined, "command.transfer.unexpected", path,
-            `${String(command.action)} names no destination: there is exactly one it could mean`);
+            `${describeValue(command.action)} names no destination: there is exactly one it could mean`);
         }
       }
       break;
@@ -2284,16 +2291,38 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     default:
       break;
   }
-  if (!isPlainObject(task)) return into.violations;
+  if (task === undefined) return into.violations;
   // The task the command is held to has to be one the wire published. A host's own mapping of it,
   // handed in for want of the original, is not, and checking a command against it would be
   // checking against a task nobody has -- so the task is validated first, and a command is held
   // only to a task that stands.
   const published = new Collector();
   validateTaskInto(task, { channel: channel ?? "voice" }, `${path}.task`, published);
-  if (published.violations.length > 0) {
+  if (published.violations.length > 0 || !isPlainObject(task)) {
     into.add("command.task", `${path}.task`,
       `the task the command is held to is not one the wire published (${published.violations.map(v => v.rule).join(", ")}): pass the task as the provider sent it, or validate the command's shape alone`);
+    return into.violations;
+  }
+
+  if (type === "custom") {
+    // Held to the task: the control it presses is one the task published, and what the control asked for travels with it.
+    const custom = isPlainObject(task) && isPlainObject(task.capabilities) ? task.capabilities.custom : undefined;
+    const control = Array.isArray(custom) ? custom.filter(isPlainObject).find(entry => entry.id === command.name) : undefined;
+    if (control === undefined) {
+      into.add("command.capability.custom", path, `custom ${describeValue(command.name)} presses a control the task never published`);
+      return into.violations;
+    }
+    if (isPlainObject(control.ui) && control.ui.control === "toggle") {
+      into.require(typeof command.on === "boolean", "command.custom.on", `${path}.on`, "a custom toggle carries the state it wants as a boolean");
+    }
+    if (isPlainObject(control.prompt) && Array.isArray(control.prompt.fields)) {
+      for (const field of control.prompt.fields.filter(isPlainObject)) {
+        if (typeof field.name === "string" && (field.required === true || command[field.name] !== undefined)) {
+          into.require(typeof command[field.name] === "string" && (field.required !== true || (command[field.name] as string).length > 0), "command.custom.prompt", `${path}.${field.name}`,
+            `${field.name} must be a string when supplied, and a required field must have a value`);
+        }
+      }
+    }
     return into.violations;
   }
 
@@ -2302,17 +2331,17 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   const offered = (name: string): boolean => {
     const declared = capabilities[name];
     if (declared === undefined) {
-      into.add(`command.capability.${name}`, path, `${String(type)} needs the ${name} capability, and the task does not offer it`);
+      into.add(`command.capability.${name}`, path, `${describeValue(type)} needs the ${name} capability, and the task does not offer it`);
       return false;
     }
     if (isLocked(declared)) {
-      into.add("command.capability.locked", path, `${name} stands locked by ${String(declared.lockedBy)}: the control is present without permission`);
+      into.add("command.capability.locked", path, `${name} stands locked by ${describeValue(declared.lockedBy)}: the control is present without permission`);
       return false;
     }
     return true;
   };
   const inPhase = (rule: string, ...phases: string[]) =>
-    into.require(phases.includes(String(task.phase)), rule, path, `${String(type)} belongs to ${phases.join(" or ")}, and the task is ${String(task.phase)}`);
+    into.require(typeof task.phase === "string" && phases.includes(task.phase), rule, path, `${describeValue(type)} belongs to ${phases.join(" or ")}, and the task is ${describeValue(task.phase)}`);
   // A control on the contact acts on a contact being handled. Before in-progress there is nothing
   // to act on yet, and in completing the handling has ended: a call with nobody on it, a
   // conversation closed. What a capability offers, the phase decides whether there is anything to use it on.
@@ -2322,7 +2351,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     const declared = capabilities[name];
     const directory = isPlainObject(declared) && Array.isArray(declared.destinations) ? declared.destinations.filter(isPlainObject) : [];
     into.require(directory.some(item => item.id === command.destinationId), "command.destination.unknown", `${path}.destinationId`,
-      `${String(command.destinationId)} is not a destination the task's ${name} directory offered`);
+      `${describeValue(command.destinationId)} is not a destination the task's ${name} directory offered`);
   };
   const onCall = Array.isArray(task.onCall) ? task.onCall.filter(isPlainObject) : [];
   switch (type) {
@@ -2346,7 +2375,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       else if (command.action === "warm") { if (offered("warmTransfer")) listed("warmTransfer"); }
       else if (command.action === "complete" || command.action === "cancel") {
         into.require(onCall.some(entry => entry.role === "consulted"), "command.transfer.consulted", path,
-          `${String(command.action)} needs a consulted entry on onCall: without one there is nothing to complete or cancel`);
+          `${describeValue(command.action)} needs a consulted entry on onCall: without one there is nothing to complete or cancel`);
       }
       break;
     case "lead-assist":
@@ -2359,7 +2388,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
         }
       } else {
         into.require(task.assisting !== undefined, "command.leadAssist.assisting", path,
-          `${String(command.action)} is the lead's own act on a call they joined: the task carries assisting`);
+          `${describeValue(command.action)} is the lead's own act on a call they joined: the task carries assisting`);
       }
       break;
     case "conference": {
@@ -2373,7 +2402,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
             "removing the party would leave the agent alone: that is end-call");
         } else if (isFilled(command.destinationId)) {
           into.require(onCall.some(entry => entry.role === "conferenced" && entry.destinationId === command.destinationId), "command.conference.remove.unknown", path,
-            `no conferenced entry on onCall has destinationId ${String(command.destinationId)}`);
+            `no conferenced entry on onCall has destinationId ${describeValue(command.destinationId)}`);
           into.require(others.length > 1, "command.conference.remove.alone", path,
             "removing the last other person would leave the agent alone: that is end-call");
         }
@@ -2391,10 +2420,13 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
           "the task declares no dispositions; complete travels with no code");
         into.require(command.notes === undefined, "command.complete.notes.unexpected", `${path}.notes`,
           "the task declares no dispositions; complete travels with no notes");
+      } else if (dispositions === true) {
+        into.require(command.disposition === undefined, "command.complete.disposition.unexpected", `${path}.disposition`,
+          "a bare dispositions control publishes no code, so complete carries none");
       } else if (isPlainObject(dispositions)) {
         if (Array.isArray(dispositions.codes) && command.disposition !== undefined) {
           into.require(dispositions.codes.some(code => isPlainObject(code) && code.id === command.disposition), "command.complete.disposition.unknown", `${path}.disposition`,
-            `${String(command.disposition)} is not a code the task published`);
+            `${describeValue(command.disposition)} is not a code the task published`);
         }
         if (dispositions.required === true) {
           into.require(command.disposition !== undefined, "command.complete.disposition.required", `${path}.disposition`,
@@ -2467,16 +2499,28 @@ export function validateResult(result: unknown, method: ResultMethod, path = "re
     into.add("result.shape", path, `${method} must answer an object`);
     return into.violations;
   }
+  if (method === "openMedia" && result.status !== "opened") {
+    into.require(result.session === undefined, "result.session.unexpected", `${path}.session`, "only opened carries a media session");
+  }
   if (result.status === statuses.success) {
     into.require(result.failure === undefined, "result.failure.unexpected", `${path}.failure`,
       `${statuses.success} carries no failure`);
     if (method === "openMedia") {
-      into.require(isPlainObject(result.session), "result.session", `${path}.session`, "opened carries the media session");
+      if (isPlainObject(result.session)) {
+        // Streams may come from another realm, and Node conformance runs have no MediaStream
+        // constructor. Check the boundary shape without claiming to verify live audio.
+        into.require(isPlainObject(result.session.remoteAudio), "result.session.remoteAudio", `${path}.session.remoteAudio`, "an opened session carries its remote audio stream");
+        for (const method of ["setMuted", "close"] as const) {
+          into.require(typeof result.session[method] === "function", `result.session.${method}`, `${path}.session.${method}`, `a media session implements ${method}`);
+        }
+      } else {
+        into.add("result.session", `${path}.session`, "opened carries the media session");
+      }
     }
     if (dials) {
       if (into.filled(result.dialId, "result.dialId", `${path}.dialId`, "dialling restates the dialId the host sent") && dialId !== undefined) {
         into.require(result.dialId === dialId, "result.dialId.mismatch", `${path}.dialId`,
-          `the host dialled ${dialId} and the provider answered for ${String(result.dialId)}`);
+          `the host dialled ${dialId} and the provider answered for ${describeValue(result.dialId)}`);
       }
     } else {
       into.require(result.dialId === undefined, "result.dialId.unexpected", `${path}.dialId`, `${statuses.success} dialled nothing and names no dial`);
@@ -2489,7 +2533,7 @@ export function validateResult(result: unknown, method: ResultMethod, path = "re
     }
   } else {
     into.add("result.status", `${path}.status`,
-      `${method} answers ${statuses.success} or ${statuses.failure}, not ${String(result.status)}`);
+      `${method} answers ${statuses.success} or ${statuses.failure}, not ${describeValue(result.status)}`);
   }
   return into.violations;
 }
@@ -2613,7 +2657,7 @@ function validateMonitorControl(value: unknown, path: string, into: Collector): 
   }
   value.forEach((mode: unknown, index: number) => {
     if (into.oneOf(mode, MONITOR_MODES, "authentication.capability.team.monitorControl.mode", `${path}[${index}]`) && value.indexOf(mode) !== index) {
-      into.add("authentication.capability.team.monitorControl.unique", `${path}[${index}]`, `duplicate monitor mode: ${String(mode)}`);
+      into.add("authentication.capability.team.monitorControl.unique", `${path}[${index}]`, `duplicate monitor mode: ${describeValue(mode)}`);
     }
   });
   into.require(value.includes("monitor"), "authentication.capability.team.monitorControl.monitor", path,
@@ -2639,7 +2683,7 @@ function validateAuthenticationFailureInto(value: unknown, path: string, into: C
   }
   if (into.filled(value.code, "authentication.failure.code", `${path}.code`, "a failure needs a code") && (value.code as string).startsWith("omni.")) {
     into.require((OMNI_FAILURE_CODES as readonly string[]).includes(value.code as string), "failure.code.unknown", `${path}.code`,
-      `${String(value.code)} is not a failure code this contract defines`);
+      `${describeValue(value.code)} is not a failure code this contract defines`);
   }
   into.filled(value.message, "authentication.failure.message", `${path}.message`, "a failure needs a message");
   into.require(typeof value.retryable === "boolean", "authentication.failure.retryable", `${path}.retryable`, "a failure must say whether it is retryable");
@@ -2648,7 +2692,7 @@ function validateAuthenticationFailureInto(value: unknown, path: string, into: C
       "a phone the platform does not permit for this agent is configuration: trying again does not change it, so the refusal is not retryable");
   }
   if (value.retryAfterMs !== undefined) {
-    into.require(typeof value.retryAfterMs === "number" && value.retryAfterMs >= 0, "authentication.failure.retryAfterMs", `${path}.retryAfterMs`,
+    into.require(typeof value.retryAfterMs === "number" && Number.isFinite(value.retryAfterMs) && value.retryAfterMs >= 0, "authentication.failure.retryAfterMs", `${path}.retryAfterMs`,
       "retryAfterMs must be a non-negative number when present");
   }
   if (value.field !== undefined) into.filled(value.field, "authentication.failure.field", `${path}.field`, "field names a declared credentials field when present");
@@ -2658,6 +2702,38 @@ export function validateAuthenticationFailure(failure: unknown, path = "failure"
   const into = new Collector();
   validateAuthenticationFailureInto(failure, path, into);
   return into.violations;
+}
+
+function validateAuthenticationChallenge(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("authentication.result.challenge", path, "interaction-required carries the challenge to put to the person");
+    return;
+  }
+  into.filled(value.flowId, "authentication.challenge.flowId", `${path}.flowId`, "a challenge names the flow to complete or cancel");
+  if (!into.oneOf(value.method, AUTHENTICATION_METHODS, "authentication.challenge.method", `${path}.method`)) return;
+  if (value.method === "browser-sso") {
+    into.filled(value.authorizationUrl, "authentication.challenge.authorizationUrl", `${path}.authorizationUrl`, "browser SSO carries the authorization URL to open");
+    into.oneOf(value.browser, AUTHENTICATION_BROWSERS, "authentication.challenge.browser", `${path}.browser`);
+  } else if (!Array.isArray(value.fields)) {
+    into.add("authentication.challenge.fields", `${path}.fields`, "credentials carries the fields to render");
+  } else {
+    const seen = new Set<string>();
+    value.fields.forEach((field: unknown, index: number) => {
+      const at = `${path}.fields[${index}]`;
+      if (!isPlainObject(field)) {
+        into.add("authentication.challenge.field.shape", at, "a credentials field must be an object");
+        return;
+      }
+      if (into.filled(field.name, "authentication.challenge.field.name", `${at}.name`, "a credentials field needs a name")) {
+        into.require(!seen.has(field.name as string), "authentication.challenge.field.unique", `${at}.name`, "each credentials field has its own key in the submitted values");
+        seen.add(field.name as string);
+      }
+      into.filled(field.label, "authentication.challenge.field.label", `${at}.label`, "a credentials field needs a label");
+      into.oneOf(field.type, CREDENTIAL_FIELD_TYPES, "authentication.challenge.field.type", `${at}.type`);
+      if (field.required !== undefined) into.require(typeof field.required === "boolean", "authentication.challenge.field.required", `${at}.required`, "required must be a boolean when present");
+      if (field.autocomplete !== undefined) into.require(typeof field.autocomplete === "string", "authentication.challenge.field.autocomplete", `${at}.autocomplete`, "autocomplete must be a string when present");
+    });
+  }
 }
 
 /**
@@ -2674,12 +2750,16 @@ export function validateAuthenticationResult(result: unknown, method: "start" | 
   if (result.status === "rejected") {
     validateAuthenticationFailureInto(result.failure, `${path}.failure`, into);
   } else if (method === "start" && result.status === "interaction-required") {
-    into.require(isPlainObject(result.challenge), "authentication.result.challenge", `${path}.challenge`, "interaction-required carries the challenge to put to the person");
+    validateAuthenticationChallenge(result.challenge, `${path}.challenge`, into);
+    into.require(result.failure === undefined, "authentication.failure.unexpected", `${path}.failure`, "an authentication challenge carries no failure");
   } else if (method === "complete" && result.status === "authenticated") {
     into.violations.push(...validateAuthenticationState(result, path, context));
   } else {
     into.add("authentication.result.status", `${path}.status`,
-      `${method} answers ${method === "start" ? "interaction-required" : "authenticated"} or rejected, not ${String(result.status)}`);
+      `${method} answers ${method === "start" ? "interaction-required" : "authenticated"} or rejected, not ${describeValue(result.status)}`);
+  }
+  if (result.status !== "interaction-required") {
+    into.require(result.challenge === undefined, "authentication.challenge.unexpected", `${path}.challenge`, "only interaction-required carries a challenge");
   }
   return into.violations;
 }

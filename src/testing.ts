@@ -1310,7 +1310,7 @@ export class TaskStream {
         this.noteDials(event.task);
         break;
       case "task-media-started":
-        ruleEvaluated("stream.taskMediaStarted.unknown", "stream.taskMediaStarted.beforeWork", "stream.taskMediaStarted.duplicate", "stream.allocation.ended", "stream.allocation.unknown");
+        ruleEvaluated("stream.taskMediaStarted.unknown", "stream.taskMediaStarted.beforeWork", "stream.taskMediaStarted.duplicate", "stream.taskMedia.channel", "stream.allocation.ended", "stream.allocation.unknown");
         if (id === undefined) break;
         if (known === undefined) {
           refuse("stream.taskMediaStarted.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
@@ -1319,6 +1319,10 @@ export class TaskStream {
         if (!this.namesTheOpenLife(event, known, at, refuse)) break;
         // Ring-back is audio: a task whose party the host is dialling has media from dialling on,
         // whatever its phase; every other task not at work has none.
+        if (known.channel !== "voice") {
+          refuse("stream.taskMedia.channel", `${at}.type`, "only a voice task has media transitions");
+          break;
+        }
         if (!AT_WORK.has(known.phase) && !known.partyRingingByHost) {
           refuse("stream.taskMediaStarted.beforeWork", `${at}.taskId`,
             `media cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
@@ -1329,13 +1333,17 @@ export class TaskStream {
         known.media = "started";
         break;
       case "task-media-ended":
-        ruleEvaluated("stream.taskMediaEnded.unknown", "stream.taskMediaEnded.beforeWork", "stream.taskMediaEnded.silent", "stream.allocation.ended", "stream.allocation.unknown");
+        ruleEvaluated("stream.taskMediaEnded.unknown", "stream.taskMediaEnded.beforeWork", "stream.taskMediaEnded.silent", "stream.taskMedia.channel", "stream.allocation.ended", "stream.allocation.unknown");
         if (id === undefined) break;
         if (known === undefined) {
           refuse("stream.taskMediaEnded.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
           break;
         }
         if (!this.namesTheOpenLife(event, known, at, refuse)) break;
+        if (known.channel !== "voice") {
+          refuse("stream.taskMedia.channel", `${at}.type`, "only a voice task has media transitions");
+          break;
+        }
         if (!WORK_BEGUN.has(known.phase)) {
           refuse("stream.taskMediaEnded.beforeWork", `${at}.taskId`,
             `media cannot end on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
@@ -1563,9 +1571,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         session = undefined;
         ruleEvaluated("drive.reload.openMedia");
         const reopened = await second.openMedia?.({ taskId, allocationId: allocationOf(), localAudio: drive.localAudio });
-        found.push(...validateResult(reopened, "openMedia", "drive.reload.openMedia"));
-        if (isRecord(reopened) && reopened.status === "opened") session = reopened.session as unknown as Record<string, unknown>;
-        else refuse("drive.reload.openMedia", "drive.reload.openMedia",
+        const malformed = validateResult(reopened, "openMedia", "drive.reload.openMedia");
+        found.push(...malformed);
+        if (malformed.length === 0 && isRecord(reopened) && reopened.status === "opened") session = reopened.session as unknown as Record<string, unknown>;
+        else if (malformed.length === 0) refuse("drive.reload.openMedia", "drive.reload.openMedia",
           `a second adapter built from the same login could not open the audio of ${taskId}, which its own snapshot carries with media started`);
       }
     } catch (error) {
@@ -1708,9 +1717,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       cursor = Math.max(cursor, started.at);
     }
     const opened = await drive.connection.openMedia?.({ taskId, allocationId: allocationOf(), localAudio: drive.localAudio });
-    found.push(...validateResult(opened, "openMedia", "drive.openMedia"));
-    if (isRecord(opened) && opened.status === "opened") session = opened.session as unknown as Record<string, unknown>;
-    else if (isRecord(opened)) refuse("drive.openMedia.unavailable", "drive.openMedia", "a softphone login's adapter could not open the call's audio");
+    const malformed = validateResult(opened, "openMedia", "drive.openMedia");
+    found.push(...malformed);
+    if (malformed.length === 0 && isRecord(opened) && opened.status === "opened") session = opened.session as unknown as Record<string, unknown>;
+    else if (malformed.length === 0 && isRecord(opened)) refuse("drive.openMedia.unavailable", "drive.openMedia", "a softphone login's adapter could not open the call's audio");
   }
   // 3b. The microphone is the host's. With the audio open, the drive mutes it for a moment and
   // reports the leg the provider's record would otherwise miss -- begun, then ended -- and

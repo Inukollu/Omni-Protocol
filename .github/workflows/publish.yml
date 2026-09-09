@@ -51,11 +51,8 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
-        run: pnpm build
-
-      - name: Test
-        run: pnpm test
+      - name: Validate source, tests, guide, and package
+        run: pnpm check
 
       - name: Allocate the release version
         id: version
