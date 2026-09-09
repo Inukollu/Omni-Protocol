@@ -35,6 +35,7 @@ import {
   observeRules,
   ruleEvaluated,
   validateHostMute,
+  validateHostRecording,
   validateLoginStore,
   validateHandlingReport,
   validateManifest,
@@ -349,6 +350,7 @@ export async function exerciseAdapter<C extends Channel>(
     // audio and reports it; on a desk phone, or off voice, there is none for it to report.
     violations.push(...validatePhone(context.phone, adapter.manifest, "context.phone"));
     const softphone = adapter.manifest.channel === "voice" && context.phone === "softphone";
+    violations.push(...validateHostRecording(context.host.recording, softphone));
     const first = context.host.report();
     violations.push(...validateHostReport(first, "context.host"));
     const hasAudio = isRecord(first) && first.audio !== undefined;
@@ -373,6 +375,7 @@ export async function exerciseAdapter<C extends Channel>(
     // The wrapped host carries the mute kind the test's host stated, so the arms of ConnectContext still hold.
     const host = {
       guarantees: context.host.guarantees,
+      ...(context.host.recording === undefined ? {} : { recording: context.host.recording }),
       ...(context.host.mute === undefined ? {} : { mute: context.host.mute }),
       report: () => { consulted.report = true; return context.host.report(); },
       subscribe: listener => { consulted.subscribe = true; return context.host.subscribe(listener); },
@@ -2009,7 +2012,7 @@ export function memoryStore(): LoginStore {
  * A softphone host states what its Mute does; a desk-phone or conversation host has no microphone and states nothing.
  */
 export function stillHost(report: HostReport, guarantees: HostGuarantees, mute: HostMute): Host & { mute: HostMute };
-export function stillHost(report?: HostReport, guarantees?: HostGuarantees): Host & { mute?: never };
+export function stillHost(report?: HostReport, guarantees?: HostGuarantees): Host & { mute?: never; recording?: never };
 export function stillHost(report: HostReport = { online: true }, guarantees: HostGuarantees = {}, mute?: HostMute): Host {
   return { guarantees, ...(mute === undefined ? {} : { mute }), report: () => report, subscribe: () => () => undefined };
 }

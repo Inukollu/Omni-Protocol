@@ -58,7 +58,7 @@ transport, a task, a break and a call each have a word of their own:
 
 ### `OMNI_PROTOCOL_VERSION`
 
-The exact protocol version implemented by this package. The current value is `1`.
+The exact protocol version implemented by this package. The current value is `2`. Version 2 replaces the broad recording flag and untargeted recording command; version 1 is not negotiated by this package. Hosts and adapters must explicitly migrate together or retain their own version-1 implementation.
 
 ### `Manifest.supportedProtocolVersions`
 
@@ -289,7 +289,57 @@ type HostAudioOutput =
 
 type UrlVisibility = "full" | "domain" | "hidden";
 
+type RecordingSource = "provider" | "host";
+type RecordingAction = "start" | "pause" | "resume" | "stop" | "cancel";
+const RECORDING_ACTIONS = ["start", "pause", "resume", "stop", "cancel"] as const satisfies readonly RecordingAction[];
+type RecordingCancelEffect = "retain" | "discard";
+interface RecordingActions {
+  start?: true;
+  pause?: true;
+  resume?: true;
+  stop?: true;
+  cancel?: { effect: RecordingCancelEffect };
+}
+interface TaskRecordingPolicy {
+  provider?: RecordingActions;
+  host?: RecordingActions & { destinationId: string };
+}
+type RecordingState =
+  | { status: "unknown"; observationId?: never; observedAt?: never; validUntil?: never; recordingId?: never }
+  | ({ observationId: string; observedAt: IsoTimestamp; validUntil: IsoTimestamp } & (
+      | { status: "inactive"; recordingId?: never }
+      | { status: "active" | "paused"; recordingId: string }
+    ));
+type RecordingCommand = {
+  type: "recording";
+  source: RecordingSource;
+  requestId: string;
+  observationId: string;
+} & (
+  | { action: "start"; recordingId?: never; cancelEffect?: never }
+  | { action: "pause" | "resume" | "stop"; recordingId: string; cancelEffect?: never }
+  | { action: "cancel"; recordingId: string; cancelEffect: RecordingCancelEffect }
+);
+interface HostRecordingReport {
+  taskId: TaskId;
+  allocationId: AllocationId;
+  state: RecordingState;
+}
+interface HostRecording {
+  actions: RecordingAction[];
+  cancelEffects: RecordingCancelEffect[];
+  destinationIds: string[];
+  execute(request: HostRecordingRequest): Promise<RecordingCommandResult>;
+}
+type RecordingCommandResult = Exclude<TaskCommandResult, { status: "dialling" }>;
+interface HostRecordingRequest {
+  taskId: TaskId;
+  allocationId: AllocationId;
+  command: RecordingCommand & { source: "host" };
+}
+
 type HostReport = {
+  recordings?: HostRecordingReport[];
   online: boolean;
   audio?: {
     input: HostAudioInput;
@@ -303,6 +353,7 @@ type HostGuarantees = {
 };
 
 type Host = {
+  recording?: HostRecording;
   guarantees: HostGuarantees;
   mute?: HostMute;
   report(): HostReport;
@@ -327,7 +378,7 @@ type ConnectContext = {
   log?: (entry: unknown) => void;
 } & (
   | { phone: "softphone"; host: { mute: HostMute } }
-  | { phone?: "deskPhone"; host: { mute?: never } }
+  | { phone?: "deskPhone"; host: { mute?: never; recording?: never } }
 );
 
 type TransportStatus = "connecting" | "active" | "error";
@@ -511,7 +562,7 @@ type TaskCapabilities<C extends Channel = Channel> =
         warmTransfer?: Lockable<DestinationDirectory>;
         leadAssist?: Lockable<true>;
         conference?: Lockable<DestinationDirectory>;
-        recording?: Lockable<true>;
+        recording?: Lockable<TaskRecordingPolicy>;
       }
     : C extends "chat"
       ? SharedTaskCapabilities & { decline?: Lockable<true>; hold?: Lockable<true> }
@@ -686,8 +737,8 @@ type Task<C extends Channel = Channel> = {
   handlingHistory?: TaskHandlingHistory;
 } & TaskCompletion & (
   C extends "voice"
-    ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
-    : { onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never }
+    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
+    : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never }
 );
 
 type PreviewDeadline = "calls" | "expires";
@@ -753,7 +804,7 @@ type VoiceTaskCommand =
   | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
   | { type: "conference"; action: "remove"; destinationId: string; party?: never }
   | { type: "conference"; action: "remove"; party: true; destinationId?: never }
-  | { type: "recording"; action: "start" | "pause" | "resume" | "stop" }
+  | (RecordingCommand & { source: "provider" })
   | ({ type: "complete" } & DispositionPayload);
 
 type ChatTaskCommand =
@@ -2994,7 +3045,7 @@ See **Which commands need a capability**.
 | `warmTransfer` | Secondary menu item: Warm transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Warm transfer**. |
 | `leadAssist` | Secondary menu item: Lead assist | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.leadAssist`. See **Lead assist**. |
 | `conference` | Secondary button: Conference | Omni may dial a destination into the active call, and remove one person from it -- a conferenced entry, one still ringing included, which calls the dial off, or the party, leaving the agent with the colleague. See **Ending a call, and removing one person from it**. |
-| `recording` | Overflow menu item: Recording | Omni may expose start, pause, resume, and stop recording controls. |
+| `recording` | Overflow menu item: Recording | Per-task provider and host policies expose only their permitted recording actions; each has independent state and routing. |
 | `dispositions` | Primary button: Complete | Omni may request task disposal with a provider disposition and notes. |
 
 ### Publishing codes and destinations
@@ -4216,7 +4267,7 @@ capability's `notes` setting. A task publishing no codes still receives `complet
 
 Every command reaches the provider through `execute`, with no branch at the call site, and every
 command asks the provider to **perform** something: `hold`, `transfer`, `conference`, `end-call`,
-`recording` and the rest act on the platform's own call leg, its bridge, or its record of the
+Provider-targeted `recording` commands and the rest act on the platform's own call leg, its bridge, or its record of the
 task. Nothing has happened until the provider applies them, and `failed` means nothing happened.
 
 **The provider performs every action; the host only offers it.** A control drawn on the host is
@@ -4325,7 +4376,7 @@ declared:
 | Everything else | Its own named capability. |
 
 **A control on the contact belongs to the handling phases**, `in-progress` and `paused`:
-`hold`, `resume` and `pause`, `end-call`, `recording`, every `transfer` and `conference` action, and
+`hold`, `resume` and `pause`, `end-call`, every `transfer` and `conference` action, and
 every `lead-assist` action. Each acts on the call or the conversation, and only while there is one.
 Before `in-progress` nothing has been placed or opened; in `completing` the handling has ended -- a
 call with nobody on it, a conversation closed -- and a wrap-up that still shows Transfer shows it
@@ -4940,3 +4991,100 @@ belongs in this contract is the boundary. A provider says what a control **is** 
 capabilities and what its work is **called** through `phaseLabels` and `taskTypePresentation`; how
 any of it is drawn is Omni's. A task cannot select a design language, inject a component, or
 override the agent's theme and font preferences.
+
+## Independent task recording (protocol 2)
+
+Recording is voice-only. A task can arrive already recording, including while pending, and offer
+no recording controls. The provider publishes only its own current state on
+the provider field of the task’s `recording` state. The host publishes its own full scoped view in `HostReport.recordings`.
+A provider task update cannot replace host state. Neither a capability nor an accepted command
+establishes recording. Missing state, lost recorder observation, transport loss and expired
+observation mean unknown; they never mean stopped. Paused means a recording remains open without
+capturing. Task hold, task pause and recording pause are independent.
+
+The per-task policy is `Task.capabilities.recording`, with independently optional provider and host
+action sets. The outer capability may be locked. Absence grants no permission, and a state may
+exist without any permission. A provider may offer only stop for a recording started automatically,
+or withdraw a control on a later task update. There is no global recording mode and no automatic
+start from a capability declaration. Host support is declared on `ConnectContext.host.recording`,
+not the provider-owned manifest. The task chooses an explicitly provisioned host destination;
+unknown destinations or unsupported actions are refused visibly, never redirected to provider
+recording or a default upload location. Initial host support requires voice softphone media and
+capture of both local and remote audio; a host unable to capture either must refuse start/resume.
+This package declares that contract; it supplies no recorder, media mixing, storage or upload.
+
+| Action | Required current recording state | Confirmed outcome |
+| --- | --- | --- |
+| start | inactive | active with a new recording identity |
+| pause | active | paused, preserving recording identity and captured audio |
+| resume | paused | active with the same recording identity |
+| stop | active or paused | inactive; finish and retain captured audio |
+| cancel | active or paused | inactive; abandon with the explicitly declared captured-audio disposition |
+
+Cancel must declare retain or discard in task policy and echo that exact effect in the command.
+Retain abandons further capture while preserving captured audio; discard additionally requires
+confirmed disposal of that recording's audio under the recorder's storage contract. Neither
+means cancelling an in-flight start request or deleting arbitrary past recordings. A recorder
+unable to guarantee the offered effect must not advertise it. Stop can be applied only after
+finalization/retention succeeds; cancel-discard only after cessation and disposition succeed.
+Partial success (capture stopped but storage outcome unknown) cannot return failed with a claim
+of no effect. It rejects with unknown outcome, reports the failure visibly and publishes whatever
+current capture state is actually known. Retention is not a promise of sample-perfect audio.
+
+Provider commands go exclusively to `Connection.execute`; host commands go exclusively to
+`HostRecording.execute`. Both include task, allocation, request and observation identities; all
+non-start commands identify the particular recording. IDs are opaque and scoped by provider login,
+task and recorder owner. They are never inferred from filenames or current agent identity. A
+recording ID survives pause/resume and reallocation only where the same recorder confirms continuity;
+commands always name the current allocation. A later start gets a different ID. Reconnect does not
+create a new recording or fresh evidence. After lost continuity, use unknown until reconciled.
+There is no automatic restart, transfer to another recorder, or stop on task hold/disconnect.
+Task removal does not prove recording stopped: outstanding host recorders remain tracked by the
+host until its executor reconciles/finishes them, with visible unresolved cleanup failures.
+
+Only start/resume require an in-progress or paused task with started media. Pause/stop/cancel may
+also finish an independently observed recorder while the task is completing. A pending task may
+show active recording, but agent controls wait until handling begins. The two recording paths may
+both be active. A command to either path has no implied effect on the other.
+
+Each confirmed observation has a fresh opaque observation identity, a canonical UTC millisecond
+observation instant and an exclusive expiry. These times describe current evidence, never historical
+capture boundaries. A trusted observer-domain current time must satisfy observedAt <= now < validUntil.
+Use `effectiveRecordingState` with that explicitly trusted time; an unavailable clock yields unknown.
+Receipt, replay and task publication never extend freshness. Clock discontinuity invalidates evidence;
+consumers must invalidate their clock estimate and use monotonic aging so clock rollback cannot
+revive expired evidence. The executor compares observation identity and recording identity against
+its latest state atomically before I/O. An intervening observation or allocation change refuses the
+stale command; it never acts on a replacement recorder. Providers lacking trustworthy current-state
+identity or observation time publish unknown and offer no issuable controls.
+
+Use `validateTask` and `validateTaskCommand` for published shape and static permissions.
+Immediately before dispatch, additionally use `validateRecordingRequest` against the full current
+task and explicit observer-domain time. For host commands also supply the current host declaration,
+full host report and softphone context. The same checks must run at the executing boundary;
+client validation alone is not authorization. The executor serializes operations on each recorder
+and durably correlates request identity with scope, action and outcome: an exact retry refers to the
+same operation; reuse with different contents is refused. It never silently retries an ambiguous
+operation. Implementations without reliable request correlation must refuse controls.
+
+Keep command progress in host UI separately from authoritative state. Applied means the requested
+transition and disposition actually completed; publish the confirming task or host report before
+resolving applied. Failed means confirmed no effect. Rejected promise means outcome unknown:
+show the failure, reconcile that path and do not automatically retry or pretend inactive. Authoritative
+updates remain full current task/host views, not replayed provider events. These current-state fields
+create no handling-history entries and infer no actors, durations or historical capture boundaries.
+
+Migration is explicit: replace the old true recording capability with per-path action policies,
+replace untargeted commands with scoped commands, and declare protocol 2 only after implementing
+these semantics. Existing version-1 adapters are refused by negotiation rather than silently mapped.
+This change does not publish a package or enable recording in any existing host/provider by itself.
+
+`validateRecordingOutcome` checks confirming observations against recording-specific applied/failed
+semantics, including pause/resume identity and rejection of a dialling result. It cannot prove audio
+retention/disposal or source truth from a status flag; those remain executor obligations.
+
+Host destination selection binds storage when start actually creates a recording. Existing recordings
+keep that binding through pause/resume/stop/cancel; a later policy cannot redirect their stored audio.
+The executor rejects a mismatched destination rather than moving or discarding another binding.
+Action permission does not authorize unattended invocation: host controls require the agent's explicit
+act, and provider authorization remains enforced at its authenticated command boundary.

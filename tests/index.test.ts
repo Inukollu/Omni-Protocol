@@ -47,7 +47,7 @@ describe("Omni protocol", () => {
   });
 
   it("negotiates the highest protocol version both sides support", () => {
-    expect(negotiateProtocolVersion([1])).toBe(OMNI_PROTOCOL_VERSION);
+    expect(negotiateProtocolVersion([2])).toBe(OMNI_PROTOCOL_VERSION);
     expect(negotiateProtocolVersion([1, 2, 3], [2, 3])).toBe(3);
     expect(negotiateProtocolVersion([3, 1, 2], [1, 2])).toBe(2);
     expect(OMNI_SUPPORTED_PROTOCOL_VERSIONS).toContain(OMNI_PROTOCOL_VERSION);
@@ -55,6 +55,7 @@ describe("Omni protocol", () => {
 
   it("refuses to connect when no protocol version is shared", () => {
     expect(negotiateProtocolVersion([99])).toBeUndefined();
+    expect(negotiateProtocolVersion([1])).toBeUndefined();
     expect(negotiateProtocolVersion([])).toBeUndefined();
     expect(negotiateProtocolVersion([1], [2])).toBeUndefined();
   });

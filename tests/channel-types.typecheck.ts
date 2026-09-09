@@ -293,15 +293,15 @@ export const streamMutingHost: Host = { guarantees: {}, mute: "stream", report: 
 // The connect context ties the mute kind to the phone: a softphone login states it, a desk phone or a conversation cannot.
 const store: LoginStore = { get: async () => undefined, set: async () => undefined, delete: async () => undefined };
 const seatless = { guarantees: {}, report: () => noAudioHere, subscribe: () => () => undefined };
-export const softphoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "softphone", host: { ...reticentHost, mute: "stream" } };
-export const deskPhoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "deskPhone", host: seatless };
-export const chatLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, host: seatless };
+export const softphoneLogin: ConnectContext = { protocolVersion: 2, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "softphone", host: { ...reticentHost, mute: "stream" } };
+export const deskPhoneLogin: ConnectContext = { protocolVersion: 2, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "deskPhone", host: seatless };
+export const chatLogin: ConnectContext = { protocolVersion: 2, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, host: seatless };
 // @ts-expect-error A softphone login's host states what its Mute does.
-export const silentSoftphoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "softphone", host: seatless };
+export const silentSoftphoneLogin: ConnectContext = { protocolVersion: 2, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "softphone", host: seatless };
 // @ts-expect-error A desk phone's microphone is the phone's: the host states no mute.
-export const mutingDeskPhoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "deskPhone", host: { ...reticentHost, mute: "stream" } };
+export const mutingDeskPhoneLogin: ConnectContext = { protocolVersion: 2, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "deskPhone", host: { ...reticentHost, mute: "stream" } };
 // @ts-expect-error Every connection carries the login's store.
-export const storelessLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, phone: "deskPhone", host: seatless };
+export const storelessLogin: ConnectContext = { protocolVersion: 2, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, phone: "deskPhone", host: seatless };
 export const stationMutingHost: Host = { guarantees: {}, mute: "station", report: () => noAudioHere, subscribe: () => () => undefined };
 // @ts-expect-error A host mutes the stream it sends or the station's microphone; there is no third way.
 export const softMutingHost: Host = { guarantees: {}, mute: "soft", report: () => noAudioHere, subscribe: () => () => undefined };
