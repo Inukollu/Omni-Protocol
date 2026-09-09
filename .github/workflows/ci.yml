@@ -33,6 +33,8 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 11.7.0
+          # pnpm 11 needs Node >=22.13; its bundled runtime keeps Node 20 testable.
+          standalone: true
           run_install: false
 
       - name: Install Node.js
@@ -43,6 +45,18 @@ jobs:
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify the test runtime
+        env:
+          EXPECTED_NODE_MAJOR: ${{ matrix.node }}
+        run: |
+          pnpm exec node -e '
+            const actual = process.versions.node;
+            if (actual.split(".")[0] !== process.env.EXPECTED_NODE_MAJOR) {
+              throw new Error(`Expected Node ${process.env.EXPECTED_NODE_MAJOR}, got ${actual}`);
+            }
+            console.log(`Testing with Node ${actual}`);
+          '
 
       - name: Validate source, tests, guide, and package
         run: pnpm check
