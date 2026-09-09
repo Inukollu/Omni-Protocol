@@ -126,10 +126,17 @@ const request = { reasonId, requestedAt } satisfies BreakRequest; // error: requ
 ## Building
 
 ```
-pnpm install
+pnpm install --frozen-lockfile
+pnpm check        # clean build, type checks, tests, and packed-package checks
 pnpm build        # emits dist/
 pnpm test         # type-checks the tests, then runs them
+pnpm check:package # verifies the current dist/ as a consumer would
 ```
+
+CI runs the complete check on Node 20, 22, and 24 for pull requests (including drafts)
+and pushes to main. Package checks create a temporary npm tarball, verify its contents,
+and check JavaScript imports and TypeScript declarations for every exported entry point
+from an isolated consumer. Publishing also runs `pnpm check` through `prepublishOnly`.
 
 ## The guide is authoritative
 

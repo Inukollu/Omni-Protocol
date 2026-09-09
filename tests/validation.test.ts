@@ -30,6 +30,70 @@ import {
 
 const rules = (violations: readonly ProtocolViolation[]) => violations.map(violation => violation.rule);
 
+describe("untrusted values in violation messages", () => {
+  it("reports malformed JSON values without trying to call their conversion methods", () => {
+    const bad: unknown = JSON.parse('{"toString":null}');
+    for (const value of [bad, [bad]]) {
+      expect(rules(validateManifest(manifest({ channel: value })))).toContain("manifest.channel");
+      expect(rules(validateTask(task({ phase: value }), { channel: "voice" }))).toContain("task.phase");
+      expect(rules(validateEventEnvelope(envelope({ type: value }), manifest()))).toContain("event.type");
+      expect(rules(validateResult({ status: value }, "execute"))).toContain("result.status");
+      expect(rules(validateAuthenticationResult({ status: value }, "start"))).toContain("authentication.result.status");
+      expect(rules(validatePhone("softphone", manifest({ phones: [value] })))).toContain("context.phone.unsupported");
+    }
+  });
+
+  it("keeps reporting violations when nested wire fields are replaced with malformed JSON", () => {
+    const cases: [unknown, (value: unknown) => ProtocolViolation[]][] = [
+      [manifest(), value => validateManifest(value)],
+      [task(), value => validateTask(value, { channel: "voice" })],
+      [snapshot({ tasks: [task()] }), value => validateSnapshot(value, manifest())],
+      [envelope({ type: "task-updated", task: task() }), value => validateEventEnvelope(value, manifest())],
+      [{ status: "authenticated", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: {} }, value => validateAuthenticationState(value)],
+      [{ status: "failed", failure: { code: "provider.busy", message: "Busy", retryable: true } }, value => validateResult(value, "execute")],
+      [{ online: true, audio: { input: { status: "unavailable", reason: "no-device", failure: { code: "device.missing", message: "No microphone", retryable: false } }, output: { status: "available" } } }, value => validateHostReport(value)],
+    ];
+    const paths = (value: unknown, at: string[] = []): string[][] => [at, ...(
+      value !== null && typeof value === "object"
+        ? Object.entries(value).flatMap(([key, child]) => paths(child, [...at, key])) : []
+    )];
+    const bad: unknown = JSON.parse('{"toString":null,"valueOf":null}');
+    for (const [valid, validate] of cases) {
+      expect(validate(valid)).toEqual([]);
+      for (const path of paths(valid)) {
+        for (const replacement of [null, false, 17, "invalid", {}, [], bad, [bad]]) {
+          let changed: unknown = structuredClone(valid);
+          if (path.length === 0) changed = replacement;
+          else {
+            let parent = changed as Record<string, unknown>;
+            for (const key of path.slice(0, -1)) parent = parent[key] as Record<string, unknown>;
+            parent[path[path.length - 1]!] = replacement;
+          }
+          const violations = validate(changed);
+          expect(Array.isArray(violations), path.join(".")).toBe(true);
+          for (const violation of violations) {
+            expect(typeof violation.rule).toBe("string");
+            expect(typeof violation.path).toBe("string");
+            expect(typeof violation.message).toBe("string");
+          }
+        }
+      }
+    }
+  });
+});
+
+describe("media events belong to voice", () => {
+  it("rejects media transitions on chat and email providers", () => {
+    for (const type of ["task-media-started", "task-media-ended"]) {
+      const event = envelope({ type, taskId: "call-42", allocationId: "alloc-42" });
+      expect(validateEventEnvelope(event, manifest())).toEqual([]);
+      for (const channel of ["chat", "email"]) {
+        expect(rules(validateEventEnvelope(event, manifest({ channel })))).toEqual(["event.media.channel"]);
+      }
+    }
+  });
+});
+
 const manifest = (over: Record<string, unknown> = {}) => ({
   id: "acme-voice",
   displayName: "Acme Voice",
@@ -92,6 +156,21 @@ describe("assertNoViolations", () => {
 });
 
 describe("timestamps", () => {
+  it("rejects impossible calendar dates and hour 24 instead of normalizing them", () => {
+    const at = (startsAt: string) => rules(validateScheduledActivity({ id: "a", title: "T", startsAt }));
+    for (const date of ["2026-02-30", "2025-02-29", "1900-02-29", "2100-02-29", "2026-04-31", "2026-00-10", "2026-13-01", "2026-01-00"]) {
+      for (const zone of ["Z", "+05:30", "-04:00"]) expect(at(`${date}T09:00:00${zone}`)).toEqual(["activity.startsAt"]);
+    }
+    for (const time of ["24:00:00", "24:00:00.000", "12:60:00", "12:00:61"]) {
+      expect(at(`2026-09-09T${time}Z`)).toEqual(["activity.startsAt"]);
+    }
+    for (const date of ["2000-02-29", "2024-02-29", "2026-02-28", "2026-04-30", "2026-12-31", "0000-02-29", "0096-02-29"]) {
+      for (const zone of ["Z", "+05:30", "-04:00"]) expect(at(`${date}T23:59:59.125${zone}`)).toEqual([]);
+    }
+    expect(at("2024-02-29t00:00:00z")).toEqual([]);
+    expect(at("2026-09-09T00:00:00+24:00")).toEqual(["activity.startsAt"]);
+    expect(at("2026-09-09T00:00:00+05:60")).toEqual(["activity.startsAt"]);
+  });
   it("requires a zone, because a timezone-less value is a different instant on every host", () => {
     const at = (value: unknown) => rules(validateScheduledActivity({ id: "a", title: "T", startsAt: value }));
     expect(at("2026-08-21T09:00:00Z")).toEqual([]);
@@ -227,6 +306,9 @@ describe("validateTask", () => {
     expect(custom({ prompt: { fields: [{ label: "Number", type: "text" }] } })).toEqual(["task.custom.prompt.field.name"]);
     expect(custom({ prompt: { fields: [{ name: "destination", type: "text" }] } })).toEqual(["task.custom.prompt.field.label"]);
     expect(custom({ prompt: { fields: [{ ...destination, type: "number" }] } })).toEqual(["task.custom.prompt.field.type"]);
+    expect(custom({ prompt: { fields: [{ ...destination, required: "yes" }] } })).toEqual(["task.custom.prompt.field.required"]);
+    expect(custom({ prompt: { fields: [{ ...destination, autocomplete: 1 }] } })).toEqual(["task.custom.prompt.field.autocomplete"]);
+    expect(custom({ prompt: { fields: [{ ...destination, required: false, autocomplete: "tel" }] } })).toEqual([]);
   });
   it("states what the record adds up to before this agent, each total present when known", () => {
     const record = (over: Record<string, unknown>) => rules(validateTask(task({ handlingHistory: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], ...over } }), { channel: "voice" }));
@@ -616,6 +698,12 @@ describe("validateTeamRoster", () => {
 });
 
 describe("validateSnapshot", () => {
+  it("points a transport violation at the transport field", () => {
+    expect(validateSnapshot(snapshot({ transport: "flaky" }), manifest(), "login.snapshot")).toEqual([
+      expect.objectContaining({ rule: "snapshot.transport", path: "login.snapshot.transport" }),
+    ]);
+    expect(validateSnapshot(snapshot(), manifest(), "login.snapshot")).toEqual([]);
+  });
   it("requires a snapshot to state its task count, reconciled with the tasks it carries", () => {
     const count = (over: Record<string, unknown> = {}) => rules(validateSnapshot(snapshot(over), manifest()));
     // The helper computes a matching count; both directions on the explicit field.
@@ -988,7 +1076,7 @@ describe("validateResult", () => {
     // renamed away: dialled overstated what happened; a dial is accepted and being placed, and its outcome comes later.
     expect(rules(validateResult({ status: "dialled", dialId: "dial-1" }, "dial"))).toEqual(["result.status"]);
     expect(rules(validateResult({ status: "ok" }, "execute"))).toEqual(["result.status"]);
-    expect(rules(validateResult({ status: "opened", session: { close: () => undefined } }, "openMedia"))).toEqual([]);
+    expect(rules(validateResult({ status: "opened", session: { remoteAudio: {}, setMuted: () => undefined, close: () => undefined } }, "openMedia"))).toEqual([]);
     expect(rules(validateResult({ status: "unavailable", failure }, "openMedia"))).toEqual([]);
     expect(rules(validateResult({ status: "failed", failure }, "openMedia"))).toEqual(["result.status"]);
     expect(rules(validateResult({ status: "opened" }, "openMedia"))).toEqual(["result.session"]);
@@ -1003,6 +1091,20 @@ describe("validateResult", () => {
     expect(rules(validateResult({ status: "failed", failure: { code: "x", message: "x" } }, "execute"))).toEqual(["failure.retryable"]);
     expect(rules(validateResult({ status: "failed", failure: { ...failure, retryAfterMs: -1 } }, "execute"))).toEqual(["failure.retryAfterMs"]);
     expect(rules(validateResult({ status: "applied", failure }, "execute"))).toEqual(["result.failure.unexpected"]);
+  });
+
+  it("requires the audio and controls promised by an opened media session", () => {
+    const session = { remoteAudio: {}, setMuted: () => undefined, close: () => undefined };
+    expect(validateResult({ status: "opened", session }, "openMedia")).toEqual([]);
+    for (const key of ["remoteAudio", "setMuted", "close"] as const) {
+      for (const value of [undefined, null, false, "invalid", []]) {
+        expect(rules(validateResult({ status: "opened", session: { ...session, [key]: value } }, "openMedia"))).toEqual([`result.session.${key}`]);
+      }
+    }
+    expect(rules(validateResult({ status: "opened", session: {} }, "openMedia"))).toEqual([
+      "result.session.remoteAudio", "result.session.setMuted", "result.session.close",
+    ]);
+    expect(rules(validateResult({ status: "unavailable", failure, session }, "openMedia"))).toEqual(["result.session.unexpected"]);
   });
 
   it("lets a provider name its own codes and holds the omni namespace to the contract", () => {
@@ -1743,15 +1845,16 @@ describe("validateTaskCommand", () => {
     expect(cmd({ type: "complete", disposition: "resolved", notes: "Called back" }, wrapping({ ...codes, notes: "optional" }))).toEqual([]);
     expect(cmd({ type: "complete", disposition: "resolved", notes: "Called back" }, wrapping({ ...codes, notes: "none" }))).toEqual(["command.complete.notes.unexpected"]);
     expect(cmd({ type: "complete", disposition: "resolved" }, wrapping({ ...codes, notes: "required" }))).toEqual(["command.complete.notes.required"]);
-    // Nothing published: complete travels with neither; true: the control with nothing published takes what the agent typed.
+    // A bare control publishes no code to choose, so complete carries none.
     expect(cmd({ type: "complete" }, wrapping(undefined))).toEqual([]);
     expect(cmd({ type: "complete", disposition: "resolved" }, wrapping(undefined))).toEqual(["command.complete.disposition.unexpected"]);
-    expect(cmd({ type: "complete", disposition: "whatever the agent typed" }, wrapping(true))).toEqual([]);
+    expect(cmd({ type: "complete" }, wrapping(true))).toEqual([]);
+    expect(cmd({ type: "complete", disposition: "whatever the agent typed" }, wrapping(true))).toEqual(["command.complete.disposition.unexpected"]);
   });
 
   it("holds a custom command to a control the task published, with what the control asked for", () => {
     const control = { id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary", render: "inline" } };
-    const asking = { ...control, id: "escalate", prompt: { fields: [{ name: "reason", label: "Reason", type: "text" }] } };
+    const asking = { ...control, id: "escalate", prompt: { fields: [{ name: "reason", label: "Reason", type: "text", required: true }] } };
     const withControls = task({ capabilities: { custom: [control, asking] } });
     expect(cmd({ type: "custom", name: "request-supervisor" }, withControls)).toEqual([]);
     expect(cmd({ type: "custom", name: "escalate", reason: "Billing dispute" }, withControls)).toEqual([]);
@@ -1760,6 +1863,32 @@ describe("validateTaskCommand", () => {
     expect(cmd({ type: "custom", name: "request-supervisor" }, task({ capabilities: {} }))).toEqual(["command.capability.custom"]);
     // Without a task only the shape is checked, as for every command.
     expect(rules(validateTaskCommand({ type: "custom", name: "refund" }))).toEqual([]);
+  });
+
+  it("checks the published task before permitting a custom control", () => {
+    const custom = [{ id: "flag", ui: { control: "button", label: "Flag", placement: "primary", render: "inline" } }];
+    const published = task({ capabilities: { custom } });
+    expect(cmd({ type: "custom", name: "flag" }, published)).toEqual([]);
+    expect(cmd({ type: "custom", name: "flag" }, { capabilities: { custom } })).toEqual(["command.task"]);
+    expect(rules(validateTaskCommand({ type: "custom", name: "flag" }, null))).toEqual(["command.task"]);
+    expect(rules(validateTaskCommand({ type: "hold" }, null))).toEqual(["command.task"]);
+  });
+
+  it("requires a custom toggle's target state and only requires declared mandatory fields", () => {
+    const control = { id: "flag", ui: { control: "toggle", label: "Flag", placement: "primary", render: "inline" },
+      prompt: { fields: [{ name: "note", label: "Note", type: "text", required: false }] } };
+    const published = task({ capabilities: { custom: [control] } });
+    for (const on of [true, false]) {
+      expect(cmd({ type: "custom", name: "flag", on }, published)).toEqual([]);
+      expect(cmd({ type: "custom", name: "flag", on, note: "" }, published)).toEqual([]);
+      expect(cmd({ type: "custom", name: "flag", on, note: "For review" }, published)).toEqual([]);
+    }
+    for (const on of [undefined, null, "yes", 1]) {
+      expect(cmd({ type: "custom", name: "flag", on }, published)).toEqual(["command.custom.on"]);
+    }
+    expect(cmd({ type: "custom", name: "flag", on: true, note: 1 }, published)).toEqual(["command.custom.prompt"]);
+    const optional = task({ capabilities: { custom: [{ ...control, prompt: { fields: [{ name: "note", label: "Note", type: "text" }] } }] } });
+    expect(cmd({ type: "custom", name: "flag", on: true }, optional)).toEqual([]);
   });
 
   it("holds a destination to the directory the task offered", () => {
@@ -1861,6 +1990,38 @@ describe("validateTaskCommand", () => {
 
 describe("an authentication refusal", () => {
   const refusal = { code: "omni.phone-not-permitted", message: "This agent is configured for a desk phone", retryable: false };
+  it("validates the challenge a host must render", () => {
+    const field = { name: "username", label: "Username", type: "text", required: true, autocomplete: "username" };
+    const credentials = { flowId: "flow-1", method: "credentials", fields: [field] };
+    const sso = { flowId: "flow-2", method: "browser-sso", authorizationUrl: "https://identity.example.com/authorize", browser: "system" };
+    const check = (challenge: unknown) => rules(validateAuthenticationResult({ status: "interaction-required", challenge }, "start"));
+    expect(check(credentials)).toEqual([]);
+    expect(check(sso)).toEqual([]);
+    expect(check({ ...sso, browser: "omni" })).toEqual([]);
+    expect(check({ ...credentials, fields: [] })).toEqual([]);
+    expect(check({})).toEqual(["authentication.challenge.flowId", "authentication.challenge.method"]);
+    expect(check({ ...credentials, flowId: " " })).toEqual(["authentication.challenge.flowId"]);
+    expect(check({ ...credentials, fields: null })).toEqual(["authentication.challenge.fields"]);
+    expect(check({ ...credentials, fields: [null] })).toEqual(["authentication.challenge.field.shape"]);
+    for (const [key, value] of [["name", ""], ["label", ""], ["type", "number"], ["required", "yes"], ["autocomplete", 1]] as const) {
+      expect(check({ ...credentials, fields: [{ ...field, [key]: value }] })).toEqual([`authentication.challenge.field.${key}`]);
+    }
+    expect(check({ ...credentials, fields: [field, field] })).toEqual(["authentication.challenge.field.unique"]);
+    expect(check({ ...sso, authorizationUrl: "" })).toEqual(["authentication.challenge.authorizationUrl"]);
+    expect(check({ ...sso, browser: "external" })).toEqual(["authentication.challenge.browser"]);
+    expect(rules(validateAuthenticationResult({ status: "interaction-required", challenge: credentials, failure: refusal }, "start"))).toEqual(["authentication.failure.unexpected"]);
+    expect(rules(validateAuthenticationResult({ status: "rejected", failure: refusal, challenge: credentials }, "start"))).toEqual(["authentication.challenge.unexpected"]);
+    const violations = validateAuthenticationResult({ status: "interaction-required", challenge: { ...credentials, fields: [{ ...field, type: false }] } }, "start", "login.start");
+    expect(violations[0]?.path).toBe("login.start.challenge.fields[0].type");
+  });
+  it("requires a finite non-negative retry delay", () => {
+    for (const retryAfterMs of [0, 30000]) {
+      expect(rules(validateAuthenticationFailure({ ...refusal, retryAfterMs }))).toEqual([]);
+    }
+    for (const retryAfterMs of [Infinity, -Infinity, NaN, -1, "500", null]) {
+      expect(rules(validateAuthenticationFailure({ ...refusal, retryAfterMs }))).toEqual(["authentication.failure.retryAfterMs"]);
+    }
+  });
   it("names the phone the platform does not permit with the contract's code, never retryable", () => {
     expect(rules(validateAuthenticationFailure(refusal))).toEqual([]);
     expect(rules(validateAuthenticationFailure({ ...refusal, retryable: true }))).toEqual(["authentication.failure.phone.retryable"]);

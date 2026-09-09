@@ -1306,7 +1306,7 @@ dropped. An adapter that wanted only a better noun loses a field it never meant 
 
 ## Protocol contract rules
 
-Nine rules govern protocol data and behavior.
+Ten rules govern protocol data and behavior.
 
 ### 1. The protocol is authoritative
 
@@ -3181,7 +3181,7 @@ inside Omni.
 
 ## Every dial has an outcome
 
-Four commands place a call: `dial` from the idle dialpad, a blind or consult `transfer`, a
+Five commands place a call: `dial` from the idle dialpad, `call` from preview, a cold or warm `transfer`, a
 `conference` `add`, and `connect-back`. Each is accepted or refused at once, and each then ends later
 and apart from its answer -- the destination picks up, is busy, or never does -- and a dial placed
 late in a call routinely outlives the call. Nothing in between is reported: the wire says
@@ -3979,18 +3979,17 @@ decision or it is not.
 
 ## Real-time media
 
-Every voice provider has media. There is nothing to announce, no capability to declare and no
-endpoint to choose: `channel: "voice"` says audio exists, and **Omni is the device it lands on**.
+Every voice provider has media: `channel: "voice"` says audio exists. Where the agent hears it
+depends on the `phone` the host selected at authentication and connect from the manifest's
+`phones`. On a softphone, audio lands in Omni; on a desk phone, it lands on the handset and Omni
+opens no audio. See **How the agent hears the call**. Media transitions are voice-only;
+chat and email publish none (`event.media.channel`, `stream.taskMedia.channel`).
 
-Other endpoints exist in a deployment — desk phones, the provider's own hardware, whatever the
-platform already rings — and none of them is the agent's. Omni does not enumerate them, map the
-agent onto one, or follow a change made to one. There is no device list, no device selection and
-no device on the snapshot, because there is no choice to record: audio for this agent arrives in
-Omni, and Omni registers the endpoint for it.
+The provider owns signalling and the platform's endpoint configuration. The host selects the
+declared phone mode; it does not enumerate or reconfigure the platform's devices. The selected
+mode stays with the login rather than being inferred from a snapshot or a device failure.
 
-That removes a whole class of state the provider would otherwise own and Omni would have to track,
-and it removes the branch that came with it: no command has to ask where the audio went before
-deciding who performs it. Nor does the audio ever stand in for the task: a task's presence and
+Nor does the audio ever stand in for the task: a task's presence and
 phase follow the provider's reports about the work, and the media — attaching, moving through a
 hold, a consult, a conference or a transfer, and ending — is transient beside it. See **A task is
 never its audio** under **Task allocation lifecycle**.
@@ -4165,7 +4164,7 @@ carries as `audio.input.localAudio`, and absent while that input is `unavailable
 bridges audio without a host-side input may ignore it; one that needs it and finds it absent
 answers `unavailable` with a failure Omni shows the agent.
 
-**When to ask is the provider's word, not Omni's guess.** Omni opens media on `task-media-started`,
+**When to ask is the provider's word, not Omni's guess.** On a softphone login, Omni opens media on `task-media-started`,
 and on a task arriving with `media: "started"` on a snapshot; it closes on `task-media-ended` and
 when the task ends. Between those words, nothing Omni's own senses report — a stream that drops, a
 track that ends — moves the task or its audio.
@@ -4302,7 +4301,7 @@ declared:
 | `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with status `requested`. |
 | `lead-assist` with `action: "take-over"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |
 | `transfer` with a destination, `conference` with `action: "add"` | Its capability, and a `destinationId` the directory offered: the id Omni sends is the id the provider published (`command.destination.unknown`). |
-| `custom` | A control the task published under `capabilities.custom`, by its `id` (`command.capability.custom`), carrying every field the control's `prompt` asked for (`command.custom.prompt`). |
+| `custom` | A control the task published under `capabilities.custom`, by its `id` (`command.capability.custom`), carrying a non-empty string for each `required` prompt field and strings for any optional fields supplied (`command.custom.prompt`). A toggle carries its target `on` boolean (`command.custom.on`). |
 | Everything else | Its own named capability. |
 
 **A control on the contact belongs to the handling phases**, `in-progress` and `paused`:

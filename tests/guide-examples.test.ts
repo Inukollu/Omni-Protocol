@@ -83,18 +83,32 @@ function fileFor(block: Block, placeholders: readonly string[]): string {
   ].join("\n");
 }
 
-const compile = (): Map<string, { code: string; text: string; line: number }[]> => {
-  const tsc = spawnSync(join(root, "node_modules", ".bin", "tsc"), ["-p", join(work, "tsconfig.json")], { encoding: "utf8", cwd: root });
-  if (tsc.error !== undefined) throw tsc.error;
+const diagnostics = (output: string, status: number | null): Map<string, { code: string; text: string; line: number }[]> => {
+  if (status === null) throw new Error(`The guide compiler was terminated:\n${output}`);
   const errors = new Map<string, { code: string; text: string; line: number }[]>();
-  for (const line of tsc.stdout.split("\n")) {
+  for (const line of output.split("\n")) {
     const match = /^(?:.*[\\/])?(L\d+)\.ts\((\d+),\d+\): error (TS\d+): (.*)$/.exec(line);
     if (match) errors.set(match[1] as string, [...(errors.get(match[1] as string) ?? []), { code: match[3] as string, text: match[4] as string, line: Number(match[2]) }]);
+    else if (line.trim() !== "") throw new Error(`Unexpected guide compiler output:\n${line}`);
   }
+  if (status !== 0 && errors.size === 0) throw new Error(`The guide compiler failed with exit code ${status}:\n${output}`);
   return errors;
 };
 
+const compile = (): Map<string, { code: string; text: string; line: number }[]> => {
+  const tsc = spawnSync(join(root, "node_modules", ".bin", "tsc"), ["-p", join(work, "tsconfig.json"), "--pretty", "false"], { encoding: "utf8", cwd: root });
+  if (tsc.error !== undefined) throw tsc.error;
+  return diagnostics(`${tsc.stdout}${tsc.stderr}`, tsc.status);
+};
+
 describe("the guide's examples compile", () => {
+  it("reports compiler failures outside an example instead of accepting an empty error list", () => {
+    expect(diagnostics("", 0).size).toBe(0);
+    expect(diagnostics("L12.ts(2,3): error TS2304: Cannot find name 'missing'.", 2).get("L12")).toHaveLength(1);
+    expect(() => diagnostics("error TS5058: The specified path does not exist.", 1)).toThrow("Unexpected guide compiler output");
+    expect(() => diagnostics("", 1)).toThrow("exit code 1");
+    expect(() => diagnostics("", null)).toThrow("terminated");
+  });
   it("every complete ```ts block type-checks, and every declared shape mirrors the package's", () => {
     rmSync(work, { recursive: true, force: true });
     mkdirSync(work, { recursive: true });
