@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BreakApproval, BreakState } from "../src/index.js";
-import { validateBreakTransition } from "../src/validation.js";
+import { validateBreakTransition, validateBreakCommand, validateBreakStatus, validateTeamBreakCommand, validateResult, type BreakMethod } from "../src/validation.js";
 import { BreakStream } from "../src/testing.js";
 
 const state = (approval: BreakApproval): BreakState => ({ approval, mayAsk: true });
@@ -62,5 +62,96 @@ describe("runtime break ordering", () => {
     const stream = new BreakStream();
     stream.seed({ break: state("in-effect") });
     expect(stream.apply({ event: { type: "snapshot", snapshot: { break: state("not-requested") } } })).toEqual([]);
+  });
+});
+
+const context = {
+  transport: "active",
+  authentication: { status: "authenticated", identity: { id: "agent", displayName: "Agent", timeZone: "UTC" }, capabilities: { breaks: true } },
+};
+describe("break prerequisites", () => {
+  it("checks all four methods against every approval", () => {
+    const allowed: Record<BreakMethod, BreakApproval[]> = {
+      requestBreak: ["not-requested"], commitBreak: ["granted", "starting-after-task", "in-effect"],
+      cancelBreak: ["awaiting-decision", "granted"], endBreak: ["starting-after-task", "in-effect"],
+    };
+    const approvals: BreakApproval[] = ["not-requested", "awaiting-decision", "granted", "starting-after-task", "in-effect"];
+    for (const method of Object.keys(allowed) as BreakMethod[]) for (const approval of approvals) {
+      const found = validateBreakCommand(method, method === "requestBreak" ? {} : undefined, state(approval), context);
+      expect(found.length === 0, `${method} from ${approval}`).toBe(allowed[method].includes(approval));
+    }
+  });
+  it("requires explicit live capability and active transport on every method", () => {
+    for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak"] as const) {
+      const current = state(method === "requestBreak" ? "not-requested" : method === "endBreak" ? "in-effect" : "granted");
+      for (const invalid of [undefined, {}, { ...context, transport: "connecting" }, { ...context, authentication: { status: "expired" } },
+        { ...context, authentication: { ...context.authentication, capabilities: { breaks: false } } }]) {
+        expect(validateBreakCommand(method, method === "requestBreak" ? {} : undefined, current, invalid)).not.toEqual([]);
+      }
+    }
+  });
+  it("requires published reasons and permits only selected alwaysAvailable exceptions", () => {
+    const current = { ...state("not-requested"), mayAsk: false, reasons: [
+      { id: "bio", label: "Bio", alwaysAvailable: true }, { id: "lunch", label: "Lunch" },
+    ] };
+    expect(validateBreakCommand("requestBreak", { reasonId: "bio" }, current, context)).toEqual([]);
+    for (const request of [{}, { reason: "Bio" }, { reasonId: "missing" }, { reasonId: "lunch" }, { reasonId: "bio", reason: "" }, null]) {
+      expect(validateBreakCommand("requestBreak", request, current, context)).not.toEqual([]);
+    }
+    expect(validateBreakCommand("requestBreak", { reasonId: "bio" }, state("not-requested"), context)).not.toEqual([]);
+    // mayAsk is not a withdrawal of an already granted request.
+    expect(validateBreakCommand("commitBreak", undefined, { ...state("granted"), mayAsk: false }, context)).toEqual([]);
+  });
+  it("forbids agent ending imposed breaks and rejects extra arguments or methods", () => {
+    expect(validateBreakCommand("endBreak", undefined, { ...state("in-effect"), imposed: { by: "lead", endsAutomatically: false } }, context))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ rule: "break.command.end.imposed" })]));
+    expect(validateBreakCommand("commitBreak", {}, state("granted"), context)).not.toEqual([]);
+    expect(validateBreakCommand("bogus" as BreakMethod, undefined, state("granted"), context)).not.toEqual([]);
+  });
+  it("validates response vocabulary without treating acknowledgments as state", () => {
+    for (const [method, status] of [["requestBreak", "requested"], ["commitBreak", "committed"], ["cancelBreak", "cancelled"], ["endBreak", "ended"]] as const) {
+      expect(validateResult({ status }, method)).toEqual([]);
+      expect(validateResult({ status: "in-effect" }, method)).not.toEqual([]);
+    }
+    expect(validateResult({ status: "failed", failure: { code: "omni.break-already-committed", message: "Commit won", retryable: false } }, "cancelBreak")).toEqual([]);
+  });
+  it("requires complete task evidence and keeps a finishing task from becoming an active break", () => {
+    expect(validateBreakStatus(state("starting-after-task"), [])).not.toEqual([]);
+    expect(validateBreakStatus(state("in-effect"), [{ id: "task", phase: "completing" }])).not.toEqual([]);
+    expect(validateBreakStatus(state("in-effect"), [])).toEqual([]);
+    expect(validateBreakStatus(state("in-effect"), undefined)).not.toEqual([]);
+    expect(validateBreakStatus(state("starting-after-task"), [{ id: "task" }])).toEqual([]);
+    const listening = { ...state("in-effect"), activeReasonId: "training", reasons: [{ id: "training", label: "Training", kind: "training" }] };
+    expect(validateBreakStatus(listening, [{ monitoring: {} }])).toEqual([]);
+    expect(validateBreakStatus(state("in-effect"), [{ monitoring: {} }])).not.toEqual([]);
+  });
+});
+
+describe("lead break prerequisites", () => {
+  const lead = { ...context, authentication: { ...context.authentication, capabilities: { team: { breakControl: true } } },
+    team: { members: [{ id: "member", availability: "ready", break: "awaiting-decision" }] },
+    memberBreak: { ...state("not-requested"), reasons: [{ id: "bio", label: "Bio" }] },
+  };
+  it("requires current decision eligibility, target membership and explicit lead permission", () => {
+    const request = { command: { type: "decide", memberId: "member", decision: "granted" } };
+    expect(validateTeamBreakCommand(request, lead)).toEqual([]);
+    for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [] } },
+      { ...lead, team: { members: [{ id: "member", break: "granted" }] } }]) {
+      expect(validateTeamBreakCommand(request, bad)).not.toEqual([]);
+    }
+    expect(validateTeamBreakCommand({ command: { ...request.command, decision: "maybe" } }, lead)).not.toEqual([]);
+  });
+  it("checks placement reason and release of an imposed break without assuming the placer is the releaser", () => {
+    expect(validateTeamBreakCommand({ command: { type: "place", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
+    expect(validateTeamBreakCommand({ command: { type: "place", memberId: "member" } }, lead)).not.toEqual([]);
+    const release = { command: { type: "release", memberId: "member" } };
+    expect(validateTeamBreakCommand(release, lead)).not.toEqual([]);
+    expect(validateTeamBreakCommand(release, { ...lead, memberBreak: { ...state("in-effect"), imposed: { by: "another-lead", endsAutomatically: false } } })).toEqual([]);
+  });
+  it("rejects unsupported policy, malformed commands and extra fields", () => {
+    expect(validateTeamBreakCommand({ command: { type: "policy", policy: "suspended" } }, lead)).toEqual([]);
+    for (const command of [null, { type: "toString" }, { type: "policy", policy: "anything" }, { type: "policy", policy: "ask", memberId: "member" }]) {
+      expect(validateTeamBreakCommand({ command }, lead)).not.toEqual([]);
+    }
   });
 });

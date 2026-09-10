@@ -3552,6 +3552,40 @@ against it (`stream.taskOffered.overCapacity`).
 idle dialpad arrives through `task-offered` like any other task, and a full agent does not forbid
 it: the ceiling binds allocation, not the agent's own hand.
 
+### Runtime break prerequisite checks
+
+Use `validateBreakCommand(method, request, state, context)` from the validation entry point
+before any agent break dispatch. The context supplies current authentication and transport;
+all four methods require the live login's break capability and active transport. Pass the
+request object only to the request method, and undefined to the other three.
+
+| Method | Required current state |
+| --- | --- |
+| `requestBreak` | `not-requested`; selected current reason code when codes exist; `mayAsk` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
+| `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `mayAsk` does not revoke the grant. |
+| `cancelBreak` | `awaiting-decision` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
+| `endBreak` | `in-effect` or `starting-after-task` during reconciliation; an agent cannot end an imposed break. |
+
+Use `validateTeamBreakCommand(request, context)` for lead decisions, placement, release and
+policy commands. It requires the live lead capability and active transport, a current target
+roster for member commands, and the target's complete break state for placement/release.
+Approve/deny requires an awaiting decision; placement uses the target's reason codes; release
+requires an imposed committed break. The context's target state must belong to the named member;
+that association and backend authorization are provider responsibilities.
+
+Use `validateBreakStatus(state, tasks)` on the complete retained task view after each transaction,
+as well as `validateBreakTransition` for event ordering. Snapshot validation shares the status
+checks. Pending and completing tasks still count as work. Only the existing monitoring exception
+allows tasks beside a break in effect. Validate full task shapes and the envelope separately.
+
+These validators report violations without dispatching, rewriting state or proving freshness.
+Recheck prerequisites atomically at the provider; client validation cannot prevent a race.
+Continue to use `validateResult` for each method's response vocabulary. A request acknowledgment
+is not a grant, and no method response overwrites a newer state emission. Rejected promises
+remain unknown and recover by snapshot, not automatic retry. The host's frozen provider set,
+durable mutually exclusive commit/cancel decision and reconciliation obligations above remain
+required; per-provider validation does not implement the multi-provider coordinator.
+
 ### `requestBreak(request)`
 
 Requests permission to stop the agent later; it does not itself stop work. The provider continues

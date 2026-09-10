@@ -1371,6 +1371,164 @@ function validateImposedBreak(value: unknown, path: string, into: Collector): vo
   }
 }
 
+/** Checks break status against the full currently retained task set, after a transaction. */
+export function validateBreakStatus(state: unknown, tasks: unknown, path = "snapshot"): ProtocolViolation[] {
+  const into = new Collector();
+  validateBreakState(state, `${path}.break`, into);
+  into.require(Array.isArray(tasks), "break.tasks.shape", `${path}.tasks`, "the complete current task list is required");
+  if (Array.isArray(tasks)) tasks.forEach((task: unknown, index: number) => {
+    into.require(isPlainObject(task), "break.task.shape", `${path}.tasks[${index}]`, "each retained task must be an object");
+  });
+  // A break in effect begins when the work ends, so it holds no task. A snapshot reporting both
+  // describes a state the agent cannot be in, whichever half is stale. The one exception is a
+  // lead listening to a call during a break that is work of another sort -- coaching,
+  // administrative, training -- and on no other.
+  // The converse: a committed break with nothing outstanding has begun. starting-after-task beside
+  // no task is a break waiting on work that does not exist, and an empty list reading as "still
+  // finishing" is the plausible nought.
+  ruleEvaluated("break.starting-after-task.tasks");
+  if (isPlainObject(state) && state.approval === "starting-after-task"
+    && Array.isArray(tasks) && tasks.length === 0) {
+    into.add("break.starting-after-task.tasks", `${path}.break.approval`,
+      "a break starting after the task waits on a task, and the snapshot carries none: with nothing outstanding the break is in-effect");
+  }
+  if (isPlainObject(state) && state.approval === "in-effect"
+    && Array.isArray(tasks) && tasks.length > 0) {
+    const listening = tasks.every((task: unknown) => isPlainObject(task) && task.monitoring !== undefined);
+    if (!listening) {
+      into.add("break.in-effect.tasks", `${path}.tasks`,
+        "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task");
+    } else {
+      const reasons = Array.isArray(state.reasons) ? state.reasons : [];
+      const active = reasons.find((reason: unknown) => isPlainObject(reason) && reason.id === state.activeReasonId);
+      const kind = isPlainObject(active) ? active.kind : undefined;
+      into.require(typeof kind === "string" && (MONITORING_BREAK_KINDS as readonly string[]).includes(kind), "snapshot.monitoring.break", `${path}.tasks`,
+        `a lead listens during a ${MONITORING_BREAK_KINDS.join(", ")} break and no other; the active reason is ${kind === undefined ? "unstated" : describeValue(kind)}`);
+    }
+  }
+
+  return into.violations;
+}
+
+/**
+ * Checks lead break dispatch using current authentication, transport, roster (`team`) and,
+ * for place/release, the target's full `memberBreak`. The provider must authorize the target
+ * and recheck the decision atomically; a roster is not authority to act after it has changed.
+ */
+export function validateTeamBreakCommand(request: unknown, context: unknown, path = "teamBreakCommand"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(context) || !isPlainObject(request) || !isPlainObject(request.command)) {
+    into.add("team.break.command.shape", path, "a command and current authentication/transport/team context are required");
+    return into.violations;
+  }
+  const auth = isPlainObject(context.authentication) ? context.authentication : {};
+  into.violations.push(...validateAuthenticationState(auth, `${path}.authentication`));
+  const caps = isPlainObject(auth.capabilities) ? auth.capabilities : {};
+  into.require((auth.status === "authenticated" || auth.status === "refreshing") && context.transport === "active",
+    "team.break.command.connection", path, "lead commands require a live login and active transport");
+  into.require(isPlainObject(caps.team) && caps.team.breakControl === true, "team.break.command.capability", path,
+    "the login must declare team.breakControl");
+  const command = request.command;
+  const allowed: Record<string, readonly string[]> = {
+    decide: ["type", "memberId", "decision", "reason"], policy: ["type", "policy"],
+    place: ["type", "memberId", "reasonId", "reason"], release: ["type", "memberId"],
+  };
+  const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
+  if (!fields) { into.add("team.break.command.type", path, "unknown lead break command"); return into.violations; }
+  for (const key of Object.keys(request)) into.require(key === "command", "team.break.request.field", `${path}.${key}`, "only command is supported");
+  for (const key of Object.keys(command)) into.require(fields.includes(key), "team.break.command.field", `${path}.${key}`, "field is not supported for this command");
+  if (command.reason !== undefined) into.filled(command.reason, "team.break.command.reason", path, "reason must not be empty");
+  if (command.type === "policy") {
+    into.require(["ask", "auto-approve", "suspended"].includes(command.policy as string), "team.break.command.policy", path, "unknown break policy");
+    return into.violations;
+  }
+  into.filled(command.memberId, "team.break.command.member", path, "name the target member");
+  const team = isPlainObject(context.team) ? context.team : {};
+  const members = Array.isArray(team.members) ? team.members : [];
+  const member = members.find((m: unknown) => isPlainObject(m) && m.id === command.memberId);
+  const self = isPlainObject(auth.identity) ? auth.identity.id : undefined;
+  into.require(isPlainObject(member) && command.memberId !== self, "team.break.command.member", path,
+    "the target must be another member of the current authorized roster");
+  if (command.type === "decide") {
+    into.require(command.decision === "granted" || command.decision === "denied", "team.break.command.decision", path, "decide granted or denied");
+    into.require(isPlainObject(member) && member.break === "awaiting-decision", "team.break.command.awaiting", path,
+      "decide only a currently awaiting-decision request");
+  } else {
+    validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
+    const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
+    if (command.type === "release") into.require(state.imposed !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
+      "team.break.command.release", path, "release a currently imposed break");
+    if (command.type === "place") {
+      if (command.reasonId !== undefined) into.filled(command.reasonId, "team.break.command.reasonId", path, "reasonId must not be empty");
+      const reasons = Array.isArray(state.reasons) ? state.reasons : [];
+      into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
+        "team.break.command.reasonId", path, "place uses the target's currently published reason codes");
+    }
+  }
+  return into.violations;
+}
+
+/** The four agent break methods; this is a validation API, not a wire command. */
+export type BreakMethod = "requestBreak" | "commitBreak" | "cancelBreak" | "endBreak";
+
+/**
+ * Validate immediately before dispatch against current provider state. Context must contain
+ * the current authentication and transport. This cannot fence a concurrent backend change;
+ * the provider must recheck atomically. Result validation never replaces authoritative state.
+ */
+export function validateBreakCommand(method: BreakMethod, request: unknown, state: unknown,
+  context: unknown, path = "breakCommand"): ProtocolViolation[] {
+  const into = new Collector();
+  validateBreakState(state, `${path}.state`, into);
+  if (!isPlainObject(context)) {
+    into.add("break.command.context", path, "current authentication and transport are required");
+    return into.violations;
+  }
+  into.violations.push(...validateAuthenticationState(context.authentication, `${path}.authentication`));
+  const auth = isPlainObject(context.authentication) ? context.authentication : {};
+  into.require(auth.status === "authenticated" || auth.status === "refreshing", "break.command.authentication", path,
+    "break commands require a live authenticated login");
+  into.require(isPlainObject(auth.capabilities) && auth.capabilities.breaks === true, "break.command.capability", path,
+    "the login must declare breaks");
+  into.require(context.transport === "active", "break.command.transport", path, "break commands require active transport");
+  if (!["requestBreak", "commitBreak", "cancelBreak", "endBreak"].includes(method)) {
+    into.add("break.command.method", path, "unknown break method");
+    return into.violations;
+  }
+  if (!isPlainObject(state) || into.violations.length) return into.violations;
+  const approval = state.approval;
+  if (method === "requestBreak") {
+    into.require(approval === "not-requested", "break.command.request.pending", path, "a new request starts only from not-requested");
+    if (!isPlainObject(request)) {
+      into.add("break.request.shape", path, "requestBreak takes a request object");
+      return into.violations;
+    }
+    for (const key of Object.keys(request)) into.require(key === "reason" || key === "reasonId",
+      "break.request.field", `${path}.${key}`, "a break request carries only reason and reasonId");
+    for (const key of ["reason", "reasonId"]) if (request[key] !== undefined)
+      into.filled(request[key], `break.request.${key}`, `${path}.${key}`, "a supplied reason must not be empty");
+    const reasons = Array.isArray(state.reasons) ? state.reasons : [];
+    const selected = reasons.find((r: unknown) => isPlainObject(r) && r.id === request.reasonId);
+    if (state.reasons !== undefined) into.require(selected !== undefined, "break.request.reasonId", path,
+      "choose a currently published reasonId; free text is not a substitute");
+    else into.require(request.reasonId === undefined, "break.request.reasonId.unexpected", path, "no reason codes were published");
+    into.require(state.mayAsk === true || (isPlainObject(selected) && selected.alwaysAvailable === true),
+      "break.request.mayAsk", path, "asking is disabled except for the selected alwaysAvailable reason");
+  } else {
+    into.require(request === undefined, "break.command.arguments", path, "this break method takes no arguments");
+    if (method === "commitBreak") into.require(approval === "granted" || approval === "starting-after-task" || approval === "in-effect",
+      "break.command.commit.grant", path, "commit requires a grant; repeated committed state is idempotent");
+    if (method === "cancelBreak") into.require(approval === "awaiting-decision" || approval === "granted",
+      "break.command.cancel.precommit", path, "cancel only a pre-commit request; a raced commit requires commit recovery");
+    if (method === "endBreak") {
+      into.require(approval === "starting-after-task" || approval === "in-effect", "break.command.end.started", path,
+        "end a committed break, including a returning provider still finishing work");
+      into.require(state.imposed === undefined, "break.command.end.imposed", path, "an agent cannot end an imposed break; an authorized lead releases it");
+    }
+  }
+  return into.violations;
+}
+
 /**
  * Checks two complete break states within one provider/login's ordered event stream.
  * Call before replacing accepted state; report violations and reconcile on failure.
@@ -1622,7 +1780,6 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       `a snapshot for session ${describeValue(snapshot.loginId)} on a login whose session is ${context.loginId}`);
   }
 
-  validateBreakState(snapshot.break, `${path}.break`, into);
 
   // The count is the provider's confirmation of how much work it answered with. Stated, never
   // inferred: an unanswered or blank state lacks it, and cannot pass as a confirmed empty.
@@ -1664,34 +1821,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       }
     });
   }
-  // A break in effect begins when the work ends, so it holds no task. A snapshot reporting both
-  // describes a state the agent cannot be in, whichever half is stale. The one exception is a
-  // lead listening to a call during a break that is work of another sort -- coaching,
-  // administrative, training -- and on no other.
-  // The converse: a committed break with nothing outstanding has begun. starting-after-task beside
-  // no task is a break waiting on work that does not exist, and an empty list reading as "still
-  // finishing" is the plausible nought.
-  ruleEvaluated("break.starting-after-task.tasks");
-  if (isPlainObject(snapshot.break) && snapshot.break.approval === "starting-after-task"
-    && Array.isArray(snapshot.tasks) && snapshot.tasks.length === 0) {
-    into.add("break.starting-after-task.tasks", `${path}.break.approval`,
-      "a break starting after the task waits on a task, and the snapshot carries none: with nothing outstanding the break is in-effect");
-  }
-  if (isPlainObject(snapshot.break) && snapshot.break.approval === "in-effect"
-    && Array.isArray(snapshot.tasks) && snapshot.tasks.length > 0) {
-    const listening = snapshot.tasks.every((task: unknown) => isPlainObject(task) && task.monitoring !== undefined);
-    if (!listening) {
-      into.add("break.in-effect.tasks", `${path}.tasks`,
-        "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task");
-    } else {
-      const state = snapshot.break;
-      const reasons = Array.isArray(state.reasons) ? state.reasons : [];
-      const active = reasons.find((reason: unknown) => isPlainObject(reason) && reason.id === state.activeReasonId);
-      const kind = isPlainObject(active) ? active.kind : undefined;
-      into.require(typeof kind === "string" && (MONITORING_BREAK_KINDS as readonly string[]).includes(kind), "snapshot.monitoring.break", `${path}.tasks`,
-        `a lead listens during a ${MONITORING_BREAK_KINDS.join(", ")} break and no other; the active reason is ${kind === undefined ? "unstated" : describeValue(kind)}`);
-    }
-  }
+  into.violations.push(...validateBreakStatus(snapshot.break, snapshot.tasks, path));
 
   // Presence is the permission, and it cuts both ways: data a provider never declared a
   // capability for is data Omni would show against a control the agent does not have.
