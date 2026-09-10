@@ -1371,6 +1371,34 @@ function validateImposedBreak(value: unknown, path: string, into: Collector): vo
   }
 }
 
+/**
+ * Checks two complete break states within one provider/login's ordered event stream.
+ * Call before replacing accepted state; report violations and reconcile on failure.
+ * This is not a freshness check: validate a fresh authoritative snapshot separately and
+ * use it as a new baseline, never as an event transition. Source ordering and connection
+ * fencing remain required; neither timestamps nor approval rank identify a break attempt.
+ */
+export function validateBreakTransition(before: unknown, after: unknown, path = "break"): ProtocolViolation[] {
+  const into = new Collector();
+  validateBreakState(before, `${path}.before`, into);
+  validateBreakState(after, `${path}.after`, into);
+  if (into.violations.length || !isPlainObject(before) || !isPlainObject(after)) return into.violations;
+  const from = before.approval as BreakApproval;
+  const to = after.approval as BreakApproval;
+  const committed = to === "starting-after-task" || to === "in-effect";
+  if (committed && (from === "not-requested" || from === "awaiting-decision") && after.imposed === undefined) {
+    into.add("stream.breakState.commitBeforeGrant", `${path}.after.approval`,
+      `${to} follows a commit, and a commit follows granted; the break stood at ${from}`);
+  }
+  const backwards =
+    (from === "in-effect" && (to === "awaiting-decision" || to === "granted" || to === "starting-after-task")) ||
+    (from === "starting-after-task" && (to === "awaiting-decision" || to === "granted")) ||
+    (from === "granted" && to === "awaiting-decision");
+  if (backwards) into.add("stream.breakState.backwards", `${path}.after.approval`,
+    `a break does not go from ${from} back to ${to}; a new request passes through not-requested`);
+  return into.violations;
+}
+
 function validateBreakState(value: unknown, path: string, into: Collector): void {
   if (!isPlainObject(value)) {
     into.add("break.shape", path, "break state must be an object");

@@ -28,6 +28,7 @@ import {
 import {
   assertNoViolations,
   validateAuthenticationState,
+  validateBreakTransition,
   validateEventEnvelope,
   validateHostGuarantees,
   validateHostReport,
@@ -1911,13 +1912,6 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
 // starting-after-task | in-effect; work ending goes starting-after-task -> in-effect; a denial,
 // a cancel, an end or a release goes back to not-requested; a placed break arrives in-effect
 // with `imposed`. Nothing else is a move the guide describes.
-const COMMITTED = new Set(["starting-after-task", "in-effect"]);
-const BACKWARDS: Record<string, readonly string[]> = {
-  "in-effect": ["awaiting-decision", "granted", "starting-after-task"],
-  "starting-after-task": ["awaiting-decision", "granted"],
-  granted: ["awaiting-decision"],
-};
-
 /** What a stream has said about the agent's break, and the moves it may not make. */
 export class BreakStream {
   private approval: string | undefined;
@@ -1940,19 +1934,8 @@ export class BreakStream {
     if (event.type !== "break-state" || !isRecord(event.break) || typeof event.break.approval !== "string") return found;
     const from = this.approval;
     const to = event.break.approval;
-    const at = `${path}.event.break.approval`;
     if (from !== undefined) {
-      // A commit's states need a grant behind them. A placed break is the one arrival in a
-      // committed state that nobody asked for -- in effect at once, or starting-after-task while
-      // the member finishes a call -- and it says so with `imposed`.
-      if (COMMITTED.has(to) && (from === "not-requested" || from === "awaiting-decision") && event.break.imposed === undefined) {
-        found.push({ rule: "stream.breakState.commitBeforeGrant", path: at,
-          message: `${to} follows a commit, and a commit follows granted; the break stood at ${from}` });
-      }
-      if ((BACKWARDS[from] ?? []).includes(to)) {
-        found.push({ rule: "stream.breakState.backwards", path: at,
-          message: `a break does not go from ${from} back to ${to}; a new request passes through not-requested` });
-      }
+      found.push(...validateBreakTransition({ approval: from, mayAsk: true }, event.break, `${path}.event.break`));
     }
     this.approval = to;
     return found;

@@ -4588,6 +4588,24 @@ from `in-effect` or `starting-after-task` to a grant or a request, or from `gran
 `exerciseAdapter` holds the stream to that from the connect snapshot on;
 `assertBreakFollowsItsRequests` holds any sequence.
 
+Adapters and hosts can call `validateBreakTransition(before, after)` from the package’s validation entry point
+with two complete break objects before applying an event. It checks shape and the transition
+rules above; it does not mutate either state or apply the event. Report a violation visibly,
+retain the last accepted state without claiming it remains current, and reconcile from the
+source. Continue to validate the full envelope/login and task/break consistency separately.
+The conformance `BreakStream` remains an observer of supplied events, not a production reducer.
+
+A fresh authoritative snapshot establishes a new baseline; do not run this event-transition
+check across it. A snapshot may legitimately establish a later request or an already active
+break after reconnect. Its freshness must be established by the source/adapter's ordered
+snapshot/publication boundary and fencing of obsolete callbacks and reads. A delayed old
+snapshot is not detectable from break approval alone. Neither envelope time nor event ID
+supplies a break revision. Do not suppress all requests after an active break: a later attempt
+passes through `not-requested`, and then may request again. Do not replay earlier ProviderEvents
+after recovery. Raw backend break handlers must preserve source order too; this helper does
+not implement or assume invocation of Protocol's two-phase request/commit coordinator.
+
+
 For a multi-provider break attempt, "every provider" is the set of providers frozen when the
 attempt entered `requesting-break`. Omni commits only after every asked provider reports `granted` —
 that one is unconditional, because nothing has stopped yet and waiting costs only time. It enters
