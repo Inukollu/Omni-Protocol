@@ -1,3 +1,12 @@
+# Expanded break lifecycle checks — 2026-09-10
+
+- PR108 https://github.com/Inukollu/Omni-Protocol/pull/108; implementation 5a983341839926e9fe45795dad6cea4dc203047e; branch fix/break-ordering-checks; worktree /private/tmp/omni-break-ordering.
+- Added validateBreakCommand for all four agent methods: live login, explicit capability, active transport, current reason selection/alwaysAvailable exception, request phase, granted/idempotent commit, precommit cancel and committed/non-imposed end.
+- Added validateTeamBreakCommand for decide/place/release/policy: live lead capability, target membership, awaiting decision, target reason codes and imposed release. Provider must bind memberBreak to memberId and recheck authorization atomically; full roster validation remains separate.
+- Added validateBreakStatus against complete retained tasks; snapshot validation shares it. Existing monitoring exception preserved; full task validation remains separate.
+- validateBreakTransition remains the shared ordering check. Source order/snapshot freshness and stale callback fencing cannot be inferred from these fields. No result acknowledgment writes state; existing validateResult checks result vocabulary. Host multi-provider durable decision/recovery is not implemented by these per-provider helpers.
+- Full pnpm check passed: 402 tests, build/types, guide, package; diff check clean. No live tests, wire/package version change, merge or release. Await latest CI and review; observation-only monitor below remains active. Keep worktree/branch until terminal verification and remote-safe cleanup.
+
 # Current work: break ordering checks — PR108
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-ordering; branch fix/break-ordering-checks; implementation 4e8a02ab9549fa7e9e3da777b20917787785a92c; PR https://github.com/Inukollu/Omni-Protocol/pull/108.
@@ -76,6 +85,6 @@ Validation: full build/typecheck plus 392 tests passed; guide-format check faile
 <!-- pr107-monitor:end -->
 
 <!-- break-monitor:begin -->
-Monitor omni-protocol-pr108-break-ordering: OPEN at 2026-09-10T07:31:46.015348+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr108-break-ordering: OPEN at 2026-09-10T07:34:48.352692+00:00. Await CI/review; monitor never merges.
 PID 66088; command python3 /private/tmp/omni-break-ordering/.agent-memory/runtime/break-monitor.py; state /private/tmp/omni-break-ordering/.agent-memory/runtime/break.state.json; log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.log; PID file /private/tmp/omni-break-ordering/.agent-memory/runtime/break.pid; process log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-ordering, branch fix/break-ordering-checks, PR https://github.com/Inukollu/Omni-Protocol/pull/108.
 <!-- break-monitor:end -->
