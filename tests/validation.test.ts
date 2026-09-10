@@ -98,7 +98,7 @@ const manifest = (over: Record<string, unknown> = {}) => ({
   id: "acme-voice",
   displayName: "Acme Voice",
   channel: "voice",
-  supportedProtocolVersions: [2],
+  supportedProtocolVersions: [1],
   authenticationMethods: ["credentials"],
   disposalSettleMs: 5000,
   // A voice manifest says which phones it supports; any other channel says nothing.
@@ -2203,8 +2203,8 @@ describe("protocol-version interoperability", () => {
     expect(rules(validateManifest(manifest({ supportedProtocolVersions: [99] })))).toContain("manifest.supportedProtocolVersions.interoperable");
     // ...and the controls: declaring this version among others is fine, and a list with a bad
     // entry beside a good one is reported for the entry, not for interoperability.
-    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [99, 2] })))).toEqual([]);
-    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [2, 1.5] })))).toEqual(["manifest.supportedProtocolVersions.value"]);
+    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [99, 1] })))).toEqual([]);
+    expect(rules(validateManifest(manifest({ supportedProtocolVersions: [1, 1.5] })))).toEqual(["manifest.supportedProtocolVersions.value"]);
   });
 });
 

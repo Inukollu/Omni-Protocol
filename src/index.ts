@@ -3,7 +3,7 @@
 // Where this file and guide.md disagree, the guide is right and this is a defect.
 
 /** The protocol version implemented by this package. */
-export const OMNI_PROTOCOL_VERSION = 2 as const;
+export const OMNI_PROTOCOL_VERSION = 1 as const;
 
 /** Every version this package can interoperate with. */
 export const OMNI_SUPPORTED_PROTOCOL_VERSIONS: readonly number[] = [OMNI_PROTOCOL_VERSION];

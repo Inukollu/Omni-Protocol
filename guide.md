@@ -58,7 +58,7 @@ transport, a task, a break and a call each have a word of their own:
 
 ### `OMNI_PROTOCOL_VERSION`
 
-The exact protocol version implemented by this package. The current value is `2`. Version 2 replaces the broad recording flag and untargeted recording command; version 1 is not negotiated by this package. Hosts and adapters must explicitly migrate together or retain their own version-1 implementation.
+The exact protocol version implemented by this package. The current value remains `1` during pre-release development. Recording contract changes do not introduce a new protocol version. Hosts and adapters adopt the current declarations together; this does not provide compatibility mapping for older recording shapes.
 
 ### `Manifest.supportedProtocolVersions`
 
@@ -4992,7 +4992,7 @@ capabilities and what its work is **called** through `phaseLabels` and `taskType
 any of it is drawn is Omni's. A task cannot select a design language, inject a component, or
 override the agent's theme and font preferences.
 
-## Independent task recording (protocol 2)
+## Independent task recording
 
 Recording is voice-only. A task can arrive already recording, including while pending, and offer
 no recording controls. The provider publishes only its own current state on
@@ -5075,8 +5075,9 @@ updates remain full current task/host views, not replayed provider events. These
 create no handling-history entries and infer no actors, durations or historical capture boundaries.
 
 Migration is explicit: replace the old true recording capability with per-path action policies,
-replace untargeted commands with scoped commands, and declare protocol 2 only after implementing
-these semantics. Existing version-1 adapters are refused by negotiation rather than silently mapped.
+replace untargeted commands with scoped commands, and retain protocol version 1. During pre-release
+development, hosts and adapters must align their recording contracts; negotiation does not detect
+differences between package revisions that share that protocol number. No legacy-shape fallback is provided.
 This change does not publish a package or enable recording in any existing host/provider by itself.
 
 `validateRecordingOutcome` checks confirming observations against recording-specific applied/failed
