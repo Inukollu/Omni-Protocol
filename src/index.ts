@@ -445,14 +445,13 @@ export type UrlVisibility = "full" | "domain" | "hidden";
 export type RecordingSource = "provider" | "host";
 export type RecordingAction = "start" | "pause" | "resume" | "stop" | "cancel";
 export const RECORDING_ACTIONS = ["start", "pause", "resume", "stop", "cancel"] as const satisfies readonly RecordingAction[];
-/** Cancel's captured-audio disposition is explicit; stop always retains captured audio. */
-export type RecordingCancelEffect = "retain" | "discard";
 export interface RecordingActions {
   start?: true;
   pause?: true;
   resume?: true;
   stop?: true;
-  cancel?: { effect: RecordingCancelEffect };
+  /** Abandon this recording and discard its captured audio. */
+  cancel?: true;
 }
 /** Per-task permission, not a provider-wide recording switch. Absence grants nothing. */
 export interface TaskRecordingPolicy {
@@ -474,9 +473,8 @@ export type RecordingCommand = {
   /** Compare-and-set against current evidence; never act on a replacement recording. */
   observationId: string;
 } & (
-  | { action: "start"; recordingId?: never; cancelEffect?: never }
-  | { action: "pause" | "resume" | "stop"; recordingId: string; cancelEffect?: never }
-  | { action: "cancel"; recordingId: string; cancelEffect: RecordingCancelEffect }
+  | { action: "start"; recordingId?: never }
+  | { action: "pause" | "resume" | "stop" | "cancel"; recordingId: string }
 );
 export interface HostRecordingReport {
   taskId: TaskId;
@@ -486,7 +484,6 @@ export interface HostRecordingReport {
 /** Host declaration in ConnectContext, not the provider-owned Manifest. */
 export interface HostRecording {
   actions: RecordingAction[];
-  cancelEffects: RecordingCancelEffect[];
   /** Explicitly provisioned destinations. A task chooses one; no upload/storage fallback. */
   destinationIds: string[];
   execute(request: HostRecordingRequest): Promise<RecordingCommandResult>;

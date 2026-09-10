@@ -292,13 +292,12 @@ type UrlVisibility = "full" | "domain" | "hidden";
 type RecordingSource = "provider" | "host";
 type RecordingAction = "start" | "pause" | "resume" | "stop" | "cancel";
 const RECORDING_ACTIONS = ["start", "pause", "resume", "stop", "cancel"] as const satisfies readonly RecordingAction[];
-type RecordingCancelEffect = "retain" | "discard";
 interface RecordingActions {
   start?: true;
   pause?: true;
   resume?: true;
   stop?: true;
-  cancel?: { effect: RecordingCancelEffect };
+  cancel?: true;
 }
 interface TaskRecordingPolicy {
   provider?: RecordingActions;
@@ -316,9 +315,8 @@ type RecordingCommand = {
   requestId: string;
   observationId: string;
 } & (
-  | { action: "start"; recordingId?: never; cancelEffect?: never }
-  | { action: "pause" | "resume" | "stop"; recordingId: string; cancelEffect?: never }
-  | { action: "cancel"; recordingId: string; cancelEffect: RecordingCancelEffect }
+  | { action: "start"; recordingId?: never }
+  | { action: "pause" | "resume" | "stop" | "cancel"; recordingId: string }
 );
 interface HostRecordingReport {
   taskId: TaskId;
@@ -327,7 +325,6 @@ interface HostRecordingReport {
 }
 interface HostRecording {
   actions: RecordingAction[];
-  cancelEffects: RecordingCancelEffect[];
   destinationIds: string[];
   execute(request: HostRecordingRequest): Promise<RecordingCommandResult>;
 }
@@ -5019,14 +5016,14 @@ This package declares that contract; it supplies no recorder, media mixing, stor
 | pause | active | paused, preserving recording identity and captured audio |
 | resume | paused | active with the same recording identity |
 | stop | active or paused | inactive; finish and retain captured audio |
-| cancel | active or paused | inactive; abandon with the explicitly declared captured-audio disposition |
+| cancel | active or paused | inactive; abandon and discard captured audio |
 
-Cancel must declare retain or discard in task policy and echo that exact effect in the command.
-Retain abandons further capture while preserving captured audio; discard additionally requires
-confirmed disposal of that recording's audio under the recorder's storage contract. Neither
-means cancelling an in-flight start request or deleting arbitrary past recordings. A recorder
-unable to guarantee the offered effect must not advertise it. Stop can be applied only after
-finalization/retention succeeds; cancel-discard only after cessation and disposition succeed.
+Stop finishes the recording and retains captured audio. Cancel abandons the recording and discards
+its captured audio; the task policy offers it with `cancel: true`. There is no configurable cancel
+effect. A recorder that cannot confirm disposal must not offer Cancel; it can offer Stop instead.
+Cancel never means cancelling an in-flight start request or deleting arbitrary past recordings.
+Stop can be applied only after finalization/retention succeeds; Cancel only after both cessation
+and disposal of this recording's audio succeed under the recorder's storage contract.
 Partial success (capture stopped but storage outcome unknown) cannot return failed with a claim
 of no effect. It rejects with unknown outcome, reports the failure visibly and publishes whatever
 current capture state is actually known. Retention is not a promise of sample-perfect audio.
@@ -5089,3 +5086,11 @@ keep that binding through pause/resume/stop/cancel; a later policy cannot redire
 The executor rejects a mismatched destination rather than moving or discarding another binding.
 Action permission does not authorize unattended invocation: host controls require the agent's explicit
 act, and provider authorization remains enforced at its authenticated command boundary.
+
+
+Recording dispatch must receive the same known task-validation context as the published task.
+Pass organisation levels and other known restrictions through the optional fourth argument of
+`validateTaskCommand`, and through `taskContext` in `validateRecordingRequest`. This keeps a valid
+custom organisation lock from being rejected against the default ladder, and prevents known
+capability restrictions from disappearing at dispatch. The standalone `validateRecordingCommandState`
+requires an affirmative permission; false, malformed permission declarations and unknown actions grant nothing.

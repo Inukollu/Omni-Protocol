@@ -1,6 +1,7 @@
+import { assertTaskCapabilityWithdrawal } from "../src/testing.js";
 import { describe, expect, it } from "vitest";
 import { type Task, type RecordingState, type HostRecording, type RecordingAction, type RecordingCommand, type VoiceTaskCommand } from "../src/index.js";
-import { effectiveRecordingState, validateRecordingOutcome, validateRecordingState, validateRecordingPolicy, validateRecordingRequest, validateHostRecording, validateHostReport, validateTask, validateTaskCommand } from "../src/validation.js";
+import { effectiveRecordingState, validateRecordingOutcome, validateRecordingCommandState, validateRecordingState, validateRecordingPolicy, validateRecordingRequest, validateHostRecording, validateHostReport, validateTask, validateTaskCommand } from "../src/validation.js";
 
 const observedAt = "2026-09-09T10:00:00.000Z";
 const validUntil = "2026-09-09T10:00:30.000Z";
@@ -8,7 +9,7 @@ const now = Date.parse(observedAt) + 1000;
 const state = (status: "inactive" | "active" | "paused" = "active"): RecordingState => status === "inactive"
   ? { status, observationId: "obs", observedAt, validUntil }
   : { status, observationId: "obs", observedAt, validUntil, recordingId: "capture-1" };
-const actions = { start: true, pause: true, resume: true, stop: true, cancel: { effect: "discard" } } as const;
+const actions = { start: true, pause: true, resume: true, stop: true, cancel: true } as const;
 const task = (status: "inactive" | "active" | "paused" = "active"): Task<"voice"> => ({
   id: "task-1", allocationId: "allocation-1", channel: "voice", title: "Call", taskType: "call",
   phase: "in-progress", media: "started", capabilitySource: "queue", completionMode: "agent-command", browsers: [],
@@ -18,10 +19,9 @@ const task = (status: "inactive" | "active" | "paused" = "active"): Task<"voice"
 const command = (action: RecordingAction, source: "provider" | "host" = "provider"): RecordingCommand => ({
   type: "recording", source, requestId: "request-1", observationId: "obs", action,
   ...(action === "start" ? {} : { recordingId: "capture-1" }),
-  ...(action === "cancel" ? { cancelEffect: "discard" } : {}),
 }) as RecordingCommand;
 const host: HostRecording = {
-  actions: ["start", "pause", "resume", "stop", "cancel"], cancelEffects: ["discard"], destinationIds: ["recordings"],
+  actions: ["start", "pause", "resume", "stop", "cancel"], destinationIds: ["recordings"],
   execute: async () => ({ status: "applied" }),
 };
 function check(action: RecordingAction, status: "inactive" | "active" | "paused", source: "provider" | "host" = "provider", changes: Record<string, unknown> = {}, context: Record<string, unknown> = {}, current: Task<"voice"> = task(status)) {
@@ -66,17 +66,24 @@ describe("independent recording controls", () => {
     expect(check("pause", "active", "provider", {}, {}, restricted)).not.toEqual([]);
     expect(check("stop", "active", "provider", {}, {}, restricted)).toEqual([]);
     expect(rules(check("start", "inactive", "host", {}, { host: { ...host, destinationIds: ["other"] } }))).toContain("recording.host.destination");
-    expect(rules(check("pause", "active", "host", {}, { host: { ...host, actions: ["stop"], cancelEffects: [] } }))).toContain("recording.host.action");
+    expect(rules(check("pause", "active", "host", {}, { host: { ...host, actions: ["stop"] } }))).toContain("recording.host.action");
     expect(rules(check("stop", "active", "host", {}, { softphone: false }))).toContain("recording.host.channel");
     expect(check("stop", "active", "host", {}, { host: undefined })).not.toEqual([]);
     expect(rules(check("stop", "active", "provider", {}, {}, { ...task(), allocationId: "next" }))).toContain("recording.request.scope");
   });
-  it("requires explicit cancel effect and does not confuse cancel with stop", () => {
-    expect(rules(check("cancel", "active", "provider", { cancelEffect: "retain" }))).toContain("recording.command.cancelEffect");
-    expect(rules(check("cancel", "active", "provider", { cancelEffect: undefined }))).toContain("recording.cancel.effect");
-    expect(check("stop", "active", "provider", { cancelEffect: "discard" })).not.toEqual([]);
-    expect(validateRecordingPolicy({ provider: { cancel: true } })).not.toEqual([]);
-    expect(validateRecordingPolicy({ provider: { cancel: { effect: "retain" } } })).toEqual([]);
+  it("offers cancel as a discard-only action and refuses legacy effect fields", () => {
+    expect(check("cancel", "active")).toEqual([]);
+    expect(check("cancel", "active", "host")).toEqual([]);
+    for (const cancelEffect of ["retain", "discard", undefined]) {
+      expect(check("cancel", "active", "provider", { cancelEffect })).not.toEqual([]);
+    }
+    expect(validateRecordingPolicy({ provider: { cancel: true } })).toEqual([]);
+    expect(validateRecordingPolicy({ provider: { cancel: false } })).not.toEqual([]);
+    for (const effect of ["retain", "discard"]) {
+      expect(validateRecordingPolicy({ provider: { cancel: { effect } } })).not.toEqual([]);
+    }
+    expect(validateHostRecording({ ...host, cancelEffects: ["discard"] }, true)).not.toEqual([]);
+    expect(check("cancel", "active", "host", {}, { host: { ...host, actions: ["stop"] } })).not.toEqual([]);
     expect(validateRecordingPolicy({ host: { start: true } })).not.toEqual([]);
   });
   it("permits terminal actions during wrap-up but cannot resume/start ended media", () => {
@@ -105,7 +112,7 @@ describe("recording evidence and declarations", () => {
   });
   it("validates host declarations, reports, unique scopes and malformed nested inputs", () => {
     expect(validateHostRecording(host, true)).toEqual([]);
-    for (const declaration of [{ ...host, actions: ["pause"] }, { ...host, actions: ["stop", "stop"] }, { ...host, cancelEffects: [] }, { ...host, destinationIds: [] }, { ...host, execute: undefined }]) expect(validateHostRecording(declaration, true)).not.toEqual([]);
+    for (const declaration of [{ ...host, actions: ["pause"] }, { ...host, actions: ["stop", "stop"] }, { ...host, actions: ["rewind"] }, { ...host, destinationIds: [] }, { ...host, execute: undefined }]) expect(validateHostRecording(declaration, true)).not.toEqual([]);
     const report = { taskId: "task-1", allocationId: "allocation-1", state: state() };
     expect(validateHostReport({ online: true, recordings: [report] })).toEqual([]);
     expect(validateHostReport({ online: true, recordings: [report, report] })).not.toEqual([]);
@@ -146,4 +153,52 @@ describe("recording outcomes", () => {
     expect(validateRecordingOutcome(command("stop"), state(), next("inactive"), undefined)).toEqual([]);
     expect(validateRecordingOutcome(command("stop"), state(), { status: "unknown" }, undefined)).toEqual([]);
   });
+});
+
+
+describe("recording validation context and direct permission checks", () => {
+  it("never treats explicit false or malformed standalone inputs as permission", () => {
+    expect(validateRecordingCommandState(command("pause"), { pause: false }, state())).not.toEqual([]);
+    expect(validateRecordingCommandState(null, actions, state())).not.toEqual([]);
+    expect(validateRecordingCommandState({ ...command("pause"), action: "rewind" }, { rewind: true }, state())).not.toEqual([]);
+    expect(validateRecordingCommandState({ ...command("cancel"), cancelEffect: "unsupported" }, { cancel: { effect: "unsupported" } }, state())).not.toEqual([]);
+  });
+
+  it("honours the provider's organisation levels at dispatch and static command validation", () => {
+    const current = task();
+    current.capabilities.hold = { lockedBy: "region" };
+    const taskContext = { levels: ["region", "person"] };
+    expect(validateTask(current, { ...taskContext, channel: "voice" })).toEqual([]);
+    expect(validateTaskCommand(command("pause"), current, "command", taskContext)).toEqual([]);
+    expect(check("pause", "active", "provider", {}, { taskContext }, current)).toEqual([]);
+    expect(validateTaskCommand(command("pause"), current)).not.toEqual([]);
+    expect(check("pause", "active", "provider", {}, {}, current)).not.toEqual([]);
+  });
+
+  it("carries known task restrictions through to recording dispatch", () => {
+    const current = task();
+    current.capabilities.coldTransfer = { destinations: [{ id: "desk", label: "Desk" }] };
+    expect(check("pause", "active", "provider", {}, { taskContext: { dialOutcomesDeclared: false } }, current)).not.toEqual([]);
+    expect(check("pause", "active", "provider", {}, { taskContext: { dialOutcomesDeclared: true } }, current)).toEqual([]);
+  });
+});
+
+
+// @ts-expect-error Cancel is a permission flag, not a configurable retain/discard policy.
+const legacyCancelPolicy: import("../src/index.js").RecordingActions = { cancel: { effect: "retain" } };
+// @ts-expect-error Cancel has a fixed discard meaning and carries no effect override.
+const legacyCancelCommand: RecordingCommand = { type: "recording", source: "provider", action: "cancel", requestId: "q", observationId: "o", recordingId: "r", cancelEffect: "retain" };
+void [legacyCancelPolicy, legacyCancelCommand];
+
+
+it("keeps recording capability withdrawal conformance scoped to the provider's levels", () => {
+  const first = task();
+  first.capabilities.decline = { lockedBy: "region" };
+  const last = { ...first, capabilities: { decline: { lockedBy: "region" } } };
+  const manifest = {
+    id: "voice", displayName: "Voice", channel: "voice" as const,
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials" as const], disposalSettleMs: 150,
+    orgLevels: [{ id: "region", label: "Region" }, { id: "person", label: "Person" }],
+  };
+  expect(() => assertTaskCapabilityWithdrawal([first, last], manifest, command("pause"))).not.toThrow();
 });

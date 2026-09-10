@@ -913,11 +913,11 @@ export function assertTaskCapabilityWithdrawal(
   if (withdrawn.length === 0) {
     throw new Error("Task capability withdrawal must end with at least one capability the offer declared withdrawn; a locked control is present without permission, not withdrawn");
   }
-  const before = validateTaskCommand(command, first, "command");
+  const before = validateTaskCommand(command, first, "command", context);
   if (before.length > 0) {
     throw new Error(`Task capability withdrawal: the command must be issuable against the task as offered, or its later refusal proves nothing (${before.map(v => v.rule).join(", ")})`);
   }
-  const after = validateTaskCommand(command, last, "command");
+  const after = validateTaskCommand(command, last, "command", context);
   const forWant = after.filter(v => withdrawn.some(name => v.rule === `command.capability.${name}`));
   if (forWant.length === 0) {
     throw new Error(`Task capability withdrawal: the command must be refused against the republished task for want of ${withdrawn.join(" or ")}; it was ${after.length === 0 ? "accepted" : `refused for ${after.map(v => v.rule).join(", ")}`}`);
@@ -1646,7 +1646,11 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // Every command the drive sends is validated against the task as published, and its answer for its method.
   ruleEvaluated("drive.timeout");
   const send = async (command: Record<string, unknown>, dialId?: string): Promise<Record<string, unknown> | undefined> => {
-    const own = validateTaskCommand(command, latestTask(), `drive.command.${String(command.type)}`);
+    const own = validateTaskCommand(command, latestTask(), `drive.command.${String(command.type)}`, {
+      levels: effectiveLevels(drive.manifest.orgLevels).map(level => level.id),
+      dialOutcomesDeclared: drive.manifest.dialOutcomes !== undefined,
+      autoAcceptTasks: drive.context.autoAcceptTasks,
+    });
     found.push(...own);
     if (own.length > 0) return undefined;
     ruleEvaluated("drive.command.rejected");
