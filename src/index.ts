@@ -483,6 +483,8 @@ export interface HostRecordingReport {
 }
 /** Host declaration in ConnectContext, not the provider-owned Manifest. */
 export interface HostRecording {
+  /** Audible recording status announcements to the remote party, for host-owned capture only. */
+  announcesToCaller?: true;
   actions: RecordingAction[];
   /** Explicitly provisioned destinations. A task chooses one; no upload/storage fallback. */
   destinationIds: string[];

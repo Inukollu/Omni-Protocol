@@ -324,6 +324,7 @@ interface HostRecordingReport {
   state: RecordingState;
 }
 interface HostRecording {
+  announcesToCaller?: true;
   actions: RecordingAction[];
   destinationIds: string[];
   execute(request: HostRecordingRequest): Promise<RecordingCommandResult>;
@@ -5094,3 +5095,40 @@ Pass organisation levels and other known restrictions through the optional fourt
 custom organisation lock from being rejected against the default ladder, and prevents known
 capability restrictions from disappearing at dispatch. The standalone `validateRecordingCommandState`
 requires an affirmative permission; false, malformed permission declarations and unknown actions grant nothing.
+
+
+### Host recording announcements to the caller
+
+`HostRecording.announcesToCaller`, when true, is a guarantee that the host delivers audible recording
+status messages to the remote party over the call's outgoing audio. It belongs inside the optional
+host recording capability: without that capability there is no such guarantee. Omission makes no
+promise; false is invalid. It does not belong in the provider manifest, the task's recording policy
+or the general `HostGuarantees` object. A provider can inspect this host guarantee when deciding
+whether to permit host recording on a task.
+
+The guarantee applies only to host-owned recordings. Providers implement announcements for their
+own recordings at their end; provider state updates must not cause the host to announce those
+recordings. Both recorders can operate independently on the same call.
+
+On a confirmed host start, the remote party hears that recording started. On a confirmed stop or
+cancel, they hear that recording stopped. If pause/resume is supported, say paused/resumed so a
+pause is not presented as a finished recording. Announcements follow actual capture transitions,
+not button clicks, accepted requests or task-policy changes. When attaching to an already-active
+host recording, announce that recording is active, without inventing its original start time.
+Repeated observations of the same state do not repeat announcements. Unknown or expired evidence
+must never produce a stopped announcement.
+
+A local sound, UI indicator, screen-reader message to the agent, or sound leaking through the
+microphone does not fulfil this guarantee. The host must deliver the message directly in the audio
+sent to the remote party, even when the agent microphone is muted. It may also notify the agent.
+Only declare the guarantee when the host can provide that outgoing audio path. An announcement
+that cannot be delivered, including after the remote party has disconnected, is a visible failure;
+never claim delivery or replay the notice into a different call.
+
+For a command under this guarantee, applied requires both the recording action and its announcement
+to succeed. If capture changes but announcement delivery fails, publish the actual recording state,
+report the announcement failure visibly and reject with unknown command outcome. Do not claim no
+effect, automatically repeat the recording action or silently switch to an agent-only notice.
+
+`validateHostRecording` checks the declaration, including its true-or-absent guarantee. Actual audio
+delivery remains the host implementation's responsibility and must be exercised in its own tests.

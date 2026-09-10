@@ -1,7 +1,7 @@
 import { assertTaskCapabilityWithdrawal } from "../src/testing.js";
 import { describe, expect, it } from "vitest";
 import { type Task, type RecordingState, type HostRecording, type RecordingAction, type RecordingCommand, type VoiceTaskCommand } from "../src/index.js";
-import { effectiveRecordingState, validateRecordingOutcome, validateRecordingCommandState, validateRecordingState, validateRecordingPolicy, validateRecordingRequest, validateHostRecording, validateHostReport, validateTask, validateTaskCommand } from "../src/validation.js";
+import { effectiveRecordingState, validateRecordingOutcome, validateRecordingCommandState, validateRecordingState, validateRecordingPolicy, validateRecordingRequest, validateHostRecording, validateHostGuarantees, validateHostReport, validateTask, validateTaskCommand } from "../src/validation.js";
 
 const observedAt = "2026-09-09T10:00:00.000Z";
 const validUntil = "2026-09-09T10:00:30.000Z";
@@ -202,3 +202,34 @@ it("keeps recording capability withdrawal conformance scoped to the provider's l
   };
   expect(() => assertTaskCapabilityWithdrawal([first, last], manifest, command("pause"))).not.toThrow();
 });
+
+
+describe("host-only caller recording announcement guarantee", () => {
+  it("is optional and declared only as true inside host recording support", () => {
+    expect(validateHostRecording(host, true)).toEqual([]);
+    expect(validateHostRecording({ ...host, announcesToCaller: true }, true)).toEqual([]);
+    for (const value of [false, null, "true", 1, {}]) {
+      expect(rules(validateHostRecording({ ...host, announcesToCaller: value }, true))).toContain("recording.host.announcesToCaller");
+    }
+    expect(validateHostRecording({ announcesToCaller: true }, true)).not.toEqual([]);
+    expect(validateHostRecording({ ...host, announcesToCaller: true }, false)).not.toEqual([]);
+  });
+
+  it("cannot be placed on provider task policy or the general host guarantees", () => {
+    expect(validateHostGuarantees({ announcesToCaller: true })).not.toEqual([]);
+    expect(validateRecordingPolicy({ provider: { start: true, announcesToCaller: true } })).not.toEqual([]);
+    expect(validateRecordingPolicy({ host: { start: true, destinationId: "recordings", announcesToCaller: true } })).not.toEqual([]);
+  });
+
+  it("does not grant recording permission or affect provider-owned dispatch", () => {
+    const announcingHost = { ...host, announcesToCaller: true };
+    expect(check("start", "inactive", "host", {}, { host: announcingHost })).toEqual([]);
+    expect(check("stop", "active", "provider", {}, { host: undefined })).toEqual([]);
+    const withoutPermission = { ...task("inactive"), capabilities: {} };
+    expect(check("start", "inactive", "host", {}, { host: announcingHost }, withoutPermission)).not.toEqual([]);
+  });
+});
+
+// @ts-expect-error Host recording caller announcement is a guarantee, never false.
+const falseAnnouncement: HostRecording = { ...host, announcesToCaller: false };
+void falseAnnouncement;

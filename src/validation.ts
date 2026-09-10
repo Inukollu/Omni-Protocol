@@ -2892,7 +2892,8 @@ export function validateHostRecording(value: unknown, softphone: boolean, path =
   const { violations, check, keys } = collector();
   check(softphone, "host.channel", path, "initial host recording requires voice softphone media");
   if (!object(value)) { check(false, "host.shape", path, "expected host recording declaration and executor"); return violations; }
-  keys(value, ["actions", "destinationIds", "execute"], path);
+  keys(value, ["actions", "destinationIds", "execute", "announcesToCaller"], path);
+  if (value.announcesToCaller !== undefined) check(value.announcesToCaller === true, "host.announcesToCaller", `${path}.announcesToCaller`, "caller announcement guarantee is true or absent");
   for (const [key, allowed] of [["actions", RECORDING_ACTIONS], ["destinationIds", undefined]] as const) {
     const list = value[key];
     if (!Array.isArray(list)) { check(false, "host.list", `${path}.${key}`, "expected explicit array"); continue; }
