@@ -13,6 +13,7 @@
 import {
   RECORDING_ACTIONS,
   type RecordingState,
+  type RecordingAction,
   ALLOWED_BROWSER_URL_SCHEMES,
   BREAK_KINDS,
   MONITORING_BREAK_KINDS,
@@ -2239,7 +2240,7 @@ const CONFERENCE_ACTIONS = ["add", "remove"] as const;
  * own shape is checked. A host validates before sending, and an adapter before acting: a command
  * for a control the task never offered is the host's error, and this names it.
  */
-export function validateTaskCommand(command: unknown, task?: unknown, path = "command"): ProtocolViolation[] {
+export function validateTaskCommand(command: unknown, task?: unknown, path = "command", taskContext?: Omit<TaskValidationContext, "channel">): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(command)) {
     into.add("command.shape", path, "a command must be an object");
@@ -2309,7 +2310,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   // checking against a task nobody has -- so the task is validated first, and a command is held
   // only to a task that stands.
   const published = new Collector();
-  validateTaskInto(task, { channel: channel ?? "voice" }, `${path}.task`, published);
+  validateTaskInto(task, { ...taskContext, channel: channel ?? "voice" }, `${path}.task`, published);
   if (published.violations.length > 0 || !isPlainObject(task)) {
     into.add("command.task", `${path}.task`,
       `the task the command is held to is not one the wire published (${published.violations.map(v => v.rule).join(", ")}): pass the task as the provider sent it, or validate the command's shape alone`);
@@ -2377,7 +2378,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     case "hold": case "resume": case "pause": offered("hold"); handling(); break;
     case "end-call": offered("endCall"); handling(); break;
     case "recording": {
-      offered("recording");
+      if (!offered("recording")) break;
       const policy = isPlainObject(capabilities.recording) ? capabilities.recording.provider : undefined;
       const state = isPlainObject(task.recording) ? task.recording.provider : undefined;
       into.violations.push(...validateRecordingCommandState(command, policy, state, path));
@@ -2831,7 +2832,6 @@ export function validateAuthenticationState(state: unknown, path = "authenticati
 
 const object = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const filled = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
-const effects = ["retain", "discard"];
 function collector() {
   const violations: ProtocolViolation[] = [];
   const check = (ok: unknown, rule: string, path: string, message: string) => {
@@ -2881,11 +2881,7 @@ export function validateRecordingPolicy(value: unknown, path = "capabilities.rec
     check(RECORDING_ACTIONS.some(action => policy[action] !== undefined), "policy.empty", at, "omit paths offering no actions");
     for (const action of RECORDING_ACTIONS) {
       if (policy[action] === undefined) continue;
-      if (action === "cancel") {
-        const cancel = policy.cancel;
-        check(object(cancel) && effects.includes(cancel.effect as string), "cancel.effect", `${at}.cancel`, "cancel explicitly retains or discards this recording's captured audio");
-        if (object(cancel)) keys(cancel, ["effect"], `${at}.cancel`);
-      } else check(policy[action] === true, "policy.action", `${at}.${action}`, "permission is true or absent");
+      check(policy[action] === true, "policy.action", `${at}.${action}`, "permission is true or absent");
     }
     if (source === "host") check(filled(policy.destinationId), "destination", `${at}.destinationId`, "host storage destination must be explicit per task");
   }
@@ -2896,16 +2892,16 @@ export function validateHostRecording(value: unknown, softphone: boolean, path =
   const { violations, check, keys } = collector();
   check(softphone, "host.channel", path, "initial host recording requires voice softphone media");
   if (!object(value)) { check(false, "host.shape", path, "expected host recording declaration and executor"); return violations; }
-  keys(value, ["actions", "cancelEffects", "destinationIds", "execute"], path);
-  for (const [key, allowed] of [["actions", RECORDING_ACTIONS], ["cancelEffects", effects], ["destinationIds", undefined]] as const) {
+  keys(value, ["actions", "destinationIds", "execute", "announcesToCaller"], path);
+  if (value.announcesToCaller !== undefined) check(value.announcesToCaller === true, "host.announcesToCaller", `${path}.announcesToCaller`, "caller announcement guarantee is true or absent");
+  for (const [key, allowed] of [["actions", RECORDING_ACTIONS], ["destinationIds", undefined]] as const) {
     const list = value[key];
     if (!Array.isArray(list)) { check(false, "host.list", `${path}.${key}`, "expected explicit array"); continue; }
     check(new Set(list).size === list.length, "host.duplicate", `${path}.${key}`, "duplicate declaration");
     check(list.every(item => filled(item) && (allowed === undefined || (allowed as readonly string[]).includes(item))), "host.list", `${path}.${key}`, "unsupported or empty declaration");
-    if (key !== "cancelEffects") check(list.length > 0, "host.empty", `${path}.${key}`, "declare at least one supported value");
+    check(list.length > 0, "host.empty", `${path}.${key}`, "declare at least one supported value");
   }
-  if (Array.isArray(value.actions) && Array.isArray(value.cancelEffects)) {
-    check(value.actions.includes("cancel") === (value.cancelEffects.length > 0), "host.cancel", path, "cancel support and explicit effects must agree");
+  if (Array.isArray(value.actions)) {
     check(value.actions.includes("pause") === value.actions.includes("resume"), "host.pause", path, "a pausable host supports resume; task permissions may independently restrict it");
   }
   check(typeof value.execute === "function", "host.execute", `${path}.execute`, "host recording requires its own executor");
@@ -2930,24 +2926,38 @@ export function validateHostRecordings(value: unknown, path = "host.recordings")
 export function validateRecordingCommandShape(value: unknown, source: "provider" | "host", path = "command"): ProtocolViolation[] {
   const { violations, check, keys } = collector();
   if (!object(value)) { check(false, "command.shape", path, "expected recording command"); return violations; }
-  keys(value, ["type", "source", "requestId", "observationId", "action", ...(value.action === "start" ? [] : ["recordingId"]), ...(value.action === "cancel" ? ["cancelEffect"] : [])], path);
+  keys(value, ["type", "source", "requestId", "observationId", "action", ...(value.action === "start" ? [] : ["recordingId"])], path);
   check(value.type === "recording" && value.source === source, "command.source", path, `this executor accepts only ${source} recording commands`);
   check((RECORDING_ACTIONS as readonly unknown[]).includes(value.action), "command.action", `${path}.action`, "unsupported recording action");
   for (const key of ["requestId", "observationId", ...(value.action === "start" ? [] : ["recordingId"])]) check(filled(value[key]), "command.identity", `${path}.${key}`, "expected nonempty scoped identity");
-  if (value.action === "cancel") check(effects.includes(value.cancelEffect as string), "cancel.effect", `${path}.cancelEffect`, "explicit captured-audio disposition required");
   return violations;
 }
+/** One transition table shared by dispatch checks and outcome checks. */
+const RECORDING_TRANSITIONS = {
+  start: { from: ["inactive"], to: "active" },
+  pause: { from: ["active"], to: "paused" },
+  resume: { from: ["paused"], to: "active" },
+  stop: { from: ["active", "paused"], to: "inactive" },
+  cancel: { from: ["active", "paused"], to: "inactive" },
+} as const satisfies Record<RecordingAction, { from: readonly RecordingState["status"][]; to: RecordingState["status"] }>;
+
+function recordingTransition(action: unknown) {
+  return typeof action === "string" && Object.hasOwn(RECORDING_TRANSITIONS, action)
+    ? RECORDING_TRANSITIONS[action as RecordingAction] : undefined;
+}
+
 /** Structural/state permission check. Dispatch MUST also call validateRecordingRequest for scope and freshness. */
 export function validateRecordingCommandState(command: unknown, policy: unknown, state: unknown, path = "command"): ProtocolViolation[] {
   const { violations, check } = collector();
-  if (!object(command)) return violations;
-  check(object(policy) && policy[command.action as string] !== undefined, "command.permission", path, "task does not permit this action on this recorder");
+  if (!object(command)) { check(false, "command.shape", path, "expected recording command"); return violations; }
+  const transition = recordingTransition(command.action);
+  if (transition === undefined) { check(false, "command.action", `${path}.action`, "unsupported recording action"); return violations; }
+  const permitted = object(policy) && policy[command.action as string] === true;
+  check(permitted, "command.permission", path, "task does not permit this action on this recorder");
   if (!object(state) || validateRecordingState(state).length) { check(false, "command.state", path, "no validated current recorder observation"); return violations; }
-  const allowed = command.action === "start" ? ["inactive"] : command.action === "pause" ? ["active"] : command.action === "resume" ? ["paused"] : ["active", "paused"];
-  check(allowed.includes(state.status as string), "command.state", path, "action is invalid in the observed recorder state");
+  check((transition.from as readonly unknown[]).includes(state.status), "command.state", path, "action is invalid in the observed recorder state");
   check(command.observationId === state.observationId, "command.stale", path, "observation changed; reconcile before acting");
   if (command.action !== "start") check(command.recordingId === state.recordingId, "command.recordingId", path, "command targets another recording");
-  if (command.action === "cancel" && object(policy)) check(object(policy.cancel) && command.cancelEffect === policy.cancel.effect, "command.cancelEffect", path, "cancel disposition must match task policy");
   return violations;
 }
 /** Validate immediately before dispatch using current task, host report and trusted observer-domain time. */
@@ -2957,10 +2967,12 @@ export function validateRecordingRequest(request: unknown, task: unknown, contex
   host?: unknown;
   hostReport?: unknown;
   softphone?: boolean;
+  /** The same provider/task context used to validate the published task. */
+  taskContext?: Omit<TaskValidationContext, "channel">;
 }, path = "request"): ProtocolViolation[] {
   const { violations, check, keys } = collector();
   if (!object(request) || !object(task)) { check(false, "request.shape", path, "request and current task required"); return violations; }
-  violations.push(...validateTask(task, { channel: "voice" }, `${path}.task`));
+  violations.push(...validateTask(task, { ...context.taskContext, channel: "voice" }, `${path}.task`));
   keys(request, ["taskId", "allocationId", "command"], path);
   check(filled(request.taskId) && filled(request.allocationId) && request.taskId === task.id && request.allocationId === task.allocationId, "request.scope", path, "task allocation changed or scope missing");
   check(task.channel === "voice", "request.channel", path, "recording is voice-only");
@@ -2980,7 +2992,6 @@ export function validateRecordingRequest(request: unknown, task: unknown, contex
     if (object(context.host)) {
       check(Array.isArray(context.host.actions) && context.host.actions.includes(command.action), "host.action", path, "host does not support action");
       check(object(policy) && Array.isArray(context.host.destinationIds) && context.host.destinationIds.includes(policy.destinationId), "host.destination", path, "task destination is not provisioned by this host");
-      if (command.action === "cancel") check(Array.isArray(context.host.cancelEffects) && context.host.cancelEffects.includes(command.cancelEffect), "host.cancelEffect", path, "host does not support cancel disposition");
     }
   }
   const fresh = effectiveRecordingState(state as RecordingState | undefined, context.now);
@@ -3007,12 +3018,12 @@ export function validateRecordingOutcome(command: unknown, before: unknown, afte
   if (result.status === "failed") {
     check(before.status !== "unknown" && after.status === before.status && after.recordingId === before.recordingId, "outcome.noEffect", path, "failed promises confirmed no effect; ambiguous or partial effects have no result");
   } else if (result.status === "applied") {
-    const expected = command.action === "pause" ? "paused" : command.action === "start" || command.action === "resume" ? "active" : "inactive";
-    check(after.status === expected, "outcome.state", path, "applied requires the confirming requested state");
+    const transition = recordingTransition(command.action);
+    if (transition === undefined) return violations; // shape validation already reported the unknown action
+    check(after.status === transition.to, "outcome.state", path, "applied requires the confirming requested state");
     check(after.observationId !== before.observationId, "outcome.observation", path, "an applied transition needs new confirming evidence");
     check(before.observationId === command.observationId, "outcome.stale", path, "command must act against its named observation");
-    const origin = command.action === "start" ? ["inactive"] : command.action === "pause" ? ["active"] : command.action === "resume" ? ["paused"] : ["active", "paused"];
-    check(origin.includes(before.status as string), "outcome.origin", path, "applied cannot claim an impossible transition");
+    check((transition.from as readonly unknown[]).includes(before.status), "outcome.origin", path, "applied cannot claim an impossible transition");
     if (command.action !== "start") check(command.recordingId === before.recordingId, "outcome.recordingId", path, "command must target the prior recording");
     if (command.action === "pause" || command.action === "resume") check(after.recordingId === before.recordingId, "outcome.continuity", path, "pause/resume preserves recording identity");
     if (instant(before.observedAt) && instant(after.observedAt)) check(after.observedAt >= before.observedAt, "outcome.order", path, "clock discontinuity requires reconciliation, not a reversed confirmation");

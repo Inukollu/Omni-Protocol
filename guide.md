@@ -58,7 +58,7 @@ transport, a task, a break and a call each have a word of their own:
 
 ### `OMNI_PROTOCOL_VERSION`
 
-The exact protocol version implemented by this package. The current value is `2`. Version 2 replaces the broad recording flag and untargeted recording command; version 1 is not negotiated by this package. Hosts and adapters must explicitly migrate together or retain their own version-1 implementation.
+The exact protocol version implemented by this package. The current value remains `1` during pre-release development. Recording contract changes do not introduce a new protocol version. Hosts and adapters adopt the current declarations together; this does not provide compatibility mapping for older recording shapes.
 
 ### `Manifest.supportedProtocolVersions`
 
@@ -292,13 +292,12 @@ type UrlVisibility = "full" | "domain" | "hidden";
 type RecordingSource = "provider" | "host";
 type RecordingAction = "start" | "pause" | "resume" | "stop" | "cancel";
 const RECORDING_ACTIONS = ["start", "pause", "resume", "stop", "cancel"] as const satisfies readonly RecordingAction[];
-type RecordingCancelEffect = "retain" | "discard";
 interface RecordingActions {
   start?: true;
   pause?: true;
   resume?: true;
   stop?: true;
-  cancel?: { effect: RecordingCancelEffect };
+  cancel?: true;
 }
 interface TaskRecordingPolicy {
   provider?: RecordingActions;
@@ -316,9 +315,8 @@ type RecordingCommand = {
   requestId: string;
   observationId: string;
 } & (
-  | { action: "start"; recordingId?: never; cancelEffect?: never }
-  | { action: "pause" | "resume" | "stop"; recordingId: string; cancelEffect?: never }
-  | { action: "cancel"; recordingId: string; cancelEffect: RecordingCancelEffect }
+  | { action: "start"; recordingId?: never }
+  | { action: "pause" | "resume" | "stop" | "cancel"; recordingId: string }
 );
 interface HostRecordingReport {
   taskId: TaskId;
@@ -326,8 +324,8 @@ interface HostRecordingReport {
   state: RecordingState;
 }
 interface HostRecording {
+  announcesToCaller?: true;
   actions: RecordingAction[];
-  cancelEffects: RecordingCancelEffect[];
   destinationIds: string[];
   execute(request: HostRecordingRequest): Promise<RecordingCommandResult>;
 }
@@ -4992,7 +4990,7 @@ capabilities and what its work is **called** through `phaseLabels` and `taskType
 any of it is drawn is Omni's. A task cannot select a design language, inject a component, or
 override the agent's theme and font preferences.
 
-## Independent task recording (protocol 2)
+## Independent task recording
 
 Recording is voice-only. A task can arrive already recording, including while pending, and offer
 no recording controls. The provider publishes only its own current state on
@@ -5019,14 +5017,14 @@ This package declares that contract; it supplies no recorder, media mixing, stor
 | pause | active | paused, preserving recording identity and captured audio |
 | resume | paused | active with the same recording identity |
 | stop | active or paused | inactive; finish and retain captured audio |
-| cancel | active or paused | inactive; abandon with the explicitly declared captured-audio disposition |
+| cancel | active or paused | inactive; abandon and discard captured audio |
 
-Cancel must declare retain or discard in task policy and echo that exact effect in the command.
-Retain abandons further capture while preserving captured audio; discard additionally requires
-confirmed disposal of that recording's audio under the recorder's storage contract. Neither
-means cancelling an in-flight start request or deleting arbitrary past recordings. A recorder
-unable to guarantee the offered effect must not advertise it. Stop can be applied only after
-finalization/retention succeeds; cancel-discard only after cessation and disposition succeed.
+Stop finishes the recording and retains captured audio. Cancel abandons the recording and discards
+its captured audio; the task policy offers it with `cancel: true`. There is no configurable cancel
+effect. A recorder that cannot confirm disposal must not offer Cancel; it can offer Stop instead.
+Cancel never means cancelling an in-flight start request or deleting arbitrary past recordings.
+Stop can be applied only after finalization/retention succeeds; Cancel only after both cessation
+and disposal of this recording's audio succeed under the recorder's storage contract.
 Partial success (capture stopped but storage outcome unknown) cannot return failed with a claim
 of no effect. It rejects with unknown outcome, reports the failure visibly and publishes whatever
 current capture state is actually known. Retention is not a promise of sample-perfect audio.
@@ -5075,8 +5073,9 @@ updates remain full current task/host views, not replayed provider events. These
 create no handling-history entries and infer no actors, durations or historical capture boundaries.
 
 Migration is explicit: replace the old true recording capability with per-path action policies,
-replace untargeted commands with scoped commands, and declare protocol 2 only after implementing
-these semantics. Existing version-1 adapters are refused by negotiation rather than silently mapped.
+replace untargeted commands with scoped commands, and retain protocol version 1. During pre-release
+development, hosts and adapters must align their recording contracts; negotiation does not detect
+differences between package revisions that share that protocol number. No legacy-shape fallback is provided.
 This change does not publish a package or enable recording in any existing host/provider by itself.
 
 `validateRecordingOutcome` checks confirming observations against recording-specific applied/failed
@@ -5088,3 +5087,48 @@ keep that binding through pause/resume/stop/cancel; a later policy cannot redire
 The executor rejects a mismatched destination rather than moving or discarding another binding.
 Action permission does not authorize unattended invocation: host controls require the agent's explicit
 act, and provider authorization remains enforced at its authenticated command boundary.
+
+
+Recording dispatch must receive the same known task-validation context as the published task.
+Pass organisation levels and other known restrictions through the optional fourth argument of
+`validateTaskCommand`, and through `taskContext` in `validateRecordingRequest`. This keeps a valid
+custom organisation lock from being rejected against the default ladder, and prevents known
+capability restrictions from disappearing at dispatch. The standalone `validateRecordingCommandState`
+requires an affirmative permission; false, malformed permission declarations and unknown actions grant nothing.
+
+
+### Host recording announcements to the caller
+
+`HostRecording.announcesToCaller`, when true, is a guarantee that the host delivers audible recording
+status messages to the remote party over the call's outgoing audio. It belongs inside the optional
+host recording capability: without that capability there is no such guarantee. Omission makes no
+promise; false is invalid. It does not belong in the provider manifest, the task's recording policy
+or the general `HostGuarantees` object. A provider can inspect this host guarantee when deciding
+whether to permit host recording on a task.
+
+The guarantee applies only to host-owned recordings. Providers implement announcements for their
+own recordings at their end; provider state updates must not cause the host to announce those
+recordings. Both recorders can operate independently on the same call.
+
+On a confirmed host start, the remote party hears that recording started. On a confirmed stop or
+cancel, they hear that recording stopped. If pause/resume is supported, say paused/resumed so a
+pause is not presented as a finished recording. Announcements follow actual capture transitions,
+not button clicks, accepted requests or task-policy changes. When attaching to an already-active
+host recording, announce that recording is active, without inventing its original start time.
+Repeated observations of the same state do not repeat announcements. Unknown or expired evidence
+must never produce a stopped announcement.
+
+A local sound, UI indicator, screen-reader message to the agent, or sound leaking through the
+microphone does not fulfil this guarantee. The host must deliver the message directly in the audio
+sent to the remote party, even when the agent microphone is muted. It may also notify the agent.
+Only declare the guarantee when the host can provide that outgoing audio path. An announcement
+that cannot be delivered, including after the remote party has disconnected, is a visible failure;
+never claim delivery or replay the notice into a different call.
+
+For a command under this guarantee, applied requires both the recording action and its announcement
+to succeed. If capture changes but announcement delivery fails, publish the actual recording state,
+report the announcement failure visibly and reject with unknown command outcome. Do not claim no
+effect, automatically repeat the recording action or silently switch to an agent-only notice.
+
+`validateHostRecording` checks the declaration, including its true-or-absent guarantee. Actual audio
+delivery remains the host implementation's responsibility and must be exercised in its own tests.

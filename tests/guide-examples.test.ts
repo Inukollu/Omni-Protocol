@@ -96,7 +96,7 @@ const diagnostics = (output: string, status: number | null): Map<string, { code:
 };
 
 const compile = (): Map<string, { code: string; text: string; line: number }[]> => {
-  const tsc = spawnSync(join(root, "node_modules", ".bin", "tsc"), ["-p", join(work, "tsconfig.json"), "--pretty", "false"], { encoding: "utf8", cwd: root });
+  const tsc = spawnSync(join(root, "node_modules", ".bin", "tsc"), ["-p", join(work, "tsconfig.json"), "--pretty", "false"], { encoding: "utf8", cwd: root, timeout: 10_000, killSignal: "SIGKILL" });
   if (tsc.error !== undefined) throw tsc.error;
   return diagnostics(`${tsc.stdout}${tsc.stderr}`, tsc.status);
 };
@@ -162,5 +162,6 @@ describe("the guide's examples compile", () => {
     expect(exportedTypes.filter(name => !declared.has(name))).toEqual([]);
     expect(complete.length).toBeGreaterThanOrEqual(35);
     expect(complete.flatMap(block => block.types).filter(type => exports.index.includes(type.name)).length).toBeGreaterThanOrEqual(60);
-  });
+    // Two bounded compiler processes plus parsing can exceed Vitest's 5s default on Node 20 CI.
+  }, 30_000);
 });

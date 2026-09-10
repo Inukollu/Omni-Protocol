@@ -74,7 +74,7 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
 describe("assertCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
-    supportedProtocolVersions: [2], authenticationMethods: ["credentials"], disposalSettleMs: 150,
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], disposalSettleMs: 150,
   } satisfies Manifest<"voice">;
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, team: { breakControl: true } } } satisfies AuthenticationState;
@@ -139,7 +139,7 @@ describe("assertCapabilityWithdrawal", () => {
 describe("assertTaskCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
-    supportedProtocolVersions: [2], authenticationMethods: ["credentials"], disposalSettleMs: 150,
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], disposalSettleMs: 150,
   } satisfies Manifest<"voice">;
   const withHold = { ...voiceTask, capabilities: { hold: true, endCall: true } } satisfies Task<"voice">;
   const withoutHold = { ...voiceTask, capabilities: { endCall: true } } satisfies Task<"voice">;
