@@ -1,3 +1,16 @@
+# Current recording refinements (2026-09-10)
+
+- PR107: https://github.com/Inukollu/Omni-Protocol/pull/107; branch fix/retain-protocol-version.
+- Implementation SHA: dde84ee63a5cae1f05ace52a1b1437733b9c7c19.
+- Approved semantics: Stop retains audio; Cancel discards it. Policy uses cancel: true. RecordingCancelEffect, command.cancelEffect and host.cancelEffects removed; legacy variants rejected. No recording history changes.
+- Validation fixes: explicit false is not permission; malformed standalone inputs rejected; provider task context preserved in dispatch/static checks and conformance; shared action/state transition table.
+- Full pnpm check passed: 384 tests, types, build, guide examples and package verification. Reproduced three failing permission/context regressions before fixing them.
+- Wire protocol remains/restores 1. Package version unchanged. No manual merge/release. Existing upstream merge workflow auto-publishes.
+- Pending discussion: host-owned recording start/stop announcement guarantee. Provider owns its own announcements. Await host announcement audience (call audio vs agent UI) before defining the field. No announcement field implemented yet.
+- Monitor remains PR107's existing named observation-only process below; keep dedicated worktree/branch while open.
+
+## Earlier handover and rollback evidence
+
 # Current work: restore the pre-release protocol number
 
 - User direction: undo the protocol-number bump; retain recording changes and do not introduce version migration work.
@@ -44,7 +57,7 @@
 <!-- pr107-monitor:begin -->
 ## Current rollback PR monitor
 
-- Status: **OPEN_PENDING** at 2026-09-10T01:17:41.161506+00:00; action: Await review/CI; no automatic merge.
+- Status: **OPEN_PENDING** at 2026-09-10T01:33:53.359099+00:00; action: Await review/CI; no automatic merge.
 - PR: https://github.com/Inukollu/Omni-Protocol/pull/107
 - Command: python3 /Users/vasu/Dev/Personal/Omni-Protocol/.worktrees/retain-protocol-version/.agent-memory/runtime/pr107-monitor.py
 - Name: omni-protocol-pr107-rollback; PID: 2325; PID file: /Users/vasu/Dev/Personal/Omni-Protocol/.worktrees/retain-protocol-version/.agent-memory/runtime/pr107.pid
