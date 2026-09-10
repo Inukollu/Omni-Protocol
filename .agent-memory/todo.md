@@ -1,3 +1,11 @@
+# Current work: break ordering checks — PR108
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-ordering; branch fix/break-ordering-checks; implementation 4e8a02ab9549fa7e9e3da777b20917787785a92c; PR https://github.com/Inukollu/Omni-Protocol/pull/108.
+
+Added runtime validateBreakTransition and shared conformance checks. Covers all approval pairs, invalid inputs, imposed transitions, later attempts and snapshot recovery. No automatic stale-event suppression: full envelope/login and task consistency validation remain caller obligations; snapshot freshness needs source ordering and callback/read fencing. Raw Jema path is not assumed to use Protocol two-phase coordination. No wire/version changes, release or live tests.
+
+Validation: full build/typecheck plus 392 tests passed; guide-format check failed, wording corrected, both guide tests rerun passed; package checks and diff check passed. Six new tests. Await CI/review; respond visibly to failures. Keep worktree and local branch while open. Cleanup only after independently verified terminal state, clean tree, remotely retained commits and recorded outcome; remote deletion needs explicit instruction.
+
 # Current recording refinements (2026-09-10)
 
 - PR107: https://github.com/Inukollu/Omni-Protocol/pull/107; branch fix/retain-protocol-version.
@@ -66,3 +74,8 @@
 - Terminal conditions: MERGED, CLOSED, AUTH_FAILED, POLL_FAILED after 3 consecutive errors, TIMEOUT or CRASHED.
 - Observe only: never merge, approve, push, delete or remove worktrees. Keep branch/worktree while open; independently verify terminal state, clean tree and retained remote commits before cleanup. Remote deletion requires separate instruction.
 <!-- pr107-monitor:end -->
+
+<!-- break-monitor:begin -->
+Monitor omni-protocol-pr108-break-ordering: OPEN at 2026-09-10T07:31:46.015348+00:00. Await CI/review; monitor never merges.
+PID 66088; command python3 /private/tmp/omni-break-ordering/.agent-memory/runtime/break-monitor.py; state /private/tmp/omni-break-ordering/.agent-memory/runtime/break.state.json; log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.log; PID file /private/tmp/omni-break-ordering/.agent-memory/runtime/break.pid; process log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-ordering, branch fix/break-ordering-checks, PR https://github.com/Inukollu/Omni-Protocol/pull/108.
+<!-- break-monitor:end -->
