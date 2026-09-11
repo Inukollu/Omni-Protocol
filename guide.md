@@ -2519,6 +2519,14 @@ provider is told through `refused` exactly which rule, so the state that looked 
 is named on its side. The task past preview has no deadline to wait for, so it carries neither
 field.
 
+**Voice describes the agent's handling within the wider call.** The task defines that agent's
+workspace, tools, permissions, media participation and completion work. The caller's channel may
+continue through IVR, queues, other agents, holds or conferences while this handling ends or wraps.
+Disposing this task ends this handling responsibility; it is not evidence that the caller's channel
+or journey ended. Task media describes this agent's attachment, not the lifetime of every party's
+connection. Commands retain their explicit targets and effects; task disposal must not silently
+become a caller-disconnect operation.
+
 **A task is never its audio.** A voice task is the allocation: the call is offered when it is
 routed to the agent and accepted as its `acceptance` dictates, and its presence and phase follow
 the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
