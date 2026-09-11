@@ -189,6 +189,8 @@ type Manifest<C extends Channel = Channel> = {
   supportedProtocolVersions: number[];
   authenticationMethods: AuthenticationMethod[];
   idleCapabilities?: IdleCapabilities<C>;
+  timeCheck?: true;
+  timestampAuthority?: "provider";
   phaseLabels?: TaskPhaseLabels;
   taskTypePresentation?: Record<string, TaskTypePresentation>;
   orgLevels?: LevelDeclaration[];
@@ -350,7 +352,15 @@ type HostGuarantees = {
   personConsent?: true;
 };
 
+type ProviderTimeScope = { providerId: string; loginId: string };
+type ProviderTimeEstimate = ProviderTimeScope & {
+  at: IsoTimestamp;
+  clockId: string;
+  uncertaintyMs?: number;
+};
+
 type Host = {
+  estimateProviderTime?(scope: ProviderTimeScope): ProviderTimeEstimate | undefined;
   recording?: HostRecording;
   guarantees: HostGuarantees;
   mute?: HostMute;
@@ -458,7 +468,7 @@ type HandlingReport = { taskId: TaskId; allocationId: AllocationId; at: IsoTimes
 );
 
 type HandlingReportResult =
-  | { status: "recorded" }
+  | { status: "recorded"; at: IsoTimestamp }
   | { status: "failed"; failure: ProtocolFailure };
 
 type PreferenceResult =
@@ -1128,7 +1138,22 @@ type Refusal = {
   violations: ProtocolViolation[];
 };
 
+type ProviderTimeCheckPolicy = {
+  intervalMs: number;
+  timeoutMs: number;
+  maxRoundTripMs: number;
+  maxSampleAgeMs: number;
+};
+type ProviderTimeCheckRequest = { requestId: string };
+type ProviderTimeCheckResult = {
+  requestId: string;
+  loginId: string;
+  clockId: string;
+  providerTime: IsoTimestamp;
+};
+
 type Connection<C extends Channel = Channel> = {
+  checkTime?(request: ProviderTimeCheckRequest): Promise<ProviderTimeCheckResult>;
   snapshot(): Snapshot<C> | Promise<Snapshot<C>>;
   subscribe(listener: (envelope: ProviderEventEnvelope<C>) => void): Unsubscribe;
   refused(report: Refusal): void;
@@ -1583,6 +1608,8 @@ compile time.
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the host) and/or `deskPhone` (a handset the platform rings; the host shows the call and opens nothing). The host picks one per login. See **How the agent hears the call**. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that transfer, conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome**. |
+| `timeCheck` | Optional `true`: implements `checkTime` for fresh provider-clock samples; host polling is independently opt-in. |
+| `timestampAuthority` | Optional `"provider"`: provider timestamps are final; host instants are advisory. Omission makes no trust promise. |
 | `runningStepReports` | The provider takes running reports of a host-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the host sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The host records what it performs**. |
 | `disposalSettleMs` | Required. How long after an applied disposal -- `complete`, or a lead's `take-over` -- the provider's `task-ended` is owed, a positive whole number of milliseconds (`manifest.disposalSettleMs`). A warm transfer's `complete` is not a disposal: the agent's wrap runs after it. Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
 
@@ -2118,6 +2145,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | Method | Implement it when |
 | --- | --- |
 | `snapshot()` | Always. |
+| `checkTime(request)` | The manifest declares `timeCheck: true`. Read-only clock check; no task command or accuracy guarantee. |
 | `subscribe(listener)` | Always. |
 | `disconnect()` | Always. |
 | `refused(report)` | Always. The host tells the adapter what it would not take -- a snapshot it did not replace its state with, an event it dropped -- with every rule broken, so a refusal is visible on both sides. See **What the host does with what it refuses**. |
@@ -2753,12 +2781,27 @@ platform cannot hold a leg the host reported keeps it in the login's `store` for
 task, so a reload of the host restates the same record; the entry is keyed by `step` and `at`, so
 a running hold restated with its final `seconds` is the same entry.
 
-**The record is ordered by the instants stated in it, whoever stamped them.** The host stamps the
-legs it performs from the same clock it reports everything else with, and the provider writes a
-host leg into the record with the host's `at`, in its place among the others by that instant, and
-answers `recorded`: it never refuses a leg, or the task, for a timestamp it did not write. A host
-whose clock runs ahead of the platform's puts its own mute before the platform's answer, and the
-record shows what was stated; that is the host's clock to fix, not the provider's record to edit. **Handle time is anchored, not restarted.** It runs from the
+**The provider owns the timestamps in its record.** Host timestamps are advisory. The provider
+may retain a host instant it accepts or assign its own observation/receipt instant; it need not
+copy the host clock. A provider declaring `timestampAuthority: "provider"` uses its own timestamps
+for final records. Receipt time is an observation boundary, not a claim about when the physical
+host action happened. Records are ordered by their published provider-selected instants, with no
+rewriting of an already-published entry when a later host report arrives.
+
+The incoming host `step` and `at`, scoped to the task and its current life, identify one reported
+leg for correlation only. The provider retains a binding from that key to its chosen history
+`at`. Every successful `recordStep` returns `{ status: "recorded", at }` with that same canonical
+history instant, even for subsequent duration/end reports. The host keeps sending the original
+report key, never the returned history timestamp. A changed host timestamp is not a correction
+to the same report: it names a different leg. Bindings survive reconnect/reload for the retained
+task lifetime. The host renders provider-published history unchanged. It never compares the
+provider instant back to its own clock, substitutes its own timestamp, or adjusts later messages
+to match an earlier host estimate. The acknowledgment identifies the provider record for
+correlation/conformance only; it is not a host-side timestamp reconciliation instruction. Conflicting reuse is refused visibly, not paired by arrival time or nearest instant.
+If two distinct entries would collide under the history's `(step, at)` key, do not invent a time
+or combine them: report the representation conflict. No ambiguous event is silently accepted.
+
+**Handle time is anchored, not restarted.** It runs from the
 `answered` step's `at` — from the task's first `in-progress` where the provider reports no
 history — until the task's media ends, and a hold neither pauses nor resets it: the hold's own
 duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is
@@ -2841,8 +2884,9 @@ void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy:
 void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy: "host", seconds: 42, ended: true }); // the moment they unmute
 ```
 
-The entry is keyed by `step` and `at`, so every report about one leg names the same instant. The
-host is the authority for the legs it performs, so it may say how long so far — `seconds` is
+Every report about one leg repeats its original `step` and host `at` as a correlation key;
+the published history uses the provider-selected `at` returned by `recordStep`. The host reports
+the action it performed and its measured duration, not an authoritative provider timestamp. It may say how long so far — `seconds` is
 elapsed while the leg runs and final once it has ended — and **the end is stated, never
 inferred**: `ended: true` marks the last report, and it carries the final duration. **What a
 provider never asked for never crosses.** The running report is sent only to a provider whose
@@ -2852,16 +2896,33 @@ a running one it was never asked for (`handlingReport.running.unexpected`). What
 did ask for them forwards upstream, and how often, is its own business. The step appears in
 `handlingHistory` when the *provider* publishes it: Omni never writes the record itself.
 `recordStep` is required of every softphone login's connection, since every call on a softphone
-can be muted by the host, and answers `recorded`. A `muted` report says whose the silence was,
+can be muted by the host, and answers `recorded` with the canonical history `at`. A `muted` report says whose the silence was,
 `mutedBy: "host"` or `"station"`, and no other report has the word (`handlingReport.mutedBy`,
 `.mutedBy.unexpected`). On a desk phone the microphone is the phone's:
 the host mutes nothing and records nothing.
 
-**A host-performed leg still open when the task's media ends, or the task ends, is ended by the
-host at that instant** — `ended: true`, `seconds` to the end, the same `at` — since a provider
-left to close it would be guessing at a host-performed duration. Both ends are read off one clock,
-the host's, and a leg shorter than a second is reported as the second it was, never as the nought
-the record refuses.
+**The provider's confirmed end is decisive.** The host keeps local state for interaction and
+reporting, but follows the provider's authoritative state. When the provider publishes the end
+of the current mute leg, the host ends that local mute and releases its host-controlled mute
+on the matching task's media. It does not wait for its own timer, reopen the leg, replace the
+provider timestamp, or overwrite the provider's final duration with a later host report.
+A later agent mute is a new leg, never a reopening of the ended one.
+
+Correlate the provider-published `muted` entry using the provider-selected `at` acknowledged
+for the current report key; a final `seconds` closes that leg under the history contract.
+This is identity matching, not reconciliation between clocks. An old closed entry, an unrelated
+task, or a stale connection cannot end a newer local mute. If publication precedes the acknowledgment,
+retain the current provider view and apply the matching closure once correlation is available;
+never guess a match from arrival order or nearest timestamp. Failure to release a host-controlled
+mute is reported visibly; local device reports still describe the actual device state.
+
+At a provider-confirmed task/media end, the host also stops the associated local mute and reports
+its observed ending where the report is still accepted. A host closing report repeats its original
+key and may include its measured duration, but cannot reverse an already confirmed provider end.
+The provider acknowledges a known closed leg without rewriting its final record; after the task
+has been disposed, it may refuse the report as task-not-found. The host reads that response rather
+than retrying or recreating the task. An observed host end before a provider closure is still
+reported normally; the provider decides the final timestamp and publishes the record.
 
 ### Browser capability
 
@@ -3446,14 +3507,12 @@ the platform added itself carries none. `held: true` is presence as claim. A sna
 after a transfer reads the room from here rather than inferring it from a sequence of outcomes it
 never saw.
 
-**`onCall` is who is on the call now, and a task outlives its call.** Wrap-up is not an ending:
-the task is alive, the agent is working, and nothing arrives to say the call ended until they
-dispose. So the room must not be the last word about a call that has ended. Once the call is over
--- the task `completing`, or its `media` ended -- `onCall` is empty, or absent only where the
-provider never publishes the room at all, and a task carrying people on a call that has ended is
-refused (`task.onCall.ended`). Empty says nobody is on the call; absent says the provider does not
-say who is, which is a different claim, so a provider that publishes the room publishes one last
-change: the empty room.
+**`onCall` describes this agent's current handling.** When the caller disconnects but the agent
+and added channels remain connected, the remaining room is still valid. When this handling's
+media ends or the task enters `completing`, clear its `onCall` view; absence is used only by a
+provider that never publishes the room. This does not assert that the caller, bridge or other
+agents' channels ended. A published room receives a final empty view for this handling, and the
+task may remain open for wrap. Disposal is a separate task action, not the caller's disconnect.
 
 **A field that describes the present is cleared by the transition that ends it.** `onCall`,
 `previewEndsAt` and `atDeadline` are three instances of one shape, and there will be more: each
@@ -4609,12 +4668,79 @@ The current exceptions and their reasons are:
 | Recording evidence expiry | A bounded observer-domain clock estimate with monotonic aging may assess freshness because observation and expiry belong to the recorder's clock. If time cannot be trusted, recording state is unknown; never renew evidence from receipt or replay. |
 | Unknown recording state | `observedAt` and `validUntil` are absent because there is no confirmed observation. The containing provider event still has its own `occurredAt`; that publication is not a recorder observation. |
 | Direct snapshot reads and method requests/results | These are reads/operations, not event envelopes, and their current types have no general event timestamp. A snapshot event still carries `occurredAt`; embedded source instants remain unchanged. Do not treat a method result or read completion time as an occurrence boundary. |
+| Host-provided provider-clock estimate | Best-effort ISO time may be supplied by the host for optional comparisons; it is not a source observation or accuracy guarantee. The reason is that the host does not own the provider clock. |
+| Provider receipt timestamps | The provider may use its own receipt instant for final records of receipt/processing because host timestamps are untrusted advisory input. Receipt must not be presented as an earlier action or capture boundary. |
 | Optional source instants and deadlines | Omit only where the declared type permits absence and the source has no evidence or the policy has no deadline (for example unlimited preview). Do not replace absence with host time. |
 
 Every additional exception must be listed with its scope and reason before adoption. Estimates
 must specify their uncertainty and validity; elapsed time should use monotonic aging, and a clock
-jump invalidates the estimate. This guide does not introduce a clock-exchange API or a new wire
-field. Report source-measured durations where required; timestamp subtraction is not a substitute.
+jump invalidates the estimate. The optional check below samples provider time without changing event timestamps. Report
+source-measured durations where required; timestamp subtraction is not a substitute.
+
+#### Optional periodic provider time checks and host estimates
+
+A provider may declare `Manifest.timeCheck: true` and implement `Connection.checkTime(request)`.
+Omission means unsupported. The host separately opts in with `ProviderTimeCheckPolicy`; these
+host-local settings are not task policy or a guarantee. All four durations are explicit positive
+safe integer milliseconds, with `maxRoundTripMs <= timeoutMs <= intervalMs`. No default interval
+is assumed. Validate settings with `validateProviderTimeCheckPolicy`.
+
+While the connection is active, the host checks immediately on opt-in and then at `intervalMs`
+using a monotonic scheduler. Only one check may be outstanding. Missed ticks are skipped, never
+replayed in a burst. Each request has a fresh ID. The provider samples its own event/deadline
+clock after receiving the request and before returning `providerTime` as an ISO/RFC3339 instant,
+with the request ID, authenticated login ID and `clockId`. No cached sample or adapter-local time
+may masquerade as provider time. A provider unable to sample that domain must not declare support.
+Clock authority replacement or a discontinuity changes `clockId`.
+
+Validate requests and responses with `validateProviderTimeCheckRequest` and
+`validateProviderTimeCheckResult`. The host also checks the outstanding request, provider/connection
+and login, monotonic elapsed time and cancellation after the await: a late successful response is
+still rejected. Reject samples at or beyond `timeoutMs`, or above `maxRoundTripMs`. Cancel local
+tracking and invalidate estimates on disconnect, logout, policy disable, clock change or clock
+jump; late results cannot restore them. Resume with a fresh check after reconnection. Expire a
+sample at `maxSampleAgeMs` using monotonic elapsed time. Failure is visible through the host's
+existing diagnostic path, with the estimate unavailable; the next scheduled check can recover.
+Checking failure alone does not assert call/recording state or require a healthy connection to close.
+This read-only check is not a task command. Protocol supplies declarations and validators; the
+host implements the scheduler and the provider implements the clock read.
+
+The host may also expose `Host.estimateProviderTime({ providerId, loginId })`. It returns an ISO
+`at` in that provider's clock domain, the same explicit scope and `clockId`, or `undefined` when
+unavailable. Optional `uncertaintyMs` is an estimate, not a guaranteed bound. The method is optional
+at the host level and is deliberately absent from `HostGuarantees`. A provider declaring time
+checks does not require the host to expose estimates, and an estimate need not originate from
+this check if the host has another explicitly configured source for that provider clock.
+
+To estimate the difference, the host brackets the request with local send/receive instants and
+measures elapsed time monotonically. For provider sample P and local bracketing instants H0/H1,
+the offset under stable clocks lies between P-H1 and P-H0, before clock error and timestamp
+precision are considered. A midpoint is only an estimate; one-way delays need not be symmetric.
+Never treat round-trip uncertainty as proof of the source clock's accuracy. Advance a retained
+sample with monotonic elapsed time, and return unavailable after its configured validity ends.
+`validateProviderTimeEstimate` checks shape and scope, not actual accuracy or freshness.
+
+A provider may declare `Manifest.timestampAuthority: "provider"`: its own timestamps are
+used for final records, and host-supplied timestamps are advisory. This declaration is independent
+of time-check support and the optional host estimate; neither changes who owns the final record.
+Omission makes no promise that host timestamps will be trusted. No host-authoritative default
+is inferred. Successful `recordStep` responses identify the provider-selected history instant;
+see **The host records what it performs** for correlation and retained bindings.
+
+A provider need not trust or adopt any host-supplied timestamp. It may timestamp an incoming
+message using its own clock at receipt and use that for its own processing/accounting. The reason
+for this exception is that host clocks and host estimates are not authoritative at the provider.
+Receipt time must be described as receipt/observation time, not relabeled as the original host
+action, recorder capture boundary, or proof an operation applied. An existing field with a
+specific occurrence meaning still requires that evidence; this option does not silently redefine
+it. Host-only instants remain advisory input; the provider owns its authoritative publication.
+
+This host estimate is another explicit timestamp exception: it helps optional displays and
+provider-clock comparisons when the host lacks that clock directly. It is not a source occurrence,
+may not replace event/history timestamps, and alone cannot authorize deadline actions or prove
+recording freshness. Uses requiring a trustworthy bound still need independently established
+clock accuracy/drift assumptions. It neither synchronizes the operating-system clock nor changes
+ISO timestamps already published by the provider.
 
 #### Nothing is lost until the connection drops
 
@@ -4923,6 +5049,10 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
 | `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
+| `validateProviderTimeCheckPolicy(policy)` | Explicit optional polling settings, positive safe-integer durations and round-trip/timeout/interval ordering. |
+| `validateProviderTimeCheckRequest(request)` | Fresh-request shape; the host enforces actual uniqueness and outstanding-request lifetime. |
+| `validateProviderTimeCheckResult(result, request, loginId)` | ISO timestamp, clock identity, exact request/login correlation; timing and source accuracy remain runtime checks. |
+| `validateProviderTimeEstimate(estimate, scope)` | Optional host estimate shape and provider/login scope; no accuracy guarantee. |
 | `validateHandlingReport(report, path?, manifest?)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateHostMute(mute, softphone)` | What the host's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the host holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
@@ -5037,7 +5167,7 @@ as each case was considered, so a test that needs a rule to have run asserts it 
 inferring it from an empty `violations`, and a rule absent from it was never looked at, which is a
 gap and not a pass. With the audio open on a softphone,
 the drive mutes it for one second and reports the leg through `recordStep`, begun and then ended,
-expecting each report `recorded` (`drive.recordStep.failed`, `.rejected`); then it mutes again and
+expecting each report `recorded` with the provider-selected history `at` (`drive.recordStep.failed`, `.rejected`, `result.recordStep.at`); then it mutes again and
 ends the call muted, as agents do, so the leg is open when the media ends, the provider closes it
 in the completing publication or the open entry is refused (`task.handlingHistory.muted.open`),
 and the drive's closing report after the media ended is expected `recorded` and to change nothing:
@@ -5047,7 +5177,7 @@ Where the provider restates the task's record afterwards, each leg is in it or t
 does, the drive reloads the host as a reload happens: the first client is unsubscribed,
 disconnected and its session closed (`drive.reload.handover`), and only then is a second adapter
 built and connected for the same login with the same context and the same `store`; its snapshot
-must carry the task with that leg and the host's word, and the run goes on with the second as its
+must carry the task with that leg at its acknowledged provider timestamp and the reported actor, and the run goes on with the second as its
 connection to the end. A platform that holds the record hands it back, and an adapter that composed
 the record in memory has nothing and is named (`drive.reload.snapshot`, `drive.reload.history`,
 `.rejected`). The second adapter's snapshot is taken as any resync is: held to what the stream knew

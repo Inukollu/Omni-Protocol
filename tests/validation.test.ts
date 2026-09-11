@@ -962,7 +962,8 @@ describe("validateHandlingReport", () => {
     expect(rules(validateManifest(manifest({ disposalSettleMs: 0 })))).toEqual(["manifest.disposalSettleMs"]);
     expect(rules(validateManifest(manifest({ disposalSettleMs: 1.5 })))).toEqual(["manifest.disposalSettleMs"]);
     expect(rules(validateManifest({ ...manifest(), disposalSettleMs: undefined }))).toEqual(["manifest.disposalSettleMs"]);
-    expect(rules(validateResult({ status: "recorded" }, "recordStep"))).toEqual([]);
+    expect(rules(validateResult({ status: "recorded", at: "2026-09-11T00:00:00Z" }, "recordStep"))).toEqual([]);
+    expect(rules(validateResult({ status: "recorded" }, "recordStep"))).toEqual(["result.recordStep.at"]);
     expect(rules(validateResult({ status: "applied" }, "recordStep"))).toEqual(["result.status"]);
   });
 });

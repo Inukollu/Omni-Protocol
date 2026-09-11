@@ -500,6 +500,60 @@ function manifestDials(manifest: unknown): boolean | undefined {
   return isPlainObject(manifest) ? Array.isArray(manifest.dialOutcomes) : undefined;
 }
 
+/** Undefined explicitly means unavailable; a returned estimate is not a clock guarantee. */
+export function validateProviderTimeEstimate(value: unknown, scope: unknown, path = "estimate"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(scope)) { into.add("timeEstimate.scope", path, "provider/login scope is required"); return into.violations; }
+  for (const key of ["providerId", "loginId"]) into.filled(scope[key], "timeEstimate.scope", `scope.${key}`, "explicit provider/login scope is required");
+  if (value === undefined) return into.violations;
+  if (!isPlainObject(value)) { into.add("timeEstimate.shape", path, "expected a provider time estimate or undefined"); return into.violations; }
+  for (const key of ["providerId", "loginId"]) into.require(value[key] === scope[key], "timeEstimate.scope", `${path}.${key}`, "estimate must match the requested provider/login");
+  into.timestamp(value.at, "timeEstimate.at", `${path}.at`);
+  into.filled(value.clockId, "timeEstimate.clock", `${path}.clockId`, "estimate must identify its clock domain");
+  if (value.uncertaintyMs !== undefined) into.require(typeof value.uncertaintyMs === "number" && Number.isFinite(value.uncertaintyMs) && value.uncertaintyMs >= 0,
+    "timeEstimate.uncertainty", `${path}.uncertaintyMs`, "estimated uncertainty must be finite and nonnegative");
+  for (const key of Object.keys(value)) into.require(["providerId", "loginId", "at", "clockId", "uncertaintyMs"].includes(key), "timeEstimate.field", `${path}.${key}`, "unsupported estimate field");
+  return into.violations;
+}
+
+/** Validate host-local periodic clock-check configuration. Omission disables checking. */
+export function validateProviderTimeCheckPolicy(value: unknown, path = "timeCheck"): ProtocolViolation[] {
+  const into = new Collector();
+  if (value === undefined) return into.violations;
+  if (!isPlainObject(value)) { into.add("timeCheck.policy.shape", path, "expected an explicit clock-check policy"); return into.violations; }
+  for (const field of ["intervalMs", "timeoutMs", "maxRoundTripMs", "maxSampleAgeMs"]) {
+    into.require(typeof value[field] === "number" && Number.isSafeInteger(value[field]) && (value[field] as number) > 0,
+      "timeCheck.policy.duration", `${path}.${field}`, "expected positive safe integer milliseconds");
+  }
+  for (const key of Object.keys(value)) into.require(["intervalMs", "timeoutMs", "maxRoundTripMs", "maxSampleAgeMs"].includes(key), "timeCheck.policy.field", `${path}.${key}`, "unsupported policy field");
+  if (!into.violations.length) into.require((value.maxRoundTripMs as number) <= (value.timeoutMs as number) && (value.timeoutMs as number) <= (value.intervalMs as number),
+    "timeCheck.policy.order", path, "maxRoundTripMs <= timeoutMs <= intervalMs is required");
+  return into.violations;
+}
+
+export function validateProviderTimeCheckRequest(value: unknown, path = "request"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(value)) { into.add("timeCheck.request.shape", path, "expected a clock-check request"); return into.violations; }
+  into.filled(value.requestId, "timeCheck.request.id", `${path}.requestId`, "a check needs a fresh request ID");
+  for (const key of Object.keys(value)) into.require(key === "requestId", "timeCheck.request.field", `${path}.${key}`, "unsupported request field");
+  return into.violations;
+}
+
+/** Checks response shape/correlation, not source-clock accuracy, round-trip delay or freshness. */
+export function validateProviderTimeCheckResult(value: unknown, request: unknown, loginId: string, path = "result"): ProtocolViolation[] {
+  const into = new Collector();
+  into.violations.push(...validateProviderTimeCheckRequest(request));
+  into.filled(loginId, "timeCheck.login", "loginId", "current authenticated login is required");
+  if (!isPlainObject(value)) { into.add("timeCheck.result.shape", path, "expected a clock-check response"); return into.violations; }
+  into.filled(value.requestId, "timeCheck.result.id", `${path}.requestId`, "response must identify its request");
+  into.require(isPlainObject(request) && value.requestId === request.requestId, "timeCheck.result.request", `${path}.requestId`, "response must match the outstanding check");
+  into.require(value.loginId === loginId, "timeCheck.result.login", `${path}.loginId`, "response belongs to the current login");
+  into.filled(value.clockId, "timeCheck.result.clock", `${path}.clockId`, "provider clock domain/incarnation is required");
+  into.timestamp(value.providerTime, "timeCheck.result.time", `${path}.providerTime`);
+  for (const key of Object.keys(value)) into.require(["requestId", "loginId", "clockId", "providerTime"].includes(key), "timeCheck.result.field", `${path}.${key}`, "unsupported response field");
+  return into.violations;
+}
+
 export function validateManifest(manifest: unknown, path = "manifest"): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(manifest)) {
@@ -543,6 +597,8 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
   }
 
   if (channelValid) validateIdleCapabilities(manifest.idleCapabilities, manifest.channel as string, `${path}.idleCapabilities`, into);
+  if (manifest.timestampAuthority !== undefined) into.require(manifest.timestampAuthority === "provider", "manifest.timestampAuthority", `${path}.timestampAuthority`, "provider timestamp authority must be explicit; omission makes no trust promise");
+  if (manifest.timeCheck !== undefined) into.require(manifest.timeCheck === true, "manifest.timeCheck", `${path}.timeCheck`, "declare true or omit unsupported clock checks");
   validateDialOutcomes(manifest, `${path}.dialOutcomes`, into);
   validatePhones(manifest, `${path}.phones`, into);
 
@@ -2744,6 +2800,7 @@ export function validateResult(result: unknown, method: ResultMethod, path = "re
     } else {
       into.require(result.dialId === undefined, "result.dialId.unexpected", `${path}.dialId`, `${statuses.success} dialled nothing and names no dial`);
     }
+    if (method === "recordStep") into.timestamp(result.at, "result.recordStep.at", `${path}.at`);
   } else if (statuses.failure !== undefined && result.status === statuses.failure) {
     if (result.failure === undefined) {
       into.add("result.failure.required", `${path}.failure`, `${statuses.failure} carries the failure that says why`);

@@ -390,6 +390,7 @@ export async function exerciseAdapter<C extends Channel>(
     // What every connection owes on connect, the first and a reloaded second alike.
     const connectObligations = (on: Connection<C>): void => {
       // A refusal is visible on both sides: what the host would not take, the adapter is told, with the rules.
+      if (adapter.manifest.timeCheck === true) requireMethod(on, "checkTime", "the manifest declares timeCheck");
       requireMethod(on, "refused", "every connection is told what the host refused");
       // Dial is declared by presence: the capability object carries a destination policy rather
       // than an `enabled` flag, so its presence is the declaration.
@@ -1733,12 +1734,13 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // 3b. The microphone is the host's. With the audio open, the drive mutes it for a moment and
   // reports the leg the provider's record would otherwise miss -- begun, then ended -- and
   // expects each report recorded. If the provider restates the task's record afterwards, the leg is in it.
-  const reportedLegs: { at: string; task: Record<string, unknown>; closedAs?: number }[] = [];
+  const canonicalTimes = new Map<string, string>();
+  const reportedLegs: { at: string | undefined; task: Record<string, unknown>; closedAs?: number }[] = [];
   /** The duration the provider's record states for the leg at `at`, as the task stands now. */
   const closedAs = (at: string): number | undefined => {
     const history = latestTask().handlingHistory;
     const leg = isRecord(history) && Array.isArray(history.steps)
-      ? history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined : undefined;
+      ? history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === canonicalTimes.get(at)) as Record<string, unknown> | undefined : undefined;
     return typeof leg?.seconds === "number" ? leg.seconds : undefined;
   };
   const canRecordMute = session !== undefined && typeof session.setMuted === "function" && typeof drive.connection.recordStep === "function";
@@ -1756,7 +1758,13 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         refuse("drive.recordStep.rejected", "drive.recordStep", `recordStep rejected rather than answered: ${String(error)}`);
         return;
       }
-      found.push(...validateResult(answer, "recordStep", "drive.recordStep.result"));
+      const resultErrors = validateResult(answer, "recordStep", "drive.recordStep.result");
+      found.push(...resultErrors);
+      if (!resultErrors.length && isRecord(answer) && answer.status === "recorded" && typeof answer.at === "string" && typeof body.at === "string") {
+        const prior = canonicalTimes.get(body.at);
+        if (prior !== undefined && prior !== answer.at) refuse("drive.recordStep.identity", "drive.recordStep.result.at", "one reported leg must retain its provider-assigned history instant");
+        else canonicalTimes.set(body.at, answer.at);
+      }
       if (isRecord(answer) && answer.status === "failed") {
         refuse("drive.recordStep.failed", "drive.recordStep",
           `the provider refused to record the host's muted leg: ${String(isRecord(answer.failure) ? answer.failure.code : answer.failure)}`);
@@ -1777,12 +1785,12 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     await new Promise<void>(resolve => setTimeout(resolve, 1000));
     setMuted(false);
     await report({ at, seconds: Math.round((Date.now() - began) / 1000), ended: true });
-    reportedLegs.push({ at, task: latestTask() });
+    reportedLegs.push({ at: canonicalTimes.get(at), task: latestTask() });
     // 3c. A host reload destroys the adapter object and keeps the login's store. Built again from
     // the same login, a second adapter carries the task and the leg -- from its platform, or from
     // the store -- or it composed the record in memory and the record died with it.
-    if (drive.rebuild !== undefined) {
-      await recordSurvivesReload(at);
+    if (drive.rebuild !== undefined && canonicalTimes.has(at)) {
+      await recordSurvivesReload(canonicalTimes.get(at)!);
       // A reload that stood no client ends the run: there is nothing left to drive.
       if (!drive.handOver.isLive()) return found;
     }
@@ -1829,7 +1837,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         // record as it stands now is what every later restatement is held to.
         const before = closedAs(openLeg.at);
         await report({ at: openLeg.at, seconds: Math.max(1, Math.round((Date.now() - openLeg.began) / 1000)), ended: true });
-        reportedLegs.push({ at: openLeg.at, task: openLeg.task, closedAs: before });
+        reportedLegs.push({ at: canonicalTimes.get(openLeg.at), task: openLeg.task, closedAs: before });
       }
       if (completing !== undefined && offers("hold")) {
         await holdRefusedOutsideHandling();
@@ -1881,6 +1889,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     return latestTask();
   };
   for (const reported of reportedLegs) {
+    if (reported.at === undefined) continue; // A refused/malformed report provides no accepted history identity.
     const published = lastPublished();
     if (published === reported.task) continue;
     const history = published.handlingHistory;

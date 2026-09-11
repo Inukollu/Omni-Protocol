@@ -204,6 +204,10 @@ export interface Manifest<C extends Channel = Channel> {
   supportedProtocolVersions: number[];
   authenticationMethods: AuthenticationMethod[];
   idleCapabilities?: IdleCapabilities<C>;
+  /** Optional provider-clock sampling through Connection.checkTime; absent means unsupported. */
+  timeCheck?: true;
+  /** Provider uses its own timestamps for final records; host timestamps are advisory. Omission makes no trust promise. */
+  timestampAuthority?: "provider";
   phaseLabels?: TaskPhaseLabels;
   /** Keyed by `taskType`. An entry replaces the channel default outright rather than merging. */
   taskTypePresentation?: Record<string, TaskTypePresentation>;
@@ -523,7 +527,22 @@ export interface HostGuarantees {
   personConsent?: true;
 }
 
+export interface ProviderTimeScope {
+  providerId: string;
+  loginId: string;
+}
+
+/** Best-effort host estimate, never a provider observation or accuracy guarantee. The provider may ignore it and timestamp receipt itself. */
+export interface ProviderTimeEstimate extends ProviderTimeScope {
+  at: IsoTimestamp;
+  clockId: string;
+  /** Estimated uncertainty only; not a guaranteed error bound. */
+  uncertaintyMs?: number;
+}
+
 export interface Host {
+  /** Optional current provider-clock estimate; undefined when no usable estimate exists. */
+  estimateProviderTime?(scope: ProviderTimeScope): ProviderTimeEstimate | undefined;
   /** Voice softphone recording support; policy and destination remain per task. */
   recording?: HostRecording;
   guarantees: HostGuarantees;
@@ -1442,7 +1461,7 @@ export type HandlingReport = { taskId: TaskId; allocationId: AllocationId; at: I
 );
 
 export type HandlingReportResult =
-  | { status: "recorded" }
+  | { status: "recorded"; at: IsoTimestamp }
   | { status: "failed"; failure: ProtocolFailure };
 
 export type PreferenceResult =
@@ -1563,7 +1582,31 @@ export interface Refusal {
   violations: ProtocolViolation[];
 }
 
+/** Host-local opt-in configuration; no implicit interval or timeout. */
+export interface ProviderTimeCheckPolicy {
+  intervalMs: number;
+  timeoutMs: number;
+  maxRoundTripMs: number;
+  maxSampleAgeMs: number;
+}
+
+export interface ProviderTimeCheckRequest {
+  /** Fresh opaque correlation ID for one outstanding check, never reused on retry. */
+  requestId: string;
+}
+
+export interface ProviderTimeCheckResult {
+  requestId: string;
+  loginId: string;
+  /** Provider clock domain/incarnation; changes on clock discontinuity or authority replacement. */
+  clockId: string;
+  /** Provider-domain ISO instant sampled after this request arrived, before its response leaves. */
+  providerTime: IsoTimestamp;
+}
+
 export interface Connection<C extends Channel = Channel> {
+  /** Required only when Manifest.timeCheck is true. A read-only clock sample, never cached/replayed. */
+  checkTime?(request: ProviderTimeCheckRequest): Promise<ProviderTimeCheckResult>;
   snapshot(): Snapshot<C> | Promise<Snapshot<C>>;
   /** Delivery order must match the order the provider observes changes. Never replay. */
   subscribe(listener: (envelope: ProviderEventEnvelope<C>) => void): Unsubscribe;

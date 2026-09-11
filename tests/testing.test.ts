@@ -986,7 +986,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         executeTeamBreak: async () => ({ status: "applied" }),
         executeTeamLeadAssist: async () => ({ status: "applied" }),
         setPreference: async () => ({ status: "applied" }),
-        recordStep: async () => ({ status: "recorded" }),
+        recordStep: async (report: { at: string }) => ({ status: "recorded", at: report.at }),
         executeTeamPolicy: async () => ({ status: "applied" }),
         openMedia: async () => ({ status: "unavailable", failure: { code: "test", message: "No media in a test", retryable: false } }),
       };
@@ -1290,6 +1290,7 @@ describe("exerciseAdapter drives one call", () => {
     /** A provider that will not record the host's closing report once the call is over. */
     refusesLateClose?: boolean;
     /** Where the adapter throws instead of answering, so each catch in the drive is seen to name it. */
+    providerTime?: boolean;
     throwsOn?: "execute" | "recordStep" | "setMuted" | "close" | "rebuild" }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   let drvSeq = 0;
@@ -1447,6 +1448,7 @@ describe("exerciseAdapter drives one call", () => {
           setMuted: () => { if (script.throwsOn === "setMuted") throw new Error("no mixer"); },
           close: () => { if (script.throwsOn === "close") throw new Error("already closed"); } } }),
         recordStep: async (report: { step: string; at: string; seconds?: number; ended?: boolean; mutedBy?: "host" | "station"; allocationId?: string }) => {
+          if (script.providerTime) report = { ...report, at: new Date(Date.parse(report.at) + 60000).toISOString() };
           if (script.throwsOn === "recordStep") throw new Error("record store down");
           if (report.allocationId !== myAllocation) return { status: "failed", failure: { code: "omni.task-not-found", message: `no allocation ${String(report.allocationId)}`, retryable: false } };
           if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
@@ -1458,16 +1460,16 @@ describe("exerciseAdapter drives one call", () => {
               closedAtEnd = { ...closedAtEnd, seconds: report.seconds + 5 };
               emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: [] }) });
             }
-            return { status: "recorded" };
+            return { status: "recorded", at: report.at };
           }
-          if (report.step === "muted" && report.ended !== true && report.mutedBy !== undefined) { openLeg = { at: report.at, mutedBy: report.mutedBy }; return { status: "recorded" }; }
+          if (report.step === "muted" && report.ended !== true && report.mutedBy !== undefined) { openLeg = { at: report.at, mutedBy: report.mutedBy }; return { status: "recorded", at: report.at }; }
           if (report.step === "muted" && report.ended === true && report.seconds !== undefined && report.mutedBy !== undefined) {
             openLeg = undefined;
             muted = { at: report.at, seconds: report.seconds, mutedBy: report.mutedBy };
             // The store write is part of recording: what the platform cannot hold goes there first.
             if (script.legsIn === "store" && given !== undefined) await given.set(legKey, JSON.stringify(muted));
           }
-          return { status: "recorded" };
+          return { status: "recorded", at: report.at };
         },
       },
     });
@@ -1517,6 +1519,10 @@ describe("exerciseAdapter drives one call", () => {
 
   it("reaches the rules about a live call: a room left full after end-call is refused at the boundary", async () => {
     expect((await drive(driveable({ keepRoomOnEnd: true }))).violations.map(v => v.rule)).toContain("task.onCall.ended");
+  });
+
+  it("accepts provider-selected history instants instead of host report timestamps", async () => {
+    expect((await drive(driveable({ restateHistory: "with-mute", providerTime: true }))).violations).toEqual([]);
   });
 
   it("mutes the open audio for a moment and reports the leg, expecting it recorded and, where the record is restated, present", async () => {
