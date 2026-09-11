@@ -318,7 +318,7 @@ describe("lead commands", () => {
   it("names the member on every act on a member's call, and holds each to what the team member list shows", () => {
     const at = "2026-08-21T09:04:00Z";
     const onCall = { ...lead, team: { members: [{ id: "member", availability: "on-task", tasks: [{ assignmentId: "alloc-7", title: "Call", channel: "voice", taskType: "Queue", phase: "in-progress" }], requests: [] },
-      { id: "listened", availability: "on-task", listening: { mode: "listen", since: at } }], requests: [{ memberId: "member", assignmentId: "alloc-7", since: at }] } };
+      { id: "listened", availability: "on-task", listening: { assignmentId: "alloc-9", mode: "listen", since: at } }], requests: [{ memberId: "member", assignmentId: "alloc-7", since: at }] } };
     for (const type of ["listen", "take-over-call", "join", "decline"]) {
       expect(validateTeamCommand({ command: { type, memberId: "member" } }, onCall)).toEqual([]);
       expect(validateTeamCommand({ command: { type, memberId: "member", assignmentId: "alloc-7" } }, onCall)).toEqual([]);

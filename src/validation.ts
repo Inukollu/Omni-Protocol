@@ -12,6 +12,7 @@
 
 import {
   RECORDING_ACTIONS,
+  SHIFT_EVENT_KINDS,
   type RecordingState,
   type RecordingAction,
   ALLOWED_BROWSER_URL_SCHEMES,
@@ -1851,10 +1852,18 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Re
       if (!isPlainObject(member.listening)) {
         into.add("team.member.listening.shape", `${at}.listening`, "listening must be an object when present");
       } else {
+        const listened = member.listening;
+        if (into.require(isAssignmentId(member.listening.assignmentId), "team.member.listening.assignmentId", `${at}.listening.assignmentId`,
+          "listening names which of the member's calls the lead is on: the application opens the lead's audio on it") && Array.isArray(member.tasks)) {
+          into.require(member.tasks.some((task: unknown) => isPlainObject(task) && task.assignmentId === listened.assignmentId),
+            "team.member.listening.assignment", `${at}.listening.assignmentId`, "the call the lead is on is one the member's tasks carry");
+        }
         into.oneOf(member.listening.mode, LISTENING_MODES, "team.member.listening.mode", `${at}.listening.mode`);
         into.timestamp(member.listening.since, "team.member.listening.since", `${at}.listening.since`);
       }
     }
+    // The member's own history for the day: about the person, not any one call.
+    if (member.shift !== undefined) validateShiftInto(member.shift, `${at}.shift`, into);
   });
   // One member's call at a time.
   const listened = teamMembers.members.filter((member: unknown) => isPlainObject(member) && member.listening !== undefined);
@@ -2151,15 +2160,6 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       into.require(context.leadFeatures !== false, "event.team.features", `${at}.team`, "the lead turned the team feature off, so nothing of the team reaches them");
       validateTeamMembersInto(event.team, `${at}.team`, { ...context, levels, channel: isChannel(channel) ? channel : undefined }, into);
       break;
-    case "team-audio-started":
-    case "team-audio-ended":
-      // The lead's channel in a member's call: audio the application opens on the member's assignment.
-      into.require(channel === "voice", "event.audio.channel", `${at}.type`, "only a voice provider publishes audio transitions");
-      into.require(context.capabilities === undefined || context.capabilities.lead === true, "event.teamAudio.capability", `${at}.type`,
-        "team audio reaches a login that declares lead, and nobody else");
-      into.require(isUserId(event.memberId), "event.teamAudio.memberId", `${at}.memberId`, "team audio names the member whose call the lead is on");
-      into.require(isAssignmentId(event.assignmentId), "event.teamAudio.assignmentId", `${at}.assignmentId`, "team audio names the member's assignment");
-      break;
     case "contacts-updated":
       into.require(idle.contacts === true, "event.contacts.capability", `${at}.contacts`,
         "contacts-updated requires the contacts idle capability");
@@ -2224,6 +2224,41 @@ function validatePreferencesInto(value: unknown, path: string, into: Collector, 
 }
 
 /** The team's policy per capability as the lead sees it: the setting, who set it, who locked it. */
+function validateShiftInto(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("team.member.shift.shape", path, "shift must be an object when present");
+    return;
+  }
+  const signedIn = into.timestamp(value.signedInAt, "team.member.shift.signedInAt", `${path}.signedInAt`);
+  if (value.signedOutAt !== undefined && into.timestamp(value.signedOutAt, "team.member.shift.signedOutAt", `${path}.signedOutAt`) && signedIn) {
+    into.require(Date.parse(value.signedOutAt as string) >= Date.parse(value.signedInAt as string), "team.member.shift.signedOutAt.order", `${path}.signedOutAt`,
+      "a member signs out after signing in");
+  }
+  for (const field of ["talkSeconds", "holdSeconds", "breakSeconds"] as const) {
+    if (value[field] !== undefined) into.require(isDurationSeconds(value[field]), `team.member.shift.${field}`, `${path}.${field}`,
+      `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
+  }
+  if (value.tasksHandled !== undefined) into.require(Number.isInteger(value.tasksHandled) && (value.tasksHandled as number) >= 0,
+    "team.member.shift.tasksHandled", `${path}.tasksHandled`, "tasksHandled must be a whole number, zero or more, or omitted when unknown");
+  if (value.events !== undefined) {
+    if (!Array.isArray(value.events)) {
+      into.add("team.member.shift.events.shape", `${path}.events`, "events must be an array when present");
+      return;
+    }
+    let previous: number | undefined;
+    value.events.forEach((event: unknown, index: number) => {
+      const at = `${path}.events[${index}]`;
+      if (!isPlainObject(event)) { into.add("team.member.shift.event.shape", at, "each shift event must be an object"); return; }
+      into.oneOf(event.kind, SHIFT_EVENT_KINDS, "team.member.shift.event.kind", `${at}.kind`);
+      if (into.timestamp(event.at, "team.member.shift.event.at", `${at}.at`)) {
+        const instant = Date.parse(event.at as string);
+        if (previous !== undefined && instant < previous) into.add("team.member.shift.events.order", `${at}.at`, "shift events are oldest first; this event is earlier than the one before it");
+        previous = instant;
+      }
+    });
+  }
+}
+
 function validateTeamPoliciesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
   if (!isPlainObject(value)) {
     into.add("team.policies.shape", path, "policies must be an object keyed by capability");

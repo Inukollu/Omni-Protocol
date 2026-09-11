@@ -977,6 +977,7 @@ type TeamMember = {
   break?: Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">;
   tasks?: MemberTask[];
   listening?: MemberListening;
+  shift?: MemberShift;
 };
 
 type LeadRequest = {
@@ -1006,8 +1007,26 @@ type MemberTask<C extends Channel = Channel> = {
   : { onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
 
 type MemberListening = {
+  assignmentId: AssignmentId;
   mode: ListeningMode;
   since: IsoTimestamp;
+};
+
+type ShiftEventKind = "signed-in" | "signed-out" | "break-started" | "break-ended";
+
+type ShiftEvent = {
+  at: IsoTimestamp;
+  kind: ShiftEventKind;
+};
+
+type MemberShift = {
+  signedInAt: IsoTimestamp;
+  signedOutAt?: IsoTimestamp;
+  talkSeconds?: DurationSeconds;
+  holdSeconds?: DurationSeconds;
+  breakSeconds?: DurationSeconds;
+  tasksHandled?: number;
+  events?: ShiftEvent[];
 };
 
 type TeamMembers = {
@@ -1108,8 +1127,6 @@ type ProviderEvent =
   | { type: "task-updated"; task: Task }
   | { type: "task-audio-started"; assignmentId: AssignmentId }
   | { type: "task-audio-ended"; assignmentId: AssignmentId }
-  | { type: "team-audio-started"; memberId: UserId; assignmentId: AssignmentId }
-  | { type: "team-audio-ended"; memberId: UserId; assignmentId: AssignmentId }
   | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
   | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; assignmentId?: AssignmentId; destinationId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
@@ -2382,7 +2399,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `history` | The call record: `steps` — the ordered interaction history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `interactionSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **Interaction history**. |
 | `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the agent application's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where an agent application placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the agent application supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `leadAssist` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Lead assist**. |
-| `takenOver` | Voice only, on a task that reached this agent by a lead's take-over: which member the call was taken from, and when. It is an ordinary assignment with the call's history, offered whatever break the lead is on and counted against no capacity. See **Lead assist**. |
+| `takenOver` | Voice only, on a task that reached this agent by a lead's take-over: which member the call was taken from, and when. It is an ordinary assignment with the call's history, offered whatever break the lead is on and counted against their capacity like any other call. See **Lead assist**. |
 
 `TaskAttribute` entries carry typed detail alongside the task:
 
@@ -2730,7 +2747,7 @@ Migration from the earlier spellings:
 | taskKey, omni.task-not-found, PROVIDER_NAME__TASK_ID__TAB_NAME (ProviderName.TaskId.TabName) | `assignmentKey`, `omni.assignment-not-found`, `PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME` (`ProviderName.AssignmentId.TabName`) |
 | Manifest.disposalSettleMs | `Manifest.completionSettleMs` |
 | the call command, atDeadline calls and host-calls | `dial`, `"provider-dials"`, `"host-dials"` |
-| media: task-media-started/-ended, team-media-*, Task.media, TaskMediaState, openMedia, OpenMediaRequest/Result, VoiceMediaSession and its session field | audio: `task-audio-started`, `task-audio-ended`, `team-audio-started`, `team-audio-ended`, `audio` on the task, `TaskAudioState`, `openAudio`, `OpenAudioRequest`, `OpenAudioResult`, `CallAudio` on the result's `audio` |
+| media: task-media-started/-ended, team-media-*, Task.media, TaskMediaState, openMedia, OpenMediaRequest/Result, VoiceMediaSession and its session field | audio: `task-audio-started`, `task-audio-ended`, `audio` on the task, `TaskAudioState`, `openAudio`, `OpenAudioRequest`, `OpenAudioResult`, `CallAudio` on the result's `audio`; there is no team audio, the lead's follows `listening` on the member |
 | capabilitySource values ungoverned and undetermined | `nobody`, `not-yet-read` (`capabilitySource.notYetRead`) |
 | Snapshot.scheduledActivities, and scheduledActivities on calendar-updated | `calendar` in both |
 | availability reserved | `elsewhere` |
@@ -3194,7 +3211,7 @@ See **Which commands need a capability**.
 | `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when local policy also permits declining. |
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
 | `endCall` | Primary button: End call | The provider ends the agent's channel and every channel the agent added; the caller continues on the provider's path. The task goes to its wrap. See **Ending a call, and removing one person from it**. |
-| `terminateCall` | Primary button: Terminate call | The provider ends the caller channel. The task goes to its wrap. See **Ending a call, and removing one person from it**. |
+| `terminateCall` | Primary button: Terminate call | The provider ends the whole call: every channel on it, the agent's, the caller's, any colleague's and anyone else's. The task goes to its wrap. See **Ending a call, and removing one person from it**. |
 | `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance completes the task at provider end. See **Connecting back during completion**. |
 | `coldTransfer` | Secondary menu item: Cold transfer | Omni may hand the customer straight to a destination, with nobody spoken to first. |
 | `warmTransfer` | Secondary menu item: Warm transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Warm transfer**. |
@@ -3294,7 +3311,7 @@ provider. Two of them end the agent's part; they differ in what happens to the c
 
 ```ts
 { type: "end-call" }                                             // the agent's channel and the channels the agent added end; the caller continues
-{ type: "terminate-call" }                                       // the caller channel ends
+{ type: "terminate-call" }                                       // every channel on the call ends
 { type: "conference", action: "remove", party: true }            // the customer leaves; the agent stays with the colleague
 { type: "conference", action: "remove", destinationId: "tier2" } // the conferenced person leaves; ringing, this calls the dial off
 ```
@@ -3303,9 +3320,10 @@ provider. Two of them end the agent's part; they differ in what happens to the c
 conferenced colleague, a consulted destination -- end, and the caller continues on the path the
 provider decides: another IVR, a queue, a survey, or the end of the call. Gated by `endCall`.
 
-**`terminate-call` ends the caller channel.** The call is over for the caller. Gated by
-`terminateCall`, a separate permission, since ending a customer's call is a different thing from
-putting my own side down.
+**`terminate-call` ends the whole call.** Every channel on it ends at the provider: the agent's,
+the caller's, any colleague the agent added, and anyone else on the call. Nobody is left on the
+line. Gated by `terminateCall`, a separate permission, since ending a customer's call is a
+different thing from putting my own side down.
 
 Both are commands to the provider through `execute`, and nothing happens on the desk until the
 provider reports it: the agent's audio ends on `task-audio-ended`, the task moves to `completing`,
@@ -4131,8 +4149,9 @@ for nothing and computes nothing.
 | `availability` | Required. What the member is doing now. |
 | `since` | Optional. When the current `availability` began — not when they signed in, and not when the team member list was read. |
 | `break` | Present only while the member has an outstanding break request. See **A member waiting for a break**. |
-| `tasks` | The member's open tasks as `MemberTask`s: the same task the member's desk holds, trimmed by the provider. The assignment, title, task type, phase, party, room, audio and the full history are what the lead reads; the workspace — controls, their source, browsers, completion terms — is the member's and travels only if the provider sends it. `[]` when the member holds none; omitted only where the provider cannot see them. |
-| `listening` | Present while this lead's channel is in this member's call — listening, coaching or joined — with the `mode` they are heard in and since when. One member's call at a time (`team.listening.single`). |
+| `tasks` | The member's open tasks as `MemberTask`s: the same task the member's desk holds, trimmed by the provider. The assignment, title, task type, phase, party, room and audio are what the lead reads; the task's history is carried in the same shape as on the member's desk, as much of it as the provider chooses to send; the workspace — controls, their source, browsers, completion terms — is the member's and travels only if the provider sends it. `[]` when the member holds none; omitted only where the provider cannot see them. |
+| `listening` | Present while this lead's channel is in this member's call — listening, coaching or joined — naming which of the member's calls by `assignmentId`, the `mode` they are heard in, and since when. Its appearance is what the lead's audio opens on. One member's call at a time (`team.listening.single`). |
+| `shift` | The member's own history for the day, about the person rather than any one call: `signedInAt`, `signedOutAt` once it has happened, today's totals as the provider counts them — `talkSeconds`, `holdSeconds`, `breakSeconds`, `tasksHandled`, each present only when the provider knows it — and the day's sign-in, sign-out and break `events`, oldest first. Omitted where the provider cannot say. |
 
 Each availability value means one thing:
 
@@ -4239,8 +4258,8 @@ executeTeam({ command: { type: "decline", memberId: "A-1", reason: "In a call" }
 
 **On `join` the provider bridges the lead's channel into the call.** The member's task moves to
 `leadAssist: { stage: "joined", leadId }`, the member on the team member list carries
-`listening: { mode: "join-call", since }`, and the lead's audio arrives as **Listening to a call**
-describes. Nothing is a task on the lead's desk: a join is the lead's act on the team surface, not
+`listening: { assignmentId, mode: "join-call", since }`, and the lead's audio opens on it as
+**Listening to a call** describes. Nothing is a task on the lead's desk: a join is the lead's act on the team surface, not
 work assigned to them.
 
 **A lead is on one member's call at a time.** A `join` from a lead already on a call -- their own
@@ -4261,15 +4280,17 @@ listening unasked -- and one act at the end of either. What follows is the same 
 
 | | The member's task | The lead's desk |
 | --- | --- | --- |
-| Take-over | `task-audio-ended`, then `completing`: the member's interaction is over and their wrap runs, exactly as after `end-call`. The audio ends first, as before every voice ending (`stream.taskEnded.audioOpen`). | An ordinary assignment arrives: `task-offered` with `acceptance: "automatic"`, carrying the call's history and `takenOver: { memberId, since }`. |
+| Take-over | `task-audio-ended`, then `completing`: the member's interaction is over and their wrap runs, exactly as after `end-call`. The audio ends first, as before every voice ending (`stream.taskEnded.audioOpen`). The member loses `listening` on the team member list no later than the offer, and the lead's listening audio closes. | An ordinary assignment arrives: `task-offered` with `acceptance: "automatic"`, carrying the call's history and `takenOver: { memberId, since }`, within the lead's capacity. |
 | The member completes | `task-ended` with `{ type: "taken-over", leadId }`, at the member's own completion. The lead is named by user id, since a lead is not a directory item. | The lead works the call as any agent would, and ends it as any call ends. |
 
-**The taken-over call is offered whatever break the lead is on.** A lead working as lead alone is
-on a break of a working kind, and the provider assigns the call regardless: it is the one task a
-break in effect may hold (`break.on-break.tasks` allows it, and nothing else). It is the lead's own
-act, so it counts against no capacity, like the agent's own dial; the only conditions are that the
-lead is not already on another call and their voice channel is free. A lead with the team feature
-off cannot take over, since they have no member's assignment to name.
+**The taken-over call is offered whatever break the lead is on, and counted like any other.** A
+lead working as lead alone is on a break of a working kind, and the provider assigns the call
+regardless: it is the one task a break in effect may hold (`break.on-break.tasks` allows it, and
+nothing else). It is a call landing on the lead's desk, so it counts against their capacity as
+every call does, with no exemption: a lead at capacity cannot take over, and the provider answers
+`failed`. The other conditions are that the lead is not already on another call and their voice
+channel is free. A lead with the team feature off cannot take over, since they have no member's
+assignment to name.
 
 ```ts
 const leadAssistCapable = {
@@ -4303,34 +4324,47 @@ history. The three modes determine who hears the lead:
 | `coach` | The agent alone. The customer hears nothing. |
 | `join-call` | Everyone on the call. |
 
-All three come with the `lead` flag; a centre reserves none of them per lead. The flow:
+All three come with the `lead` flag; a centre reserves none of them per lead.
+
+**There is no team audio.** Audio is the agent's or the lead's, and the lead's audio while
+listening follows the provider's published state exactly as a task's does: `listening` on the
+member is the provider's word that the lead's channel is in the call. When it appears, the
+application opens `openAudio({ assignmentId })` on the lead's connection for the call it names,
+and plays the `CallAudio` returned; when it goes, the application closes it. Nothing else says
+when the lead's audio is up, and a reload reopens it from the snapshot's team member list as a task
+carried with `audio: "started"` is reopened.
+
+The flow, end to end:
 
 ```ts
-// 1. The lead picks a member from the team member list and starts silent.
-executeTeam({ command: { type: "listen", memberId: "A-1" } })
-//    team-updated: the member carries listening: { mode: "listen", since }
-//    team-audio-started: { memberId: "A-1", assignmentId: "alloc-42" } -- the lead's audio attaches
-
-// 2. The lead changes how they are heard; the provider restates the member with the new mode.
+// 1. The lead, with the feature on, sees a member on-task with their tasks, and picks a call.
+// 2. The lead's channel joins it in silence. Conditions: the lead's voice channel is free --
+//    not on a call, not listening elsewhere. Capacity is not involved: nothing is assigned.
+executeTeam({ command: { type: "listen", memberId: "A-1", assignmentId: "alloc-42" } })
+// 3. The provider republishes the team member list; the member carries
+//    listening: { assignmentId: "alloc-42", mode: "listen", since }
+//    -- the application opens openAudio({ assignmentId: "alloc-42" }) on the lead's connection.
+// 4. The lead changes how they are heard; the provider restates listening.mode. The audio stays open.
 executeTeam({ command: { type: "coach", memberId: "A-1" } })
 executeTeam({ command: { type: "join-call", memberId: "A-1" } })
-
-// 3. The lead leaves, or takes the call.
+// 5. The lead leaves: the provider republishes the member without listening; the application closes the audio.
 executeTeam({ command: { type: "leave", memberId: "A-1" } })
+// 6. The member's call ends: the same as leave, from the provider's side.
+// 7. The lead takes the call: the member loses listening no later than the offer, the application
+//    closes the listening audio, and the lead's own call arrives as an ordinary assignment marked
+//    takenOver, counted against capacity, with its audio following task-audio-started as any call's does.
+//    At capacity the take-over is refused and the lead stays listening.
 executeTeam({ command: { type: "take-over-call", memberId: "A-1" } })
+// 8. A join on the member's request is the same flow entered at step 3 with mode: "join-call",
+//    and the member's task shows leadAssist: joined.
+// 9. A reload of the lead's application: the snapshot's team member list still carries listening,
+//    so the audio is reopened.
 ```
 
-**The lead's audio arrives through team audio.** While the lead's channel is in a member's call
--- listening, coaching or joined on request -- the lead's connection receives `team-audio-started`
-naming the member and the member's assignment, and on a softphone the agent application opens
-`openAudio` on that assignment as it does for a task; `team-audio-ended` closes it. Voice only, and
-to a login that declares `lead` (`event.teamAudio.*`). The member's own audio events are the
-member's and never reach the lead.
-
-**`listening` on the member is the state**, restated on every change of mode, and a lead is on
-one member's call at a time (`team.listening.single`). The member's call ending ends the lead's
-listening with it: the provider republishes the member without `listening` and sends
-`team-audio-ended`.
+**`listening` on the member is the state**, restated on every change of mode, naming the call so
+the application knows which audio to open (`team.member.listening.assignmentId`, and one the
+member's tasks carry, `team.member.listening.assignment`), and a lead is on one member's call at a
+time (`team.listening.single`).
 
 **A lead listens while holding no call of their own.** Omni offers Listen to a lead whose voice
 channel is free, and a provider answers a `listen` from one whose channel is not `failed`. That
@@ -4689,7 +4723,7 @@ declared:
 | --- | --- |
 | `answer`, `accept` | Nothing. A task that was offered can be accepted, or offering it meant nothing. |
 | `end-call` | The `endCall` capability: ends my part, the caller continues. |
-| `terminate-call` | The `terminateCall` capability: ends the caller channel. |
+| `terminate-call` | The `terminateCall` capability: ends the whole call, every channel on it. |
 | `conference` with `action: "remove"` | The `conference` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
 | `decline` | The `decline` capability on any channel, **and** Omni local policy permitting it. One word for refusing an offer, whatever the channel. |
 | `dial` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
