@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
 import type { LoginStore, Refusal } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
-import { memoryStore, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
+import { memoryStore, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const voiceTask = {
   title: "Customer call",
@@ -254,7 +254,7 @@ describe("assertBreakFollowsItsRequests", () => {
   });
 });
 
-describe("assertMediaFollowsTheTask", () => {
+describe("assertAudioFollowsTheTask", () => {
   const at = "2026-08-21T09:00:00Z";
   const call = (phase: Task<"voice">["phase"]): Task<"voice"> => ({ ...voiceTask, phase });
   const offered = (): ProviderEventEnvelope<"voice"> => ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...call("pending"), acceptance: "consent" } } });
@@ -262,38 +262,38 @@ describe("assertMediaFollowsTheTask", () => {
   // A connect-back brings a completing task back, and the update shows it: the party being dialled, ringing with the host's dial.
   const connectingBack = (id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at,
     event: { type: "task-updated", task: { ...call("in-progress"), onCall: [{ role: "party", dialId: "dial-9", stage: "ringing", since: at }] } } });
-  const mediaReady = (id = "e2b"): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-media-started", assignmentId: voiceTask.assignmentId } });
-  const mediaEnded: ProviderEventEnvelope<"voice"> = { id: "e3", loginId: "session-1", occurredAt: at, event: { type: "task-media-ended", assignmentId: voiceTask.assignmentId } };
+  const audioReady = (id = "e2b"): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-audio-started", assignmentId: voiceTask.assignmentId } });
+  const audioEnded: ProviderEventEnvelope<"voice"> = { id: "e3", loginId: "session-1", occurredAt: at, event: { type: "task-audio-ended", assignmentId: voiceTask.assignmentId } };
   const ended: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-ended", assignmentId: voiceTask.assignmentId, outcome: { type: "completed", by: "agent" } } };
   const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
 
-  it("rejects media events on non-voice tasks without changing their state", () => {
+  it("rejects audio events on non-voice tasks without changing their state", () => {
     for (const channel of ["chat", "email"] as const) {
       const work: Task = { ...voiceTask, channel, capabilities: {}, browsers: [], phase: "in-progress" };
       const initial: Snapshot = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [work], taskCount: 1 };
-      expect(rulesOf(() => assertMediaFollowsTheTask([mediaReady(), mediaEnded, ended], initial))).toEqual([
-        "stream.taskMedia.channel", "stream.taskMedia.channel",
+      expect(rulesOf(() => assertAudioFollowsTheTask([audioReady(), audioEnded, ended], initial))).toEqual([
+        "stream.taskAudio.channel", "stream.taskAudio.channel",
       ]);
     }
   });
 
-  it("accepts a call offered, started, made ready, whose media ends, completing, then ending", () => {
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), ended]))).toEqual([]);
-    // A snapshot may carry the task in with its media ready; connecting back puts media back and it ends again.
-    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), connectingBack("e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...call("in-progress"), media: "started" }], taskCount: 1 }))).toEqual([]);
+  it("accepts a call offered, started, made ready, whose audio ends, completing, then ending", () => {
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, updated("completing", "e5"), ended]))).toEqual([]);
+    // A snapshot may carry the task in with its audio ready; connecting back puts audio back and it ends again.
+    expect(rulesOf(() => assertAudioFollowsTheTask([audioEnded, updated("completing"), connectingBack("e5"), audioReady("e5b"), { ...audioEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...call("in-progress"), audio: "started" }], taskCount: 1 }))).toEqual([]);
   });
 
-  it("refuses a task that completes around its audio: completing while the media the stream holds is still started", () => {
-    // The stream holds the audio from the events, so an update that omits media and moves to completing is caught too.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), updated("completing", "e5")]))).toEqual(["stream.taskUpdated.mediaOpen", "stream.taskUpdated.media"]);
-    // The control: media ended first, as the guide orders it, and a completing task that never had audio.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), ended]))).toEqual([]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), updated("completing", "e5"), ended]))).toEqual([]);
+  it("refuses a task that completes around its audio: completing while the audio the stream holds is still started", () => {
+    // The stream holds the audio from the events, so an update that omits audio and moves to completing is caught too.
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), updated("completing", "e5")]))).toEqual(["stream.taskUpdated.audioOpen", "stream.taskUpdated.audio"]);
+    // The control: audio ended first, as the guide orders it, and a completing task that never had audio.
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, updated("completing", "e5"), ended]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), updated("completing", "e5"), ended]))).toEqual([]);
   });
 
   it("holds a conversation the provider completes itself to publishing completing first, where it stated an allowance to run", () => {
     const chat = (over: Record<string, unknown>) => {
-      const { onCall: _room, media: _media, ...rest } = voiceTask as Record<string, unknown>;
+      const { onCall: _room, audio: _media, ...rest } = voiceTask as Record<string, unknown>;
       return { ...rest, assignmentId: "alloc-c7", channel: "chat", capabilities: {}, completionMode: "provider-automatic", wrapAllowance: 60, ...over };
     };
     const env = (id: string, event: Record<string, unknown>) => ({ id, loginId: "session-1", occurredAt: at, event }) as unknown as ProviderEventEnvelope;
@@ -302,101 +302,101 @@ describe("assertMediaFollowsTheTask", () => {
     const chatEnded = (outcome: Record<string, unknown>) => env("c9", { type: "task-ended", assignmentId: "alloc-c7", outcome });
     const completed = { type: "completed", by: "provider" };
     // Completed straight from in-progress, the sixty seconds it stated were never given.
-    expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatEnded(completed)]))).toEqual(["stream.taskEnded.unwrapped"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatEnded(completed)]))).toEqual(["stream.taskEnded.unwrapped"]);
     // The controls: completing published first; nothing to wrap; the agent completes; the ending is not a completion.
-    expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatUpdated("completing", {}, "c3"), chatEnded(completed)]))).toEqual([]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered({ wrapAllowance: 0 }), chatUpdated("in-progress", { wrapAllowance: 0 }), chatEnded(completed)]))).toEqual([]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered({ completionMode: "agent-command" }), chatUpdated("in-progress", { completionMode: "agent-command" }), chatEnded({ type: "completed", by: "agent" })]))).toEqual([]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatEnded({ type: "cancelled", by: "party" })]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatUpdated("completing", {}, "c3"), chatEnded(completed)]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([chatOffered({ wrapAllowance: 0 }), chatUpdated("in-progress", { wrapAllowance: 0 }), chatEnded(completed)]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([chatOffered({ completionMode: "agent-command" }), chatUpdated("in-progress", { completionMode: "agent-command" }), chatEnded({ type: "completed", by: "agent" })]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([chatOffered(), chatUpdated("in-progress"), chatEnded({ type: "cancelled", by: "party" })]))).toEqual([]);
   });
 
-  it("refuses a voice ending with the media still started, whatever the outcome: the audio ends first", () => {
+  it("refuses a voice ending with the audio still started, whatever the outcome: the audio ends first", () => {
     const takenOver: ProviderEventEnvelope<"voice"> = { id: "e9", loginId: "session-1", occurredAt: at, event: { type: "task-ended", assignmentId: voiceTask.assignmentId, outcome: { type: "taken-over", leadId: "L-9" } } };
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), ended]))).toEqual(["stream.taskEnded.mediaOpen"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), takenOver]))).toEqual(["stream.taskEnded.mediaOpen"]);
-    // The controls: the media ended first, and a task that never had audio.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, takenOver]))).toEqual([]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), ended]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), ended]))).toEqual(["stream.taskEnded.audioOpen"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), takenOver]))).toEqual(["stream.taskEnded.audioOpen"]);
+    // The controls: the audio ended first, and a task that never had audio.
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, takenOver]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), ended]))).toEqual([]);
   });
 
-  it("gives a host-placed dial audio from dialling: media on a task whose party the host is ringing, and on no other task not at work", () => {
+  it("gives a host-placed dial audio from dialling: audio on a task whose party the host is ringing, and on no other task not at work", () => {
     const dialled = (id: string, phase: Task<"voice">["phase"]): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at,
       event: { type: "task-offered", task: { ...call(phase), acceptance: "automatic", onCall: [{ role: "party", dialId: "dial-3", stage: "ringing", since: at }] } } });
-    expect(rulesOf(() => assertMediaFollowsTheTask([dialled("d1", "pending"), mediaReady("d2")]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([dialled("d1", "pending"), audioReady("d2")]))).toEqual([]);
     // The control: an offered task nobody is dialling has no audio yet.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), mediaReady()]))).toEqual(["stream.taskMediaStarted.beforeWork"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), audioReady()]))).toEqual(["stream.taskAudioStarted.beforeWork"]);
   });
 
   it("holds the party's stage to its life: joined once after the answered outcome, then no stage, and only a dial it saw brings a completing task back", () => {
     const outcome = (id: string, dialId: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId, assignmentId: voiceTask.assignmentId, outcome: "answered" } });
     const party = (id: string, entry: Record<string, unknown>): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), onCall: [{ role: "party", since: at, ...entry }] } } });
     const joined = { stage: "joined", dialId: "dial-9" };
-    const back = [offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), connectingBack("e6"), outcome("e7", "dial-9")];
+    const back = [offered(), updated("in-progress"), audioReady(), audioEnded, updated("completing", "e5"), connectingBack("e6"), outcome("e7", "dial-9")];
     // joined is transient: stated once on the publication after the answered outcome, and a party with no stage is on the call.
-    expect(rulesOf(() => assertMediaFollowsTheTask([...back, party("e8", joined), party("e9", {})]))).toEqual([]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([...back, party("e8", joined), party("e9", joined)]))).toEqual(["stream.taskUpdated.stage.lingering"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([...back, party("e8", joined), party("e9", {})]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([...back, party("e8", joined), party("e9", joined)]))).toEqual(["stream.taskUpdated.stage.lingering"]);
     // A completing task comes back on a party ringing, or joined by a dial whose answered outcome the stream saw: a stale copy
     // carrying joined from a dial it never saw answered is the ending the agent never saw.
-    expect(rulesOf(() => assertMediaFollowsTheTask([...back, party("e8", joined)]))).toEqual([]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), party("e6", { stage: "joined", dialId: "dial-old" })])))
+    expect(rulesOf(() => assertAudioFollowsTheTask([...back, party("e8", joined)]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, updated("completing", "e5"), party("e6", { stage: "joined", dialId: "dial-old" })])))
       .toEqual(["stream.taskUpdated.phase"]);
   });
 
-  it("lets a connect-back release ended media on the way back: the follow rule keeps the same exception as the phase rule", () => {
-    const completingEnded: ProviderEventEnvelope<"voice"> = { id: "e5", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("completing"), media: "ended" } } };
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, completingEnded, connectingBack("e6")]))).toEqual([]);
-    // The control: after ended media, a phase that is not completing and not a connect-back is still refused.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, completingEnded, updated("in-progress", "e6")]))).toEqual(["stream.taskUpdated.phase", "stream.taskMediaEnded.follow"]);
+  it("lets a connect-back release ended audio on the way back: the follow rule keeps the same exception as the phase rule", () => {
+    const completingEnded: ProviderEventEnvelope<"voice"> = { id: "e5", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("completing"), audio: "ended" } } };
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, completingEnded, connectingBack("e6")]))).toEqual([]);
+    // The control: after ended audio, a phase that is not completing and not a connect-back is still refused.
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, completingEnded, updated("in-progress", "e6")]))).toEqual(["stream.taskUpdated.phase", "stream.taskAudioEnded.follow"]);
   });
 
   it("holds a resync snapshot to what the stream knew: no phase backwards, and no audio forgotten on a task still at work", () => {
     const resync = (task: Record<string, unknown>, id = "s1") => ({ id, loginId: "session-1", occurredAt: at,
       event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [task], taskCount: 1 } } }) as unknown as ProviderEventEnvelope<"voice">;
     // The audio was up; a snapshot carrying the task at work without it lost state. One carrying it started, or completing with it ended, did not.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync(call("in-progress"))]))).toEqual(["stream.snapshot.media"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync({ ...call("paused") })]))).toEqual(["stream.snapshot.media"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync({ ...call("in-progress"), media: "started" })]))).toEqual([]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync({ ...call("completing"), media: "ended" })]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), resync(call("in-progress"))]))).toEqual(["stream.snapshot.audio"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), resync({ ...call("paused") })]))).toEqual(["stream.snapshot.audio"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), resync({ ...call("in-progress"), audio: "started" })]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), resync({ ...call("completing"), audio: "ended" })]))).toEqual([]);
     // A task does not go backwards on a resync either; the same phase, or a later one, stands.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), resync(call("confirmed"))]))).toEqual(["stream.snapshot.phase"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), resync(call("in-progress"))]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), resync(call("confirmed"))]))).toEqual(["stream.snapshot.phase"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), resync(call("in-progress"))]))).toEqual([]);
     // A task the snapshot carries under another assignment is another life, and is held to nothing the old one said.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync({ ...call("pending"), assignmentId: "alloc-43" })]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), resync({ ...call("pending"), assignmentId: "alloc-43" })]))).toEqual([]);
   });
 
-  it("refuses media that moves before the work began, arrives twice, or ends where none arrived", () => {
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), mediaReady()]))).toEqual(["stream.taskMediaStarted.beforeWork"]);
+  it("refuses audio that moves before the work began, arrives twice, or ends where none arrived", () => {
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), audioReady()]))).toEqual(["stream.taskAudioStarted.beforeWork"]);
     // A completing task's call is over: a connect-back returns it to in-progress before any audio arrives.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), mediaReady("e6")]))).toEqual(["stream.taskMediaStarted.beforeWork"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), mediaEnded]))).toEqual(["stream.taskMediaEnded.beforeWork", "stream.taskMediaEnded.silent"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, updated("completing", "e5"), audioReady("e6")]))).toEqual(["stream.taskAudioStarted.beforeWork"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), audioEnded]))).toEqual(["stream.taskAudioEnded.beforeWork", "stream.taskAudioEnded.silent"]);
     // The defect this rule is for: a live call whose provider said nothing about its audio.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaEnded]))).toEqual(["stream.taskMediaEnded.silent"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaReady("e2c")]))).toEqual(["stream.taskMediaStarted.duplicate"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([mediaReady()]))).toEqual(["stream.assignment.unknown"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioEnded]))).toEqual(["stream.taskAudioEnded.silent"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioReady("e2c")]))).toEqual(["stream.taskAudioStarted.duplicate"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([audioReady()]))).toEqual(["stream.assignment.unknown"]);
   });
 
-  it("lets an update re-state media, and refuses one that moves it", () => {
-    const restated = (id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("paused"), media: "started" } } });
-    const arrives = (id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), media: "started" } } });
+  it("lets an update re-state audio, and refuses one that moves it", () => {
+    const restated = (id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("paused"), audio: "started" } } });
+    const arrives = (id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), audio: "started" } } });
     // Republishing ready on a hold is a statement, not a second arrival.
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), restated("e2c")]))).toEqual([]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), arrives("e2c")]))).toEqual(["stream.taskUpdated.media"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), { id: "e2d", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), media: "ended" } } }]))).toEqual(["stream.taskUpdated.media"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), restated("e2c")]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), arrives("e2c")]))).toEqual(["stream.taskUpdated.audio"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), { id: "e2d", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), audio: "ended" } } }]))).toEqual(["stream.taskUpdated.audio"]);
   });
 
-  it("refuses media that decides what follows", () => {
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("paused", "e5")]))).toEqual(["stream.taskMediaEnded.follow"]);
+  it("refuses audio that decides what follows", () => {
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, updated("paused", "e5")]))).toEqual(["stream.taskAudioEnded.follow"]);
   });
 
   it("refuses a stream that speaks of a task it never introduced, or introduces one twice", () => {
-    expect(rulesOf(() => assertMediaFollowsTheTask([updated("in-progress")]))).toEqual(["stream.taskUpdated.unknown"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded]))).toEqual(["stream.assignment.unknown"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([ended]))).toEqual(["stream.assignment.unknown"]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), { ...offered(), id: "e9" }]))).toEqual(["stream.taskOffered.duplicate"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([updated("in-progress")]))).toEqual(["stream.taskUpdated.unknown"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([audioEnded]))).toEqual(["stream.assignment.unknown"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([ended]))).toEqual(["stream.assignment.unknown"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), { ...offered(), id: "e9" }]))).toEqual(["stream.taskOffered.duplicate"]);
     // A call that comes back is a new assignment; the same assignment offered again after it ended is not.
     const again: ProviderEventEnvelope<"voice"> = { ...offered(), id: "e9", event: { type: "task-offered", task: { ...call("pending"), assignmentId: "alloc-43", acceptance: "consent" } } };
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), ended, again]))).toEqual([]);
-    expect(rulesOf(() => assertMediaFollowsTheTask([offered(), ended, { ...offered(), id: "e9" }]))).toEqual(["stream.taskOffered.duplicate"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), ended, again]))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), ended, { ...offered(), id: "e9" }]))).toEqual(["stream.taskOffered.duplicate"]);
   });
 });
 
@@ -407,7 +407,7 @@ describe("TaskStream names a task by its assignment alone", () => {
   const env = (id: string, event: unknown): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event } as ProviderEventEnvelope<"voice">);
   const offered = (assignmentId: string, id = "o1") => env(id, { type: "task-offered", task: life(assignmentId, { phase: "pending", acceptance: "consent" }) });
   const ended = (assignmentId: string, id = "x1") => env(id, { type: "task-ended", assignmentId, outcome: { type: "completed", by: "agent" } });
-  const mediaEnded = (assignmentId: string, id = "m1") => env(id, { type: "task-media-ended", assignmentId });
+  const audioEnded = (assignmentId: string, id = "m1") => env(id, { type: "task-audio-ended", assignmentId });
   const outcome = (assignmentId: string | undefined, id = "d1") => env(id, { type: "dial-outcome", dialId: "dial-1a0", outcome: "no-answer", assignmentId: voiceTask.assignmentId, ...(assignmentId === undefined ? {} : { assignmentId }) });
   const seeded = (assignmentId: string, over: Record<string, unknown> = {}) => { const s = new TaskStream(); s.seed({ tasks: [life(assignmentId, over)] }); return s; };
 
@@ -426,16 +426,16 @@ describe("TaskStream names a task by its assignment alone", () => {
     expect(rulesOf(s.apply(env("u2", { type: "task-updated", task: life("alloc-0") })))).toEqual(["stream.taskUpdated.unknown"]);
   });
 
-  it("does not let a late ending or media event for a life that ended land on the life now open, and names a life nobody saw", () => {
+  it("does not let a late ending or audio event for a life that ended land on the life now open, and names a life nobody saw", () => {
     const s = new TaskStream(); s.seed({ tasks: [] });
     s.apply(offered("alloc-1")); s.apply(ended("alloc-1")); s.apply(offered("alloc-2", "o2"));
-    s.apply(env("u", { type: "task-updated", task: life("alloc-2", { phase: "in-progress", media: "started" }) }));
+    s.apply(env("u", { type: "task-updated", task: life("alloc-2", { phase: "in-progress", audio: "started" }) }));
     // The first customer's late ending must not end the second customer's call.
     expect(rulesOf(s.apply(ended("alloc-1", "x9")))).toEqual(["stream.assignment.ended"]);
-    expect(rulesOf(s.apply(mediaEnded("alloc-1", "m9")))).toEqual(["stream.assignment.ended"]);
-    expect(rulesOf(s.apply(mediaEnded("alloc-7", "m8")))).toEqual(["stream.assignment.unknown"]);
+    expect(rulesOf(s.apply(audioEnded("alloc-1", "m9")))).toEqual(["stream.assignment.ended"]);
+    expect(rulesOf(s.apply(audioEnded("alloc-7", "m8")))).toEqual(["stream.assignment.unknown"]);
     // The control: the open life's own events stand, and the task is still open after the refused ending.
-    expect(rulesOf(s.apply(mediaEnded("alloc-2", "m2")))).toEqual([]);
+    expect(rulesOf(s.apply(audioEnded("alloc-2", "m2")))).toEqual([]);
     expect(rulesOf(s.apply(ended("alloc-2", "x2")))).toEqual([]);
   });
 
@@ -541,35 +541,35 @@ describe("TaskStream holds terms once read", () => {
 
   it("lets terms arrive, and refuses their loss", () => {
     // Arriving: the terms were unread and now are read, under either kind of governance.
-    expect(rulesOf(seeded("undetermined").apply(under("queue")))).toEqual([]);
-    expect(rulesOf(seeded("undetermined").apply(under("ungoverned")))).toEqual([]);
-    expect(rulesOf(seeded("undetermined").apply(under("undetermined")))).toEqual([]);
+    expect(rulesOf(seeded("not-yet-read").apply(under("queue")))).toEqual([]);
+    expect(rulesOf(seeded("not-yet-read").apply(under("nobody")))).toEqual([]);
+    expect(rulesOf(seeded("not-yet-read").apply(under("not-yet-read")))).toEqual([]);
     // Moving queues, or into one: a fact replacing a fact.
-    expect(rulesOf(seeded("ungoverned").apply(under("queue")))).toEqual([]);
+    expect(rulesOf(seeded("nobody").apply(under("queue")))).toEqual([]);
     expect(rulesOf(seeded("queue").apply(under("queue")))).toEqual([]);
     // Lost: a task that had its terms cannot say it never did.
-    expect(rulesOf(seeded("queue").apply(under("undetermined")))).toEqual(["stream.taskUpdated.capabilitySource"]);
-    expect(rulesOf(seeded("ungoverned").apply(under("undetermined")))).toEqual(["stream.taskUpdated.capabilitySource"]);
+    expect(rulesOf(seeded("queue").apply(under("not-yet-read")))).toEqual(["stream.taskUpdated.capabilitySource"]);
+    expect(rulesOf(seeded("nobody").apply(under("not-yet-read")))).toEqual(["stream.taskUpdated.capabilitySource"]);
   });
 
   it("holds a snapshot to the same rule: a resync may not say a task lost the terms it had", () => {
     const resync = (capabilitySource: Task["capabilitySource"]): ProviderEventEnvelope<"voice"> =>
       ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...voiceTask, capabilitySource }], taskCount: 1 } } });
-    expect(rulesOf(seeded("queue").apply(resync("undetermined")))).toEqual(["stream.snapshot.capabilitySource"]);
-    expect(rulesOf(seeded("ungoverned").apply(resync("undetermined")))).toEqual(["stream.snapshot.capabilitySource"]);
+    expect(rulesOf(seeded("queue").apply(resync("not-yet-read")))).toEqual(["stream.snapshot.capabilitySource"]);
+    expect(rulesOf(seeded("nobody").apply(resync("not-yet-read")))).toEqual(["stream.snapshot.capabilitySource"]);
     // The control: terms arriving on a snapshot, or restated by one, are what a snapshot is for.
-    expect(rulesOf(seeded("undetermined").apply(resync("queue")))).toEqual([]);
+    expect(rulesOf(seeded("not-yet-read").apply(resync("queue")))).toEqual([]);
     expect(rulesOf(seeded("queue").apply(resync("queue")))).toEqual([]);
     // And a task the stream never knew arrives under whatever terms it has.
     const fresh = new TaskStream(); fresh.seed({ tasks: [] });
-    expect(rulesOf(fresh.apply(resync("undetermined")))).toEqual([]);
+    expect(rulesOf(fresh.apply(resync("not-yet-read")))).toEqual([]);
   });
 
   it("holds an offer to the same rule once it is on the stream", () => {
     const s = new TaskStream(); s.seed({ tasks: [] });
     const offered: ProviderEventEnvelope<"voice"> = { id: "e0", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...voiceTask, phase: "pending", acceptance: "consent", capabilitySource: "queue" } } };
     expect(rulesOf(s.apply(offered))).toEqual([]);
-    expect(rulesOf(s.apply(under("undetermined", "e1")))).toEqual(["stream.taskUpdated.capabilitySource"]);
+    expect(rulesOf(s.apply(under("not-yet-read", "e1")))).toEqual(["stream.taskUpdated.capabilitySource"]);
     expect(rulesOf(s.apply(under("queue", "e2")))).toEqual([]);
   });
 });
@@ -715,7 +715,7 @@ describe("assertDeniedAndRetriedBreak", () => {
 });
 
 describe("assertWrapTimeout", () => {
-  it("accepts a deadline of media end plus the task allowance", () => {
+  it("accepts a deadline of audio end plus the task allowance", () => {
     expect(() => assertWrapTimeout(voiceTask, "2026-08-21T01:00:00.000Z", "2026-08-21T01:01:00.000Z")).not.toThrow();
   });
 
@@ -857,7 +857,7 @@ const conformingSnapshot = {
     capabilitySource: "queue",
     assignmentId: "alloc-42",
     phase: "in-progress",
-    media: "started",
+    audio: "started",
     completionMode: "agent-command",
     wrapAllowance: 60,
     party: { name: "Maya Rao", number: "+919876543210" },
@@ -872,7 +872,7 @@ const conformingSnapshot = {
   }],
   taskCount: 1,
   contacts: [{ name: "Asha Rao", number: "+919876543210", email: "asha@example.com", attributes: [{ key: "Category", value: "High priority" }] }],
-  scheduledActivities: [{ id: "cb-1", title: "Callback", startsAt: "2026-08-21T10:00:00Z", endsAt: "2026-08-21T10:15:00Z" }],
+  calendar: [{ id: "cb-1", title: "Callback", startsAt: "2026-08-21T10:00:00Z", endsAt: "2026-08-21T10:15:00Z" }],
 } satisfies Snapshot<"voice">;
 
 /** Declares nothing optional, so no optional method is required of it. */
@@ -972,7 +972,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         executeTeam: async () => ({ status: "applied" }),
         setPreference: async () => ({ status: "applied" }),
         recordStep: async (report: { at: string }) => ({ status: "recorded", at: report.at }),
-        openMedia: async () => ({ status: "unavailable", failure: { code: "test", message: "No media in a test", retryable: false } }),
+        openAudio: async () => ({ status: "unavailable", failure: { code: "test", message: "No audio in a test", retryable: false } }),
       };
       return { ...connection, ...overrides.connection } as Connection<"voice">;
     },
@@ -1006,17 +1006,17 @@ describe("exerciseAdapter", () => {
   it("holds the host's phone to the manifest, and lets a desk phone own no audio", async () => {
     const on = async (phone: unknown, overrides: AdapterOverrides = {}, host: Host = stillHost(speaking, {}, "stream")) =>
       (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, phone: phone as "softphone", host } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule);
-    // A softphone login: the host reports audio and the adapter opens media.
+    // A softphone login: the host reports audio and the adapter opens audio.
     expect(await on("softphone")).toEqual([]);
-    expect(await on("softphone", { connection: { openMedia: undefined } })).toContain("connection.openMedia.required");
+    expect(await on("softphone", { connection: { openAudio: undefined } })).toContain("connection.openAudio.required");
     expect(await on("softphone", {}, stillHost({ online: true }, {}, "stream"))).toEqual(["context.host.audio.required"]);
     // What the host's Mute does is stated on a softphone, in one of two words, and nowhere else.
     expect(await on("softphone", {}, stillHost(speaking, {}, "station"))).toEqual([]);
     expect(await on("softphone", {}, stillHost(speaking, {}))).toEqual(["host.mute.required"]);
     expect(await on("softphone", {}, stillHost(speaking, {}, "soft" as "stream"))).toEqual(["host.mute"]);
-    expect(await on("deskPhone", { connection: { openMedia: undefined, recordStep: undefined } }, stillHost({ online: true }, {}, "stream"))).toEqual(["host.mute.unexpected"]);
+    expect(await on("deskPhone", { connection: { openAudio: undefined, recordStep: undefined } }, stillHost({ online: true }, {}, "stream"))).toEqual(["host.mute.unexpected"]);
     // A desk-phone login: the host has no audio to report and nothing to open.
-    expect(await on("deskPhone", { connection: { openMedia: undefined, recordStep: undefined } }, stillHost({ online: true }))).toEqual([]);
+    expect(await on("deskPhone", { connection: { openAudio: undefined, recordStep: undefined } }, stillHost({ online: true }))).toEqual([]);
     // A softphone's host handed to a desk-phone login is wrong twice: it reports audio it does not have, and a mute it cannot perform.
     expect(await on("deskPhone")).toEqual(["context.host.audio.unexpected", "host.mute.unexpected"]);
     // The choice is held to the manifest, and required on voice.
@@ -1029,14 +1029,14 @@ describe("exerciseAdapter", () => {
     const [carried] = (conformingSnapshot as { tasks: Record<string, unknown>[] }).tasks;
     const under = (capabilitySource: string) => ({ ...conformingSnapshot, tasks: [{ ...carried, capabilitySource }] });
     expect(await rules({ snapshot: under("queue") })).toEqual([]);
-    expect(await rules({ snapshot: under("ungoverned") })).toEqual([]);
-    expect(await rules({ snapshot: under("undetermined") })).toEqual(["capabilitySource.undetermined"]);
-    // And on the wire after the snapshot: an offer under undetermined terms is the same fault.
+    expect(await rules({ snapshot: under("nobody") })).toEqual([]);
+    expect(await rules({ snapshot: under("not-yet-read") })).toEqual(["capabilitySource.notYetRead"]);
+    // And on the wire after the snapshot: an offer under not-yet-read terms is the same fault.
     const offer = (capabilitySource: string): ProviderEventEnvelope<"voice"> => ({ id: "offer-1", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
       event: { type: "task-offered", task: { ...voiceTask, assignmentId: "call-77", phase: "pending", acceptance: "consent", capabilitySource: capabilitySource as "queue" } } });
     const idle = { ...conformingSnapshot, tasks: [], taskCount: 0 };
     expect(await rules({ snapshot: idle, emitOnCapacity: listener => listener(offer("queue")) })).toEqual([]);
-    expect(await rules({ snapshot: idle, emitOnCapacity: listener => listener(offer("undetermined")) })).toEqual(["capabilitySource.undetermined"]);
+    expect(await rules({ snapshot: idle, emitOnCapacity: listener => listener(offer("not-yet-read")) })).toEqual(["capabilitySource.notYetRead"]);
   });
 
   it("requires the host to state a time zone, and the provider to keep it on the identity", async () => {
@@ -1057,8 +1057,8 @@ describe("exerciseAdapter", () => {
   it("catches a preview task that leaves preview still carrying its deadline, through the full run", async () => {
     // The natural provider implementation spreads the old task into the new one, and its own
     // state looks right; only the host's boundary sees the deadline a task past preview cannot have.
-    const previewed = { ...conformingSnapshot.tasks[0]!, assignmentId: "call-77", capabilities: {}, browsers: [], phase: "preview" as const, media: undefined, history: undefined,
-      previewEndsAt: "2026-08-21T09:02:00Z", atDeadline: "calls" as const };
+    const previewed = { ...conformingSnapshot.tasks[0]!, assignmentId: "call-77", capabilities: {}, browsers: [], phase: "preview" as const, audio: undefined, history: undefined,
+      previewEndsAt: "2026-08-21T09:02:00Z", atDeadline: "provider-dials" as const };
     const withPreview = { ...conformingSnapshot, tasks: [previewed], taskCount: 1 } satisfies Snapshot<"voice">;
     const update = (task: Task<"voice">): ProviderEventEnvelope<"voice"> =>
       ({ id: "evt-spread", loginId: "session-1", occurredAt: "2026-08-21T09:01:30Z", event: { type: "task-updated", task } });
@@ -1078,8 +1078,8 @@ describe("exerciseAdapter", () => {
     const events = (subjects: readonly ContractSubject[]) => subjects.filter(subject => subject.startsWith("event."));
     const everyEvent: ContractSubject[] = [
       "event.snapshot", "event.transport-status", "event.break-state", "event.task-offered", "event.task-updated",
-      "event.task-media-started", "event.task-media-ended", "event.task-ended", "event.dial-outcome", "event.announcement", "event.queue-summary",
-      "event.diagnostic", "event.team-updated", "event.team-media-started", "event.team-media-ended", "event.contacts-updated", "event.calendar-updated",
+      "event.task-audio-started", "event.task-audio-ended", "event.task-ended", "event.dial-outcome", "event.announcement", "event.queue-summary",
+      "event.diagnostic", "event.team-updated", "event.team-audio-started", "event.team-audio-ended", "event.contacts-updated", "event.calendar-updated",
     ];
     // The rich task carries browsers, history, an outcome policy, transfer destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
@@ -1089,8 +1089,8 @@ describe("exerciseAdapter", () => {
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.history", "task.onCall", "task.leadAssist", "task.takenOver",
-      "task.media", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.requests", "team.tasks", "team.listening",
-      "contacts", "scheduledActivities", "team.policies",
+      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.requests", "team.tasks", "team.listening",
+      "contacts", "calendar", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.
     const reached = {
@@ -1127,9 +1127,9 @@ describe("exerciseAdapter", () => {
     // The conforming manifest declares contacts and calendar, and the conforming snapshot carries
     // both; the same snapshot without them fails, and passes again under a manifest that declares
     // neither.
-    const { contacts: _contacts, scheduledActivities: _activities, ...neither } = conformingSnapshot;
+    const { contacts: _contacts, calendar: _activities, ...neither } = conformingSnapshot;
     expect(await rules({ snapshot: neither })).toEqual(expect.arrayContaining(["snapshot.contacts.required", "snapshot.calendar.required"]));
-    expect(await rules({ snapshot: { ...neither, contacts: [], scheduledActivities: [] } })).toEqual([]);
+    expect(await rules({ snapshot: { ...neither, contacts: [], calendar: [] } })).toEqual([]);
     expect(await rules({ manifest: plainManifest, snapshot: neither })).toEqual([]);
   });
 
@@ -1242,14 +1242,14 @@ describe("exerciseAdapter", () => {
 describe("exerciseAdapter drives one call", () => {
   const at = "2026-08-21T09:00:00Z";
   type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
-  interface Script { skipMediaStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute";
+  interface Script { skipAudioStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute";
     /** A platform shared between instances of the adapter, as a host reload shares it: which task is open, and the first client's listener. */
     platform?: { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean; secondStated?: number };
     /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
     legsIn?: "memory" | "store";
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
-    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-media" | "gone-backwards" | "media-unavailable" | "without-refused";
-    /** A provider that takes the host's late closing report as the leg's duration, overwriting what it closed at media end, and restates the record. */
+    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "without-refused";
+    /** A provider that takes the host's late closing report as the leg's duration, overwriting what it closed at audio end, and restates the record. */
     overwritesLateClose?: boolean;
     /** A provider whose store keys never name the task, or name it only as a run of characters inside another id: the harness can see nothing of them, and says so. */
     keyShape?: "unrelated" | "run-on";
@@ -1265,11 +1265,11 @@ describe("exerciseAdapter drives one call", () => {
     leavesHoldOpen?: boolean;
     /** A provider that restates the host's muted leg without its duration after the call is over. */
     leavesMuteOpen?: boolean;
-    /** End-call moves the task to completing and publishes no task-media-ended: the audio stays up through the wrap-up. */
+    /** End-call moves the task to completing and publishes no task-audio-ended: the audio stays up through the wrap-up. */
     completesAroundAudio?: boolean;
     /** Complete is answered applied and no task-ended follows: the platform still holds the task, or has dropped it without a word. */
     neverEnds?: "held" | "dropped";
-    /** A provider that ends the media and leaves the host's still-open leg as it found it, for the host to close. */
+    /** A provider that ends the audio and leaves the host's still-open leg as it found it, for the host to close. */
     leavesHostLegOpen?: boolean;
     /** A provider that will not record the host's closing report once the call is over. */
     refusesLateClose?: boolean;
@@ -1290,12 +1290,12 @@ describe("exerciseAdapter drives one call", () => {
     const id = () => `drv-${drvSeq += 1}`;
     const base: Record<string, unknown> = {
       ...conformingSnapshot.tasks[0]!, assignmentId: myAssignment, capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), outcomes: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
-      browsers: [], history: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
+      browsers: [], history: undefined, audio: undefined, party: { name: "Maya Rao", number: "+919876543210" },
     };
     let phase = "pending";
     let offeredOnce = false;
     let muted: { at: string; seconds: number; mutedBy: "host" | "station" } | undefined;
-    // The host's leg still open when the media ends, and the same leg as the provider closed it at that instant.
+    // The host's leg still open when the audio ends, and the same leg as the provider closed it at that instant.
     let openLeg: { at: string; mutedBy: "host" | "station" } | undefined;
     let closedAtEnd: { at: string; seconds?: number; mutedBy: "host" | "station" } | undefined;
     // The store as the host handed it on connect: an adapter writes through what it was given, never a copy the test holds.
@@ -1311,11 +1311,11 @@ describe("exerciseAdapter drives one call", () => {
     let disposed = false;
     // Whether the call's audio is up on this instance's account: it ends, closing the host's open leg at that
     // instant, before any ending the provider publishes, since a voice task ends after its audio and never around it.
-    let mediaUp = false;
-    const endMedia = () => {
+    let audioUp = false;
+    const endAudio = () => {
       if (openLeg !== undefined) { closedAtEnd = { ...openLeg, seconds: script.leavesHostLegOpen ? undefined : 1 }; openLeg = undefined; }
-      emit({ type: "task-media-ended", assignmentId: myAssignment });
-      mediaUp = false;
+      emit({ type: "task-audio-ended", assignmentId: myAssignment });
+      audioUp = false;
     };
     const reloaded = async () => {
       if (script.platform?.open !== true) return { ...conformingSnapshot, tasks: [], taskCount: 0 };
@@ -1329,9 +1329,9 @@ describe("exerciseAdapter drives one call", () => {
       const legs = muted === undefined ? [] : [legEntry(muted)];
       const steps = [...(script.reloadAs === "without-answered" ? [] : [{ step: "answered" as const, at }]), ...legs];
       // A reloaded instance that forgot the audio was up, or that reads the task as not yet begun, serves a snapshot that lost state.
-      const media = script.reloadAs === "without-media" ? {} : { media: "started" };
+      const audio = script.reloadAs === "without-audio" ? {} : { audio: "started" };
       const phase = script.reloadAs === "gone-backwards" ? "confirmed" : "in-progress";
-      return { ...conformingSnapshot, tasks: [t({ phase, ...media, onCall: room, history: { steps }, assignmentId: myAssignment })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
+      return { ...conformingSnapshot, tasks: [t({ phase, ...audio, onCall: room, history: { steps }, assignmentId: myAssignment })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
     };
     // A provider that restates its record does so on every publication once work has begun, never only at the end.
     const t = (over: Record<string, unknown>) => {
@@ -1357,7 +1357,7 @@ describe("exerciseAdapter drives one call", () => {
         // A second instance built without a method the first had: held to the connect obligations as the first was.
         ...(script.reloadAs === "without-refused" && isSecond ? { refused: undefined } : {}),
         ...(script.neverEnds === undefined ? {} : { snapshot: async () => disposed && script.neverEnds === "held"
-          ? { ...conformingSnapshot, tasks: [t({ phase: "completing", media: "ended", onCall: [] })], taskCount: 1 }
+          ? { ...conformingSnapshot, tasks: [t({ phase: "completing", audio: "ended", onCall: [] })], taskCount: 1 }
           : { ...conformingSnapshot, tasks: [], taskCount: 0 } }),
         setCapacity: async ({ count }: { count: number }) => {
           // A provider assigns while it holds room and has work: this platform has one call, offered
@@ -1377,12 +1377,12 @@ describe("exerciseAdapter drives one call", () => {
           switch (command.type) {
             case "answer":
               // The phase moves first and the audio follows on its own event, which is the only
-              // order the stream allows: an update never moves media, and media never arrives on
+              // order the stream allows: an update never moves audio, and audio never arrives on
               // a task whose work has not begun.
               // A provider that acknowledges before it starts says so: confirmed first, then work begins.
               if (script.confirmFirst) { emit({ type: "task-updated", task: t({ phase: "confirmed" }) }); return { status: "applied" }; }
               emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
-              if (!script.skipMediaStart) { emit({ type: "task-media-started", assignmentId: myAssignment }); mediaUp = true; }
+              if (!script.skipAudioStart) { emit({ type: "task-audio-started", assignmentId: myAssignment }); audioUp = true; }
               return { status: "applied" };
             case "hold":
               if (script.refuseHold) return { status: "failed", failure: { code: "provider.busy", message: "No hold today", retryable: false } };
@@ -1394,29 +1394,29 @@ describe("exerciseAdapter drives one call", () => {
                 // Work begins once the probe has been answered: the drive is still in confirmed when it sends.
                 const answer = script.holdBeforeStart ? { status: "applied" as const } : { status: "failed" as const, failure: { code: "provider.not-started", message: "Nothing to hold yet", retryable: false } };
                 emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
-                emit({ type: "task-media-started", assignmentId: myAssignment }); mediaUp = true;
+                emit({ type: "task-audio-started", assignmentId: myAssignment }); audioUp = true;
                 return answer;
               }
               held = { at: "2026-08-21T09:01:00Z" };
-              emit({ type: "task-updated", task: t({ phase: "paused", media: "started", onCall: room }) }); return { status: "applied" };
+              emit({ type: "task-updated", task: t({ phase: "paused", audio: "started", onCall: room }) }); return { status: "applied" };
             case "resume":
               if (held !== undefined && !script.leavesHoldOpen) held = { ...held, seconds: 5 };
-              emit({ type: "task-updated", task: t({ phase: "in-progress", media: "started", onCall: room }) }); return { status: "applied" };
+              emit({ type: "task-updated", task: t({ phase: "in-progress", audio: "started", onCall: room }) }); return { status: "applied" };
             case "end-call":
               if (script.completesAroundAudio) {
-                emit({ type: "task-updated", task: t({ phase: "completing", media: "started", onCall: room }) });
+                emit({ type: "task-updated", task: t({ phase: "completing", audio: "started", onCall: room }) });
                 return { status: "applied" };
               }
-              // The media ends, and the provider closes the host's open leg at that instant, at the record's grain.
-              endMedia();
+              // The audio ends, and the provider closes the host's open leg at that instant, at the record's grain.
+              endAudio();
               // t() restates the record after it has taken the phase, so what the record says of a leg follows the phase it is published under.
-              emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
+              emit({ type: "task-updated", task: t({ phase: "completing", audio: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
               return { status: "applied" };
             case "complete":
               if (script.neverEnds !== undefined) { disposed = true; return { status: "applied" }; }
               if (script.platform !== undefined) script.platform.open = false;
               // A call the agent completes from in-progress ends its audio first, as before every voice ending.
-              if (mediaUp) endMedia();
+              if (audioUp) endAudio();
               // A task's keys go with the task, before its end is published.
               if (script.legsIn === "store" && given !== undefined && !script.leavesKeys) await given.delete(legKey);
               emit({ type: "task-ended", assignmentId: myAssignment, outcome: { type: "completed", by: "agent" } });
@@ -1426,9 +1426,9 @@ describe("exerciseAdapter drives one call", () => {
             default: return { status: "failed", failure: { code: "omni.capability-not-enabled", message: command.type, retryable: false } };
           }
         },
-        openMedia: async () => script.reloadAs === "media-unavailable" && isSecond
-          ? { status: "unavailable" as const, failure: { code: "provider.media", message: "No media on this instance", retryable: false } }
-          : ({ status: "opened", session: { remoteAudio: {} as MediaStream,
+        openAudio: async () => script.reloadAs === "audio-unavailable" && isSecond
+          ? { status: "unavailable" as const, failure: { code: "provider.audio", message: "No audio on this instance", retryable: false } }
+          : ({ status: "opened", audio: { remoteAudio: {} as MediaStream,
           setMuted: () => { if (script.throwsOn === "setMuted") throw new Error("no mixer"); },
           close: () => { if (script.throwsOn === "close") throw new Error("already closed"); } } }),
         recordStep: async (report: { step: string; at: string; seconds?: number; ended?: boolean; mutedBy?: "host" | "station"; assignmentId?: string }) => {
@@ -1436,13 +1436,13 @@ describe("exerciseAdapter drives one call", () => {
           if (script.throwsOn === "recordStep") throw new Error("record store down");
           if (report.assignmentId !== myAssignment) return { status: "failed", failure: { code: "omni.assignment-not-found", message: `no assignment ${String(report.assignmentId)}`, retryable: false } };
           if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
-          // A closing report for a leg the provider already closed at media end is answered recorded and changes nothing.
+          // A closing report for a leg the provider already closed at audio end is answered recorded and changes nothing.
           if (report.step === "muted" && closedAtEnd !== undefined && report.at === closedAtEnd.at) {
             if (script.refusesLateClose) return { status: "failed", failure: { code: "provider.call-ended", message: "The call is over", retryable: false } };
             // One that takes the host's word over its own overwrites the duration it closed with, and restates the record.
             if (script.overwritesLateClose && report.seconds !== undefined) {
               closedAtEnd = { ...closedAtEnd, seconds: report.seconds + 5 };
-              emit({ type: "task-updated", task: t({ phase: "completing", media: "ended", onCall: [] }) });
+              emit({ type: "task-updated", task: t({ phase: "completing", audio: "ended", onCall: [] }) });
             }
             return { status: "recorded", at: report.at };
           }
@@ -1461,7 +1461,7 @@ describe("exerciseAdapter drives one call", () => {
   };
   const drive = async (adapter: Adapter<"voice">) => exerciseAdapter(adapter, context, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
 
-  it("refuses malformed media sessions before invoking their controls", async () => {
+  it("refuses malformed audio sessions before invoking their controls", async () => {
     const setMuted = vi.fn();
     const close = vi.fn();
     for (const session of [null, { setMuted, close }]) {
@@ -1469,31 +1469,31 @@ describe("exerciseAdapter drives one call", () => {
       const connect = adapter.connect.bind(adapter);
       adapter.connect = async given => {
         const connection = await connect(given);
-        connection.openMedia = async () => ({ status: "opened", session } as unknown as Awaited<ReturnType<NonNullable<Connection<"voice">["openMedia"]>>>);
+        connection.openAudio = async () => ({ status: "opened", audio: session } as unknown as Awaited<ReturnType<NonNullable<Connection<"voice">["openAudio"]>>>);
         return connection;
       };
       const result = await drive(adapter);
-      expect(result.violations.map(violation => violation.rule)).toEqual([session === null ? "result.session" : "result.session.remoteAudio"]);
+      expect(result.violations.map(violation => violation.rule)).toEqual([session === null ? "result.audio" : "result.audio.remoteAudio"]);
     }
     expect(setMuted).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
   });
 
-  it("takes the first offer through answer, media, hold, resume, end-call and complete, reaching what a static run never does", async () => {
+  it("takes the first offer through answer, audio, hold, resume, end-call and complete, reaching what a static run never does", async () => {
     const result = await drive(driveable());
     expect(result.violations).toEqual([]);
     // The subjects a run without a drive lists as never reached are now reached.
-    for (const subject of ["tasks", "task.onCall", "task.media", "task.acceptance", "task.outcomes", "event.task-offered", "event.task-updated", "event.task-media-started", "event.task-media-ended", "event.task-ended"] as const) {
+    for (const subject of ["tasks", "task.onCall", "task.audio", "task.acceptance", "task.outcomes", "event.task-offered", "event.task-updated", "event.task-audio-started", "event.task-audio-ended", "event.task-ended"] as const) {
       expect(result.notExercised).not.toContain(subject);
     }
     // The control: without the drive the same adapter reaches none of the call.
     const still = await exerciseAdapter(driveable(), context, { collectOnly: true });
     expect(still.violations).toEqual([]);
-    expect(still.notExercised).toContain("task.media");
+    expect(still.notExercised).toContain("task.audio");
   });
 
   it("names what the provider owed and never sent, and a refusal of a control the task offered", async () => {
-    expect((await drive(driveable({ skipMediaStart: true }))).violations.map(v => v.rule)).toEqual(["drive.timeout"]);
+    expect((await drive(driveable({ skipAudioStart: true }))).violations.map(v => v.rule)).toEqual(["drive.timeout"]);
     expect((await drive(driveable({ refuseHold: true }))).violations.map(v => v.rule)).toEqual(["drive.command.failed"]);
     // A command is never sent against a task that does not stand: the malformed offer is named, and so is the command held to it.
     const bad = (await drive(driveable({ badCapability: true }))).violations.map(v => v.rule);
@@ -1520,8 +1520,8 @@ describe("exerciseAdapter drives one call", () => {
     expect((await drive(driveable({ restateHistory: "with-mute-by-station" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.history"]);
   });
 
-  it("ends the call with the microphone muted, and holds the provider to closing that leg at media end and taking the late report", async () => {
-    // The conforming fixture closes the leg when the media ends and answers the host's later report recorded (the first test).
+  it("ends the call with the microphone muted, and holds the provider to closing that leg at audio end and taking the late report", async () => {
+    // The conforming fixture closes the leg when the audio ends and answers the host's later report recorded (the first test).
     // One that leaves the leg as it found it publishes a completing task with a mute still running; one that will not take the
     // late report refuses a report the contract says changes nothing.
     const open = (await drive(driveable({ restateHistory: "with-mute", leavesHostLegOpen: true }))).violations.map(v => v.rule);
@@ -1530,7 +1530,7 @@ describe("exerciseAdapter drives one call", () => {
     expect(refused).toEqual(["drive.recordStep.failed"]);
   });
 
-  it("names a provider that overwrites the leg it closed at media end with the host's late report", async () => {
+  it("names a provider that overwrites the leg it closed at audio end with the host's late report", async () => {
     // The conforming fixture answers the late report recorded and changes nothing (the first test); this one takes the host's
     // word over its own and restates the record.
     expect((await drive(driveable({ restateHistory: "with-mute", overwritesLateClose: true }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.overwritten"]);
@@ -1579,7 +1579,7 @@ describe("exerciseAdapter drives one call", () => {
   }, 20000);
 
   it("holds the second adapter to what the first was: the same provider, a snapshot that stands, a record that lost nothing", async () => {
-    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-media" | "gone-backwards" | "media-unavailable" | "without-refused") => {
+    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "without-refused") => {
       const store = memoryStore();
       const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, reloadAs };
       return (await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations.map(v => v.rule);
@@ -1594,11 +1594,11 @@ describe("exerciseAdapter drives one call", () => {
     expect((await misbehaving("reminted")).slice(0, 1)).toEqual(["drive.reload.snapshot"]);
     // The stream's rules keep working across the reload: the second snapshot may not forget the audio the first held up,
     // nor read the task as not yet begun. Named by the stream, as any resync is, not by a reload twin.
-    expect(await misbehaving("without-media")).toContain("stream.snapshot.media");
+    expect(await misbehaving("without-audio")).toContain("stream.snapshot.audio");
     expect(await misbehaving("gone-backwards")).toContain("stream.snapshot.phase");
-    // The first client's media session died with it: the second opens the audio again on a task its snapshot carries
+    // The first client's audio session died with it: the second opens the audio again on a task its snapshot carries
     // started, and one that cannot is named; the conforming reload above reopens it and is clean.
-    expect(await misbehaving("media-unavailable")).toEqual(["drive.reload.openMedia"]);
+    expect(await misbehaving("audio-unavailable")).toEqual(["drive.reload.openAudio"]);
     // And to the connect obligations every connection owes: a second built without refused is named as the first would be.
     expect(await misbehaving("without-refused")).toEqual(["connection.refused.required"]);
     // The second is told the capacity in force, as a host tells every connection on connect.
@@ -1621,8 +1621,8 @@ describe("exerciseAdapter drives one call", () => {
     expect((await drive(driveable({ throwsOn: "execute" }))).violations.map(v => v.rule)).toEqual(["drive.command.rejected", "drive.command.rejected"]);
     // Two legs, each begun and ended, are four reports and four turns of the microphone.
     expect((await drive(driveable({ throwsOn: "recordStep" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.rejected", "drive.recordStep.rejected", "drive.recordStep.rejected", "drive.recordStep.rejected"]);
-    expect((await drive(driveable({ throwsOn: "setMuted" }))).violations.map(v => v.rule)).toEqual(["drive.openMedia.setMuted", "drive.openMedia.setMuted", "drive.openMedia.setMuted", "drive.openMedia.setMuted"]);
-    expect((await drive(driveable({ throwsOn: "close" }))).violations.map(v => v.rule)).toEqual(["drive.openMedia.close"]);
+    expect((await drive(driveable({ throwsOn: "setMuted" }))).violations.map(v => v.rule)).toEqual(["drive.openAudio.setMuted", "drive.openAudio.setMuted", "drive.openAudio.setMuted", "drive.openAudio.setMuted"]);
+    expect((await drive(driveable({ throwsOn: "close" }))).violations.map(v => v.rule)).toEqual(["drive.openAudio.close"]);
     const store = memoryStore();
     const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } };
     expect((await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => { throw new Error("no factory"); } })).violations.map(v => v.rule)).toEqual(["drive.reload.rejected"]);
@@ -1662,9 +1662,9 @@ describe("exerciseAdapter drives one call", () => {
     expect(told).toEqual([{ artefact: "snapshot", violations: [expect.objectContaining({ rule: "task.wrapAllowance" })] }]);
     // An event it dropped: told with the envelope id.
     told.length = 0;
-    const bad: ProviderEventEnvelope<"voice"> = { id: "evt-bad", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z", event: { type: "task-media-ended", assignmentId: "" } };
+    const bad: ProviderEventEnvelope<"voice"> = { id: "evt-bad", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z", event: { type: "task-audio-ended", assignmentId: "" } };
     const result = await exerciseAdapter(makeAdapter({ emitOnCapacity: listener => listener(bad), connection: listening }).adapter, context, { collectOnly: true });
-    expect(result.violations.map(v => v.rule)).toContain("event.taskMediaEnded.assignmentId");
+    expect(result.violations.map(v => v.rule)).toContain("event.taskAudioEnded.assignmentId");
     expect(told.map(r => [r.artefact, r.envelopeId])).toEqual([["event", "evt-bad"]]);
     // The control: a clean run tells nothing, and a conforming adapter with the method is clean.
     told.length = 0;
@@ -1714,7 +1714,7 @@ describe("exerciseAdapter drives one call", () => {
 
   it("names a provider that writes the hold into its record and never closes it on resume, or the mute once the call is over", async () => {
     // The record carries the hold open while the task is paused, and closed with its duration once it resumes;
-    // the host's muted leg it restates closed, since the host ended it before the media ended.
+    // the host's muted leg it restates closed, since the host ended it before the audio ended.
     expect((await drive(driveable({ restateHistory: "with-mute" }))).violations).toEqual([]);
     const openHold = (await drive(driveable({ restateHistory: "with-mute", leavesHoldOpen: true }))).violations.map(v => v.rule);
     expect(openHold).toContain("task.history.held.open");
@@ -1751,12 +1751,12 @@ describe("exerciseAdapter drives one call", () => {
   });
 
   it("names an adapter whose end-call moves the task to completing with the audio still up, by the rule and not by the clock", async () => {
-    // The conforming fixture ends the media first and the run is clean (the first test); this one never ends it.
-    // The task contradicts itself (media, and the room still on a completing task), the stream names the
+    // The conforming fixture ends the audio first and the run is clean (the first test); this one never ends it.
+    // The task contradicts itself (audio, and the room still on a completing task), the stream names the
     // update that did it, and the complete command lands on a task that fails validation. The drive does
     // not also wait out the clock for an ending the rule has already named as missing: no drive.timeout.
     const rules = (await drive(driveable({ completesAroundAudio: true }))).violations.map(v => v.rule);
-    expect(rules).toEqual(["task.media.completing", "task.onCall.ended", "stream.taskUpdated.mediaOpen", "command.task"]);
+    expect(rules).toEqual(["task.audio.completing", "task.onCall.ended", "stream.taskUpdated.audioOpen", "command.task"]);
   });
 
   it("sends hold in confirmed too, where the provider publishes it, and names an adapter that applies it there", async () => {
@@ -1775,7 +1775,7 @@ describe("exerciseAdapter drives one call", () => {
     const result = await drive(driveable({ noEndCall: true }));
     expect(result.violations).toEqual([]);
     // The provider ends the audio before the ending it publishes for the agent's complete, as before every voice ending.
-    expect(result.notExercised).not.toContain("event.task-media-ended");
+    expect(result.notExercised).not.toContain("event.task-audio-ended");
     expect(result.notExercised).not.toContain("event.task-ended");
   });
 });
@@ -1793,10 +1793,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       .not.toContain("connection.dial.required");
   });
 
-  it("openMedia(), of every voice adapter", async () => {
-    expect(await rules({ connection: { openMedia: undefined } })).toContain("connection.openMedia.required");
-    expect(await rules({ manifest: chatManifest, snapshot: chatSnapshot, connection: { openMedia: undefined, dial: undefined } }))
-      .not.toContain("connection.openMedia.required");
+  it("openAudio(), of every voice adapter", async () => {
+    expect(await rules({ connection: { openAudio: undefined } })).toContain("connection.openAudio.required");
+    expect(await rules({ manifest: chatManifest, snapshot: chatSnapshot, connection: { openAudio: undefined, dial: undefined } }))
+      .not.toContain("connection.openAudio.required");
   });
 
   it("all four break methods together, when the login declares breaks", async () => {
@@ -1928,10 +1928,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("holds the event stream to what came before it, from the connect snapshot on", async () => {
-    // The conforming snapshot carries call-42 in progress; its media may end. A task the stream
+    // The conforming snapshot carries call-42 in progress; its audio may end. A task the stream
     // never introduced may not; the same events before any snapshot are judged alone.
     const at = "2026-08-21T09:05:00Z";
-    const ended = (taskId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${taskId}`, loginId: "session-1", occurredAt: at, event: { type: "task-media-ended", assignmentId: taskId === "call-42" ? "alloc-42" : `${taskId}-a` } });
+    const ended = (taskId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${taskId}`, loginId: "session-1", occurredAt: at, event: { type: "task-audio-ended", assignmentId: taskId === "call-42" ? "alloc-42" : `${taskId}-a` } });
     // Delivered from setCapacity, which the harness calls after the snapshot; before it, the
     // stream has no beginning and the same events are judged alone.
     const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
@@ -2024,7 +2024,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       (await exerciseAdapter(makeAdapter(overrides).adapter, { ...contextFor(overrides.manifest ?? conformingManifest), host } as ConnectContext, { collectOnly: true })).violations.map(violation => violation.rule);
     expect(await run({}, stillHost(speaking, {}, "stream"))).toEqual([]);
     expect(await run({}, stillHost({ online: true }, {}, "stream"))).toEqual(["context.host.audio.required"]);
-    const chat = { manifest: chatManifest, snapshot: chatSnapshot, connection: { openMedia: undefined, dial: undefined } };
+    const chat = { manifest: chatManifest, snapshot: chatSnapshot, connection: { openAudio: undefined, dial: undefined } };
     expect(await run(chat, stillHost({ online: true }))).toEqual([]);
     expect(await run(chat, stillHost(speaking, {}, "stream"))).toEqual(["context.host.audio.unexpected", "host.mute.unexpected"]);
     // The obligation: a voice adapter asks. A chat adapter has nothing to ask about and is not held to it.
@@ -2071,7 +2071,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   it("passes autoAcceptTasks through as the host stated it, and infers nothing from a caller that states none", async () => {
     const offered = (acceptance?: "consent"): ProviderEventEnvelope<"voice"> => ({
       id: "evt-offer", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
-      event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending", media: undefined, ...(acceptance ? { acceptance } : {}) } },
+      event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending", audio: undefined, ...(acceptance ? { acceptance } : {}) } },
     });
     const run = async (autoAcceptTasks: boolean, envelope: ProviderEventEnvelope<"voice">) =>
       (await exerciseAdapter(makeAdapter({ snapshot: { ...conformingSnapshot, tasks: [], taskCount: 0 }, emitOnCapacity: listener => listener(envelope) }).adapter, { ...context, autoAcceptTasks }, { collectOnly: true }))
@@ -2079,13 +2079,13 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await run(true, offered("consent"))).toEqual([]);
     expect(await run(true, offered())).toContain("task.acceptance.required");
     // A validator called without the host's word checks neither way: absence is not a value.
-    const pending = { ...conformingSnapshot.tasks[0]!, phase: "pending" as const, media: undefined };
+    const pending = { ...conformingSnapshot.tasks[0]!, phase: "pending" as const, audio: undefined };
     expect(validateTask(pending, { channel: "voice" }).map(v => v.rule)).not.toContain("task.acceptance.required");
     expect(validateTask({ ...pending, acceptance: "consent" }, { channel: "voice" }).map(v => v.rule)).not.toContain("task.acceptance.unexpected");
     expect(await run(false, offered())).toEqual([]);
     expect(await run(false, offered("consent"))).toContain("task.acceptance.unexpected");
     // The word is on the task, so a reconnect snapshot says it too: a pending task carried in without it is refused the same way.
-    const carried = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, phase: "pending" as const, media: undefined }] };
+    const carried = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, phase: "pending" as const, audio: undefined }] };
     expect(await rules({ snapshot: carried })).toContain("task.acceptance.required");
     expect(await rules({ snapshot: { ...carried, tasks: [{ ...carried.tasks[0]!, acceptance: "consent" as const }] } })).toEqual([]);
   });
@@ -2128,9 +2128,9 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   it("recordStep(), of every softphone login: the host mutes its microphone, and the record is the provider's", async () => {
     expect(await rules({ connection: { recordStep: undefined } })).toContain("connection.recordStep.required");
     // A chat provider has no microphone in play; a desk phone's is the phone's own, and the host mutes nothing.
-    expect(await rules({ manifest: chatManifest, snapshot: chatSnapshot, connection: { recordStep: undefined, dial: undefined, openMedia: undefined } }))
+    expect(await rules({ manifest: chatManifest, snapshot: chatSnapshot, connection: { recordStep: undefined, dial: undefined, openAudio: undefined } }))
       .not.toContain("connection.recordStep.required");
-    const deskPhone = await exerciseAdapter(makeAdapter({ connection: { recordStep: undefined, openMedia: undefined } }).adapter,
+    const deskPhone = await exerciseAdapter(makeAdapter({ connection: { recordStep: undefined, openAudio: undefined } }).adapter,
       { ...context, phone: "deskPhone", host: stillHost({ online: true }) }, { collectOnly: true });
     expect(deskPhone.violations.map(v => v.rule)).not.toContain("connection.recordStep.required");
   });
@@ -2175,7 +2175,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       snapshot: minimalSnapshot,
       connection: {
         getUserDetails: undefined, dial: undefined, requestBreak: undefined, commitBreak: undefined,
-        cancelBreak: undefined, endBreak: undefined, executeTeam: undefined, openMedia: undefined,
+        cancelBreak: undefined, endBreak: undefined, executeTeam: undefined, openAudio: undefined,
       },
     });
     expect(found).toEqual([]);

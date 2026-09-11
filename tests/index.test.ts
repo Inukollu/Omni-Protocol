@@ -275,7 +275,7 @@ describe("historyStepExpectsAPerson", () => {
 describe("every dial has an outcome", () => {
   it("names the dial a command places, and none for a command that dials nothing", () => {
     expect(commandDialId({ type: "connect-back", dialId: "dial-1" })).toBe("dial-1");
-    expect(commandDialId({ type: "call", dialId: "dial-5" })).toBe("dial-5");
+    expect(commandDialId({ type: "dial", dialId: "dial-5" })).toBe("dial-5");
     expect(commandDialId({ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" })).toBe("dial-2");
     expect(commandDialId({ type: "transfer", action: "warm", dialId: "dial-3", destinationId: "tier2" })).toBe("dial-3");
     expect(commandDialId({ type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" })).toBe("dial-4");
@@ -290,7 +290,7 @@ describe("every dial has an outcome", () => {
 
   it("closes the set of outcomes, and says which record steps a dial writes", () => {
     expect(DIAL_OUTCOMES).toEqual(["answered", "busy", "no-answer", "unreachable", "rejected", "cancelled", "unexplained"]);
-    expect(CAPABILITY_SOURCES).toEqual(["queue", "ungoverned", "undetermined"]);
+    expect(CAPABILITY_SOURCES).toEqual(["queue", "nobody", "not-yet-read"]);
     expect(HOST_MUTES).toEqual(["stream", "station"]);
     expect(MUTED_BY).toEqual(["host", "station"]);
     expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);

@@ -71,7 +71,7 @@ const STATE_SUBJECTS = [
   "task.onCall",
   "task.leadAssist",
   "task.takenOver",
-  "task.media",
+  "task.audio",
   "task.acceptance",
   "task.outcomes",
   "task.destinations",
@@ -84,15 +84,15 @@ const STATE_SUBJECTS = [
   "team.tasks",
   "team.listening",
   "contacts",
-  "scheduledActivities",
+  "calendar",
   "team.policies",
 ] as const;
 // Pinned to the event union the way validation pins its closed sets: a type added to
 // `ProviderEvent` without a row here, or a row it lacks, is a compile error.
 const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
-  "task-media-started": true, "task-media-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
-  "team-updated": true, "team-media-started": true, "team-media-ended": true, "contacts-updated": true, "calendar-updated": true,
+  "task-audio-started": true, "task-audio-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
+  "team-updated": true, "team-audio-started": true, "team-audio-ended": true, "contacts-updated": true, "calendar-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
 const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
@@ -114,7 +114,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (some(value.onCall)) seen.add("task.onCall");
   if (value.leadAssist !== undefined) seen.add("task.leadAssist");
   if (value.takenOver !== undefined) seen.add("task.takenOver");
-  if (value.media !== undefined) seen.add("task.media");
+  if (value.audio !== undefined) seen.add("task.audio");
   if (value.acceptance !== undefined) seen.add("task.acceptance");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
   if (isRecord(capabilities.outcomes)) seen.add("task.outcomes");
@@ -150,7 +150,7 @@ function observeSnapshot(value: unknown, seen: Set<ContractSubject>): void {
   observeBreak(value.break, seen);
   observeTeam(value.team, seen);
   if (some(value.contacts)) seen.add("contacts");
-  if (some(value.scheduledActivities)) seen.add("scheduledActivities");
+  if (some(value.calendar)) seen.add("calendar");
 }
 
 function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
@@ -164,7 +164,7 @@ function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
     case "task-updated": observeTask(event.task, seen); break;
     case "team-updated": observeTeam(event.team, seen); break;
     case "contacts-updated": if (some(event.contacts)) seen.add("contacts"); break;
-    case "calendar-updated": if (some(event.scheduledActivities)) seen.add("scheduledActivities"); break;
+    case "calendar-updated": if (some(event.calendar)) seen.add("calendar"); break;
     default: break;
   }
 }
@@ -202,7 +202,7 @@ export interface ExerciseAdapterOptions {
   collectOnly?: boolean;
   /**
    * Drive one ordinary lifecycle on the first task the provider offers -- accept it, open its
-   * media on a softphone, hold and resume where offered, end the call where offered, complete it
+   * audio on a softphone, hold and resume where offered, end the call where offered, complete it
    * where the agent completes -- so the rules about a live call are reached rather than listed
    * under `notExercised`. Off by default, since it issues commands against whatever platform the
    * adapter is connected to: turn it on against a test backend.
@@ -398,7 +398,7 @@ export async function exerciseAdapter<C extends Channel>(
       // than an `enabled` flag, so its presence is the declaration.
       if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod(on, "dial", "the manifest declares dial");
       // On a softphone the call's audio lands in Omni, so the adapter has to open it; on a desk phone the host opens nothing.
-      if (softphone) requireMethod(on, "openMedia", "the login is on a softphone");
+      if (softphone) requireMethod(on, "openAudio", "the login is on a softphone");
       // The microphone is the host's, so on a softphone every call can be muted by it, and the
       // record of that leg is the provider's to take; on a desk phone the host holds no microphone.
       if (softphone) requireMethod(on, "recordStep", "the login is on a softphone, whose microphone the host mutes");
@@ -434,7 +434,7 @@ export async function exerciseAdapter<C extends Channel>(
         violations.push({ rule: "diagnostic.raised", path: "event.diagnostic",
           message: `the provider reported a diagnostic: expected ${String(envelope.event.expected)}; observed ${String(envelope.event.observed)}` });
       }
-      violations.push(...undeterminedTasks(eventTasks(envelope), "event"));
+      violations.push(...notYetReadTasks(eventTasks(envelope), "event"));
       lockedPartySeen ||= eventTasks(envelope).some(locksParty);
       if (eventNamesUsers(envelope)) requireMethod(live, "getUserDetails", "an event publishes a UserId");
       // Work is pulled, never pushed: an offer before the host stated capacity is an assignment
@@ -513,7 +513,7 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push(...broken);
       if (broken.length > 0) tellRefused({ artefact: "snapshot", violations: broken });
       const tasks = isRecord(read) && Array.isArray(read.tasks) ? read.tasks : [];
-      violations.push(...undeterminedTasks(tasks, `${path}.tasks`));
+      violations.push(...notYetReadTasks(tasks, `${path}.tasks`));
       lockedPartySeen ||= tasks.some(locksParty);
       if (publishesUserIds(read as Snapshot)) {
         requireMethod(source, "getUserDetails", "the snapshot publishes a UserId");
@@ -817,13 +817,13 @@ function eventTasks(envelope: unknown): unknown[] {
 }
 
 /**
- * A task published under `undetermined` terms is a fact to a host and a failure to a conformance
+ * A task published under `not-yet-read` terms is a fact to a host and a failure to a conformance
  * run, as a diagnostic is: the platform under test could not say what it permits, and a green
  * result must not paper over it.
  */
-function undeterminedTasks(tasks: readonly unknown[], path: string): ProtocolViolation[] {
-  return tasks.flatMap((task, index) => isRecord(task) && task.capabilitySource === "undetermined"
-    ? [{ rule: "capabilitySource.undetermined", path: `${path}[${index}].capabilitySource`,
+function notYetReadTasks(tasks: readonly unknown[], path: string): ProtocolViolation[] {
+  return tasks.flatMap((task, index) => isRecord(task) && task.capabilitySource === "not-yet-read"
+    ? [{ rule: "capabilitySource.notYetRead", path: `${path}[${index}].capabilitySource`,
         message: `task ${String(task.assignmentId)} was published under terms the provider could not determine` }]
     : []);
 }
@@ -1015,13 +1015,13 @@ export function assertDeniedAndRetriedBreak(approvals: readonly BreakStatus[]): 
 // ---------------------------------------------------------------------------
 // The task stream. Each event is validated on its own; what one event may say about a task
 // depends on what was said before, and only something that watched the whole stream can hold a
-// provider to it. A task is never its audio: media arrives on the provider's word, ends only
-// where it arrived and on work that has begun, and what follows the media ending is the work
+// provider to it. A task is never its audio: audio arrives on the provider's word, ends only
+// where it arrived and on work that has begun, and what follows the audio ending is the work
 // completing or ending, never a phase the audio decided.
 // ---------------------------------------------------------------------------
 
 const WORK_BEGUN = new Set(["in-progress", "paused", "completing"]);
-/** Where audio can arrive: a task at work. A completing task's call is over; a connect-back returns it to in-progress before any media. */
+/** Where audio can arrive: a task at work. A completing task's call is over; a connect-back returns it to in-progress before any audio. */
 const AT_WORK = new Set(["in-progress", "paused"]);
 
 /** What a stream has said about the tasks it carries, and the rules across events. */
@@ -1042,7 +1042,7 @@ const REACHABLE_PHASES: Record<string, Set<string>> = {
  */
 export const SUPERSEDED_BY_A_SNAPSHOT: ReadonlySet<string> = new Set([
   "snapshot", "transport-status", "break-state", "task-offered", "task-updated", "task-ended",
-  "task-media-started", "task-media-ended", "team-updated", "contacts-updated", "calendar-updated",
+  "task-audio-started", "task-audio-ended", "team-updated", "contacts-updated", "calendar-updated",
 ]);
 
 export class TaskStream {
@@ -1119,8 +1119,8 @@ export class TaskStream {
     return [...was].filter(key => !now.has(key));
   }
 
-  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; assignment: string; channel: string; completionMode: string; wrapAllowance: number | undefined; partyRingingBeforeWork: boolean } {
-    const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
+  private static stated(task: unknown): { phase: string; audio: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; assignment: string; channel: string; completionMode: string; wrapAllowance: number | undefined; partyRingingBeforeWork: boolean } {
+    const audio = isRecord(task) && (task.audio === "started" || task.audio === "ended") ? task.audio : "none";
     // The stage of every dialled entry the room names by its dial, so an update can be held to the
     // outcome that moves it.
     const stages = new Map<string, string>();
@@ -1130,32 +1130,32 @@ export class TaskStream {
       }
     }
     const partyRingingBeforeWork = isRecord(task) && Array.isArray(task.onCall)
-      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && entry.stage === "ringing" && (typeof entry.dialId === "string" || (task.phase === "preview" && task.atDeadline === "calls" && entry.dialId === undefined)));
+      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && entry.stage === "ringing" && (typeof entry.dialId === "string" || (task.phase === "preview" && task.atDeadline === "provider-dials" && entry.dialId === undefined)));
     return { partyRingingBeforeWork, channel: String(isRecord(task) ? task.channel : undefined), completionMode: String(isRecord(task) ? task.completionMode : undefined),
       wrapAllowance: isRecord(task) && typeof task.wrapAllowance === "number" ? task.wrapAllowance : undefined,
-      phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task), assignment: String(isRecord(task) ? task.assignmentId : undefined) };
+      phase: String(isRecord(task) ? task.phase : undefined), audio, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task), assignment: String(isRecord(task) ? task.assignmentId : undefined) };
   }
 
   /**
    * Takes a resync snapshot -- a `snapshot` event, or the read a reloaded client makes -- as the
    * state now, and first holds it to what the stream knew. A snapshot replaces state; it does not
    * get to forget it. A task it carries that the stream already held may not go backwards, lose an
-   * entry of its record, return to undetermined terms, or be at work without the audio the stream
-   * held up: media ends on task-media-ended and the call moves on, so a task still in-progress or
-   * paused without its media is a snapshot that lost state, not a call that ended.
+   * entry of its record, return to not-yet-read terms, or be at work without the audio the stream
+   * held up: audio ends on task-audio-ended and the call moves on, so a task still in-progress or
+   * paused without its audio is a snapshot that lost state, not a call that ended.
    */
   resync(snapshot: unknown, at: string): ProtocolViolation[] {
     const found: ProtocolViolation[] = [];
     const refuse = (rule: string, where: string, message: string) => found.push({ rule, path: where, message });
-    ruleEvaluated("stream.snapshot.capabilitySource", "stream.snapshot.history", "stream.snapshot.phase", "stream.snapshot.media");
+    ruleEvaluated("stream.snapshot.capabilitySource", "stream.snapshot.history", "stream.snapshot.phase", "stream.snapshot.audio");
     if (isRecord(snapshot) && Array.isArray(snapshot.tasks)) {
       snapshot.tasks.forEach((task, index) => {
         if (!isRecord(task) || typeof task.assignmentId !== "string") return;
         const was = this.tasks.get(task.assignmentId);
         if (was === undefined) return;
-        if ((was.source === "queue" || was.source === "ungoverned") && task.capabilitySource === "undetermined") {
+        if ((was.source === "queue" || was.source === "nobody") && task.capabilitySource === "not-yet-read") {
           refuse("stream.snapshot.capabilitySource", `${at}.tasks[${index}].capabilitySource`,
-            `${task.assignmentId} was published under ${was.source} terms and the snapshot says undetermined: terms once read stay read`);
+            `${task.assignmentId} was published under ${was.source} terms and the snapshot says not-yet-read: terms once read stay read`);
         }
         // A record once read is not unread: a resync restates it whole, or with more, never with less.
         const lost = TaskStream.lost(was.record, TaskStream.record(task));
@@ -1172,9 +1172,9 @@ export class TaskStream {
               `${task.assignmentId} was ${was.phase} and the snapshot says ${to}: a task does not go backwards, on an update or on a resync`);
           }
         }
-        if (was.media === "started" && (to === "in-progress" || to === "paused") && task.media !== "started") {
-          refuse("stream.snapshot.media", `${at}.tasks[${index}].media`,
-            `${task.assignmentId}'s audio was up and the snapshot carries it ${to} without it: media ends on task-media-ended and the call moves on, so a snapshot that forgets the audio lost state`);
+        if (was.audio === "started" && (to === "in-progress" || to === "paused") && task.audio !== "started") {
+          refuse("stream.snapshot.audio", `${at}.tasks[${index}].audio`,
+            `${task.assignmentId}'s audio was up and the snapshot carries it ${to} without it: audio ends on task-audio-ended and the call moves on, so a snapshot that forgets the audio lost state`);
         }
       });
     }
@@ -1230,14 +1230,14 @@ export class TaskStream {
           break;
         }
         // The rules about a known task are evaluated only once there is one.
-        ruleEvaluated("stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.mediaOpen",
-          "stream.taskUpdated.history", "stream.taskMediaEnded.follow", "stream.taskUpdated.media", "stream.taskUpdated.stage", "stream.taskUpdated.stage.lingering");
+        ruleEvaluated("stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.audioOpen",
+          "stream.taskUpdated.history", "stream.taskAudioEnded.follow", "stream.taskUpdated.audio", "stream.taskUpdated.stage", "stream.taskUpdated.stage.lingering");
         // Terms once read stay read. A re-read that fails is not a new fact about the task, so the
-        // last statement stands and the failure is a diagnostic; undetermined is a place a task
+        // last statement stands and the failure is a diagnostic; not-yet-read is a place a task
         // starts from, never one it returns to.
-        if ((known.source === "queue" || known.source === "ungoverned") && isRecord(event.task) && event.task.capabilitySource === "undetermined") {
+        if ((known.source === "queue" || known.source === "nobody") && isRecord(event.task) && event.task.capabilitySource === "not-yet-read") {
           refuse("stream.taskUpdated.capabilitySource", `${at}.task.capabilitySource`,
-            `${id} was published under ${known.source} terms and now says undetermined: terms once read stay read, and a re-read that fails is a diagnostic, not a republish`);
+            `${id} was published under ${known.source} terms and now says not-yet-read: terms once read stay read, and a re-read that fails is a diagnostic, not a republish`);
         }
         // A task does not go backwards. The stream sees publications, not transitions, and a task may
         // pass through a phase between two, so what is refused is a phase unreachable from the last
@@ -1264,32 +1264,32 @@ export class TaskStream {
               `${id}'s record lost ${lost.join(", ")} on the update: an entry read by the host stays in the record until the task ends`);
           }
         }
-        // A task completes after its media ends, never around it: an update that moves a task to
+        // A task completes after its audio ends, never around it: an update that moves a task to
         // completing while the stream holds its audio as started is a call whose audio never ended,
         // whoever caused the ending -- the drive's end-call, a transfer, the provider's own hand.
         {
           const to = isRecord(event.task) ? String(event.task.phase) : "";
-          if (to === "completing" && known.media === "started" && known.phase !== "completing") {
-            refuse("stream.taskUpdated.mediaOpen", `${at}.task.phase`,
-              `${id} moves to completing with its media still started: the audio ends first, on task-media-ended, and a wrap-up with the call still up is audio that never ended`);
+          if (to === "completing" && known.audio === "started" && known.phase !== "completing") {
+            refuse("stream.taskUpdated.audioOpen", `${at}.task.phase`,
+              `${id} moves to completing with its audio still started: the audio ends first, on task-audio-ended, and a wrap-up with the call still up is audio that never ended`);
           }
         }
         // The connect-back that brings a completing task back is the one exception here too.
-        if (known.media === "ended") {
+        if (known.audio === "ended") {
           const phase = isRecord(event.task) ? String(event.task.phase) : "";
           if (phase !== "completing" && !(known.phase === "completing" && this.partyDialled(event.task))) {
-            refuse("stream.taskMediaEnded.follow", `${at}.task.phase`,
-              `after its media ended, ${id} completes or ends; ${phase} is a phase the audio does not decide`);
+            refuse("stream.taskAudioEnded.follow", `${at}.task.phase`,
+              `after its audio ended, ${id} completes or ends; ${phase} is a phase the audio does not decide`);
           }
         }
-        // A task replaces the task, and an update re-states media without moving it: the
-        // transitions belong to task-media-started and task-media-ended. Releasing ended is the
+        // A task replaces the task, and an update re-states audio without moving it: the
+        // transitions belong to task-audio-started and task-audio-ended. Releasing ended is the
         // one move an update may make, since wrapped audio has nothing left to end.
         {
           const next = TaskStream.stated(event.task);
-          if (known.media !== next.media && !(known.media === "ended" && next.media === "none")) {
-            refuse("stream.taskUpdated.media", `${at}.task.media`,
-              `a task-updated re-states media, it does not move it: ${id} held ${known.media} and the update says ${next.media}; audio arrives on task-media-started and ends on task-media-ended`);
+          if (known.audio !== next.audio && !(known.audio === "ended" && next.audio === "none")) {
+            refuse("stream.taskUpdated.audio", `${at}.task.audio`,
+              `a task-updated re-states audio, it does not move it: ${id} held ${known.audio} and the update says ${next.audio}; audio arrives on task-audio-started and ends on task-audio-ended`);
           }
           // The same pairing for a dialled entry: the dial-outcome is the transition, the stage is
           // the state, and the outcome comes first. An update that joins an entry on its own is
@@ -1310,48 +1310,48 @@ export class TaskStream {
         }
         this.noteDials(event.task);
         break;
-      case "task-media-started":
-        ruleEvaluated("stream.taskMediaStarted.beforeWork", "stream.taskMediaStarted.duplicate", "stream.taskMedia.channel", "stream.assignment.ended", "stream.assignment.unknown");
+      case "task-audio-started":
+        ruleEvaluated("stream.taskAudioStarted.beforeWork", "stream.taskAudioStarted.duplicate", "stream.taskAudio.channel", "stream.assignment.ended", "stream.assignment.unknown");
         if (id === undefined) break;
         if (known === undefined) {
           this.notOpen(event, id, at, refuse);
           break;
         }
-        // Ring-back is audio: a task whose party the host is dialling has media from dialling on,
+        // Ring-back is audio: a task whose party the host is dialling has audio from dialling on,
         // whatever its phase; every other task not at work has none.
         if (known.channel !== "voice") {
-          refuse("stream.taskMedia.channel", `${at}.type`, "only a voice task has media transitions");
+          refuse("stream.taskAudio.channel", `${at}.type`, "only a voice task has audio transitions");
           break;
         }
         if (!AT_WORK.has(known.phase) && !known.partyRingingBeforeWork) {
-          refuse("stream.taskMediaStarted.beforeWork", `${at}.assignmentId`,
-            `media cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
+          refuse("stream.taskAudioStarted.beforeWork", `${at}.assignmentId`,
+            `audio cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
-        if (known.media === "started") {
-          refuse("stream.taskMediaStarted.duplicate", `${at}.assignmentId`, `media already started on ${id}; started and ended alternate`);
+        if (known.audio === "started") {
+          refuse("stream.taskAudioStarted.duplicate", `${at}.assignmentId`, `audio already started on ${id}; started and ended alternate`);
         }
-        known.media = "started";
+        known.audio = "started";
         break;
-      case "task-media-ended":
-        ruleEvaluated("stream.taskMediaEnded.beforeWork", "stream.taskMediaEnded.silent", "stream.taskMedia.channel", "stream.assignment.ended", "stream.assignment.unknown");
+      case "task-audio-ended":
+        ruleEvaluated("stream.taskAudioEnded.beforeWork", "stream.taskAudioEnded.silent", "stream.taskAudio.channel", "stream.assignment.ended", "stream.assignment.unknown");
         if (id === undefined) break;
         if (known === undefined) {
           this.notOpen(event, id, at, refuse);
           break;
         }
         if (known.channel !== "voice") {
-          refuse("stream.taskMedia.channel", `${at}.type`, "only a voice task has media transitions");
+          refuse("stream.taskAudio.channel", `${at}.type`, "only a voice task has audio transitions");
           break;
         }
         if (!WORK_BEGUN.has(known.phase) && !known.partyRingingBeforeWork) {
-          refuse("stream.taskMediaEnded.beforeWork", `${at}.assignmentId`,
-            `media cannot end on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
+          refuse("stream.taskAudioEnded.beforeWork", `${at}.assignmentId`,
+            `audio cannot end on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
-        if (known.media !== "started") {
-          refuse("stream.taskMediaEnded.silent", `${at}.assignmentId`,
-            `media cannot end on ${id} where none arrived: audio attaches on task-media-started, or on a task carried with media started`);
+        if (known.audio !== "started") {
+          refuse("stream.taskAudioEnded.silent", `${at}.assignmentId`,
+            `audio cannot end on ${id} where none arrived: audio attaches on task-audio-started, or on a task carried with audio started`);
         }
-        known.media = "ended";
+        known.audio = "ended";
         break;
       case "task-ended":
         ruleEvaluated("stream.assignment.ended", "stream.assignment.unknown");
@@ -1362,13 +1362,13 @@ export class TaskStream {
         }
         // A voice task ends after its audio ends, never around it, whatever the outcome: a take-over
         // and a lead leaving included. An ending with the audio still up leaves the host holding an
-        // open media session and an open leg on a task that no longer exists.
-        ruleEvaluated("stream.taskEnded.mediaOpen");
-        if (known.media === "started") {
-          refuse("stream.taskEnded.mediaOpen", `${at}.assignmentId`,
-            `${id} ended with its media still started: the audio ends first, on task-media-ended, whatever the outcome`);
+        // open audio session and an open leg on a task that no longer exists.
+        ruleEvaluated("stream.taskEnded.audioOpen");
+        if (known.audio === "started") {
+          refuse("stream.taskEnded.audioOpen", `${at}.assignmentId`,
+            `${id} ended with its audio still started: the audio ends first, on task-audio-ended, whatever the outcome`);
         }
-        // Off voice there is no media event, so the update that moves a task to completing is the
+        // Off voice there is no audio event, so the update that moves a task to completing is the
         // provider's word that interaction ended and the moment the wrap allowance starts. A provider
         // that completes the task itself with an allowance to run has to have started the clock:
         // completed from in-progress, the allowance it stated was never given.
@@ -1473,7 +1473,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       drive.waiters.add(waiter);
     });
 
-  // The call's media session, opened on the first client and opened again on a reloaded second.
+  // The call's audio session, opened on the first client and opened again on a reloaded second.
   let session: Record<string, unknown> | undefined;
   const recordSurvivesReload = async (at: string): Promise<void> => {
     // Each reload rule is marked where it is decided, never up front: a rebuild that throws has looked at nothing else.
@@ -1552,22 +1552,22 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         refuse("drive.reload.history", "drive.reload.history",
           `the reloaded record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host`);
       }
-      // The drive goes on with the task as the reloaded client holds it. The first client's media
-      // session died with it: a host opens media on a task arriving with media started on a
+      // The drive goes on with the task as the reloaded client holds it. The first client's audio
+      // session died with it: a host opens audio on a task arriving with audio started on a
       // snapshot, so the drive opens it again on the second and holds the answer as it held the first.
       task = carried;
-      if (drive.softphone && carried.media === "started") {
+      if (drive.softphone && carried.audio === "started") {
         if (session !== undefined && typeof session.close === "function") {
-          try { (session.close as () => void)(); } catch { refuse("drive.openMedia.close", "drive.openMedia", "the first client's media session threw on close"); }
+          try { (session.close as () => void)(); } catch { refuse("drive.openAudio.close", "drive.openAudio", "the first client's audio session threw on close"); }
         }
         session = undefined;
-        ruleEvaluated("drive.reload.openMedia");
-        const reopened = await second.openMedia?.({ assignmentId: taskId, localAudio: drive.localAudio });
-        const malformed = validateResult(reopened, "openMedia", "drive.reload.openMedia");
+        ruleEvaluated("drive.reload.openAudio");
+        const reopened = await second.openAudio?.({ assignmentId: taskId, localAudio: drive.localAudio });
+        const malformed = validateResult(reopened, "openAudio", "drive.reload.openAudio");
         found.push(...malformed);
-        if (malformed.length === 0 && isRecord(reopened) && reopened.status === "opened") session = reopened.session as unknown as Record<string, unknown>;
-        else if (malformed.length === 0) refuse("drive.reload.openMedia", "drive.reload.openMedia",
-          `a second adapter built from the same login could not open the audio of ${taskId}, which its own snapshot carries with media started`);
+        if (malformed.length === 0 && isRecord(reopened) && reopened.status === "opened") session = reopened.audio as unknown as Record<string, unknown>;
+        else if (malformed.length === 0) refuse("drive.reload.openAudio", "drive.reload.openAudio",
+          `a second adapter built from the same login could not open the audio of ${taskId}, which its own snapshot carries with audio started`);
       }
     } catch (error) {
       refuse("drive.reload.rejected", "drive.reload", `the second adapter rejected rather than answered: ${String(error)}`);
@@ -1664,9 +1664,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     return declared !== undefined && !(isRecord(declared) && declared.lockedBy !== undefined);
   };
 
-  // Media may arrive any time after the accept, before or after the task's own update says
+  // Audio may arrive any time after the accept, before or after the task's own update says
   // in-progress: the event is the provider's word that the audio should attach, never a reply to
-  // openMedia, so the drive looks for it from the accept rather than from the last update it read.
+  // openAudio, so the drive looks for it from the accept rather than from the last update it read.
   const acceptedAt = drive.events.length;
   // 1. Accept the offer, if it is one.
   if (latestTask().phase === "pending") {
@@ -1677,7 +1677,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   if (latestTask().phase === "preview") {
     const dialId = `drive-${taskId}`;
     drive.stream.dialled(dialId);
-    if (await send({ type: "call", dialId }, dialId) === undefined) return found;
+    if (await send({ type: "dial", dialId }, dialId) === undefined) return found;
     if (await updated(t => t.phase === "in-progress" || t.phase === "completing", "the task leaving preview after Call") === undefined) return found;
   }
   // The other direction of step 4, wherever the task stands outside the interaction phases with the
@@ -1703,19 +1703,19 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   }
   // 3. On a softphone, the audio arrives and the host opens it.
   if (drive.softphone && latestTask().phase === "in-progress") {
-    if (latestTask().media !== "started") {
-      const started = await waitFor("task-media-started for the driven task", envelope => {
+    if (latestTask().audio !== "started") {
+      const started = await waitFor("task-audio-started for the driven task", envelope => {
         const event = envelope.event as Record<string, unknown>;
-        return event.type === "task-media-started" && event.assignmentId === taskId ? event : undefined;
+        return event.type === "task-audio-started" && event.assignmentId === taskId ? event : undefined;
       }, acceptedAt);
       if (started === undefined) return found;
       cursor = Math.max(cursor, started.at);
     }
-    const opened = await drive.connection.openMedia?.({ assignmentId: taskId, localAudio: drive.localAudio });
-    const malformed = validateResult(opened, "openMedia", "drive.openMedia");
+    const opened = await drive.connection.openAudio?.({ assignmentId: taskId, localAudio: drive.localAudio });
+    const malformed = validateResult(opened, "openAudio", "drive.openAudio");
     found.push(...malformed);
-    if (malformed.length === 0 && isRecord(opened) && opened.status === "opened") session = opened.session as unknown as Record<string, unknown>;
-    else if (malformed.length === 0 && isRecord(opened)) refuse("drive.openMedia.unavailable", "drive.openMedia", "a softphone login's adapter could not open the call's audio");
+    if (malformed.length === 0 && isRecord(opened) && opened.status === "opened") session = opened.audio as unknown as Record<string, unknown>;
+    else if (malformed.length === 0 && isRecord(opened)) refuse("drive.openAudio.unavailable", "drive.openAudio", "a softphone login's adapter could not open the call's audio");
   }
   // 3b. The microphone is the host's. With the audio open, the drive mutes it for a moment and
   // reports the leg the provider's record would otherwise miss -- begun, then ended -- and
@@ -1760,7 +1760,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       // No session, nothing to mute: a reload whose second client could not open the audio has been named already.
       if (session === undefined) return;
       try { (session.setMuted as (muted: boolean) => void)(muted); }
-      catch { refuse("drive.openMedia.setMuted", "drive.openMedia", `the media session threw on setMuted(${String(muted)})`); }
+      catch { refuse("drive.openAudio.setMuted", "drive.openAudio", `the audio session threw on setMuted(${String(muted)})`); }
     };
   if (canRecordMute) {
     const at = new Date().toISOString();
@@ -1792,10 +1792,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     }
   }
   // 5. End the call, where the agent may -- with the microphone muted, as agents do. The leg left
-  // open at media end is the provider's to close, since the provider knows the instant the media
+  // open at audio end is the provider's to close, since the provider knows the instant the audio
   // ended; the host's own closing report can only follow what it hears, is answered recorded, and
   // changes nothing. So the drive mutes, does not report the end before end-call, and reports it
-  // after the media has ended.
+  // after the audio has ended.
   if (drive.channel === "voice" && latestTask().phase === "in-progress" && offers("endCall")) {
     let openLeg: { at: string; began: number; task: Record<string, unknown> } | undefined;
     if (canRecordMute && session !== undefined) {
@@ -1806,19 +1806,19 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     }
     if (await send({ type: "end-call" }) !== undefined) {
       // A task that completes with its audio still up is refused by the stream as it passes
-      // (stream.taskUpdated.mediaOpen); the drive does not also wait out the clock for an ending
+      // (stream.taskUpdated.audioOpen); the drive does not also wait out the clock for an ending
       // that is not coming, so the run reads by the rule and not by its timeout.
-      const mediaEnded = await waitFor("task-media-ended after end-call", envelope => {
+      const audioEnded = await waitFor("task-audio-ended after end-call", envelope => {
         const event = envelope.event as Record<string, unknown>;
-        if (event.type === "task-media-ended" && event.assignmentId === taskId) return "ended" as const;
+        if (event.type === "task-audio-ended" && event.assignmentId === taskId) return "ended" as const;
         if (event.type === "task-updated" && isTask(event.task) && event.task.assignmentId === taskId && event.task.phase === "completing") return "completing" as const;
         return undefined;
       }, cursor);
-      if (mediaEnded?.found === "ended") cursor = mediaEnded.at;
-      const completing = await updated(t => t.phase === "completing", "the task completing after its media ended");
+      if (audioEnded?.found === "ended") cursor = audioEnded.at;
+      const completing = await updated(t => t.phase === "completing", "the task completing after its audio ended");
       if (openLeg !== undefined) {
         setMuted(false);
-        // The provider closed this leg at media end, in the completing publication; the host's report,
+        // The provider closed this leg at audio end, in the completing publication; the host's report,
         // stated at the record's grain (a leg that rounds to nought is 1), changes nothing, and the
         // record as it stands now is what every later restatement is held to.
         const before = closedAs(openLeg.at);
@@ -1831,10 +1831,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     }
   }
   if (typeof (session as { close?: unknown } | undefined)?.close === "function") {
-    try { (session as { close: () => void }).close(); } catch { refuse("drive.openMedia.close", "drive.openMedia", "the media session threw on close"); }
+    try { (session as { close: () => void }).close(); } catch { refuse("drive.openAudio.close", "drive.openAudio", "the audio session threw on close"); }
   }
   // 6. Complete, where the agent completes; otherwise the provider does, and the drive waits for it.
-  // A conversation has no media to end and no completing phase to wait for: a chat or an email,
+  // A conversation has no audio to end and no completing phase to wait for: a chat or an email,
   // and a voice task offering no end-call, is completed from where it stands.
   const completable = latestTask().phase === "completing" || latestTask().phase === "in-progress" || latestTask().phase === "paused";
   if (latestTask().completionMode === "agent-command" && completable) {
@@ -1892,7 +1892,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         ruleEvaluated("drive.recordStep.overwritten");
         if (leg.seconds !== reported.closedAs) {
           refuse("drive.recordStep.overwritten", "drive.recordStep",
-            `the provider closed the leg at ${at} with ${reported.closedAs}s at media end and the record now says ${String(leg.seconds)}s: the host's closing report changes nothing`);
+            `the provider closed the leg at ${at} with ${reported.closedAs}s at audio end and the record now says ${String(leg.seconds)}s: the host's closing report changes nothing`);
         }
       }
     }
@@ -1955,17 +1955,17 @@ export function assertBreakFollowsItsRequests(envelopes: readonly ProviderEventE
 }
 
 /**
- * The media follows the task and never decides it. Given a provider's stream -- optionally seeded
- * with the snapshot it began from -- every task is introduced once, `task-media-started` and
- * `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what
- * follows the media ending is `completing` or `task-ended`.
+ * The audio follows the task and never decides it. Given a provider's stream -- optionally seeded
+ * with the snapshot it began from -- every task is introduced once, `task-audio-started` and
+ * `task-audio-ended` alternate on work that has begun, audio ends only where it arrived, and what
+ * follows the audio ending is `completing` or `task-ended`.
  */
-export function assertMediaFollowsTheTask(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
+export function assertAudioFollowsTheTask(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
   const stream = new TaskStream();
   if (snapshot !== undefined) stream.seed(snapshot);
   const found: ProtocolViolation[] = [];
   envelopes.forEach((envelope, index) => found.push(...stream.apply(envelope, `envelopes[${index}]`)));
-  assertNoViolations(found, "The media follows the task");
+  assertNoViolations(found, "The audio follows the task");
 }
 
 /** The store as handed to the adapter, and the keys it holds at any moment, seen rather than reported. */
@@ -2070,7 +2070,7 @@ export function assertBreakBeginsAfterTask(steps: readonly BreakOnTaskStep[]): v
 }
 
 /**
- * Validates the deadline derived from media end and the task's fixed wrap allowance.
+ * Validates the deadline derived from audio end and the task's fixed wrap allowance.
  *
  * A task with no allowance has no deadline, so `observedDeadline` must then be `undefined`: a
  * host counting down what the provider left open is the violation, and so is a host counting
@@ -2079,7 +2079,7 @@ export function assertBreakBeginsAfterTask(steps: readonly BreakOnTaskStep[]): v
  */
 export function assertWrapTimeout(
   task: Pick<TaskCompletion, "completionMode" | "wrapAllowance">,
-  mediaEndedAt: string,
+  audioEndedAt: string,
   observedDeadline: string | undefined,
   toleranceMs = 1_000,
 ): void {
@@ -2092,7 +2092,7 @@ export function assertWrapTimeout(
   if (observedDeadline === undefined) {
     throw new Error(`Wrap deadline mismatch: the task allows ${task.wrapAllowance}s, but no deadline was observed`);
   }
-  const ended = Date.parse(mediaEndedAt);
+  const ended = Date.parse(audioEndedAt);
   const deadline = Date.parse(observedDeadline);
   if (Number.isNaN(ended) || Number.isNaN(deadline)) throw new Error("Wrap scenario requires valid ISO-8601 times");
   const expected = ended + task.wrapAllowance * 1_000;

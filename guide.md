@@ -50,7 +50,7 @@ state use `status`; name the object when discussing them to avoid ambiguity.
 | Word | Belongs to | Values |
 | --- | --- | --- |
 | `phase` | A task | `pending`, `confirmed`, `preview`, `in-progress`, `paused`, `completing` |
-| `media` | A task's audio | `started`, `ended` |
+| `audio` | A task's audio | `started`, `ended` |
 | `transport` | A connection | `connecting`, `active`, `error` |
 | `status` | An authentication session | `signed-out`, `authenticating`, `authenticated`, `refreshing`, `expired` |
 | `status` | The agent’s break lifecycle | `not-requested`, `awaiting-approval`, `granted`, `starting-after-task`, `on-break` |
@@ -302,7 +302,7 @@ interface RecordingActions {
 }
 interface TaskRecordingPolicy {
   provider?: RecordingActions;
-  host?: RecordingActions & { destinationId: string };
+  host?: RecordingActions & { storageId: string };
 }
 type RecordingState =
   | { status: "unknown"; observationId?: never; observedAt?: never; validUntil?: never; recordingId?: never }
@@ -326,7 +326,7 @@ interface HostRecordingReport {
 interface HostRecording {
   announcesToCaller?: true;
   actions: RecordingAction[];
-  destinationIds: string[];
+  storageIds: string[];
   execute(request: HostRecordingRequest): Promise<RecordingCommandResult>;
 }
 type RecordingCommandResult = Exclude<TaskCommandResult, { status: "dialling" }>;
@@ -479,7 +479,7 @@ type Snapshot = {
   tasks: Task[];
   taskCount: number;
   contacts?: Contact[];
-  scheduledActivities?: ScheduledActivity[];
+  calendar?: ScheduledActivity[];
   team?: TeamMembers;
 };
 
@@ -710,9 +710,9 @@ type Locked = {
 
 type Lockable<T> = T | Locked;
 
-type TaskMediaState = "started" | "ended";
+type TaskAudioState = "started" | "ended";
 
-type CapabilitySource = "queue" | "ungoverned" | "undetermined";
+type CapabilitySource = "queue" | "nobody" | "not-yet-read";
 
 type Task<C extends Channel = Channel> = {
   assignmentId: AssignmentId;
@@ -732,11 +732,11 @@ type Task<C extends Channel = Channel> = {
   history?: TaskHistory;
 } & TaskCompletion & (
   C extends "voice"
-    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; media?: TaskMediaState }
-    : { recording?: never; onCall?: never; leadAssist?: never; takenOver?: never; media?: never }
+    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
+    : { recording?: never; onCall?: never; leadAssist?: never; takenOver?: never; audio?: never }
 );
 
-type PreviewDeadline = "calls" | "host-calls" | "waits";
+type PreviewDeadline = "provider-dials" | "host-dials" | "waits";
 
 type AcceptanceMode =
   | "no-preference"
@@ -759,7 +759,7 @@ const TASK_COMMAND_NAMES = {
   voice: [
     "answer",
     "decline",
-    "call",
+    "dial",
     "hold",
     "resume",
     "end-call",
@@ -783,7 +783,7 @@ type OutcomePayload = { outcome?: string; notes?: string };
 type VoiceTaskCommand =
   | { type: "answer" }
   | { type: "decline" }
-  | { type: "call"; dialId: DialId }
+  | { type: "dial"; dialId: DialId }
   | { type: "hold" }
   | { type: "resume" }
   | { type: "end-call" }
@@ -968,7 +968,7 @@ type BreakEndResult =
 ### Team
 
 ```ts
-type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "reserved" | "signed-out";
+type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "elsewhere" | "signed-out";
 
 type TeamMember = {
   id: UserId;
@@ -1002,8 +1002,8 @@ type MemberTask<C extends Channel = Channel> = {
   completionMode?: CompletionMode;
   wrapAllowance?: DurationSeconds;
 } & (C extends "voice"
-  ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; media?: TaskMediaState }
-  : { onCall?: never; leadAssist?: never; takenOver?: never; media?: never });
+  ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
+  : { onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
 
 type MemberListening = {
   mode: ListeningMode;
@@ -1061,20 +1061,20 @@ type TeamCommandResult =
   | { status: "failed"; failure: ProtocolFailure };
 ```
 
-### Media
+### Audio
 
 ```ts
-type VoiceMediaSession = {
+type CallAudio = {
   remoteAudio: MediaStream;
   setMuted(muted: boolean): void;
   close(): void;
 };
 
-type OpenMediaResult =
-  | { status: "opened"; session: VoiceMediaSession }
+type OpenAudioResult =
+  | { status: "opened"; audio: CallAudio }
   | { status: "unavailable"; failure: ProtocolFailure };
 
-type OpenMediaRequest = {
+type OpenAudioRequest = {
   assignmentId: AssignmentId;
   localAudio?: MediaStream;
 };
@@ -1106,10 +1106,10 @@ type ProviderEvent =
       assignmentExpiresAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task }
-  | { type: "task-media-started"; assignmentId: AssignmentId }
-  | { type: "task-media-ended"; assignmentId: AssignmentId }
-  | { type: "team-media-started"; memberId: UserId; assignmentId: AssignmentId }
-  | { type: "team-media-ended"; memberId: UserId; assignmentId: AssignmentId }
+  | { type: "task-audio-started"; assignmentId: AssignmentId }
+  | { type: "task-audio-ended"; assignmentId: AssignmentId }
+  | { type: "team-audio-started"; memberId: UserId; assignmentId: AssignmentId }
+  | { type: "team-audio-ended"; memberId: UserId; assignmentId: AssignmentId }
   | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
   | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; assignmentId?: AssignmentId; destinationId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
@@ -1117,7 +1117,7 @@ type ProviderEvent =
   | { type: "diagnostic"; expected: string; observed: string; assignmentId?: AssignmentId }
   | { type: "team-updated"; team: TeamMembers }
   | { type: "contacts-updated"; contacts: Contact[] }
-  | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
+  | { type: "calendar-updated"; calendar: ScheduledActivity[] };
 
 type ProviderEventEnvelope = {
   id: string;
@@ -1172,7 +1172,7 @@ type Connection<C extends Channel = Channel> = {
   endBreak?(): Promise<BreakEndResult>;
 
   executeTeam?(request: TeamCommandRequest): Promise<TeamCommandResult>;
-  openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
+  openAudio?(request: OpenAudioRequest): Promise<OpenAudioResult>;
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
   recordStep?(report: HistoryReport): Promise<HistoryReportResult>;
 };
@@ -1531,7 +1531,7 @@ Request/response polling does not have those properties and is not a transport f
 
 Everything an adapter publishes about a task is derived from what the platform states, or kept in
 the login's store where the platform cannot hold it. Per offer, the `assignmentId` comes from what
-the offer itself states; per call, the media follows `task-media-started` and `task-media-ended`,
+the offer itself states; per call, the audio follows `task-audio-started` and `task-audio-ended`,
 never a flag set when the audio was opened; per session, the phone the agent holds is what the
 platform restates on activation, not a mapping read once over HTTP. What the platform cannot hold
 -- an agent application's muted leg -- goes in `ConnectContext.store`, keyed by the task and gone with it.
@@ -1539,11 +1539,11 @@ platform restates on activation, not a mapping read once over HTTP. What the pla
 A fact read once over a connection and kept in the adapter object dies with the client. An agent application
 reload is the first client dying and a second coming up for the same login, and the second
 publishes the same truth about the same task as the first did, or the first was publishing
-something it made up: an assignment minted for the connection, media remembered as a boolean, a
+something it made up: an assignment minted for the connection, audio remembered as a boolean, a
 phone the second never read. Three pieces of exactly that state were found in one adapter in an
 afternoon, and none of it was visible until the adapter was built twice. The drive's `rebuild` is the test of this
 principle: given a way to build the adapter again, the run hands the login over and holds the
-second to what the first published (`drive.reload.snapshot`, `.history`, `.openMedia`, and the
+second to what the first published (`drive.reload.snapshot`, `.history`, `.openAudio`, and the
 stream's own rules across the resync). An adapter that cannot be built twice against its platform
 and publish the same task is not a conformant adapter yet, whatever a single run says.
 
@@ -1753,7 +1753,7 @@ contributions from active providers into one agent-facing calendar while retaini
 provider identity for each activity.
 
 When declared, the provider publishes its authoritative list through
-`Snapshot.scheduledActivities` and replaces it with a `calendar-updated` event when it
+`Snapshot.calendar` and replaces it with a `calendar-updated` event when it
 changes.
 
 | Field | Contract |
@@ -2127,13 +2127,13 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | `tasks` | Complete set of tasks currently offered to or owned by this agent. |
 | `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
-| `scheduledActivities` | Required complete calendar contribution when the manifest declares `calendar`; `[]` clears it. Omitted only when it does not. |
+| `calendar` | Required complete calendar contribution when the manifest declares `calendar`; `[]` clears it. Omitted only when it does not. |
 | `team` | Required `TeamMembers` when the login declares `capabilities.lead` and the lead has the team feature on, `members: []` when nobody is in it. Forbidden otherwise — the login is the permission, and a lead who turned the feature off gets nothing of the team. |
 
 ## Live connection
 
 `Connection` is what `connect()` returns. Its methods are documented in the sections that follow
-and under **Breaks**, **Team leads**, **Real-time media** and **Task commands**; this is the whole
+and under **Breaks**, **Team leads**, **Real-time audio** and **Task commands**; this is the whole
 surface in one place, and what obliges an adapter to implement each one.
 
 | Method | Implement it when |
@@ -2154,7 +2154,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `executeTeam(request)` | The login declares `capabilities.lead`: every lead act, on the team surface and nowhere else. See **Lead commands**. |
 | `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
 | `recordStep(report)` | The manifest lists `softphone` among its `phones`. On a softphone the agent application mutes its own microphone on any call, and the provider's record has to have somewhere to take that leg; a desk phone's microphone is the phone's. See **The agent application records what it performs**. |
-| `openMedia(request)` | The manifest lists `softphone` among its `phones`. On a softphone the call's audio lands in Omni, so the adapter has to open it; a platform of desk phones alone never does. |
+| `openAudio(request)` | The manifest lists `softphone` among its `phones`. On a softphone the call's audio lands in Omni, so the adapter has to open it; a platform of desk phones alone never does. |
 
 **The four break methods stand or fall together.** Declaring `capabilities.breaks` at login and then
 implementing `requestBreak` without `commitBreak` leaves an agent granted a break that can never
@@ -2168,7 +2168,7 @@ Returns the provider's complete authoritative state at one point in time.
 - Omni registers `subscribe()` before awaiting the initial snapshot. An event delivered while the
   snapshot is read is held until it lands, and what happens to it then depends on what it is. A
   snapshot restates state, so an event of a state-replacing kind -- `task-offered`, `task-updated`,
-  `task-ended`, `task-media-started`, `task-media-ended`, `break-state`, `team-updated`,
+  `task-ended`, `task-audio-started`, `task-audio-ended`, `break-state`, `team-updated`,
   `contacts-updated`, `calendar-updated`, `transport-status`, `snapshot` -- is dropped, because the
   snapshot accounts for it. An event that reports a transaction no snapshot carries --
   `dial-outcome`, `diagnostic`, `announcement`, `queue-summary` -- is applied after the snapshot,
@@ -2224,7 +2224,7 @@ Stops the connection and releases adapter-owned resources.
 
 - Must be safe after partial startup and safe to call once during normal shutdown.
 - Must stop automatic reconnect.
-- Must remove event handlers and release media resources owned by the adapter.
+- Must remove event handlers and release audio resources owned by the adapter.
 - Does not imply that active tasks were completed or removed.
 
 ## Task assignment lifecycle
@@ -2310,7 +2310,7 @@ const assignment = {
 ```
 
 The rule the phase exists to express: **nothing is acquired on the agent's behalf while a task
-is pending.** An agent application that carries media must not open the microphone until the task is
+is pending.** An agent application that carries audio must not open the microphone until the task is
 accepted. Omni does not open the task's browsers either — a task that rings out costs nothing.
 
 When consent is required, Omni offers the agent an **Accept** control. The call is the
@@ -2362,22 +2362,22 @@ time. Runtime conformance checks also require the task channel to match its prov
 
 | Field | Contract |
 | --- | --- |
-| `assignmentId` | Required `AssignmentId`: the assignment this task is the record of, and its one identity. Issued by the provider, unique within the provider, never reused. Every event, command and report that names a task names it by this, so a late dial outcome or a late history report for one customer never lands on the next. The stream refuses an assignment introduced twice (`stream.taskOffered.duplicate`) and a media or ending event naming one that has ended or that nobody has seen (`stream.assignment.ended`, `.unknown`); a `dial-outcome` may name an ended assignment, since a dial placed late routinely outlives its call, and the agent application routes it there. See **A task's life on the wire**. |
+| `assignmentId` | Required `AssignmentId`: the assignment this task is the record of, and its one identity. Issued by the provider, unique within the provider, never reused. Every event, command and report that names a task names it by this, so a late dial outcome or a late history report for one customer never lands on the next. The stream refuses an assignment introduced twice (`stream.taskOffered.duplicate`) and an audio or ending event naming one that has ended or that nobody has seen (`stream.assignment.ended`, `.unknown`); a `dial-outcome` may name an ended assignment, since a dial placed late routinely outlives its call, and the agent application routes it there. See **A task's life on the wire**. |
 | `title` | Agent-facing task title. |
 | `channel` | Channel used for this task. It must equal the source provider's manifest channel. |
 | `taskType` | Required provider-defined source or category of work, such as a voice `Queue Name`, `Mailbox Folder`, `Chat Source`, `Support`, `Billing`, or `Returns`. |
 | `capabilities` | Controls and workspace features available for this specific task. |
-| `capabilitySource` | Required. Who chose the capabilities: `queue` when somebody configured these terms, `ungoverned` when nothing handed the work over -- an agent's own outbound -- and `undetermined` when a queue was named and its terms could not be read, in which case `capabilities` is what the provider will honour, not what the platform permits. An agent application shows `undetermined` where the agent works. See **Task capabilities**. |
+| `capabilitySource` | Required. Who chose the capabilities: `queue` when somebody configured these terms, `nobody` when nothing handed the work over -- an agent's own outbound -- and `not-yet-read` when a queue was named and its terms could not be read, in which case `capabilities` is what the provider will honour, not what the platform permits. An agent application shows `not-yet-read` where the agent works. See **Task capabilities**. |
 | `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
 | `party` | The person or entity on the other end of this task, as a `Contact`: often a name and one address; a withheld caller ID may leave nothing to send at all. Optional. The party is who the task is *with*; `contacts` is the directory. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preview`, `in-progress`, `paused`, or `completing`. `preview` is voice only. |
-| `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. Media names a task whose work has begun, or whose party the agent application is dialling: on a `pending`, `confirmed` or `preview` task with nobody ringing it is refused (`task.media.beforeWork`), on a snapshot as on the event, since an agent application opens the microphone on it; with the party ringing by an agent application dial or provider-triggered preview dial, actual ring-back media may precede answer. |
+| `audio` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-audio-started`**. Audio names a task whose work has begun, or whose party the agent application is dialling: on a `pending`, `confirmed` or `preview` task with nobody ringing it is refused (`task.audio.beforeWork`), on a snapshot as on the event, since an agent application opens the microphone on it; with the party ringing by an agent application dial or provider-triggered preview dial, actual ring-back audio may precede answer. |
 | `acceptance` | How this offer is accepted — `no-preference`, `consent`, or `automatic` — stated on the pending task so a reconnect snapshot says it too. Required while `pending` when `autoAcceptTasks` was `true`, forbidden when it was `false`, and absent past `pending`. See **Acceptance modes**. |
 | `previewEndsAt` | Voice only, in `preview`: the preparation target instant. Absent, the agent has as long as they need without a preparation countdown. Always with `atDeadline`. See **Preview: the agent presses Call**. |
-| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` makes the provider initiate dialing, `host-calls` makes the agent application issue Call, `waits` keeps the task in preview awaiting the agent. |
+| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `provider-dials` makes the provider initiate dialing, `host-dials` makes the agent application issue Call, `waits` keeps the task in preview awaiting the agent. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
-| `wrapAllowance` | Fixed time allowed to complete the task after primary interaction ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
+| `wrapAllowance` | Fixed time allowed to complete the task after primary interaction ends. For real-time audio, it begins after `task-audio-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `history` | The call record: `steps` — the ordered interaction history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `interactionSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **Interaction history**. |
 | `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the agent application's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where an agent application placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the agent application supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
@@ -2414,7 +2414,7 @@ The canonical task transitions are:
 | `pending` | Task is accepted | `confirmed` |
 | `confirmed` | The customer's record is put in front of the agent before any call goes out (voice) | `preview` |
 | `confirmed` | Work begins | `in-progress` |
-| `preview` | Agent presses Call (`call`) and the customer answers, or the deadline `calls` and they answer | `in-progress` |
+| `preview` | Agent presses Call (`dial`) and the customer answers, or the deadline `provider-dials` and they answer | `in-progress` |
 | `preview` | The call goes out and nobody answers | `completing` |
 | `preview` | The preparation target passes with `atDeadline: "waits"` | Remains `preview`, waiting for the agent to press Call |
 | `pending` | Provider withdraws the assignment, the agent declines, or the party abandons the ring | Removed by `task-ended` with `cancelled` outcome, `by` saying which |
@@ -2433,7 +2433,7 @@ The canonical task transitions are:
 A task has one name, the assignment it is the record of, and the provider issues it. Platforms
 reuse their own handles: a closed one is retired minutes later, a requeue takes seconds, and on
 one platform a call was offered twice, thirteen seconds apart, under one handle, through a close
-and a re-offer. Everything that names a task after the fact -- a dial outcome, a media event, an
+and a re-offer. Everything that names a task after the fact -- a dial outcome, an audio event, an
 ending, a history report, a command -- would land on whichever assignment is open when it arrives.
 So the assignment id is unique within the provider and never reused: where the platform's handle
 never comes back, the adapter passes it through; where it does, the adapter mints the assignment id
@@ -2442,7 +2442,7 @@ belongs to or is refused, and a task-scoped browser session (`PROVIDER_NAME__ASS
 lives one assignment, never the next customer's cookies. A dial the agent application placed was
 already safe, since its outcome is placed by the agent application's own `dialId`; where the
 assignment earns its place is everything the agent application does not mint --
-`task-media-started`, `task-media-ended`, `task-ended`, a `recordStep` naming a task -- any of which
+`task-audio-started`, `task-audio-ended`, `task-ended`, a `recordStep` naming a task -- any of which
 would otherwise find the next customer under a reused handle and act on them. A minted id is part
 of the task the adapter keeps, not a field held in memory beside it: it lives in the login's
 `store` with the task, or is derived from a platform handle that itself never reuses, so a rebuilt
@@ -2469,19 +2469,19 @@ const previewed = {
   phase: "preview",
   party: { name: "Maya Rao", number: "+919876543210" },
   previewEndsAt: "2026-08-25T10:40:37.000Z",
-  atDeadline: "calls",
+  atDeadline: "provider-dials",
 } satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "party" | "previewEndsAt" | "atDeadline">;
 
 // The agent presses Call. It is a dial like any other.
-const pressed: TaskCommand<"voice"> = { type: "call", dialId: "dial-7f2" };
+const pressed: TaskCommand<"voice"> = { type: "dial", dialId: "dial-7f2" };
 ```
 
 **Call is a dial.** It carries the agent application's `dialId`, is answered `dialling`, and ends in exactly one
 `dial-outcome`; the phase is its gate and there is no capability, since a record put in front of an
-agent is there to be called. Its media starts on `dialling`, as every agent application-placed dial's does --
-ring-back is audio the agent hears -- so `task-media-started` arrives on the `preview` task with
-its party ringing. On `answered` the task is `in-progress`; on any other outcome the media ends,
-`task-media-ended` starts the wrap clock as on every voice task, and the task goes to
+agent is there to be called. Its audio starts on `dialling`, as every agent application-placed dial's does --
+ring-back is audio the agent hears -- so `task-audio-started` arrives on the `preview` task with
+its party ringing. On `answered` the task is `in-progress`; on any other outcome the audio ends,
+`task-audio-ended` starts the wrap clock as on every voice task, and the task goes to
 `completing`, so the agent records the
 no-answer as the outcome it is -- in a campaign that is the commonest outcome there is, and it
 is work, not a cancellation. A `preview` task therefore needs a manifest that says how a dial ends
@@ -2493,8 +2493,8 @@ carries the provider's authoritative preparation-end instant and exactly one tri
 
 | Declaration | At preparation end |
 | --- | --- |
-| `atDeadline: "calls"` | The provider initiates dialing. The agent application never sends a timer-triggered Call. |
-| `atDeadline: "host-calls"` | The agent application sends the ordinary `call` command with a fresh agent application `dialId`. The provider does not independently auto-dial this task. |
+| `atDeadline: "provider-dials"` | The provider initiates dialing. The agent application never sends a timer-triggered Call. |
+| `atDeadline: "host-dials"` | The agent application sends the ordinary `dial` command with a fresh agent application `dialId`. The provider does not independently auto-dial this task. |
 | `atDeadline: "waits"` | Neither side auto-dials. The task remains in preview until the agent presses Call. |
 
 The agent may press Call early in either fixed-preparation dialing mode, or at any time in
@@ -2502,7 +2502,7 @@ The agent may press Call early in either fixed-preparation dialing mode, or at a
 zero the UI says "Waiting for agent" and keeps Call available. There is no automatic task-ended,
 completion, dialing or phase change. No repeating timer action occurs on later snapshots. This differs
 from unlimited preparation only by displaying a preparation target. The former `expires` deadline
-value is not supported; elapsed preparation must not withdraw the task. For `calls` and `host-calls`, the deadline ends
+value is not supported; elapsed preparation must not withdraw the task. For `provider-dials` and `host-dials`, the deadline ends
 preparation and triggers initiation; it does not promise ringing, playable audio or customer
 answer at that exact instant. Scheduling/dispatch delay must remain visible, and a failed or
 prevented initiation must be reported rather than leaving a silently expired countdown.
@@ -2513,7 +2513,7 @@ time; clock estimation is allowed only under the explicit agent application-trig
 Without usable provider-domain time
 it cannot safely auto-trigger and must expose the uncertainty and reconcile. No zero-duration,
 receipt-time or local-default deadline is inferred. Neither elapsed time nor submission changes
-the task phase: subsequent authoritative events state ringing, answer, media and completion.
+the task phase: subsequent authoritative events state ringing, answer, audio and completion.
 
 An agent application must serialize manual clicks and its timer under the exact provider/login/task/assignment
 scope, allowing at most one unresolved submission. Recheck the current phase, deadline owner,
@@ -2527,11 +2527,11 @@ command as ownership of an already-running independent attempt.
 Agent application-triggered automatic dialing is an ordinary agent application dial: its result is `dialling` with the same
 agent application `dialId`, followed by exactly one correlated terminal `dial-outcome`. A provider-triggered
 dial has no invented agent application ID or agent application dial outcome. It reports source-evidenced party ringing,
-actual media and customer answer separately. In preview with `atDeadline: "calls"`, a ringing
-party without an agent application ID may carry actual pre-answer media; the deadline alone permits no media.
-Media is still introduced/ended by the corresponding events and must not imply customer answer.
+actual audio and customer answer separately. In preview with `atDeadline: "provider-dials"`, a ringing
+party without an agent application ID may carry actual pre-answer audio; the deadline alone permits no audio.
+Audio is still introduced/ended by the corresponding events and must not imply customer answer.
 Submission acceptance is never an answered outcome or permission to publish `in-progress` early.
-Unsupported source correlation/outcome/media evidence remains an integration blocker.
+Unsupported source correlation/outcome/audio evidence remains an integration blocker.
 
 **Drop both fields when the phase moves.** A provider that builds the `in-progress` task by
 spreading the `preview` one carries `previewEndsAt` and `atDeadline` with it, and the agent application refuses
@@ -2549,7 +2549,7 @@ recording contract; this distinction does not remove it or move provider call op
 
 A caller journey may revisit the same agent while an earlier interaction still wraps. Each is its
 own assignment, and two open at once carry two assignment ids. Restore them unchanged on
-reconnect. Commands, media, endings and history reports name the exact assignment; never retarget
+reconnect. Commands, audio, endings and history reports name the exact assignment; never retarget
 an old command to the newest interaction of a journey. `validateTaskCommandRequest` checks the
 request's assignment against the supplied published task and then its command prerequisites. The
 caller must select that task within the correct provider/login and recheck at the provider; the
@@ -2559,33 +2559,33 @@ portion must not be cleared because this task ended. Snapshot counts include all
 and active interactions; task completion is not caller hangup.
 
 **Voice describes the agent's interaction within the wider call.** The task defines that agent's
-workspace, tools, permissions, media participation and completion work. The caller's channel may
+workspace, tools, permissions, audio participation and completion work. The caller's channel may
 continue through IVR, queues, other agents, holds or conferences while this interaction ends or wraps.
 Completing this task ends this interaction responsibility; it is not evidence that the caller's channel
-or journey ended. Task media describes this agent's attachment, not the lifetime of every party's
+or journey ended. Task audio describes this agent's attachment, not the lifetime of every party's
 connection. Commands retain their explicit targets and effects; task completion must not silently
 become a caller-disconnect operation.
 
 **A task is never its audio.** A voice task represents the agent’s interaction: the call is offered when it is
 routed to the agent and accepted as its `acceptance` dictates, and its presence and phase follow
 the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
-consult, a conference leg joining or leaving, a transfer, a connect-back — the media follows
-separately, arriving on `task-media-started`, attaching through `openMedia` and ending with
-`task-media-ended`. Omni does not ring,
+consult, a conference leg joining or leaving, a transfer, a connect-back — the audio follows
+separately, arriving on `task-audio-started`, attaching through `openAudio` and ending with
+`task-audio-ended`. Omni does not ring,
 bridge, or hold a line. How the phone rings, whether it rings at all, and where legs join and leave
 are the adapter's and the platform's, transient, and decide neither when a task exists nor what
 phase it is in.
 
-The line runs between the provider's word and Omni's own senses. `task-media-ended` is the
+The line runs between the provider's word and Omni's own senses. `task-audio-ended` is the
 provider's report that primary interaction ended — a fact about the work, which is why the completion
 allowance starts on it and the Connect back control appears on it — and Omni follows that report as it
-follows any other. What Omni never does is derive a task's state from its own media session: a
+follows any other. What Omni never does is derive a task's state from its own audio session: a
 stream that drops, a track that ends, a transport that disconnects, a microphone that fails, an
 endpoint re-registering change nothing about the task until the provider says so. Structurally:
-`task-media-started` and `task-media-ended` alternate on a task whose work has begun, media ends
-only where it arrived, what follows the media ending is `completing` or `task-ended`, and every
+`task-audio-started` and `task-audio-ended` alternate on a task whose work has begun, audio ends
+only where it arrived, what follows the audio ending is `completing` or `task-ended`, and every
 task is introduced once — `exerciseAdapter` holds the stream to that from the connect snapshot on,
-and `assertMediaFollowsTheTask` holds any sequence.
+and `assertAudioFollowsTheTask` holds any sequence.
 
 #### Completion timing
 
@@ -2594,16 +2594,16 @@ the task open until Omni sends the channel's `complete` command. With `provider-
 provider may complete the task without receiving that command.
 
 `wrapAllowance` is independent of that decision. It is fixed, and when it starts depends on
-whether the channel carries real-time media:
+whether the channel carries real-time audio:
 
 | Channel | Wrap allowance starts at |
 | --- | --- |
-| Voice and any channel with real-time media | The `task-media-ended` event |
+| Voice and any channel with real-time audio | The `task-audio-ended` event |
 | Chat | The `task-updated` that moves the task to `completing`: the provider's word that the conversation is closed on its side, the allowance running from that publication's `occurredAt` |
 | Email | The `task-updated` that moves the task to `completing`: the provider's word that the platform has accepted the outgoing message, the allowance running from that publication's `occurredAt` |
-| Other non-media channels | The `task-updated` that moves the task to `completing` |
+| Other non-audio channels | The `task-updated` that moves the task to `completing` |
 
-**Off voice, `completing` is the provider's word that interaction ended.** There is no media event to
+**Off voice, `completing` is the provider's word that interaction ended.** There is no audio event to
 carry it, so the phase does; an agent application starts the wrap clock at that publication and nowhere else. It
 is optional: a conversation with nothing to wrap moves from `in-progress` to `task-ended` and
 `completing` is never published. Under `provider-automatic` with a non-zero `wrapAllowance` it is
@@ -2638,9 +2638,9 @@ const untimedWrap = {
 } satisfies Pick<Task<"voice">, "completionMode" | "wrapAllowance">;
 ```
 
-Here the customer has hung up, `task-media-ended` has been sent on time, the task is `completing`,
+Here the customer has hung up, `task-audio-ended` has been sent on time, the task is `completing`,
 and the agent takes as long as the work needs. Moving the task to `completing` late to avoid a
-deadline is not an alternative on a media channel: the clock starts at a real event, and delaying
+deadline is not an alternative on an audio channel: the clock starts at a real event, and delaying
 that event would falsify the phase and everything timed from it.
 
 #### Connecting back during completion
@@ -2655,9 +2655,9 @@ is; the command carries no destination, and it is a dial like any other, so it c
 
 On `dialling` the provider is placing the call and the task returns to `in-progress`: the agent is
 working again, and the wrap allowance is **discarded, not paused**. From there the call is
-reported as any call is -- `paused`, `in-progress`, and when its media ends, `task-media-ended`
+reported as any call is -- `paused`, `in-progress`, and when its audio ends, `task-audio-ended`
 again, which starts a fresh allowance from that instant. A party who does not answer is a dial
-whose outcome says so and a call whose media ended: the task returns to `completing` through the
+whose outcome says so and a call whose audio ended: the task returns to `completing` through the
 same event and the clock starts again from there. At no point is an agent dialling against a
 deadline.
 
@@ -2693,7 +2693,7 @@ const connectBackCapable = {
 With ten seconds of the thirty left, the agent presses Connect back: `execute({ command: { type:
 "connect-back", dialId } })` returns `dialling`, the task is `in-progress`, and the thirty seconds
 are gone.
-The second call ends: `task-media-ended`, the task is `completing`, and a new thirty seconds runs
+The second call ends: `task-audio-ended`, the task is `completing`, and a new thirty seconds runs
 from that instant.
 
 ```ts
@@ -2729,6 +2729,12 @@ Migration from the earlier spellings:
 | Task.id, TaskId, and `taskId` on every event, command, report and lead request | gone: a task is named by `assignmentId` alone, and `assignmentKey(providerId, assignmentId)` scopes it |
 | taskKey, omni.task-not-found, PROVIDER_NAME__TASK_ID__TAB_NAME (ProviderName.TaskId.TabName) | `assignmentKey`, `omni.assignment-not-found`, `PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME` (`ProviderName.AssignmentId.TabName`) |
 | Manifest.disposalSettleMs | `Manifest.completionSettleMs` |
+| the call command, atDeadline calls and host-calls | `dial`, `"provider-dials"`, `"host-dials"` |
+| media: task-media-started/-ended, team-media-*, Task.media, TaskMediaState, openMedia, OpenMediaRequest/Result, VoiceMediaSession and its session field | audio: `task-audio-started`, `task-audio-ended`, `team-audio-started`, `team-audio-ended`, `audio` on the task, `TaskAudioState`, `openAudio`, `OpenAudioRequest`, `OpenAudioResult`, `CallAudio` on the result's `audio` |
+| capabilitySource values ungoverned and undetermined | `nobody`, `not-yet-read` (`capabilitySource.notYetRead`) |
+| Snapshot.scheduledActivities, and scheduledActivities on calendar-updated | `calendar` in both |
+| availability reserved | `elsewhere` |
+| recording destinationId, HostRecording.destinationIds | `storageId`, `storageIds` (`recording.storage`, `recording.host.storage`) |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
 History and report rule names use `history` and `historyReport`; assignment rules use
@@ -2772,16 +2778,16 @@ Steps are `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conf
 when it began, `seconds` once it ended and omitted while it runs — and a second hold is a second
 entry after the first, never a revision of it. A leg that has ended states its duration, and the
 task says whether a leg can still be running: a hold runs only while the task is `paused`, a mute
-only while its media is up, so a `held` entry without `seconds` on a task that is not paused, or a
+only while its audio is up, so a `held` entry without `seconds` on a task that is not paused, or a
 `muted` one on a call that is over, is a leg nobody closed and reads exactly like a leg running now
 (`task.history.held.open`, `.muted.open`). Whoever performs the leg closes it — the
 provider whose platform parks the caller, the agent application whose microphone it is — by restating the entry
 with its duration, and **an entry that cannot be closed is not written**: open for ever is a
-plausible nought one level down from a total. **A leg still open when the media ends is closed by
-the provider**, at that instant, in the same publication that says the media ended: the provider
+plausible nought one level down from a total. **A leg still open when the audio ends is closed by
+the provider**, at that instant, in the same publication that says the audio ended: the provider
 is the one that knows the instant, and the agent application can only learn of it afterwards. Agents end calls
-muted, so the agent application's leg is routinely open at media end; the provider closes it with the duration
-from the leg's `at` to the media's end, and the agent application's own closing report for that leg, which
+muted, so the agent application's leg is routinely open at audio end; the provider closes it with the duration
+from the leg's `at` to the audio's end, and the agent application's own closing report for that leg, which
 follows what it hears, is answered `recorded` and changes nothing, the entry standing as the
 provider closed it. One publisher of the closed leg, and no order between them to get right. There is no resumed step; a resume is the end of a
 hold, at the entry's `at` plus its `seconds`, and nothing is lost by not naming it twice. The same goes for every step: two mutes are two
@@ -2828,7 +2834,7 @@ or combine them: report the representation conflict. No ambiguous event is silen
 
 **Handle time is anchored, not restarted.** It runs from the
 `answered` step's `at` — from the task's first `in-progress` where the provider reports no
-history — until the task's media ends, and a hold neither pauses nor resets it: the hold's own
+history — until the task's audio ends, and a hold neither pauses nor resets it: the hold's own
 duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is
 counting the wrong thing.
 
@@ -2928,7 +2934,7 @@ the agent application mutes nothing and records nothing.
 **The provider's confirmed end is decisive.** The agent application keeps local state for interaction and
 reporting, but follows the provider's authoritative state. When the provider publishes the end
 of the current mute leg, the agent application ends that local mute and releases its agent application-controlled mute
-on the matching task's media. It does not wait for its own timer, reopen the leg, replace the
+on the matching task's audio. It does not wait for its own timer, reopen the leg, replace the
 provider timestamp, or overwrite the provider's final duration with a later agent application report.
 A later agent mute is a new leg, never a reopening of the ended one.
 
@@ -2940,7 +2946,7 @@ retain the current provider view and apply the matching closure once correlation
 never guess a match from arrival order or nearest timestamp. Failure to release an agent application-controlled
 mute is reported visibly; local device reports still describe the actual device state.
 
-At a provider-confirmed task/media end, the agent application also stops the associated local mute and reports
+At a provider-confirmed task/audio end, the agent application also stops the associated local mute and reports
 its observed ending where the report is still accepted. An agent application closing report repeats its original
 key and may include its measured duration, but cannot reverse an already confirmed provider end.
 The provider acknowledges a known closed leg without rewriting its final record; after the task
@@ -3068,7 +3074,7 @@ from no other source -- not the queue the task came from, not the login, not its
 about this task, and a client with two sources and a rule for choosing between them is the shape
 that produces two consumers disagreeing about one fact. The task is the one source, and the
 provider puts on the task what the platform permits for it -- and says, in `capabilitySource`, who
-chose those terms. `queue` says somebody configured them. `ungoverned` says nothing handed the work
+chose those terms. `queue` says somebody configured them. `nobody` says nothing handed the work
 over: an agent's own outbound call has no queue behind it, and the provider states what it permits
 for such a call. Neither changes where an agent application reads the capabilities from, which is the task; the
 source is one more published fact about them, and the one that lets an agent application tell a fact from a fault
@@ -3106,15 +3112,15 @@ direction: the task as offered and as republished, and one command that was issu
 first and is refused under the last for want of the capability withdrawn -- and nothing else.
 
 **An empty capability set is a statement, not a shrug.** `capabilities: {}` under `queue` or
-`ungoverned` says the platform permits nothing capability-gated on this task, and an agent application draws
+`nobody` says the platform permits nothing capability-gated on this task, and an agent application draws
 nothing beyond what the phase and `completionMode` require. A provider that has not yet learned
 what the platform permits -- a queue's configuration that has not reached it -- knows nothing of
 the kind, and must not publish the task as if it did, neither as `{}` nor as every control it has.
-It publishes the task under `capabilitySource: "undetermined"`, with the capabilities it will
+It publishes the task under `capabilitySource: "not-yet-read"`, with the capabilities it will
 honour until it knows, and an agent application shows that where the agent works, beside the controls it draws
 from them: "no queue governs this call" is a fact, "the configuration has not arrived" is a fault,
 and the set alone cannot tell them apart, so the provider says which. What a provider honours
-under undetermined terms is its own call -- a floor that would rather an agent briefly hold a
+under not-yet-read terms is its own call -- a floor that would rather an agent briefly hold a
 control the platform might not have granted than lose hold or hang-up mid-call over a slow
 configuration read publishes those -- and the protocol chooses no default set for it. The fault is
 also reported as a `diagnostic` naming the task, one per occurrence, so an operator counts it. When
@@ -3122,12 +3128,12 @@ the terms arrive, the task is republished under `queue` with the set as it now s
 republish as any other permission that changed while the task was open. The move goes one way.
 Terms once read stay read: a re-read that fails mid-task is not a new fact about the task, so the
 last statement stands and the failure is a `diagnostic`, and a task that was published under
-`queue` or `ungoverned` never returns to `undetermined`, on an update (`stream.taskUpdated.capabilitySource`)
+`queue` or `nobody` never returns to `not-yet-read`, on an update (`stream.taskUpdated.capabilitySource`)
 or on a resync snapshot (`stream.snapshot.capabilitySource`); a record once read never loses an
 entry the same two ways (`stream.taskUpdated.history`, `stream.snapshot.history`);
-a snapshot carrying a task still at work does not forget the audio the stream held up, since media
-ends on `task-media-ended` and the call moves on (`stream.snapshot.media`); a voice task ends after
-its audio ends, never around it, whatever the outcome (`stream.taskEnded.mediaOpen`); and a task does not go
+a snapshot carrying a task still at work does not forget the audio the stream held up, since audio
+ends on `task-audio-ended` and the call moves on (`stream.snapshot.audio`); a voice task ends after
+its audio ends, never around it, whatever the outcome (`stream.taskEnded.audioOpen`); and a task does not go
 backwards, on an update or on a resync (`stream.taskUpdated.phase`, `stream.snapshot.phase`): the
 stream sees publications, not
 transitions, and a task may pass through a phase between two, so `pending` to `in-progress` stands
@@ -3136,32 +3142,32 @@ the transition table -- back to `pending`, back to `confirmed` or `preview` once
 `completing` except by the party being dialled again, a connect-back or a platform's callback,
 which the update itself shows: the party ringing, or joined by a dial whose answered outcome the
 stream saw in this life. A completing task republished as `in-progress` from a stale copy carries
-no such stage, and that is the ending the agent never saw. Audio arrives only on a task at work: `task-media-started` on a `completing` task
-is refused as it is on a pending one (`stream.taskMediaStarted.beforeWork`), since a connect-back
-returns the task to `in-progress` before any media. And a task completes after its audio ends,
-never around it: an update moving a task to `completing` while the stream holds its media as
-started is refused (`stream.taskUpdated.mediaOpen`), whoever caused the ending, and a task stating
-`completing` with `media: "started"` contradicts itself on any snapshot or update
-(`task.media.completing`). The consequence the rule exists for is concrete: the customer's audio
+no such stage, and that is the ending the agent never saw. Audio arrives only on a task at work: `task-audio-started` on a `completing` task
+is refused as it is on a pending one (`stream.taskAudioStarted.beforeWork`), since a connect-back
+returns the task to `in-progress` before any audio. And a task completes after its audio ends,
+never around it: an update moving a task to `completing` while the stream holds its audio as
+started is refused (`stream.taskUpdated.audioOpen`), whoever caused the ending, and a task stating
+`completing` with `audio: "started"` contradicts itself on any snapshot or update
+(`task.audio.completing`). The consequence the rule exists for is concrete: the customer's audio
 keeps playing through the agent's wrap-up.
 
 What the agent is told differs by source, and only one source tells them anything. Under `queue`
-and `ungoverned` the agent sees controls and nothing about where they came from: both are facts,
+and `nobody` the agent sees controls and nothing about where they came from: both are facts,
 and an agent working a call has no use for the name of the rule behind its buttons. Under
-`undetermined` the agent is told, beside the controls, that these are what the provider will honour
+`not-yet-read` the agent is told, beside the controls, that these are what the provider will honour
 until the queue's terms arrive, and that the controls may change when they do -- a statement about
 the buttons in front of them now, not about the provider, because that is what changes when the
 republish lands. It stays for as long as the set is provisional, beside the controls it qualifies;
 a message that shows and clears has said nothing about the buttons still on the screen. The two
-words are close in English and far apart on the desk: `ungoverned` is silence, `undetermined` is a
+words are close in English and far apart on the desk: `nobody` is silence, `not-yet-read` is a
 standing notice.
 
-One consequence for whoever builds the agent application: because a conformance run fails on `undetermined`, a
-conformant adapter never shows an agent application `undetermined` under test, and a clean `exerciseAdapter`
+One consequence for whoever builds the agent application: because a conformance run fails on `not-yet-read`, a
+conformant adapter never shows an agent application `not-yet-read` under test, and a clean `exerciseAdapter`
 result says nothing about how the agent application renders it. That rendering is tested against a fixture --
-a task published under `undetermined` shows the notice, the same task under `queue` shows none --
+a task published under `not-yet-read` shows the notice, the same task under `queue` shows none --
 and never against an adapter, even in principle. `exerciseAdapter` treats a
-task published under `undetermined` as a violation (`capabilitySource.undetermined`), as it treats
+task published under `not-yet-read` as a violation (`capabilitySource.notYetRead`), as it treats
 a diagnostic: a conformance run against a platform that cannot say what it permits fails loudly
 rather than passing with a note.
 
@@ -3302,7 +3308,7 @@ provider decides: another IVR, a queue, a survey, or the end of the call. Gated 
 putting my own side down.
 
 Both are commands to the provider through `execute`, and nothing happens on the desk until the
-provider reports it: the agent's media ends on `task-media-ended`, the task moves to `completing`,
+provider reports it: the agent's audio ends on `task-audio-ended`, the task moves to `completing`,
 any wrap allowance runs, and the agent completes. Neither is `task-ended`, and `complete` is
 neither of them. Both capabilities are the queue's to grant and a level's to lock, and both may
 change while the task is open: the provider republishes the task at the moment a permission
@@ -3352,7 +3358,7 @@ that offers `warmTransfer` implements all three.
 
 `applied` on `complete` says the provider is bridging the customer to the destination and
 dropping the agent's leg. What follows is what follows any call the agent leaves: the agent's
-media ends and the provider reports `task-media-ended`, the task moves to `completing`, any wrap
+audio ends and the provider reports `task-audio-ended`, the task moves to `completing`, any wrap
 allowance runs, and the task ends `completed` as any call does. A warm complete is not a completion:
 the agent has a wrap to do, so nothing is owed within `completionSettleMs`. `transferred` names a
 cold transfer alone, where the agent had no wrap. `applied` on `cancel` says the destination is
@@ -3438,7 +3444,7 @@ inside Omni.
 
 ## Every dial has an outcome
 
-Five commands place a call: `dial` from the idle dialpad, `call` from preview, a cold or warm `transfer`, a
+Five commands place a call: `dial()` from the idle dialpad, the `dial` command from preview, a cold or warm `transfer`, a
 `conference` `add`, and `connect-back`. Each is accepted or refused at once, and each then ends later
 and apart from its answer -- the destination picks up, is busy, or never does -- and a dial placed
 late in a call routinely outlives the call. Nothing in between is reported: the wire says
@@ -3544,7 +3550,7 @@ never saw.
 
 **`onCall` describes this agent's current interaction.** When the caller disconnects but the agent
 and added channels remain connected, the remaining room is still valid. When this interaction's
-media ends or the task enters `completing`, clear its `onCall` view; absence is used only by a
+audio ends or the task enters `completing`, clear its `onCall` view; absence is used only by a
 provider that never publishes the room. This does not assert that the caller, bridge or other
 agents' channels ended. A published room receives a final empty view for this interaction, and the
 task may remain open for wrap. Completion is a separate task action, not the caller's disconnect.
@@ -3569,10 +3575,10 @@ still-ringing `destinationId` calls that dial off, with `cancelled` as its outco
 
 **The entry says where it stands.** A dialled entry carries `stage`: `ringing` until its dial is
 answered, `joined` after. The `dial-outcome` is the transition and the stage is the state, the same
-pairing as `task-media-started` and `media`: an `answered` outcome and the task restated with the
+pairing as `task-audio-started` and `audio`: an `answered` outcome and the task restated with the
 entry `joined` say one thing twice, and any other outcome removes the entry. The outcome comes
 first: a `task-updated` that itself moves an entry from `ringing` to `joined` before an `answered`
-outcome for its dial is refused (`stream.taskUpdated.stage`), as an update that moves `media` is.
+outcome for its dial is refused (`stream.taskUpdated.stage`), as an update that moves `audio` is.
 The rule keys on the entry's `dialId`, so an entry the platform added itself, with none, is one
 whose move the stream cannot hold to an outcome: a clean stream proves nothing about ordering there. It is stated rather
 than left to whoever placed the dial because that knowledge lives in one process: after a reload,
@@ -3789,7 +3795,7 @@ Your own tasks are the only ones you count. What the agent holds at other provid
 concern — Omni set `count` knowing it, and this is how: the agent is one person on several
 providers, and the agent application divides their capacity among them rather than telling each the whole. A
 provider that has none of it for now is told **`count: 0`, agent application-stopped**: assign nothing, show
-the member as `reserved` on the team member list -- signed in here, capacity held by the agent application for elsewhere,
+the member as `elsewhere` on the team member list -- signed in here, capacity held by the agent application for elsewhere,
 a fact this provider holds, where `on-task` would assert work it cannot see -- and take the next
 count as any other when the agent application has capacity for this provider again. Zero is the one restatement
 that follows work rather than local policy.
@@ -4125,7 +4131,7 @@ for nothing and computes nothing.
 | `availability` | Required. What the member is doing now. |
 | `since` | Optional. When the current `availability` began — not when they signed in, and not when the team member list was read. |
 | `break` | Present only while the member has an outstanding break request. See **A member waiting for a break**. |
-| `tasks` | The member's open tasks as `MemberTask`s: the same task the member's desk holds, trimmed by the provider. The assignment, title, task type, phase, party, room, media and the full history are what the lead reads; the workspace — controls, their source, browsers, completion terms — is the member's and travels only if the provider sends it. `[]` when the member holds none; omitted only where the provider cannot see them. |
+| `tasks` | The member's open tasks as `MemberTask`s: the same task the member's desk holds, trimmed by the provider. The assignment, title, task type, phase, party, room, audio and the full history are what the lead reads; the workspace — controls, their source, browsers, completion terms — is the member's and travels only if the provider sends it. `[]` when the member holds none; omitted only where the provider cannot see them. |
 | `listening` | Present while this lead's channel is in this member's call — listening, coaching or joined — with the `mode` they are heard in and since when. One member's call at a time (`team.listening.single`). |
 
 Each availability value means one thing:
@@ -4135,7 +4141,7 @@ Each availability value means one thing:
 | `ready` | Signed in, able to take work, none assigned. |
 | `on-task` | Working on at least one task. It says nothing about how many, and nothing about whether more will fit. |
 | `on-break` | Stopped and not taking work, whether they asked or somebody stopped them. The reason lives on their own `BreakState`, not here. |
-| `reserved` | Signed in here, and the agent application holds this agent's capacity for another provider (`count: 0`, agent application-stopped): not receiving this provider's work, and not on a break. See **Capacity**. |
+| `elsewhere` | Signed in here, and the agent application holds this agent's capacity for another provider (`count: 0`, agent application-stopped): not receiving this provider's work, and not on a break. See **Capacity**. |
 | `signed-out` | Known to this team but not signed in to this provider. |
 
 **Always publish the complete team member list, never a change to it.** Team presence typically reaches an
@@ -4255,7 +4261,7 @@ listening unasked -- and one act at the end of either. What follows is the same 
 
 | | The member's task | The lead's desk |
 | --- | --- | --- |
-| Take-over | `task-media-ended`, then `completing`: the member's interaction is over and their wrap runs, exactly as after `end-call`. The audio ends first, as before every voice ending (`stream.taskEnded.mediaOpen`). | An ordinary assignment arrives: `task-offered` with `acceptance: "automatic"`, carrying the call's history and `takenOver: { memberId, since }`. |
+| Take-over | `task-audio-ended`, then `completing`: the member's interaction is over and their wrap runs, exactly as after `end-call`. The audio ends first, as before every voice ending (`stream.taskEnded.audioOpen`). | An ordinary assignment arrives: `task-offered` with `acceptance: "automatic"`, carrying the call's history and `takenOver: { memberId, since }`. |
 | The member completes | `task-ended` with `{ type: "taken-over", leadId }`, at the member's own completion. The lead is named by user id, since a lead is not a directory item. | The lead works the call as any agent would, and ends it as any call ends. |
 
 **The taken-over call is offered whatever break the lead is on.** A lead working as lead alone is
@@ -4303,7 +4309,7 @@ All three come with the `lead` flag; a centre reserves none of them per lead. Th
 // 1. The lead picks a member from the team member list and starts silent.
 executeTeam({ command: { type: "listen", memberId: "A-1" } })
 //    team-updated: the member carries listening: { mode: "listen", since }
-//    team-media-started: { memberId: "A-1", assignmentId: "alloc-42" } -- the lead's audio attaches
+//    team-audio-started: { memberId: "A-1", assignmentId: "alloc-42" } -- the lead's audio attaches
 
 // 2. The lead changes how they are heard; the provider restates the member with the new mode.
 executeTeam({ command: { type: "coach", memberId: "A-1" } })
@@ -4314,17 +4320,17 @@ executeTeam({ command: { type: "leave", memberId: "A-1" } })
 executeTeam({ command: { type: "take-over-call", memberId: "A-1" } })
 ```
 
-**The lead's audio arrives through team media.** While the lead's channel is in a member's call
--- listening, coaching or joined on request -- the lead's connection receives `team-media-started`
+**The lead's audio arrives through team audio.** While the lead's channel is in a member's call
+-- listening, coaching or joined on request -- the lead's connection receives `team-audio-started`
 naming the member and the member's assignment, and on a softphone the agent application opens
-`openMedia` on that assignment as it does for a task; `team-media-ended` closes it. Voice only, and
-to a login that declares `lead` (`event.teamMedia.*`). The member's own media events are the
+`openAudio` on that assignment as it does for a task; `team-audio-ended` closes it. Voice only, and
+to a login that declares `lead` (`event.teamAudio.*`). The member's own audio events are the
 member's and never reach the lead.
 
 **`listening` on the member is the state**, restated on every change of mode, and a lead is on
 one member's call at a time (`team.listening.single`). The member's call ending ends the lead's
 listening with it: the provider republishes the member without `listening` and sends
-`team-media-ended`.
+`team-audio-ended`.
 
 **A lead listens while holding no call of their own.** Omni offers Listen to a lead whose voice
 channel is free, and a provider answers a `listen` from one whose channel is not `failed`. That
@@ -4369,20 +4375,20 @@ A request needing *more than one* approval is not something this contract descri
 no partial state to report and no progress to display: a request is either still owed a
 decision or it is not.
 
-## Real-time media
+## Real-time audio
 
-Every voice provider has media: `channel: "voice"` says audio exists. Where the agent hears it
+Every voice provider has audio: `channel: "voice"` says audio exists. Where the agent hears it
 depends on the `phone` the agent application selected at authentication and connect from the manifest's
 `phones`. On a softphone, audio lands in Omni; on a desk phone, it lands on the handset and Omni
-opens no audio. See **How the agent hears the call**. Media transitions are voice-only;
-chat and email publish none (`event.media.channel`, `stream.taskMedia.channel`).
+opens no audio. See **How the agent hears the call**. Audio transitions are voice-only;
+chat and email publish none (`event.audio.channel`, `stream.taskAudio.channel`).
 
 The provider owns signalling and the platform's endpoint configuration. The agent application selects the
 declared phone mode; it does not enumerate or reconfigure the platform's devices. The selected
 mode stays with the login rather than being inferred from a snapshot or a device failure.
 
 Nor does the audio ever stand in for the task: a task's presence and
-phase follow the provider's reports about the work, and the media — attaching, moving through a
+phase follow the provider's reports about the work, and the audio — attaching, moving through a
 hold, a consult, a conference or a transfer, and ending — is transient beside it. See **A task is
 never its audio** under **Task assignment lifecycle**.
 
@@ -4419,7 +4425,7 @@ refuses a false one, as it refuses a name this contract does not list.
 | --- | --- |
 | `online` | Whether the agent application has a network interface up. Not a claim that anything is reachable — the adapter knows whether it can reach its own platform far better than the agent application does — so `false` is a reason not to go ready and `true` is not a reason to. |
 | `audio` | Present on a voice connection, absent where there is no audio. |
-| `audio.input` | `available` with `localAudio` — the microphone as captured, the same stream `openMedia` receives — and `flowing`, false while no audio moves through it, when `mutedBy` says who stopped it: `host`, the agent application's own Mute on an agent application that mutes the station, or `station`, a slider on the headset or the operating system, which the agent application observed and did not do. An adapter treats `host` as the agent's act on a call and `station` as a condition of the station. `unavailable` with `reason`, since each wants a different fix from the agent: `no-device`; `denied`; `not-asked`, which an agent application that asks at connect never publishes; `in-use`, a device present and permitted that another application holds — on an agent desktop the commonest of all; `lost`, a capture that ended. An agent application decides the reason from the devices before the error name: a browser can report a permission error on a machine with no microphone at all, and "grant permission" is the wrong instruction for an agent who needs to plug one in. `failure` carries the words Omni showed them. |
+| `audio.input` | `available` with `localAudio` — the microphone as captured, the same stream `openAudio` receives — and `flowing`, false while no audio moves through it, when `mutedBy` says who stopped it: `host`, the agent application's own Mute on an agent application that mutes the station, or `station`, a slider on the headset or the operating system, which the agent application observed and did not do. An adapter treats `host` as the agent's act on a call and `station` as a condition of the station. `unavailable` with `reason`, since each wants a different fix from the agent: `no-device`; `denied`; `not-asked`, which an agent application that asks at connect never publishes; `in-use`, a device present and permitted that another application holds — on an agent desktop the commonest of all; `lost`, a capture that ended. An agent application decides the reason from the devices before the error name: a browser can report a permission error on a machine with no microphone at all, and "grant permission" is the wrong instruction for an agent who needs to plug one in. `failure` carries the words Omni showed them. |
 | `audio.output` | `available`, with `flowing` where the agent application can know whether audio reaches the speaker — a browser mostly cannot, and omits it; a native agent application reads the endpoint — false while it is silenced, when `mutedBy` says who did it, as on input. Or `unavailable` with `reason` — `no-device`, or `lost` for one removed — and `failure`: an agent who cannot hear is as unable to take a call as one who cannot speak. |
 
 Omni republishes the report whenever it changes — a permission granted late, a headset unplugged,
@@ -4488,10 +4494,10 @@ A voice manifest lists its `phones` and any other channel lists none (`manifest.
 `manifest.phones.channel`). The agent application's `phone` is required on a voice login, absent on any other,
 and one the manifest listed (`context.phone.required`, `.unexpected`, `.unsupported`). Everything
 about audio then follows the phone rather than the channel: on a softphone the agent application reports its
-audio, the adapter implements `openMedia`, and `task-media-started` is the word to open it; on a
-desk phone the agent application reports no audio, opens nothing, and `task-media-started` still marks the
+audio, the adapter implements `openAudio`, and `task-audio-started` is the word to open it; on a
+desk phone the agent application reports no audio, opens nothing, and `task-audio-started` still marks the
 moment the call is live so the desk shows it, with the sound on the handset. A platform that lists
-`deskPhone` alone never implements `openMedia`; one that lists `softphone` always does.
+`deskPhone` alone never implements `openAudio`; one that lists `softphone` always does.
 
 **The mode comes from the agent application; the status comes from the provider.** The agent application knows which kind
 of station the agent signed in at, because the person chose it, and nothing else can know that.
@@ -4503,10 +4509,10 @@ the handset is momentarily unregistered, and demanding a microphone of it, is th
 sentence exists to refuse. What the provider does when the handset is not registered is what it
 does for any station that cannot take a call -- hold the agent not-ready and say why.
 
-**On a desk-phone login the agent application never calls `openMedia`.** There is no stream to hand over and
+**On a desk-phone login the agent application never calls `openAudio`.** There is no stream to hand over and
 no audio to attach; an agent application that calls it anyway is in error, and an adapter that receives the call
 answers `unavailable` with a non-retryable failure, since waiting changes nothing about a station
-that is a telephone. The harness requires no `openMedia` of such an adapter and never calls it.
+that is a telephone. The harness requires no `openAudio` of such an adapter and never calls it.
 
 **Which handset a desk-phone login rings is the platform's configuration for that agent**, and
 this wire never asks the agent for it: an agent application declares `phone` and nothing more. What a platform
@@ -4529,11 +4535,11 @@ is the administrator's, and a login is not a request to reconfigure an agent.
 
 ### Opening the audio
 
-`openMedia` hands Omni the remote audio for one task. Every adapter whose manifest lists
+`openAudio` hands Omni the remote audio for one task. Every adapter whose manifest lists
 `softphone` implements it, because on a softphone the call's audio lands in Omni:
 
 ```ts
-openMedia({ assignmentId, localAudio }): Promise<OpenMediaResult>
+openAudio({ assignmentId, localAudio }): Promise<OpenAudioResult>
 // { status: "opened", session } | { status: "unavailable", failure }
 ```
 
@@ -4556,8 +4562,8 @@ carries as `audio.input.localAudio`, and absent while that input is `unavailable
 bridges audio without an application-side input may ignore it; one that needs it and finds it absent
 answers `unavailable` with a failure Omni shows the agent.
 
-**When to ask is the provider's word, not Omni's guess.** On a softphone login, Omni opens media on `task-media-started`,
-and on a task arriving with `media: "started"` on a snapshot; it closes on `task-media-ended` and
+**When to ask is the provider's word, not Omni's guess.** On a softphone login, Omni opens audio on `task-audio-started`,
+and on a task arriving with `audio: "started"` on a snapshot; it closes on `task-audio-ended` and
 when the task ends. Between those words, nothing Omni's own senses report — a stream that drops, a
 track that ends — moves the task or its audio.
 
@@ -4607,8 +4613,8 @@ agent application's. So mute is not a capability a provider declares, not a cont
 locks, not a preference the person keeps with the provider, and not a command: nothing about the
 station crosses to the provider except two things -- the station's condition, in the agent application report,
 and the record of when the agent could not be heard, through `recordStep`. An agent application offers Mute on
-every voice task with media open, under its own local policy, in `in-progress` and `paused`
-alone, and performs it through `VoiceMediaSession.setMuted()`. A task carrying
+every voice task with audio open, under its own local policy, in `in-progress` and `paused`
+alone, and performs it through `CallAudio.setMuted()`. A task carrying
 `capabilities.mute` is refused (`task.capability.unknown`), and so is a `mute` command
 (`command.type`), a `mute` preference (`preference.id`) and a `mute` policy (`team.policy.key`).
 
@@ -4644,9 +4650,9 @@ forty seconds" and "the agent's headset was muted for forty seconds" as the diff
 are. See **The agent application records what it performs**.
 
 **Mute has a lifecycle, and none of it is inferred.** A call that starts while the station is
-already muted begins a `muted` leg the moment its media starts, `mutedBy: "station"`. Media that
+already muted begins a `muted` leg the moment its audio starts, `mutedBy: "station"`. Audio that
 ends while any leg is open ends the leg at that instant, as every agent application-performed leg ends. And the
-agent application's own Mute starts off on every call, which is every `task-media-started` -- a connect-back
+agent application's own Mute starts off on every call, which is every `task-audio-started` -- a connect-back
 opens a second call on the same task with no offer -- so an agent is never muted by the call before.
 
 **Every press on a headset is the agent's own press**, performed the agent application's way, and the lights
@@ -4686,7 +4692,7 @@ declared:
 | `terminate-call` | The `terminateCall` capability: ends the caller channel. |
 | `conference` with `action: "remove"` | The `conference` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
 | `decline` | The `decline` capability on any channel, **and** Omni local policy permitting it. One word for refusing an offer, whatever the channel. |
-| `call` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
+| `dial` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
 | `complete` | `completionMode: "agent-command"`. The `outcomes` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. What travels is what the capability published: a code from its list where it has one (`command.complete.outcome.unknown`), a code at all where it requires one (`.outcome.required`), notes as it said (`.notes.required`, `.notes.unexpected`), and neither where the task declares no outcomes (`.outcome.unexpected`). |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | `transfer` with `action: "warm"` | The `warmTransfer` capability. `action: "cold"` is gated by `coldTransfer`; the two are declared and offered separately. |
@@ -4706,7 +4712,7 @@ declared while the task remains open; the phase prevents this task from controll
 it no longer owns. Omni shows these controls only in the two interaction phases, and
 `validateTaskCommand` refuses them outside those phases (`command.phase.interaction`).
 The commands with a phase of their own -- `answer`, `accept` and `decline` in `pending`,
-`call` in `preview`, `connect-back` in `completing`, `complete` in any -- are not among them.
+`dial` in `preview`, `connect-back` in `completing`, `complete` in any -- are not among them.
 
 `validateTaskCommand(command, task)` holds a command to this table at runtime, both ways: the
 capability it needs, the phase it belongs to, and the state that has to stand. The task it wants
@@ -5055,30 +5061,30 @@ snapshots until it ends.
 Replaces the current representation of one provider-local task. It is a full task value, not a
 partial patch.
 
-### `task-media-started`
+### `task-audio-started`
 
-The provider's word that the task's audio should now attach. Omni calls `openMedia` on it — and on
-a task carried with `media: "started"`, which is how a reconnect snapshot reattaches audio an
+The provider's word that the task's audio should now attach. Omni calls `openAudio` on it — and on
+a task carried with `audio: "started"`, which is how a reconnect snapshot reattaches audio an
 earlier event brought — and renders the call as live from that word, never from its own senses. It
-precedes `openMedia` and is never a reply to it: a provider whose media state comes from the
+precedes `openAudio` and is never a reply to it: a provider whose audio state comes from the
 platform, a station going in use the moment a call is answered, sends it then, before any agent application has
-opened anything, and `openMedia` has its own answer for what the agent application did. It
-names a task whose work has begun, and it alternates with `task-media-ended`: media that never
+opened anything, and `openAudio` has its own answer for what the agent application did. It
+names a task whose work has begun, and it alternates with `task-audio-ended`: audio that never
 started cannot end, so a live call whose provider says nothing about its audio is a provider in
 breach, not a state a desk fills in from its own devices.
 
-The event is the transition and the task's `media` field is the state. A `task-updated` re-states
-the media its task already holds — republishing `started` on a hold is a statement, not a second
+The event is the transition and the task's `audio` field is the state. A `task-updated` re-states
+the audio its task already holds — republishing `started` on a hold is a statement, not a second
 arrival — but it does not move it: an update that itself flips the field is refused
-(`stream.taskUpdated.media`), and the pairing at the moment audio arrives is the phase change
+(`stream.taskUpdated.audio`), and the pairing at the moment audio arrives is the phase change
 without the field, then the event. Releasing `ended` is the one move an update may make, since
 wrapped audio has nothing left to end.
 
-### `task-media-ended`
+### `task-audio-ended`
 
-Signals that a task's real-time media ended. For voice and similar channels, this starts the fixed
-completion timer. It does not remove the task, and it ends only audio that `task-media-started` — or
-a task carried with `media: "started"` — attached.
+Signals that a task's real-time audio ended. For voice and similar channels, this starts the fixed
+completion timer. It does not remove the task, and it ends only audio that `task-audio-started` — or
+a task carried with `audio: "started"` — attached.
 
 ### `task-ended`
 
@@ -5086,7 +5092,7 @@ Every outcome ends the task for this agent. On `task-ended`, Omni:
 
 - removes the task from its current provider view;
 - clears the task workspace when it is selected;
-- stops task timers and media;
+- stops task timers and audio;
 - releases task-scoped resources; and
 - selects another task or returns to the idle workspace.
 
@@ -5101,7 +5107,7 @@ performed. Past the bound the agent application calls `snapshot()`: a snapshot s
 held open by a provider that said it was done, and the desk shows it as unsettled -- "Completing...
 the provider has not confirmed" -- naming the command; a snapshot no longer carrying it clears the
 task, since the ending was owed and lost. The drive holds a provider to the same bound
-(`drive.completion.unsettled`). The `task-media-ended` event and the `completing` phase are likewise
+(`drive.completion.unsettled`). The `task-audio-ended` event and the `completing` phase are likewise
 non-terminal. A replacement
 snapshot that no longer contains the task also clears it. Repeated `task-ended` delivery with the
 same envelope ID is harmless, and a `task-ended` naming an assignment that has already ended is
@@ -5135,8 +5141,8 @@ console is the silence problem one layer up. One event per occurrence; the agent
 provider does not batch. `exerciseAdapter` treats a diagnostic delivered during a run as a
 violation (`diagnostic.raised`): a conformance run against a platform that is breaking its rules
 fails loudly rather than passing with a note. A task published under `capabilitySource:
-"undetermined"` is the same kind of fact, stated on the task instead, and fails a run the same way
-(`capabilitySource.undetermined`); see **Task capabilities**.
+"not-yet-read"` is the same kind of fact, stated on the task instead, and fails a run the same way
+(`capabilitySource.notYetRead`); see **Task capabilities**.
 
 | Field | Contract |
 | --- | --- |
@@ -5306,10 +5312,10 @@ Nothing there is a violation: an adapter with no team has nothing to exercise. B
 no tasks exercises no task rule, and a pass over it reads as coverage it is not.
 
 **A static run never answers a call.** It states a capacity and disconnects, so everything
-downstream of `answer` -- the room, the stage, media, every phase past `pending`, every dial
+downstream of `answer` -- the room, the stage, audio, every phase past `pending`, every dial
 outcome -- stays in `notExercised` for every adapter, and a rule about a live call is enforced only
 in each adopter's own tests. `{ drive: true }` closes that: the exercise takes the first task the
-provider offers through one ordinary lifecycle -- accept it, wait for its media and open it on a
+provider offers through one ordinary lifecycle -- accept it, wait for its audio and open it on a
 softphone, hold and resume where the task offers `hold`, end the call where it offers `endCall`,
 complete it with an outcome where the agent completes -- and holds every step to the rules a
 agent application holds a provider to. Each command is validated against the task as published
@@ -5324,17 +5330,17 @@ nothing (`getUserDetails.user.*`, `getUserDetails.unasked`, `connection.getUserD
 the second adapter a `rebuild` gives comes up signed in as the same login from the secrets alone
 before it reads anything (`drive.reload.login`), and is then held to everything the first was on
 connect: the methods its declarations call for, the agent application's report, a capacity stated to it, its
-snapshot read as the connect snapshot was, and its media opened afresh on a task carried with
-`media: "started"`, since the first client's session died with it. The result also says which rules the
+snapshot read as the connect snapshot was, and its audio opened afresh on a task carried with
+`audio: "started"`, since the first client's session died with it. The result also says which rules the
 run evaluated, pass or fail, in `rulesEvaluated`: the validators' as each was applied, the stream's
 as each case was considered, so a test that needs a rule to have run asserts it there rather than
 inferring it from an empty `violations`, and a rule absent from it was never looked at, which is a
 gap and not a pass. With the audio open on a softphone,
 the drive mutes it for one second and reports the leg through `recordStep`, begun and then ended,
 expecting each report `recorded` with the provider-selected history `at` (`drive.recordStep.failed`, `.rejected`, `result.recordStep.at`); then it mutes again and
-ends the call muted, as agents do, so the leg is open when the media ends, the provider closes it
+ends the call muted, as agents do, so the leg is open when the audio ends, the provider closes it
 in the completing publication or the open entry is refused (`task.history.muted.open`),
-and the drive's closing report after the media ended is expected `recorded` and to change nothing:
+and the drive's closing report after the audio ended is expected `recorded` and to change nothing:
 a record restated afterwards with that leg's duration altered is named (`drive.recordStep.overwritten`).
 Where the provider restates the task's record afterwards, each leg is in it or the hole is named
 (`drive.recordStep.history`). Given `rebuild`, a way to build the adapter again as an agent application reload
@@ -5347,7 +5353,7 @@ the record in memory has nothing and is named (`drive.reload.snapshot`, `drive.r
 `.rejected`). The second adapter's snapshot is taken as any resync is: held to what the stream knew
 before it replaces it, so a phase gone backwards, a record that shrank or audio forgotten on a task
 still at work is named by the stream's own rules (`stream.snapshot.phase`, `.history`,
-`.media`) and a reload is a place those rules keep working, not one where they stop. The second
+`.audio`) and a reload is a place those rules keep working, not one where they stop. The second
 adapter is held to what the first was: the same provider
 (`drive.reload.manifest`), a snapshot that stands as any snapshot must, and a record that lost none
 of the entries the first had published -- a record once read is not unread across a reload either.
@@ -5374,15 +5380,15 @@ completed from wherever it stands once the drive has nothing left to do on it --
 after an `end-call`, or from `in-progress` where there is no call to end, which is every chat and
 email and a voice task offering no `endCall` -- so a conversation reaches its end as a call does.
 The drive stops where the task offers no way on and says nothing about what it could not reach. A
-softphone adapter written for a browser needs its media APIs supplied by whatever runs the
-harness: the drive opens media outside a browser, and a provider that quietly stopped carrying audio
+softphone adapter written for a browser needs its audio APIs supplied by whatever runs the
+harness: the drive opens audio outside a browser, and a provider that quietly stopped carrying audio
 where `AudioContext` was missing would be lying about the one thing the channel is for. It is off by default because it issues
 commands against whatever platform the adapter is connected to: turn it on against a test backend.
 
 ```ts
 const driven = await exerciseAdapter(adapter, context, { collectOnly: true, drive: true });
 expect(driven.violations).toEqual([]);
-assertReached(driven, ["task.onCall", "task.media", "event.task-ended"]);
+assertReached(driven, ["task.onCall", "task.audio", "event.task-ended"]);
 ```
 `assertReached(result, subjects)` is the paired assertion: it throws naming every subject the run
 never met, so a test that meant to check a team member list cannot pass on a fixture that never produced one.
@@ -5419,11 +5425,11 @@ cannot be established from TypeScript structure alone.
 | `stillHost(report?, guarantees?, mute?)` | An agent application that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a softphone voice adapter, and never for a desk phone. |
 | `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for an agent application that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |
 | `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a forced break arriving in effect with `forced`. The harness applies the same rules after the connect snapshot. |
-| `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-started` and `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what follows the media ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no media satisfies it by never testing it — pair it with the assertion that the media end is present. |
+| `assertAudioFollowsTheTask(envelopes, snapshot?)` | The audio follows the task and never decides it: every task is introduced once, `task-audio-started` and `task-audio-ended` alternate on work that has begun, audio ends only where it arrived, and what follows the audio ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no audio satisfies it by never testing it — pair it with the assertion that the audio end is present. |
 | `assertBreakAttemptProviders(candidates, asked)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `on-break` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
-| `assertWrapTimeout(task, mediaEndedAt, deadline, toleranceMs?)` | The wrap deadline equals media end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |
+| `assertWrapTimeout(task, audioEndedAt, deadline, toleranceMs?)` | The wrap deadline equals audio end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |
 | `assertBrowserSessionIsolation(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |
 | `assertNoBrowserSessionKeyCollisions(scenarios)` | No two distinct scenarios derive the same session key. Feed it adversarial names. |
 
@@ -5456,11 +5462,11 @@ action sets. The outer capability may be locked. Absence grants no permission, a
 exist without any permission. A provider may offer only stop for a recording started automatically,
 or withdraw a control on a later task update. There is no global recording mode and no automatic
 start from a capability declaration. Agent application support is declared on `ConnectContext.host.recording`,
-not the provider-owned manifest. The task chooses an explicitly provisioned agent application destination;
-unknown destinations or unsupported actions are refused visibly, never redirected to provider
-recording or a default upload location. Initial agent application support requires voice softphone media and
+not the provider-owned manifest. The task names one of the storage places the agent application provisioned, by `storageId`;
+an unknown storage place or an unsupported action is refused visibly, never redirected to provider
+recording or a default upload location. Initial agent application support requires voice softphone audio and
 capture of both local and remote audio; an agent application unable to capture either must refuse start/resume.
-This package declares that contract; it supplies no recorder, media mixing, storage or upload.
+This package declares that contract; it supplies no recorder, audio mixing, storage or upload.
 
 | Action | Required current recording state | Confirmed outcome |
 | --- | --- | --- |
@@ -5491,7 +5497,7 @@ There is no automatic restart, transfer to another recorder, or stop on task hol
 Task removal does not prove recording stopped: outstanding agent application recorders remain tracked by the
 agent application until its executor reconciles/finishes them, with visible unresolved cleanup failures.
 
-Only start/resume require an in-progress or paused task with started media. Pause/stop/cancel may
+Only start/resume require an in-progress or paused task with started audio. Pause/stop/cancel may
 also finish an independently observed recorder while the task is completing. A pending task may
 show active recording, but agent controls wait until interaction begins. The two recording paths may
 both be active. A command to either path has no implied effect on the other.
@@ -5534,9 +5540,9 @@ This change does not publish a package or enable recording in any existing agent
 semantics, including pause/resume identity and rejection of a dialling result. It cannot prove audio
 retention/completion or source truth from a status flag; those remain executor obligations.
 
-Agent application destination selection binds storage when start actually creates a recording. Existing recordings
+The storage place named on the task is bound when start actually creates a recording. Existing recordings
 keep that binding through pause/resume/stop/cancel; a later policy cannot redirect their stored audio.
-The executor rejects a mismatched destination rather than moving or discarding another binding.
+The executor rejects a mismatched storage place rather than moving or discarding another binding.
 Action permission does not authorize unattended invocation: agent application controls require the agent's explicit
 act, and provider authorization remains enforced at its authenticated command boundary.
 

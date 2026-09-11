@@ -82,13 +82,13 @@ describe("untrusted values in violation messages", () => {
   });
 });
 
-describe("media events belong to voice", () => {
-  it("rejects media transitions on chat and email providers", () => {
-    for (const type of ["task-media-started", "task-media-ended"]) {
+describe("audio events belong to voice", () => {
+  it("rejects audio transitions on chat and email providers", () => {
+    for (const type of ["task-audio-started", "task-audio-ended"]) {
       const event = envelope({ type, assignmentId: "alloc-42" });
       expect(validateEventEnvelope(event, manifest())).toEqual([]);
       for (const channel of ["chat", "email"]) {
-        expect(rules(validateEventEnvelope(event, manifest({ channel })))).toEqual(["event.media.channel"]);
+        expect(rules(validateEventEnvelope(event, manifest({ channel })))).toEqual(["event.audio.channel"]);
       }
     }
   });
@@ -244,19 +244,19 @@ describe("validateTask", () => {
     expect(browser({ urlVisibility: "full" })).toEqual([]);
     expect(browser({ urlVisibility: "partial" })).toEqual(["task.browser.urlVisibility"]);
   });
-  it("carries the task's media state on voice alone, in one of two words", () => {
-    const media = (value: unknown, channel = "voice") => rules(validateTask(task({ channel, media: value }), { channel }));
-    expect(media("started")).toEqual([]);
-    expect(media("ended")).toEqual([]);
-    expect(media(undefined)).toEqual([]);
-    expect(media("live")).toEqual(["task.media"]);
-    // Media names a task whose work has begun: on an offer it would open the microphone on nobody's call.
+  it("carries the task's audio state on voice alone, in one of two words", () => {
+    const audio = (value: unknown, channel = "voice") => rules(validateTask(task({ channel, audio: value }), { channel }));
+    expect(audio("started")).toEqual([]);
+    expect(audio("ended")).toEqual([]);
+    expect(audio(undefined)).toEqual([]);
+    expect(audio("live")).toEqual(["task.audio"]);
+    // Audio names a task whose work has begun: on an offer it would open the microphone on nobody's call.
     for (const phase of ["pending", "confirmed", "preview"]) {
-      expect(rules(validateTask(task({ phase, media: "started", ...(phase === "pending" ? { acceptance: "consent" } : {}) }), { channel: "voice", dialOutcomesDeclared: true })), phase).toEqual(["task.media.beforeWork"]);
+      expect(rules(validateTask(task({ phase, audio: "started", ...(phase === "pending" ? { acceptance: "consent" } : {}) }), { channel: "voice", dialOutcomesDeclared: true })), phase).toEqual(["task.audio.beforeWork"]);
     }
-    expect(rules(validateTask(task({ phase: "paused", media: "started" }), { channel: "voice" }))).toEqual([]);
-    // Real-time media is a voice affair; another channel carries no state for it.
-    expect(media("ready", "chat")).toEqual(["task.media.channel"]);
+    expect(rules(validateTask(task({ phase: "paused", audio: "started" }), { channel: "voice" }))).toEqual([]);
+    // Real-time audio is a voice affair; another channel carries no state for it.
+    expect(audio("ready", "chat")).toEqual(["task.audio.channel"]);
   });
   it("lets a control stand locked in its place, naming the level, and never a queue's own content", () => {
     const caps = (capabilities: unknown) => rules(validateTask(task({ capabilities }), { channel: "voice" }));
@@ -335,18 +335,18 @@ describe("validateTask", () => {
     expect(paused([answered, { step: "held", at: "2026-08-21T01:02:10Z", by: "a-17" }])).toEqual([]);
     expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", by: "a-17" }])).toEqual(["task.history.held.open"]);
     expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }])).toEqual([]);
-    // A mute runs only while the media is up: an open one on a call that is over is a leg nobody closed.
+    // A mute runs only while the audio is up: an open one on a call that is over is a leg nobody closed.
     const over = (steps: unknown, over: Record<string, unknown>) => rules(validateTask(task({ ...over, history: { steps } }), { channel: "voice" }));
     const openMute = { step: "muted", at: "2026-08-21T01:00:00Z", by: "a-17", mutedBy: "host" };
-    expect(over([answered, openMute], { media: "started" })).toEqual([]);
-    expect(over([answered, openMute], { media: "ended" })).toEqual(["task.history.muted.open"]);
+    expect(over([answered, openMute], { audio: "started" })).toEqual([]);
+    expect(over([answered, openMute], { audio: "ended" })).toEqual(["task.history.muted.open"]);
     expect(over([answered, openMute], { phase: "completing", onCall: [] })).toEqual(["task.history.muted.open"]);
     // A completing task's audio has ended or never started: stated as started, it is a call that never ended.
-    expect(rules(validateTask(task({ phase: "completing", onCall: [], media: "ended" }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: [], audio: "ended" }), { channel: "voice" }))).toEqual([]);
     expect(rules(validateTask(task({ phase: "completing", onCall: [] }), { channel: "voice" }))).toEqual([]);
-    expect(rules(validateTask(task({ phase: "completing", onCall: [], media: "started" }), { channel: "voice" }))).toEqual(["task.media.completing"]);
-    expect(rules(validateTask(task({ phase: "in-progress", media: "started" }), { channel: "voice" }))).toEqual([]);
-    expect(over([answered, { ...openMute, seconds: 4 }], { media: "ended" })).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: [], audio: "started" }), { channel: "voice" }))).toEqual(["task.audio.completing"]);
+    expect(rules(validateTask(task({ phase: "in-progress", audio: "started" }), { channel: "voice" }))).toEqual([]);
+    expect(over([answered, { ...openMute, seconds: 4 }], { audio: "ended" })).toEqual([]);
     expect(paused([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
     expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17", mutedBy: "host" }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9, by: "a-17", mutedBy: "station" }])).toEqual([]);
     // A muted leg names the agent: the host has one, the provider knows who. A held leg may honestly not.
@@ -368,11 +368,11 @@ describe("validateTask", () => {
   it("gives a task whose party the host is dialling its audio from dialling, and no other task not at work", () => {
     const ringing = { onCall: [{ role: "party", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:00:00Z" }] };
     const voice = { channel: "voice", dialOutcomesDeclared: true };
-    expect(rules(validateTask(task({ phase: "pending", acceptance: "automatic", media: "started", ...ringing }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ phase: "preview", capabilities: {}, media: "started", ...ringing }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "pending", acceptance: "automatic", audio: "started", ...ringing }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "preview", capabilities: {}, audio: "started", ...ringing }), voice))).toEqual([]);
     // The controls: nobody ringing, and a platform's own callback without the host's dial, have no audio before the work begins.
-    expect(rules(validateTask(task({ phase: "pending", media: "started" }), voice))).toEqual(["task.media.beforeWork"]);
-    expect(rules(validateTask(task({ phase: "preview", capabilities: {}, media: "started", onCall: [{ role: "party", stage: "ringing", since: "2026-08-21T09:00:00Z" }] }), voice))).toEqual(["task.media.beforeWork"]);
+    expect(rules(validateTask(task({ phase: "pending", audio: "started" }), voice))).toEqual(["task.audio.beforeWork"]);
+    expect(rules(validateTask(task({ phase: "preview", capabilities: {}, audio: "started", onCall: [{ role: "party", stage: "ringing", since: "2026-08-21T09:00:00Z" }] }), voice))).toEqual(["task.audio.beforeWork"]);
   });
 
   it("holds a task whose party is locked to carrying the locked value nowhere else, given the values", () => {
@@ -396,9 +396,9 @@ describe("validateTask", () => {
 
   it("refuses the task words the contract renamed, beside the words that replaced them", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
-    const media = (value: unknown) => rules(validateTask(task({ media: value }), { channel: "voice" }));
-    expect(media("started")).toEqual([]);
-    expect(media("ready")).toEqual(["task.media"]);
+    const audio = (value: unknown) => rules(validateTask(task({ audio: value }), { channel: "voice" }));
+    expect(audio("started")).toEqual([]);
+    expect(audio("ready")).toEqual(["task.audio"]);
     const tab = (browser: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/", ...browser }] }), { channel: "voice" }));
     expect(tab({ sharedSession: false })).toEqual([]);
     // renamed away: a browser still saying reuse has not said whether its session is shared.
@@ -661,7 +661,7 @@ describe("validateTeamMembers", () => {
     expect(validateTeamMembers(teamMembers())).toEqual([]);
     expect(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", since: "2026-08-21T09:00:00Z", break: "starting-after-task" }], requests: [] })).toEqual([]);
     // Host-stopped is a stated availability of its own: signed in here, capacity held by the host for elsewhere.
-    expect(validateTeamMembers({ members: [{ id: "A-2", availability: "reserved", since: "2026-08-21T09:00:00Z" }], requests: [] })).toEqual([]);
+    expect(validateTeamMembers({ members: [{ id: "A-2", availability: "elsewhere", since: "2026-08-21T09:00:00Z" }], requests: [] })).toEqual([]);
     // Requests are always carried: [] when nobody is asking, never omitted.
     const withoutRequests = { members: [] as never[] };
     expect(rules(validateTeamMembers(withoutRequests))).toEqual(["team.requests.shape"]);
@@ -677,7 +677,7 @@ describe("validateTeamMembers", () => {
     expect(withTasks([{ ...trimmed, capabilities: { hold: true }, capabilitySource: "queue", browsers: [], completionMode: "agent-command" }])).toEqual([]);
     expect(withTasks([{ ...trimmed, capabilities: { hold: true, mute: true } }])).toEqual(["task.capability.unknown"]);
     expect(withTasks([{ ...trimmed, history: { steps: [{ step: "held", at, seconds: 12, by: "A-2" }] }, onCall: [{ role: "party", since: at }] }])).toEqual([]);
-    expect(withTasks([{ ...trimmed, media: "started", phase: "completing" }])).toEqual(["task.media.completing"]);
+    expect(withTasks([{ ...trimmed, audio: "started", phase: "completing" }])).toEqual(["task.audio.completing"]);
     expect(withTasks([{ ...trimmed, phase: "ringing" }])).toEqual(["task.phase"]);
     expect(withTasks([{ ...trimmed, assignmentId: "" }])).toEqual(["task.assignmentId"]);
     expect(withTasks([trimmed, trimmed])).toEqual(["team.member.tasks.unique"]);
@@ -764,10 +764,10 @@ describe("validateSnapshot", () => {
 
   it("requires each contribution the manifest declares, [] included, and refuses one it does not", () => {
     const declaring = manifest({ idleCapabilities: { contacts: true, calendar: true } });
-    expect(rules(validateSnapshot(snapshot({ contacts: [], scheduledActivities: [] }), declaring))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ contacts: [], calendar: [] }), declaring))).toEqual([]);
     expect(rules(validateSnapshot(snapshot(), declaring)).sort()).toEqual(["snapshot.calendar.required", "snapshot.contacts.required"]);
     expect(rules(validateSnapshot(snapshot(), manifest()))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ contacts: [], scheduledActivities: [] }), manifest())).sort()).toEqual(["snapshot.calendar.capability", "snapshot.contacts.capability"]);
+    expect(rules(validateSnapshot(snapshot({ contacts: [], calendar: [] }), manifest())).sort()).toEqual(["snapshot.calendar.capability", "snapshot.contacts.capability"]);
   });
 
   it("carries the reader into the team member list", () => {
@@ -799,12 +799,12 @@ describe("validateSnapshot", () => {
     // agent does not have.
     expect(rules(validateSnapshot(snapshot({ contacts: [{ name: "Asha" }] }), manifest())))
       .toContain("snapshot.contacts.capability");
-    expect(rules(validateSnapshot(snapshot({ scheduledActivities: [] }), manifest())))
+    expect(rules(validateSnapshot(snapshot({ calendar: [] }), manifest())))
       .toContain("snapshot.calendar.capability");
     // Controls: with the capability declared, the same data is fine -- and only that capability,
     // since a declared contribution the snapshot lacks is refused the other way round.
     expect(validateSnapshot(snapshot({ contacts: [{ name: "Asha" }] }), manifest({ idleCapabilities: { contacts: true } }))).toEqual([]);
-    expect(validateSnapshot(snapshot({ scheduledActivities: [] }), manifest({ idleCapabilities: { calendar: true } }))).toEqual([]);
+    expect(validateSnapshot(snapshot({ calendar: [] }), manifest({ idleCapabilities: { calendar: true } }))).toEqual([]);
   });
 });
 
@@ -815,10 +815,10 @@ describe("validateEventEnvelope", () => {
   it("refuses the event names the contract renamed, beside the names that replaced them", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
     const event = (type: string) => rules(validateEventEnvelope(envelope({ type, assignmentId: "alloc-42", status: "active" }), manifest()));
-    expect(event("task-media-started")).toEqual([]);
+    expect(event("task-audio-started")).toEqual([]);
     expect(event("transport-status")).toEqual([]);
     // renamed away: the old event names must be refused, not aliased.
-    expect([event("task-media-ready"), event("provider-status"), event("provider-summary")]).toEqual([["event.type"], ["event.type"], ["event.type"]]);
+    expect([event("task-audio-ready"), event("provider-status"), event("provider-summary")]).toEqual([["event.type"], ["event.type"], ["event.type"]]);
     // renamed away: the word moved from the offer to the task; an offer still carrying it has a task saying nothing.
     expect(rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending" }), acceptanceMode: "consent" }), manifest(), "event", { autoAcceptTasks: true }))).toEqual(["task.acceptance.required"]);
   });
@@ -886,11 +886,11 @@ describe("validateEventEnvelope", () => {
     expect(check({ type: "break-state", break: { status: "on-break", canRequestBreak: false } })).toEqual([]);
     expect(check({ type: "task-offered", task: task({ phase: "pending", acceptance: "consent" }) })).toEqual([]);
     expect(check({ type: "task-offered", task: task({ phase: "pending", acceptance: "whenever" }) })).toContain("task.acceptance");
-    expect(check({ type: "task-media-ended", assignmentId: "alloc-42" })).toEqual([]);
-    expect(check({ type: "task-media-ended", assignmentId: "" })).toContain("event.taskMediaEnded.assignmentId");
-    expect(check({ type: "task-media-ended", assignmentId: "alloc-42", taskId: "call-42" })).toContain("event.assignmentId.renamed");
-    expect(check({ type: "task-media-started", assignmentId: "alloc-42" })).toEqual([]);
-    expect(check({ type: "task-media-started", assignmentId: "" })).toContain("event.taskMediaStarted.assignmentId");
+    expect(check({ type: "task-audio-ended", assignmentId: "alloc-42" })).toEqual([]);
+    expect(check({ type: "task-audio-ended", assignmentId: "" })).toContain("event.taskAudioEnded.assignmentId");
+    expect(check({ type: "task-audio-ended", assignmentId: "alloc-42", taskId: "call-42" })).toContain("event.assignmentId.renamed");
+    expect(check({ type: "task-audio-started", assignmentId: "alloc-42" })).toEqual([]);
+    expect(check({ type: "task-audio-started", assignmentId: "" })).toContain("event.taskAudioStarted.assignmentId");
     expect(check({ type: "announcement", text: "Hello", announcedAt: "2026-08-21T09:00:00Z" })).toEqual([]);
     expect(check({ type: "announcement", text: "", announcedAt: "2026-08-21T09:00:00Z" })).toContain("event.announcement.text");
     expect(check({ type: "team-updated", team: { members: [], requests: [] } })).toEqual([]);
@@ -1108,10 +1108,10 @@ describe("validateResult", () => {
     // renamed away: dialled overstated what happened; a dial is accepted and being placed, and its outcome comes later.
     expect(rules(validateResult({ status: "dialled", dialId: "dial-1" }, "dial"))).toEqual(["result.status"]);
     expect(rules(validateResult({ status: "ok" }, "execute"))).toEqual(["result.status"]);
-    expect(rules(validateResult({ status: "opened", session: { remoteAudio: {}, setMuted: () => undefined, close: () => undefined } }, "openMedia"))).toEqual([]);
-    expect(rules(validateResult({ status: "unavailable", failure }, "openMedia"))).toEqual([]);
-    expect(rules(validateResult({ status: "failed", failure }, "openMedia"))).toEqual(["result.status"]);
-    expect(rules(validateResult({ status: "opened" }, "openMedia"))).toEqual(["result.session"]);
+    expect(rules(validateResult({ status: "opened", audio: { remoteAudio: {}, setMuted: () => undefined, close: () => undefined } }, "openAudio"))).toEqual([]);
+    expect(rules(validateResult({ status: "unavailable", failure }, "openAudio"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure }, "openAudio"))).toEqual(["result.status"]);
+    expect(rules(validateResult({ status: "opened" }, "openAudio"))).toEqual(["result.audio"]);
     expect(rules(validateResult("applied", "execute"))).toEqual(["result.shape"]);
   });
 
@@ -1125,18 +1125,18 @@ describe("validateResult", () => {
     expect(rules(validateResult({ status: "applied", failure }, "execute"))).toEqual(["result.failure.unexpected"]);
   });
 
-  it("requires the audio and controls promised by an opened media session", () => {
+  it("requires the audio and controls promised by an opened audio session", () => {
     const session = { remoteAudio: {}, setMuted: () => undefined, close: () => undefined };
-    expect(validateResult({ status: "opened", session }, "openMedia")).toEqual([]);
+    expect(validateResult({ status: "opened", audio: session }, "openAudio")).toEqual([]);
     for (const key of ["remoteAudio", "setMuted", "close"] as const) {
       for (const value of [undefined, null, false, "invalid", []]) {
-        expect(rules(validateResult({ status: "opened", session: { ...session, [key]: value } }, "openMedia"))).toEqual([`result.session.${key}`]);
+        expect(rules(validateResult({ status: "opened", audio: { ...session, [key]: value } }, "openAudio"))).toEqual([`result.audio.${key}`]);
       }
     }
-    expect(rules(validateResult({ status: "opened", session: {} }, "openMedia"))).toEqual([
-      "result.session.remoteAudio", "result.session.setMuted", "result.session.close",
+    expect(rules(validateResult({ status: "opened", audio: {} }, "openAudio"))).toEqual([
+      "result.audio.remoteAudio", "result.audio.setMuted", "result.audio.close",
     ]);
-    expect(rules(validateResult({ status: "unavailable", failure, session }, "openMedia"))).toEqual(["result.session.unexpected"]);
+    expect(rules(validateResult({ status: "unavailable", failure, audio: session }, "openAudio"))).toEqual(["result.audio.unexpected"]);
   });
 
   it("lets a provider name its own codes and holds the omni namespace to the contract", () => {
@@ -1268,9 +1268,9 @@ describe("the other direction, everywhere", () => {
     const on = (event: unknown, m: unknown) => rules(validateEventEnvelope(envelope(event), m));
     expect(on({ type: "contacts-updated", contacts: [] }, declaring())).toEqual([]);
     expect(on({ type: "contacts-updated", contacts: [] }, manifest())).toEqual(["event.contacts.capability"]);
-    expect(on({ type: "calendar-updated", scheduledActivities: [activity] }, declaring())).toEqual([]);
-    expect(on({ type: "calendar-updated", scheduledActivities: [activity] }, manifest())).toEqual(["event.calendar.capability"]);
-    expect(on({ type: "calendar-updated", scheduledActivities: [activity, activity] }, declaring())).toEqual(["activity.id.unique"]);
+    expect(on({ type: "calendar-updated", calendar: [activity] }, declaring())).toEqual([]);
+    expect(on({ type: "calendar-updated", calendar: [activity] }, manifest())).toEqual(["event.calendar.capability"]);
+    expect(on({ type: "calendar-updated", calendar: [activity, activity] }, declaring())).toEqual(["activity.id.unique"]);
   });
 
   it("offers a task only before it is under way, with the acceptance the login asked for on the task", () => {
@@ -1384,7 +1384,7 @@ describe("rules that had no test", () => {
   });
 
   it("scheduled activities on the snapshot", () => {
-    const calendar = (activities: unknown[]) => rules(validateSnapshot(snapshot({ scheduledActivities: activities }), manifest({ idleCapabilities: { calendar: true } })));
+    const calendar = (activities: unknown[]) => rules(validateSnapshot(snapshot({ calendar: activities }), manifest({ idleCapabilities: { calendar: true } })));
     const activity = { id: "cb-1", title: "Callback", startsAt: "2026-08-21T10:00:00Z", endsAt: "2026-08-21T10:15:00Z" };
     expect(calendar([activity])).toEqual([]);
     expect(calendar([{ ...activity, endsAt: "2026-08-21T09:00:00Z" }])).toEqual(["activity.endsAt.order"]);
@@ -1563,7 +1563,7 @@ describe("the validators accept exactly what the contract publishes", () => {
       if (name === "dial") expect(onChat).toContain("manifest.idleCapability.channel");
       else expect(onChat).toEqual([]);
     }
-    expect(rules(validateManifest(manifest({ idleCapabilities: { media: true } })))).toContain("manifest.idleCapability.channel");
+    expect(rules(validateManifest(manifest({ idleCapabilities: { audio: true } })))).toContain("manifest.idleCapability.channel");
   });
 });
 
@@ -1634,15 +1634,15 @@ describe("who is on the call", () => {
   const conferenced = { role: "conferenced", destinationId: "tier2", dialId: "dial-7f2", label: "Tier 2", stage: "joined", since };
 
   it("empties once the call has ended, even while the task goes on", () => {
-    // The last word about a call must not stay true for ever: a completing task, or one whose media
+    // The last word about a call must not stay true for ever: a completing task, or one whose audio
     // ended, carries nobody on the call. Empty and absent both say so.
     const live = [party, agent];
     expect(rules(validateTask(task({ onCall: live }), voice))).toEqual([]);
     expect(rules(validateTask(task({ phase: "completing", onCall: live }), voice))).toEqual(["task.onCall.ended"]);
-    expect(rules(validateTask(task({ media: "ended", onCall: live }), voice))).toEqual(["task.onCall.ended"]);
+    expect(rules(validateTask(task({ audio: "ended", onCall: live }), voice))).toEqual(["task.onCall.ended"]);
     expect(rules(validateTask(task({ phase: "completing", onCall: [] }), voice))).toEqual([]);
     expect(rules(validateTask(task({ phase: "completing" }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ media: "started", onCall: live }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ audio: "started", onCall: live }), voice))).toEqual([]);
   });
 
   it("states each role with what that role needs, and refuses what another role would carry", () => {
@@ -1842,8 +1842,8 @@ describe("validateTaskCommand", () => {
     // The microphone is the host's: there is no mute command for a provider, on any channel.
     expect(rules(validateTaskCommand({ type: "mute", muted: true }))).toEqual(["command.type"]);
     expect(rules(validateTaskCommand({ type: "mute", muted: true }, voice))).toEqual(["command.type"]);
-    expect(rules(validateTaskCommand({ type: "call", dialId: "dial-1" }))).toEqual([]);
-    expect(rules(validateTaskCommand({ type: "call" }))).toEqual(["command.call.dialId"]);
+    expect(rules(validateTaskCommand({ type: "dial", dialId: "dial-1" }))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "dial" }))).toEqual(["command.dial.dialId"]);
     expect(rules(validateTaskCommand({ type: "connect-back" }))).toEqual(["command.connectBack.dialId"]);
     expect(rules(validateTaskCommand({ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "transfer", action: "blind", dialId: "dial-2", destinationId: "tier2" }))).toContain("command.transfer.action");
@@ -1985,8 +1985,8 @@ describe("validateTaskCommand", () => {
     expect(cmd({ type: "pause" }, task({ channel: "chat", capabilities: { hold: true } }))).toEqual([]);
     expect(cmd({ type: "answer" }, task({ phase: "pending" }))).toEqual([]);
     expect(cmd({ type: "answer" })).toEqual(["command.phase.pending"]);
-    expect(cmd({ type: "call", dialId: "dial-1" }, task({ phase: "preview", capabilities: {} }))).toEqual([]);
-    expect(cmd({ type: "call", dialId: "dial-1" })).toEqual(["command.phase.preview"]);
+    expect(cmd({ type: "dial", dialId: "dial-1" }, task({ phase: "preview", capabilities: {} }))).toEqual([]);
+    expect(cmd({ type: "dial", dialId: "dial-1" })).toEqual(["command.phase.preview"]);
     expect(cmd({ type: "connect-back", dialId: "dial-1" }, task({ phase: "completing", capabilities: { connectBack: true } }))).toEqual([]);
     expect(cmd({ type: "connect-back", dialId: "dial-1" }, task({ phase: "completing", capabilities: {} }))).toEqual(["command.capability.connectBack"]);
     expect(cmd({ type: "connect-back", dialId: "dial-1" }, task({ capabilities: { connectBack: true } }))).toEqual(["command.phase.completing"]);
@@ -2159,13 +2159,13 @@ describe("preview: the agent presses Call", () => {
   });
 
   it("carries the deadline and what happens at it together, and only while previewing", () => {
-    expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "calls" }), voice))).toEqual([]);
+    expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "provider-dials" }), voice))).toEqual([]);
     expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "waits" }), voice))).toEqual([]);
     expect(rules(validateTask(preview({ previewEndsAt: at }), voice))).toEqual(["task.preview.atDeadline.required"]);
-    expect(rules(validateTask(preview({ atDeadline: "calls" }), voice))).toEqual(["task.preview.previewEndsAt.required"]);
-    expect(rules(validateTask(preview({ previewEndsAt: "soon", atDeadline: "calls" }), voice))).toEqual(["task.preview.previewEndsAt"]);
+    expect(rules(validateTask(preview({ atDeadline: "provider-dials" }), voice))).toEqual(["task.preview.previewEndsAt.required"]);
+    expect(rules(validateTask(preview({ previewEndsAt: "soon", atDeadline: "provider-dials" }), voice))).toEqual(["task.preview.previewEndsAt"]);
     expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "dials" }), voice))).toEqual(["task.preview.atDeadline"]);
-    expect(rules(validateTask(task({ phase: "in-progress", previewEndsAt: at, atDeadline: "calls" }), voice))).toEqual(["task.preview.deadline.unexpected"]);
+    expect(rules(validateTask(task({ phase: "in-progress", previewEndsAt: at, atDeadline: "provider-dials" }), voice))).toEqual(["task.preview.deadline.unexpected"]);
     // No deadline at all: the agent has as long as they need.
     expect(rules(validateTask(preview(), voice))).toEqual([]);
   });
@@ -2203,17 +2203,17 @@ describe("the lead surface", () => {
     expect(updated({ capabilities: {} })).toEqual(["event.team.capability", "team.unentitled"]);
   });
 
-  it("gives the lead audio on a member's call through team media, on a voice login that leads", () => {
-    const media = (event: Record<string, unknown>, context: unknown = lead, m = manifest()) => rules(validateEventEnvelope(envelope(event), m, "event", context as never));
-    for (const type of ["team-media-started", "team-media-ended"]) {
-      expect(media({ type, memberId: "A-2", assignmentId: "alloc-42" })).toEqual([]);
-      expect(media({ type, memberId: "A-2", assignmentId: "alloc-42" }, { capabilities: {} })).toEqual(["event.teamMedia.capability"]);
-      expect(media({ type, memberId: "", assignmentId: "alloc-42" })).toEqual(["event.teamMedia.memberId"]);
-      expect(media({ type, memberId: "A-2" })).toEqual(["event.teamMedia.assignmentId"]);
-      expect(media({ type, memberId: "A-2", assignmentId: "alloc-42" }, lead, manifest({ channel: "chat", phones: undefined }))).toContain("event.media.channel");
+  it("gives the lead audio on a member's call through team audio, on a voice login that leads", () => {
+    const audio = (event: Record<string, unknown>, context: unknown = lead, m = manifest()) => rules(validateEventEnvelope(envelope(event), m, "event", context as never));
+    for (const type of ["team-audio-started", "team-audio-ended"]) {
+      expect(audio({ type, memberId: "A-2", assignmentId: "alloc-42" })).toEqual([]);
+      expect(audio({ type, memberId: "A-2", assignmentId: "alloc-42" }, { capabilities: {} })).toEqual(["event.teamAudio.capability"]);
+      expect(audio({ type, memberId: "", assignmentId: "alloc-42" })).toEqual(["event.teamAudio.memberId"]);
+      expect(audio({ type, memberId: "A-2" })).toEqual(["event.teamAudio.assignmentId"]);
+      expect(audio({ type, memberId: "A-2", assignmentId: "alloc-42" }, lead, manifest({ channel: "chat", phones: undefined }))).toContain("event.audio.channel");
     }
     // Without the login in hand, the entitlement is not checked, and the shape still is.
-    expect(media({ type: "team-media-started", memberId: "A-2", assignmentId: "alloc-42" }, {})).toEqual([]);
+    expect(audio({ type: "team-audio-started", memberId: "A-2", assignmentId: "alloc-42" }, {})).toEqual([]);
   });
 
   it("answers the one lead method as every provider method answers", () => {
@@ -2240,14 +2240,14 @@ describe("validateTask capabilitySource", () => {
   const rules = (t: unknown) => validateTask(t, voice).map(v => v.rule);
 
   it("requires the task to say where its capabilities came from, and closes the set", () => {
-    for (const source of ["queue", "ungoverned", "undetermined"]) expect(rules(task({ capabilitySource: source }))).toEqual([]);
+    for (const source of ["queue", "nobody", "not-yet-read"]) expect(rules(task({ capabilitySource: source }))).toEqual([]);
     expect(rules(task({ capabilitySource: undefined }))).toEqual(["task.capabilitySource"]);
     expect(rules(task({ capabilitySource: "Unreadable" }))).toEqual(["task.capabilitySource"]);
   });
 
-  it("holds undetermined terms to no shape of their own: what the provider will honour is what it publishes", () => {
-    expect(rules(task({ capabilitySource: "undetermined", capabilities: {} }))).toEqual([]);
-    expect(rules(task({ capabilitySource: "undetermined", capabilities: { hold: true, endCall: true } }))).toEqual([]);
+  it("holds not-yet-read terms to no shape of their own: what the provider will honour is what it publishes", () => {
+    expect(rules(task({ capabilitySource: "not-yet-read", capabilities: {} }))).toEqual([]);
+    expect(rules(task({ capabilitySource: "not-yet-read", capabilities: { hold: true, endCall: true } }))).toEqual([]);
     expect(rules(task({ capabilitySource: "queue", capabilities: {} }))).toEqual([]);
   });
 });

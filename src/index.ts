@@ -153,7 +153,7 @@ export const DIAL_OUTCOMES = ["answered", "busy", "no-answer", "unreachable", "r
 
 /**
  * How the agent hears the call: on a `softphone`, where the host owns the audio and opens it
- * through `openMedia`, or on a `deskPhone`, a handset the platform rings, where the host opens
+ * through `openAudio`, or on a `deskPhone`, a handset the platform rings, where the host opens
  * nothing and only shows the call. A voice manifest lists the phones its platform supports, and
  * the host picks one for the login at authentication.
  */
@@ -445,7 +445,7 @@ export interface RecordingActions {
 /** Per-task permission, not a provider-wide recording switch. Absence grants nothing. */
 export interface TaskRecordingPolicy {
   provider?: RecordingActions;
-  host?: RecordingActions & { destinationId: string };
+  host?: RecordingActions & { storageId: string };
 }
 /** Current evidence only. Expiry/disconnect means unknown, never a historical stop. */
 export type RecordingState =
@@ -475,7 +475,7 @@ export interface HostRecording {
   announcesToCaller?: true;
   actions: RecordingAction[];
   /** Explicitly provisioned destinations. A task chooses one; no upload/storage fallback. */
-  destinationIds: string[];
+  storageIds: string[];
   execute(request: HostRecordingRequest): Promise<RecordingCommandResult>;
 }
 /** Recording applies or fails; it never dials. Rejection without result means unknown. */
@@ -759,9 +759,9 @@ export type TaskPhase =
 /** What the system does when a preview's deadline passes with no Call pressed. */
 export type PreviewDeadline =
   /** Provider initiates dialing when preparation ends; never a host timer command. */
-  | "calls"
+  | "provider-dials"
   /** Host initiates the ordinary call command when preparation ends. */
-  | "host-calls"
+  | "host-dials"
   /** Preparation target has elapsed; remain in preview until the agent presses Call. */
   | "waits";
 
@@ -940,13 +940,13 @@ export interface Locked {
 export type Lockable<T> = T | Locked;
 
 /**
- * Who chose a task's capabilities. `undetermined` is a fault the provider states on the task rather
+ * Who chose a task's capabilities. `not-yet-read` is a fault the provider states on the task rather
  * than hides: the platform's terms could not be read, and the set published is what the provider
  * will honour, not what the platform permits.
  */
-export type CapabilitySource = "queue" | "ungoverned" | "undetermined";
+export type CapabilitySource = "queue" | "nobody" | "not-yet-read";
 
-export const CAPABILITY_SOURCES = ["queue", "ungoverned", "undetermined"] as const satisfies readonly CapabilitySource[];
+export const CAPABILITY_SOURCES = ["queue", "nobody", "not-yet-read"] as const satisfies readonly CapabilitySource[];
 
 export type Task<C extends Channel = Channel> = {
   /** The assignment this task is the record of, and its one identity. See `AssignmentId`. */
@@ -958,8 +958,8 @@ export type Task<C extends Channel = Channel> = {
   capabilities: TaskCapabilities<C>;
   /**
    * Where the capabilities came from before the provider put them on the task, so a host can tell
-   * a fact from a fault: `queue` when somebody chose these terms, `ungoverned` when nothing handed
-   * the work over, `undetermined` when a queue was named and its terms could not be read -- the
+   * a fact from a fault: `queue` when somebody chose these terms, `nobody` when nothing handed
+   * the work over, `not-yet-read` when a queue was named and its terms could not be read -- the
    * provider then publishes what it will honour and says so here, where the controls are drawn.
    */
   capabilitySource: CapabilitySource;
@@ -978,7 +978,7 @@ export type Task<C extends Channel = Channel> = {
   acceptance?: AcceptanceMode;
   /**
    * In `preview` only, and together: the preparation target and behavior when it elapses,
-   * and who acts then -- `calls` makes the provider initiate dialing, `host-calls` makes the
+   * and who acts then -- `provider-dials` makes the provider initiate dialing, `host-dials` makes the
    * host issue Call, and `waits` keeps waiting for the agent without dialing or ending the task.
    * Absent, the agent has as long as they need, without a preparation countdown.
    */
@@ -990,10 +990,10 @@ export type Task<C extends Channel = Channel> = {
   history?: TaskHistory;
 } & TaskCompletion
   // onCall is this interaction's current room, not the lifetime of the caller or whole bridge.
-  // Its room, a lead asked onto it or taking it over, and real-time media are voice affairs; forbidden elsewhere.
+  // Its room, a lead asked onto it or taking it over, and real-time audio are voice affairs; forbidden elsewhere.
   & (C extends "voice"
-    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; media?: TaskMediaState }
-    : { recording?: never; onCall?: never; leadAssist?: never; takenOver?: never; media?: never });
+    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
+    : { recording?: never; onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
 
 /**
  * What the provider wants of Omni's acceptance policy for one offer. On routed work, present only
@@ -1023,7 +1023,7 @@ export type TaskOutcome =
 // ---------------------------------------------------------------------------
 
 export const TASK_COMMAND_NAMES = {
-  voice: ["answer", "decline", "call", "hold", "resume", "end-call", "terminate-call",
+  voice: ["answer", "decline", "dial", "hold", "resume", "end-call", "terminate-call",
           "connect-back", "transfer", "lead-assist", "conference", "recording", "complete"],
   chat: ["accept", "decline", "pause", "resume", "complete"],
   email: ["accept", "decline", "complete"],
@@ -1041,7 +1041,7 @@ export type VoiceTaskCommand =
   | { type: "answer" }
   | { type: "decline" }
   /** In `preview`: place the call to the party whose record the agent has read. A dial, gated by the phase alone. */
-  | { type: "call"; dialId: DialId }
+  | { type: "dial"; dialId: DialId }
   | { type: "hold" }
   | { type: "resume" }
   /** End the agent's channel and every channel the agent added; the caller continues on the provider's path. Gated by `endCall`. */
@@ -1120,7 +1120,7 @@ export type TaskCommandResult =
 
 /** The dial a command places, by the host's identity for it; `undefined` for a command that dials nothing. */
 export function commandDialId(command: TaskCommand): DialId | undefined {
-  if (command.type === "connect-back" || command.type === "call") return command.dialId;
+  if (command.type === "connect-back" || command.type === "dial") return command.dialId;
   if (command.type === "transfer" && (command.action === "cold" || command.action === "warm")) return command.dialId;
   if (command.type === "conference" && command.action === "add") return command.dialId;
   return undefined;
@@ -1228,8 +1228,8 @@ export type BreakEndResult =
 // Team.
 // ---------------------------------------------------------------------------
 
-/** `reserved`: signed in here, and the host holds this agent's capacity for another provider (`count: 0`, host-stopped); not receiving this provider's work. */
-export type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "reserved" | "signed-out";
+/** `elsewhere`: signed in here, and the host holds this agent's capacity for another provider (`count: 0`, host-stopped); not receiving this provider's work. */
+export type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "elsewhere" | "signed-out";
 
 export interface TeamMember {
   id: UserId;
@@ -1274,8 +1274,8 @@ export type MemberTask<C extends Channel = Channel> = {
   completionMode?: CompletionMode;
   wrapAllowance?: DurationSeconds;
 } & (C extends "voice"
-  ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; media?: TaskMediaState }
-  : { onCall?: never; leadAssist?: never; takenOver?: never; media?: never });
+  ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
+  : { onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
 
 /** The lead on this member's call, in the mode they are heard, since when. */
 export interface MemberListening {
@@ -1360,7 +1360,7 @@ export type TeamCommandResult =
   | { status: "failed"; failure: ProtocolFailure };
 
 // ---------------------------------------------------------------------------
-// Media.
+// Audio.
 // ---------------------------------------------------------------------------
 
 /**
@@ -1368,22 +1368,22 @@ export type TeamCommandResult =
  * `ended` once primary interaction's audio ended, and the field omitted while none should be. The
  * provider's word -- a desk attaches and renders audio from it, never from its own senses.
  */
-export type TaskMediaState = "started" | "ended";
+export type TaskAudioState = "started" | "ended";
 
-export interface VoiceMediaSession {
+export interface CallAudio {
   remoteAudio: MediaStream;
   setMuted(muted: boolean): void;
   close(): void;
 }
 
-export interface OpenMediaRequest {
+export interface OpenAudioRequest {
   assignmentId: AssignmentId;
   /** The agent's microphone as Omni captured it, `HostReport.audio.input.localAudio`; absent while that input is `unavailable`. */
   localAudio?: MediaStream;
 }
 
-export type OpenMediaResult =
-  | { status: "opened"; session: VoiceMediaSession }
+export type OpenAudioResult =
+  | { status: "opened"; audio: CallAudio }
   | { status: "unavailable"; failure: ProtocolFailure };
 
 // ---------------------------------------------------------------------------
@@ -1464,7 +1464,7 @@ export interface Snapshot<C extends Channel = Channel> {
   /** The provider's own count of those tasks, stated rather than inferred: it must equal `tasks.length`, so a blank or unanswered state can never pass as a confirmed empty. */
   taskCount: number;
   contacts?: Contact[];
-  scheduledActivities?: ScheduledActivity[];
+  calendar?: ScheduledActivity[];
   team?: TeamMembers;
 }
 
@@ -1475,7 +1475,7 @@ export interface Snapshot<C extends Channel = Channel> {
  * tasks against it and needs no new signal when one ends. The agent is one person on several
  * providers, and the host divides their capacity among them: `0` is host-stopped -- the agent's
  * capacity is elsewhere for now, this provider assigns nothing and shows the member as
- * `reserved` -- and is not a break, which is the agent not working at all. The host restates a
+ * `elsewhere` -- and is not a break, which is the agent not working at all. The host restates a
  * count of one or more when this provider has the agent's capacity again.
  */
 export interface AgentCapacity {
@@ -1508,15 +1508,15 @@ export type ProviderEvent<C extends Channel = Channel> =
       assignmentExpiresAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task<C> }
-  | { type: "task-media-started"; assignmentId: AssignmentId }
-  | { type: "task-media-ended"; assignmentId: AssignmentId }
+  | { type: "task-audio-started"; assignmentId: AssignmentId }
+  | { type: "task-audio-ended"; assignmentId: AssignmentId }
   /**
    * The lead's channel is in a member's call -- listening, coaching or joined -- and its audio should
-   * attach: on a softphone the application opens media on the member's assignment as it does for a
+   * attach: on a softphone the application opens audio on the member's assignment as it does for a
    * task. Voice, to a login that declares `lead`, never to the member.
    */
-  | { type: "team-media-started"; memberId: UserId; assignmentId: AssignmentId }
-  | { type: "team-media-ended"; memberId: UserId; assignmentId: AssignmentId }
+  | { type: "team-audio-started"; memberId: UserId; assignmentId: AssignmentId }
+  | { type: "team-audio-ended"; memberId: UserId; assignmentId: AssignmentId }
   | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
   /**
    * How a dial the host placed ended, once, either way -- `answered` is stated, never read off
@@ -1531,7 +1531,7 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "diagnostic"; expected: string; observed: string; assignmentId?: AssignmentId }
   | { type: "team-updated"; team: TeamMembers }
   | { type: "contacts-updated"; contacts: Contact[] }
-  | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
+  | { type: "calendar-updated"; calendar: ScheduledActivity[] };
 
 /**
  * The `Provider` prefix survives here for a mechanical reason rather than a naming one: `Event`
@@ -1629,7 +1629,7 @@ export interface Connection<C extends Channel = Channel> {
   /** Required when the login declares `capabilities.lead`: every lead act, on the team surface and nowhere else. */
   executeTeam?(request: TeamCommandRequest): Promise<TeamCommandResult>;
   /** Required of a voice adapter whose manifest lists `softphone`: on one, the call's audio lands in Omni. */
-  openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
+  openAudio?(request: OpenAudioRequest): Promise<OpenAudioResult>;
   /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
   /** Records an interaction leg the host performed. Required of a softphone login's connection: the host mutes its microphone on any call, and the record is the provider's. */

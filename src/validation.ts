@@ -34,7 +34,7 @@ import {
   DEFAULT_LEVELS,
   effectiveLevels,
   type TeamPolicySetting,
-  type TaskMediaState,
+  type TaskAudioState,
   type TransportRecovery,
   type HostGuarantees,
   type HostMute,
@@ -107,7 +107,7 @@ const TASK_PHASES = membersOf<TaskPhase>({
   pending: true, confirmed: true, preview: true, "in-progress": true, paused: true, completing: true,
 });
 const COMPLETION_MODES = membersOf<CompletionMode>({ "agent-command": true, "provider-automatic": true });
-const CAPABILITY_SOURCES = membersOf<CapabilitySource>({ queue: true, ungoverned: true, undetermined: true });
+const CAPABILITY_SOURCES = membersOf<CapabilitySource>({ queue: true, nobody: true, "not-yet-read": true });
 const ACCEPTANCE_MODES = membersOf<AcceptanceMode>({
   "no-preference": true, "consent": true, "automatic": true,
 });
@@ -121,7 +121,7 @@ const BREAK_APPROVALS = membersOf<BreakStatus>({
   "not-requested": true, "awaiting-approval": true, granted: true, "starting-after-task": true, "on-break": true,
 });
 const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
-  ready: true, "on-task": true, "on-break": true, reserved: true, "signed-out": true,
+  ready: true, "on-task": true, "on-break": true, elsewhere: true, "signed-out": true,
 });
 const HISTORY_STEPS = membersOf<HistoryStep>({
   queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
@@ -151,7 +151,7 @@ const MEMBER_BREAKS = membersOf<Extract<BreakStatus, "awaiting-approval" | "gran
 const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
   pending: true,
 });
-const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, "host-calls": true, waits: true });
+const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ "provider-dials": true, "host-dials": true, waits: true });
 const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
 const LISTENING_MODES = membersOf<ListeningMode>({ listen: true, coach: true, "join-call": true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
@@ -966,7 +966,7 @@ function validateTaskAttributes(value: unknown, path: string, into: Collector, l
   });
 }
 
-function validateHistory(value: unknown, path: string, into: Collector, task: { phase?: unknown; media?: unknown } = {}): void {
+function validateHistory(value: unknown, path: string, into: Collector, task: { phase?: unknown; audio?: unknown } = {}): void {
   if (value === undefined) return;
   if (!isPlainObject(value)) {
     into.add("task.history.shape", path, "history must be an object with its steps when present");
@@ -1014,15 +1014,15 @@ function validateHistory(value: unknown, path: string, into: Collector, task: { 
         "seconds must be a positive whole number; omit it while the step is still running");
     } else {
       // An open leg is one still running, and the task says whether it can be: a hold runs only while
-      // the task is paused, and a mute only while its media is up. An open entry after that is a leg
+      // the task is paused, and a mute only while its audio is up. An open entry after that is a leg
       // nobody closed, which reads exactly like a leg running now.
       if (entry.step === "held") {
         into.require(task.phase === "paused", "task.history.held.open", `${at}.seconds`,
           `a held entry without seconds is a hold still running, and the task is ${describeValue(task.phase)}: the hold has ended, and its duration is stated`);
       }
       if (entry.step === "muted") {
-        into.require(task.media !== "ended" && task.phase !== "completing", "task.history.muted.open", `${at}.seconds`,
-          "a muted entry without seconds is still running, but this interaction's media has ended: the provider closes its open leg and states the duration; other channels may continue");
+        into.require(task.audio !== "ended" && task.phase !== "completing", "task.history.muted.open", `${at}.seconds`,
+          "a muted entry without seconds is still running, but this interaction's audio has ended: the provider closes its open leg and states the duration; other channels may continue");
       }
     }
     // A muted entry carries whose the silence was, as the host reported it; no other step has it.
@@ -1056,26 +1056,26 @@ function validateHistory(value: unknown, path: string, into: Collector, task: { 
 }
 
 /** Present only while consulting, and only on voice: elsewhere there is nobody to consult. */
-const TASK_MEDIA_STATES = membersOf<TaskMediaState>({ started: true, ended: true });
+const TASK_MEDIA_STATES = membersOf<TaskAudioState>({ started: true, ended: true });
 
-/** Real-time media is a voice affair, and its state is one of two words. */
+/** Real-time audio is a voice affair, and its state is one of two words. */
 /** A host dial, or explicitly provider-triggered preview dial, is ringing the party. */
 function partyRingingBeforeWork(task: Record<string, unknown>): boolean {
   return Array.isArray(task.onCall) && task.onCall.some(entry =>
-    isPlainObject(entry) && entry.role === "party" && entry.stage === "ringing" && (isFilled(entry.dialId) || (task.phase === "preview" && task.atDeadline === "calls" && entry.dialId === undefined)));
+    isPlainObject(entry) && entry.role === "party" && entry.stage === "ringing" && (isFilled(entry.dialId) || (task.phase === "preview" && task.atDeadline === "provider-dials" && entry.dialId === undefined)));
 }
 
-function validateTaskMedia(task: Record<string, unknown>, value: unknown, channel: string, phase: unknown, path: string, into: Collector): void {
+function validateTaskAudio(task: Record<string, unknown>, value: unknown, channel: string, phase: unknown, path: string, into: Collector): void {
   if (value === undefined) return;
-  if (!into.require(channel === "voice", "task.media.channel", path,
-    `a ${channel} task carries no real-time media state`)) return;
-  if (into.oneOf(value, TASK_MEDIA_STATES, "task.media", path)) {
-    // Nothing is acquired while pending, and a preview has placed no call: media names a task whose
+  if (!into.require(channel === "voice", "task.audio.channel", path,
+    `a ${channel} task carries no real-time audio state`)) return;
+  if (into.oneOf(value, TASK_MEDIA_STATES, "task.audio", path)) {
+    // Nothing is acquired while pending, and a preview has placed no call: audio names a task whose
     // work has begun, on a snapshot as on the event, or a host would open the microphone on an offer.
     // Ring-back may precede answer for a host dial or an explicitly provider-triggered preview.
-    // A deadline alone is never evidence that media started.
-    into.require(!(WORK_NOT_BEGUN as readonly unknown[]).includes(phase) || partyRingingBeforeWork(task), "task.media.beforeWork", path,
-      `a ${describeValue(phase)} task has no media: audio arrives once its work has begun, or once an evidenced host/provider preview dial is ringing its party`);
+    // A deadline alone is never evidence that audio started.
+    into.require(!(WORK_NOT_BEGUN as readonly unknown[]).includes(phase) || partyRingingBeforeWork(task), "task.audio.beforeWork", path,
+      `a ${describeValue(phase)} task has no audio: audio arrives once its work has begun, or once an evidenced host/provider preview dial is ringing its party`);
   }
 }
 const WORK_NOT_BEGUN = ["pending", "confirmed", "preview"] as const;
@@ -1257,7 +1257,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     }
     if (task.atDeadline === undefined) {
       into.add("task.preview.atDeadline.required", `${path}.atDeadline`,
-        "a preview with a deadline says what happens at it: provider calls, host calls, or waits for the agent -- an agent counting down has to know which");
+        "a preview with a deadline says what happens at it: provider dials, host dials, or waits for the agent -- an agent counting down has to know which");
     } else {
       into.oneOf(task.atDeadline, PREVIEW_DEADLINES, "task.preview.atDeadline", `${path}.atDeadline`);
     }
@@ -1322,20 +1322,20 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   }
   if (context.member !== true || task.browsers !== undefined) validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into, context.levels);
-  validateHistory(task.history, `${path}.history`, into, { phase: task.phase, media: task.media });
+  validateHistory(task.history, `${path}.history`, into, { phase: task.phase, audio: task.audio });
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
-  // Media and onCall describe this agent's interaction, not the continuing caller journey.
-  // Once the interaction's media ends or it enters wrap, its live room is cleared. Other
+  // Audio and onCall describe this agent's interaction, not the continuing caller journey.
+  // Once the interaction's audio ends or it enters wrap, its live room is cleared. Other
   // channels may remain connected under another interaction or in IVR/queue stages.
-  if (task.phase === "completing" && task.media === "started") {
-    into.add("task.media.completing", `${path}.media`,
-      "a completing task's interaction media has ended or never started; it cannot still be started during wrap");
+  if (task.phase === "completing" && task.audio === "started") {
+    into.add("task.audio.completing", `${path}.audio`,
+      "a completing task's interaction audio has ended or never started; it cannot still be started during wrap");
   }
-  if (Array.isArray(task.onCall) && task.onCall.length > 0 && (task.phase === "completing" || task.media === "ended")) {
+  if (Array.isArray(task.onCall) && task.onCall.length > 0 && (task.phase === "completing" || task.audio === "ended")) {
     into.add("task.onCall.ended", `${path}.onCall`,
-      `this interaction is no longer connected (${task.phase === "completing" ? "the task is completing" : "its media ended"}); clear its onCall view without implying that other channels ended`);
+      `this interaction is no longer connected (${task.phase === "completing" ? "the task is completing" : "its audio ended"}); clear its onCall view without implying that other channels ended`);
   }
-  validateTaskMedia(task, task.media, context.channel, task.phase, `${path}.media`, into);
+  validateTaskAudio(task, task.audio, context.channel, task.phase, `${path}.audio`, into);
   validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
   validateTakenOver(task.takenOver, context.channel, `${path}.takenOver`, into);
 
@@ -1911,8 +1911,8 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     into.add("snapshot.contacts.required", `${path}.contacts`,
       "the manifest declares contacts, so every snapshot carries the contribution: [] when there are none");
   }
-  if (snapshot.scheduledActivities === undefined && idle.calendar === true) {
-    into.add("snapshot.calendar.required", `${path}.scheduledActivities`,
+  if (snapshot.calendar === undefined && idle.calendar === true) {
+    into.add("snapshot.calendar.required", `${path}.calendar`,
       "the manifest declares calendar, so every snapshot carries the contribution: [] when there are none");
   }
   if (snapshot.contacts !== undefined) {
@@ -1925,22 +1925,22 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       into.add("snapshot.contacts.shape", `${path}.contacts`, "contacts must be an array when present");
     }
   }
-  if (snapshot.scheduledActivities !== undefined) {
-    into.require(idle.calendar === true, "snapshot.calendar.capability", `${path}.scheduledActivities`,
+  if (snapshot.calendar !== undefined) {
+    into.require(idle.calendar === true, "snapshot.calendar.capability", `${path}.calendar`,
       "scheduled activities require the calendar idle capability");
-    if (Array.isArray(snapshot.scheduledActivities)) {
+    if (Array.isArray(snapshot.calendar)) {
       const seen = new Set<string>();
-      snapshot.scheduledActivities.forEach((activity: unknown, index: number) => {
-        validateScheduledActivityInto(activity, `${path}.scheduledActivities[${index}]`, into, levels);
+      snapshot.calendar.forEach((activity: unknown, index: number) => {
+        validateScheduledActivityInto(activity, `${path}.calendar[${index}]`, into, levels);
         if (isPlainObject(activity) && isFilled(activity.id)) {
           if (seen.has(activity.id as string)) {
-            into.add("activity.id.unique", `${path}.scheduledActivities[${index}].id`, `duplicate activity id: ${activity.id}`);
+            into.add("activity.id.unique", `${path}.calendar[${index}].id`, `duplicate activity id: ${activity.id}`);
           }
           seen.add(activity.id as string);
         }
       });
     } else {
-      into.add("snapshot.calendar.shape", `${path}.scheduledActivities`, "scheduledActivities must be an array when present");
+      into.add("snapshot.calendar.shape", `${path}.calendar`, "calendar must be an array when present");
     }
   }
   // The login is the permission: a lead's snapshot carries a team member list, `members: []` included,
@@ -2104,13 +2104,13 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
     case "task-updated":
       validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${at}.task`, into);
       break;
-    case "task-media-started":
-      into.require(channel === "voice", "event.media.channel", `${at}.type`, "only a voice provider publishes media transitions");
-      into.require(isAssignmentId(event.assignmentId), "event.taskMediaStarted.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
+    case "task-audio-started":
+      into.require(channel === "voice", "event.audio.channel", `${at}.type`, "only a voice provider publishes audio transitions");
+      into.require(isAssignmentId(event.assignmentId), "event.taskAudioStarted.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
       break;
-    case "task-media-ended":
-      into.require(channel === "voice", "event.media.channel", `${at}.type`, "only a voice provider publishes media transitions");
-      into.require(isAssignmentId(event.assignmentId), "event.taskMediaEnded.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
+    case "task-audio-ended":
+      into.require(channel === "voice", "event.audio.channel", `${at}.type`, "only a voice provider publishes audio transitions");
+      into.require(isAssignmentId(event.assignmentId), "event.taskAudioEnded.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
       break;
     case "task-ended":
       into.require(isAssignmentId(event.assignmentId), "event.taskEnded.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
@@ -2151,14 +2151,14 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       into.require(context.leadFeatures !== false, "event.team.features", `${at}.team`, "the lead turned the team feature off, so nothing of the team reaches them");
       validateTeamMembersInto(event.team, `${at}.team`, { ...context, levels, channel: isChannel(channel) ? channel : undefined }, into);
       break;
-    case "team-media-started":
-    case "team-media-ended":
+    case "team-audio-started":
+    case "team-audio-ended":
       // The lead's channel in a member's call: audio the application opens on the member's assignment.
-      into.require(channel === "voice", "event.media.channel", `${at}.type`, "only a voice provider publishes media transitions");
-      into.require(context.capabilities === undefined || context.capabilities.lead === true, "event.teamMedia.capability", `${at}.type`,
-        "team media reaches a login that declares lead, and nobody else");
-      into.require(isUserId(event.memberId), "event.teamMedia.memberId", `${at}.memberId`, "team media names the member whose call the lead is on");
-      into.require(isAssignmentId(event.assignmentId), "event.teamMedia.assignmentId", `${at}.assignmentId`, "team media names the member's assignment");
+      into.require(channel === "voice", "event.audio.channel", `${at}.type`, "only a voice provider publishes audio transitions");
+      into.require(context.capabilities === undefined || context.capabilities.lead === true, "event.teamAudio.capability", `${at}.type`,
+        "team audio reaches a login that declares lead, and nobody else");
+      into.require(isUserId(event.memberId), "event.teamAudio.memberId", `${at}.memberId`, "team audio names the member whose call the lead is on");
+      into.require(isAssignmentId(event.assignmentId), "event.teamAudio.assignmentId", `${at}.assignmentId`, "team audio names the member's assignment");
       break;
     case "contacts-updated":
       into.require(idle.contacts === true, "event.contacts.capability", `${at}.contacts`,
@@ -2171,16 +2171,16 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       }
       break;
     case "calendar-updated":
-      into.require(idle.calendar === true, "event.calendar.capability", `${at}.scheduledActivities`,
+      into.require(idle.calendar === true, "event.calendar.capability", `${at}.calendar`,
         "calendar-updated requires the calendar idle capability");
-      if (!Array.isArray(event.scheduledActivities)) {
-        into.add("event.calendar.shape", `${at}.scheduledActivities`, "scheduledActivities must be an array");
+      if (!Array.isArray(event.calendar)) {
+        into.add("event.calendar.shape", `${at}.calendar`, "calendar must be an array");
       } else {
         const ids = new Set<string>();
-        event.scheduledActivities.forEach((activity: unknown, index: number) => {
-          validateScheduledActivityInto(activity, `${at}.scheduledActivities[${index}]`, into, levels);
+        event.calendar.forEach((activity: unknown, index: number) => {
+          validateScheduledActivityInto(activity, `${at}.calendar[${index}]`, into, levels);
           if (isPlainObject(activity) && isFilled(activity.id)) {
-            if (ids.has(activity.id as string)) into.add("activity.id.unique", `${at}.scheduledActivities[${index}].id`, `duplicate activity id: ${activity.id}`);
+            if (ids.has(activity.id as string)) into.add("activity.id.unique", `${at}.calendar[${index}].id`, `duplicate activity id: ${activity.id}`);
             ids.add(activity.id as string);
           }
         });
@@ -2518,7 +2518,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   if (type !== "custom" && type !== "recording") {
     let fields = ["type"];
     switch (type) {
-      case "call": case "connect-back": fields.push("dialId"); break;
+      case "dial": case "connect-back": fields.push("dialId"); break;
       case "complete": fields.push("outcome", "notes"); break;
       case "transfer":
         fields.push("action");
@@ -2538,8 +2538,8 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   }
   const dial = (rule: string) => into.filled(command.dialId, rule, `${path}.dialId`, "a command that dials carries the host's dialId");
   switch (type) {
-    case "call":
-      dial("command.call.dialId");
+    case "dial":
+      dial("command.dial.dialId");
       break;
     case "connect-back":
       dial("command.connectBack.dialId");
@@ -2650,7 +2650,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       inPhase("command.phase.pending", "pending");
       if (type === "decline") offered("decline");
       break;
-    case "call":
+    case "dial":
       inPhase("command.phase.preview", "preview");
       break;
     case "hold": case "resume": case "pause": offered("hold"); interaction(); break;
@@ -2663,7 +2663,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       into.violations.push(...validateRecordingCommandState(command, policy, state, path));
       if (command.action === "start" || command.action === "resume") {
         interaction();
-        into.require(task.media === "started", "recording.request.phase", path, "capture needs live media");
+        into.require(task.audio === "started", "recording.request.phase", path, "capture needs live audio");
       } else inPhase("command.phase.interaction", "in-progress", "paused", "completing");
       break;
     }
@@ -2753,7 +2753,7 @@ export type ResultMethod =
   | "cancelBreak"
   | "endBreak"
   | "executeTeam"
-  | "openMedia"
+  | "openAudio"
   | "setPreference"
   | "recordStep";
 
@@ -2769,7 +2769,7 @@ const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string |
   cancelBreak: { success: "cancelled", failure: "failed" },
   endBreak: { success: "ended", failure: "failed" },
   executeTeam: { success: "applied", failure: "failed" },
-  openMedia: { success: "opened", failure: "unavailable" },
+  openAudio: { success: "opened", failure: "unavailable" },
   setPreference: { success: "applied", failure: "failed" },
   recordStep: { success: "recorded", failure: "failed" },
 };
@@ -2790,22 +2790,22 @@ export function validateResult(result: unknown, method: ResultMethod, path = "re
     into.add("result.shape", path, `${method} must answer an object`);
     return into.violations;
   }
-  if (method === "openMedia" && result.status !== "opened") {
-    into.require(result.session === undefined, "result.session.unexpected", `${path}.session`, "only opened carries a media session");
+  if (method === "openAudio" && result.status !== "opened") {
+    into.require(result.audio === undefined, "result.audio.unexpected", `${path}.audio`, "only opened carries an audio session");
   }
   if (result.status === statuses.success) {
     into.require(result.failure === undefined, "result.failure.unexpected", `${path}.failure`,
       `${statuses.success} carries no failure`);
-    if (method === "openMedia") {
-      if (isPlainObject(result.session)) {
+    if (method === "openAudio") {
+      if (isPlainObject(result.audio)) {
         // Streams may come from another realm, and Node conformance runs have no MediaStream
         // constructor. Check the boundary shape without claiming to verify live audio.
-        into.require(isPlainObject(result.session.remoteAudio), "result.session.remoteAudio", `${path}.session.remoteAudio`, "an opened session carries its remote audio stream");
+        into.require(isPlainObject(result.audio.remoteAudio), "result.audio.remoteAudio", `${path}.audio.remoteAudio`, "an opened session carries its remote audio stream");
         for (const method of ["setMuted", "close"] as const) {
-          into.require(typeof result.session[method] === "function", `result.session.${method}`, `${path}.session.${method}`, `a media session implements ${method}`);
+          into.require(typeof result.audio[method] === "function", `result.audio.${method}`, `${path}.audio.${method}`, `an audio session implements ${method}`);
         }
       } else {
-        into.add("result.session", `${path}.session`, "opened carries the media session");
+        into.add("result.audio", `${path}.audio`, "opened carries the audio session");
       }
     }
     if (dials) {
@@ -3108,24 +3108,24 @@ export function validateRecordingPolicy(value: unknown, path = "capabilities.rec
     const policy = value[source]; if (policy === undefined) continue;
     const at = `${path}.${source}`;
     if (!object(policy)) { check(false, "policy.shape", at, "expected permitted actions"); continue; }
-    keys(policy, [...RECORDING_ACTIONS, ...(source === "host" ? ["destinationId"] : [])], at);
+    keys(policy, [...RECORDING_ACTIONS, ...(source === "host" ? ["storageId"] : [])], at);
     check(RECORDING_ACTIONS.some(action => policy[action] !== undefined), "policy.empty", at, "omit paths offering no actions");
     for (const action of RECORDING_ACTIONS) {
       if (policy[action] === undefined) continue;
       check(policy[action] === true, "policy.action", `${at}.${action}`, "permission is true or absent");
     }
-    if (source === "host") check(filled(policy.destinationId), "destination", `${at}.destinationId`, "host storage destination must be explicit per task");
+    if (source === "host") check(filled(policy.storageId), "storage", `${at}.storageId`, "host storage must be named per task");
   }
   return violations;
 }
 export function validateHostRecording(value: unknown, softphone: boolean, path = "host.recording"): ProtocolViolation[] {
   if (value === undefined) return [];
   const { violations, check, keys } = collector();
-  check(softphone, "host.channel", path, "initial host recording requires voice softphone media");
+  check(softphone, "host.channel", path, "initial host recording requires voice softphone audio");
   if (!object(value)) { check(false, "host.shape", path, "expected host recording declaration and executor"); return violations; }
-  keys(value, ["actions", "destinationIds", "execute", "announcesToCaller"], path);
+  keys(value, ["actions", "storageIds", "execute", "announcesToCaller"], path);
   if (value.announcesToCaller !== undefined) check(value.announcesToCaller === true, "host.announcesToCaller", `${path}.announcesToCaller`, "caller announcement guarantee is true or absent");
-  for (const [key, allowed] of [["actions", RECORDING_ACTIONS], ["destinationIds", undefined]] as const) {
+  for (const [key, allowed] of [["actions", RECORDING_ACTIONS], ["storageIds", undefined]] as const) {
     const list = value[key];
     if (!Array.isArray(list)) { check(false, "host.list", `${path}.${key}`, "expected explicit array"); continue; }
     check(new Set(list).size === list.length, "host.duplicate", `${path}.${key}`, "duplicate declaration");
@@ -3222,14 +3222,14 @@ export function validateRecordingRequest(request: unknown, task: unknown, contex
     state = Array.isArray(reports) ? reports.find(r => object(r) && r.assignmentId === task.assignmentId)?.state : undefined;
     if (object(context.host)) {
       check(Array.isArray(context.host.actions) && context.host.actions.includes(command.action), "host.action", path, "host does not support action");
-      check(object(policy) && Array.isArray(context.host.destinationIds) && context.host.destinationIds.includes(policy.destinationId), "host.destination", path, "task destination is not provisioned by this host");
+      check(object(policy) && Array.isArray(context.host.storageIds) && context.host.storageIds.includes(policy.storageId), "host.storage", path, "task storage is not one this host provisions");
     }
   }
   const fresh = effectiveRecordingState(state as RecordingState | undefined, context.now);
   check(fresh.status !== "unknown", "request.freshness", path, "current state or trusted observer time unavailable/expired");
   violations.push(...validateRecordingCommandState(command, policy, fresh, `${path}.command`));
   const opening = command.action === "start" || command.action === "resume";
-  check(opening ? ["in-progress", "paused"].includes(task.phase as string) && task.media === "started" : ["in-progress", "paused", "completing"].includes(task.phase as string), "request.phase", path, "capture needs live task media; terminal controls may finish recordings during wrap-up");
+  check(opening ? ["in-progress", "paused"].includes(task.phase as string) && task.audio === "started" : ["in-progress", "paused", "completing"].includes(task.phase as string), "request.phase", path, "capture needs live task audio; terminal controls may finish recordings during wrap-up");
   return violations;
 }
 /** Check recording-specific result semantics against the owner's confirming observations. */

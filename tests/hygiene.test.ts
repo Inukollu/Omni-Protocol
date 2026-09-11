@@ -15,7 +15,7 @@ describe("a public repo says less", () => {
   it("keeps the words the contract renamed out of everything committed, and finds a planted one", () => {
     // A rename that lingers in the guide or a fixture teaches the old word to the next adapter.
     const RENAMED = ["sessionId", "SessionCapabilities", "ConnectionStatus", "ConnectionRecovery", "provider-status",
-      "orgTiers", "TierDeclaration", "DEFAULT_TIERS", "effectiveTiers", "task-media-ready", "TaskBrowserBase",
+      "orgTiers", "TierDeclaration", "DEFAULT_TIERS", "effectiveTiers", "task-audio-ready", "TaskBrowserBase",
       "destinationPolicy", "completionAllowance", "DispositionPolicy", "BrowserAccessPolicy", "DialDestinationPolicy",
       "ProviderSummary", "provider-summary", "assertBrowserIsolationAndReuse", "reuse:",
       "accessPolicyScope", "require-agent-acceptance", "require-automatic-acceptance", "team.policy.agent", "acceptanceMode", "TaskInheritance", "task.inherited",
