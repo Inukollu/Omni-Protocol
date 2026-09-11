@@ -1226,7 +1226,7 @@ export interface BreakRequest {
 }
 
 /**
- * A break placed on the agent rather than requested by them.
+ * A break forced on the agent rather than requested by them.
  *
  * `by` is required in both arms. Who put somebody off the floor survives whether or not the
  * break ends on a clock -- a forced break with no origin is a state the agent cannot reason
@@ -1361,7 +1361,7 @@ export type TeamBreakCommand =
   | { type: "decide"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "policy"; policy: "ask" | "auto-approve" | "suspended" }
   /** `reasonId` names a published `BreakReason.id`, required whenever the provider publishes reasons: the member's forced break carries it as `activeReasonId`. */
-  | { type: "place"; memberId: UserId; reasonId?: string; reason?: string }
+  | { type: "force"; memberId: UserId; reasonId?: string; reason?: string }
   | { type: "release"; memberId: UserId };
 
 export type TeamCommandResult =
