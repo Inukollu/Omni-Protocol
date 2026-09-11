@@ -546,7 +546,7 @@ describe("break state", () => {
   });
 
   it("accepts each approval and rejects one the contract dropped", () => {
-    for (const status of ["not-requested", "awaiting-decision", "granted", "on-break"]) {
+    for (const status of ["not-requested", "awaiting-approval", "granted", "on-break"]) {
       expect(check({ status })).toEqual([]);
     }
     // A break starting after the task waits on a task: beside one it stands, beside none it is refused, since with
@@ -592,9 +592,9 @@ describe("break state", () => {
     const placed = { by: "lead-3" };
     expect(check({ status: "on-break", forced: placed })).toEqual([]);
     expect(rules(validateSnapshot(snapshot({ break: { status: "starting-after-task", canRequestBreak: false, forced: placed }, tasks: [task()] }), manifest()))).toEqual([]);
-    // Beside granted or awaiting-decision the host would commit a break nobody asked for.
+    // Beside granted or awaiting-approval the host would commit a break nobody asked for.
     expect(check({ status: "granted", forced: placed })).toEqual(["break.forced.status"]);
-    expect(check({ status: "awaiting-decision", forced: placed })).toEqual(["break.forced.status"]);
+    expect(check({ status: "awaiting-approval", forced: placed })).toEqual(["break.forced.status"]);
     expect(check({ status: "not-requested", forced: placed })).toEqual(["break.forced.status"]);
   });
 
@@ -1194,7 +1194,7 @@ describe("the other direction, everywhere", () => {
 
   it("lets only an outstanding request appear on a team member", () => {
     const member = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", ...over }] }));
-    for (const status of ["awaiting-decision", "granted", "starting-after-task"]) expect(member({ break: status })).toEqual([]);
+    for (const status of ["awaiting-approval", "granted", "starting-after-task"]) expect(member({ break: status })).toEqual([]);
     expect(member({ availability: "on-break" })).toEqual([]);
     expect(member({ break: "on-break" })).toEqual(["team.member.break"]);
     expect(member({ break: "not-requested" })).toEqual(["team.member.break"]);

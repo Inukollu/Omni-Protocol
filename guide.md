@@ -52,7 +52,7 @@ state use `status`; name the object when discussing them to avoid ambiguity.
 | `media` | A task's audio | `started`, `ended` |
 | `transport` | A connection | `connecting`, `active`, `error` |
 | `status` | An authentication session | `signed-out`, `authenticating`, `authenticated`, `refreshing`, `expired` |
-| `status` | The agent’s break lifecycle | `not-requested`, `awaiting-decision`, `granted`, `starting-after-task`, `on-break` |
+| `status` | The agent’s break lifecycle | `not-requested`, `awaiting-approval`, `granted`, `starting-after-task`, `on-break` |
 | `availability` | A team member | `ready`, `on-task`, `on-break`, `signed-out` |
 
 ## Versioning
@@ -930,7 +930,7 @@ keeps a choice about it. See **The station is the host's**.
 ```ts
 type BreakStatus =
   | "not-requested"
-  | "awaiting-decision"
+  | "awaiting-approval"
   | "granted"
   | "starting-after-task"
   | "on-break";
@@ -990,7 +990,7 @@ type TeamMember = {
   id: UserId;
   availability: TeamMemberAvailability;
   since?: IsoTimestamp;
-  break?: Extract<BreakStatus, "awaiting-decision" | "granted" | "starting-after-task">;
+  break?: Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">;
 };
 
 type LeadRequest = {
@@ -1924,7 +1924,7 @@ them from what arrives later.
 | --- | --- |
 | `breaks` | This login may request a break. Requires the four break methods on the connection. |
 | `team` | This login leads a team. The provider publishes a `TeamMembers` object to it on every snapshot — `members: []` when nobody is in it — and to nobody else. |
-| `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — force-break, end-forced-break, decide-break-request, set-break-policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-decision`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
+| `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — force-break, end-forced-break, decide-break-request, set-break-policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-approval`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
 | `team.leadAssistControl` | This lead may join a member's call on request. Requires `executeTeamLeadAssist`. |
 | `team.listeningControl` | This lead may listen to a member's call unasked, in the listed modes and no others: `listen`, `coach`, `join-call`. The list always includes `listen`, since the other two begin from one. Requires `executeTeamListen`. See **Listening to a call**. |
 | `team.policyControl` | This lead sets the team's policy per capability — on, off, or the person's — within what the queue allows. Requires `executeTeamPolicy`; the team member list carries `policies`. |
@@ -3622,7 +3622,7 @@ rendering one as the other tells an agent to wait for somebody who is never comi
 | `status` | Meaning |
 | --- | --- |
 | `not-requested` | No request outstanding. |
-| `awaiting-decision` | A person has to decide. The agent is waiting on somebody. |
+| `awaiting-approval` | A person has to decide. The agent is waiting on somebody. |
 | `granted` | A person decided yes. Omni may now tell this provider to stop the agent; until it does, work continues normally, and this says nothing about why Omni has not. |
 | `starting-after-task` | Omni has told the provider to stop; the break begins when the current task ends. No new work arrives meanwhile, and nobody needs to act. It waits on a task, so beside no task it is refused (`break.starting-after-task.tasks`): a committed break with nothing outstanding is `on-break`. |
 | `on-break` | The agent is on the break now. It holds no task: a break begins when the work ends, so a snapshot reporting `on-break` beside a task is refused as `break.on-break.tasks`. The one exception is a lead's listening task during a `coaching`, `administrative` or `training` break -- see **Listening to a call**. |
@@ -3641,6 +3641,10 @@ refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest 
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
 ### Forced breaks
+
+Migration: the former awaiting-decision value is now `awaiting-approval` in break status
+and the team member’s pending break state. The old value is rejected without an alias;
+the request can still be granted or denied, and ordering rules are unchanged.
 
 Migration: the former BreakApproval type is now `BreakStatus`, matching `BreakState.status`.
 The former type is not exported as an alias; its values and behavior are unchanged.
@@ -3707,7 +3711,7 @@ Omni resolves the name to show with `describeUsers()`, so a provider sends the i
 a display name.
 
 **A forced break travels with `on-break` or `starting-after-task`, and nothing else.** It is a
-break in progress or about to be; beside `granted` or `awaiting-decision` the host would read a
+break in progress or about to be; beside `granted` or `awaiting-approval` the host would read a
 request the agent never made and commit it (`break.forced.status`). Where the provider publishes
 `reasons`, the lead's `force-break` named one, and the member's state carries it as `activeReasonId`.
 
@@ -3829,7 +3833,7 @@ request object only to the request method, and undefined to the other three.
 | --- | --- |
 | `requestBreak` | `not-requested`; selected current reason code when codes exist; `canRequestBreak` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
 | `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `canRequestBreak` does not revoke the grant. |
-| `cancelBreak` | `awaiting-decision` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
+| `cancelBreak` | `awaiting-approval` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
 | `endBreak` | `on-break` or `starting-after-task` during reconciliation; the agent may explicitly end a requested or forced break. |
 
 Use `validateTeamBreakCommand(request, context)` for lead decisions, forcing a break, ending a forced break and
@@ -3865,7 +3869,7 @@ without published choices, `{}` is valid. A lead can similarly send a `force-bre
 with its member ID and, where required, the selected reason ID, without reason text.
 
 Requests permission to stop the agent later; it does not itself stop work. The provider continues
-offering work and reports `awaiting-decision` or `granted` through `break-state` events. If the request is denied, the
+offering work and reports `awaiting-approval` or `granted` through `break-state` events. If the request is denied, the
 provider reports `not-requested` directly, with `decisionReason` when one was supplied.
 
 **An agent asks from anywhere — idle or on a task** — and Omni offers the request in the task
@@ -3994,7 +3998,7 @@ Omni coordinates one break attempt as follows:
    capacity until then. `refreshing` keeps a provider in — its identity and capabilities remain
    available and work continues. `assertBreakAttemptProviders` holds a host to this set.
 2. Enter `requesting-break`. Keep the agent's normal capacity in place throughout this phase.
-3. Send one `requestBreak` to every asked provider. A provider reports `awaiting-decision` or
+3. Send one `requestBreak` to every asked provider. A provider reports `awaiting-approval` or
    `granted`; neither state stops work. A denial transitions directly to `not-requested` and
    causes Omni to take the cancel path.
 4. If every asked provider reports `granted`, durably choose commit, enter `committing-break`,
@@ -4009,7 +4013,7 @@ Omni coordinates one break attempt as follows:
 5. If any asked provider fails or denies the request, cannot be reconciled within the bounded
    decision timeout, or the agent cancels before commit, durably choose cancel and enter
    `cancelling-break`. Send `cancelBreak()` to every provider still reporting
-   `awaiting-decision` or `granted`. Work continues during cancellation because no stop was
+   `awaiting-approval` or `granted`. Work continues during cancellation because no stop was
    committed. Return to `working` only after no provider retains either state.
 
 Commit and cancel are mutually exclusive decisions for one break attempt. Once Omni chooses commit
@@ -4083,7 +4087,7 @@ Omit it when you cannot say, and when there is no break: reporting a reason alon
 
 ### `cancelBreak()`
 
-Cancels the active pre-commit request while its status is `awaiting-decision` or `granted`.
+Cancels the active pre-commit request while its status is `awaiting-approval` or `granted`.
 Cancellation releases the request but does not restore work because work never stopped. If
 commit already won, the provider returns `omni.break-already-committed`. The resulting state is
 reported through `break-state`.
@@ -4380,7 +4384,7 @@ about whether anybody has to act on it, and the difference is a lead's entire ac
 
 | `break` | Means |
 | --- | --- |
-| `awaiting-decision` | Somebody has to decide. This is the lead's queue. |
+| `awaiting-approval` | Somebody has to decide. This is the lead's queue. |
 | `granted` | Decided yes, but Omni has not told the provider to stop yet. Work continues and nobody needs to decide. |
 | `starting-after-task` | Already granted; it begins when their current task ends. Nobody needs to act. |
 
@@ -4390,7 +4394,7 @@ so neither survives to be reported. It is otherwise the same `BreakStatus` the m
 break state uses, rather than a parallel vocabulary for the lead's view, so the two cannot drift
 apart.
 
-Omni offers Approve and Deny only while a member is `awaiting-decision`, shows `granted` as agreed
+Omni offers Approve and Deny only while a member is `awaiting-approval`, shows `granted` as agreed
 but not started, and shows `starting-after-task` as settled.
 
 **Live status, not a record.** The provider derives it from what is true now — not stored, not
@@ -5016,7 +5020,7 @@ covers a `diagnostic`: shown where the agent works, and counted.
 ### `break-state`
 
 Replaces this provider's complete `break` object. Its `status` uses the canonical
-`not-requested`, `awaiting-decision`, `granted`, `starting-after-task` and
+`not-requested`, `awaiting-approval`, `granted`, `starting-after-task` and
 `on-break` states defined under Breaks; the event also carries the corresponding may-ask state,
 reasons, retry details, and any forced break.
 
@@ -5025,7 +5029,7 @@ Each state is also held to the one before it. A commit's states, `starting-after
 break, which says so with `forced`: in effect at once, or `starting-after-task` while the member
 finishes the call they are on (`stream.breakState.commitBeforeGrant`); and a break never moves backwards —
 from `on-break` or `starting-after-task` to a grant or a request, or from `granted` to
-`awaiting-decision` — a new request passes through `not-requested` (`stream.breakState.backwards`).
+`awaiting-approval` — a new request passes through `not-requested` (`stream.breakState.backwards`).
 `exerciseAdapter` holds the stream to that from the connect snapshot on;
 `assertBreakFollowsItsRequests` holds any sequence.
 
@@ -5051,7 +5055,7 @@ to a later attempt merely because its status happens to look compatible. Keep at
 unresolved operation per provider/attempt; recovery must resolve uncertainty before another
 operation is dispatched. The source must fence delayed operations against its own attempt state.
 
-Normal order is `not-requested` → `awaiting-decision` → `granted` →
+Normal order is `not-requested` → `awaiting-approval` → `granted` →
 `starting-after-task` → `on-break` → `not-requested`. Auto-approval may go directly to
 `granted`; a commit with no outstanding work may go directly to `on-break`. Denial/cancel
 returns a precommit request to `not-requested`; an explicit agent end returns a committed

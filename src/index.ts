@@ -1179,7 +1179,7 @@ export type DialResult =
 export type BreakStatus =
   | "not-requested"
   /** Somebody has to decide. The agent is waiting on a person. */
-  | "awaiting-decision"
+  | "awaiting-approval"
   /** Granted, and a promise to honour a later commit. */
   | "granted"
   /** Granted and begins when the current task ends. Nobody needs to act. */
@@ -1282,7 +1282,7 @@ export interface TeamMember {
   /** Omitted rather than invented: Omni renders it as a duration. */
   since?: IsoTimestamp;
   /** A request in flight or a grant not yet in effect. `not-requested` is absence, and `on-break` is `availability: "on-break"`. */
-  break?: Extract<BreakStatus, "awaiting-decision" | "granted" | "starting-after-task">;
+  break?: Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">;
 }
 
 /** A member asking this lead to join their call. */

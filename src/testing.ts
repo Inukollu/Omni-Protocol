@@ -986,12 +986,12 @@ export function assertReconnectWithMissedAssignments<C extends Channel>(
  * pending request nobody is coming to decide is worse than none. So the scenario is a request
  * that goes back to not-requested, and a later one that is granted.
  *
- * A request shows as `awaiting-decision` where a person decides, and as `granted` at once where
+ * A request shows as `awaiting-approval` where a person decides, and as `granted` at once where
  * the provider decides alone; either is the request being made, and the rule is the same for
  * both.
  */
 export function assertDeniedAndRetriedBreak(approvals: readonly BreakStatus[]): void {
-  const asked = approvals.findIndex(approval => approval === "awaiting-decision" || approval === "granted");
+  const asked = approvals.findIndex(approval => approval === "awaiting-approval" || approval === "granted");
   if (asked < 0) throw new Error("Break retry scenario requires an initial request");
   const refused = approvals.indexOf("not-requested", asked + 1);
   if (refused < 0) throw new Error("A refused break must return to not-requested, leaving nothing pending");
@@ -1917,7 +1917,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   return found;
 }
 
-// A request goes not-requested -> awaiting-decision | granted; a commit goes granted ->
+// A request goes not-requested -> awaiting-approval | granted; a commit goes granted ->
 // starting-after-task | on-break; work ending goes starting-after-task -> on-break; a denial,
 // a cancel or an explicit agent end goes back to not-requested; a lead lifting forced status
 // preserves the committed break. A forced break arrives on-break
@@ -2065,7 +2065,7 @@ export interface BreakOnTaskStep {
  * outstanding -- never beside a task, and never later than the step that has none.
  */
 export function assertBreakBeginsAfterTask(steps: readonly BreakOnTaskStep[]): void {
-  const asked = steps.findIndex(step => step.approval === "awaiting-decision" || step.approval === "granted");
+  const asked = steps.findIndex(step => step.approval === "awaiting-approval" || step.approval === "granted");
   if (asked < 0) throw new Error("Break-on-task scenario requires a request");
   if ((steps[asked]?.outstanding ?? 0) < 1) throw new Error("Break-on-task scenario requires the request to be made while a task is outstanding");
   const committed = steps.findIndex((step, index) => index > asked && step.approval === "starting-after-task");

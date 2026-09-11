@@ -238,10 +238,10 @@ describe("assertBreakFollowsItsRequests", () => {
 
   it("accepts every move the guide describes", () => {
     // Asked, decided, committed while working, begun when the work ended, ended.
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("granted"), state("starting-after-task"), state("on-break"), state("not-requested")], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-approval"), state("granted"), state("starting-after-task"), state("on-break"), state("not-requested")], idle))).toEqual([]);
     // Granted at once and committed with nothing outstanding; denied; cancelled after a grant.
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("on-break"), state("not-requested")], idle))).toEqual([]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("not-requested")], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-approval"), state("not-requested")], idle))).toEqual([]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("not-requested")], idle))).toEqual([]);
     // Placed on the agent: in effect with nobody asking, and it says so -- or starting after the
     // call the member is on, which is the same placing reported while the work finishes.
@@ -257,13 +257,13 @@ describe("assertBreakFollowsItsRequests", () => {
   it("refuses a commit's states with no grant behind them", () => {
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("on-break")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-approval"), state("on-break")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
   });
 
   it("refuses a break that goes backwards", () => {
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("on-break"), state("granted", {}, "g2")], idle))).toEqual(["stream.breakState.backwards"]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("starting-after-task"), state("awaiting-decision")], idle))).toEqual(["stream.breakState.backwards"]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("awaiting-decision")], idle))).toEqual(["stream.breakState.backwards"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("starting-after-task"), state("awaiting-approval")], idle))).toEqual(["stream.breakState.backwards"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("awaiting-approval")], idle))).toEqual(["stream.breakState.backwards"]);
   });
 });
 
@@ -668,10 +668,10 @@ describe("assertBreakAttemptProviders", () => {
 });
 
 describe("assertBreakBeginsAfterTask", () => {
-  const on = (approval: "not-requested" | "awaiting-decision" | "granted" | "starting-after-task" | "on-break", outstanding: number) => ({ approval, outstanding });
+  const on = (approval: "not-requested" | "awaiting-approval" | "granted" | "starting-after-task" | "on-break", outstanding: number) => ({ approval, outstanding });
 
   it("accepts a break asked for on a task that begins when the task ends, decided or granted at once", () => {
-    expect(() => assertBreakBeginsAfterTask([on("not-requested", 1), on("awaiting-decision", 1), on("granted", 1), on("starting-after-task", 1), on("on-break", 0)])).not.toThrow();
+    expect(() => assertBreakBeginsAfterTask([on("not-requested", 1), on("awaiting-approval", 1), on("granted", 1), on("starting-after-task", 1), on("on-break", 0)])).not.toThrow();
     expect(() => assertBreakBeginsAfterTask([on("granted", 2), on("starting-after-task", 2), on("starting-after-task", 1), on("on-break", 0)])).not.toThrow();
   });
 
@@ -692,8 +692,8 @@ describe("assertDeniedAndRetriedBreak", () => {
   it("accepts a refusal that returns to not-requested and a later grant", () => {
     // There is no `denied` approval: a refusal leaves nothing pending, because a request
     // nobody is coming to decide is worse than none.
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "awaiting-decision", "granted"])).not.toThrow();
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "awaiting-decision", "on-break"])).not.toThrow();
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "not-requested", "awaiting-approval", "granted"])).not.toThrow();
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "not-requested", "awaiting-approval", "on-break"])).not.toThrow();
   });
 
   it("accepts a provider that decides alone: granted at once, refused, granted again", () => {
@@ -714,15 +714,15 @@ describe("assertDeniedAndRetriedBreak", () => {
   });
 
   it("rejects a refusal that leaves the request pending", () => {
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "granted"])).toThrow(/leaving nothing pending/);
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "granted"])).toThrow(/leaving nothing pending/);
   });
 
   it("rejects a sequence that never grants after the refusal", () => {
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested"])).toThrow(/must grant a later request/);
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "not-requested"])).toThrow(/must grant a later request/);
   });
 
   it("rejects a sequence that ends back at not-requested", () => {
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "granted", "not-requested"]))
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "not-requested", "granted", "not-requested"]))
       .toThrow(/must end granted or in effect/);
   });
 });

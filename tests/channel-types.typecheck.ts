@@ -496,3 +496,6 @@ export const advisoryForcedBreak: import("../src/index.js").ForcedBreak = { by: 
 export const automaticForcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAutomatically: true };
 // @ts-expect-error A fixed end timestamp cannot resume an agent.
 export const fixedForcedBreakEnd: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAt: "2026-09-11T12:00:00Z" };
+
+// @ts-expect-error Use awaiting-approval, not the retired awaiting-decision status.
+export const retiredAwaitingDecision: import("../src/index.js").BreakStatus = "awaiting-decision";

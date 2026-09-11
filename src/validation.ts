@@ -120,7 +120,7 @@ const AUTHENTICATION_STATUSES = membersOf<AuthenticationState["status"]>({
   "signed-out": true, authenticating: true, authenticated: true, refreshing: true, expired: true,
 });
 const BREAK_APPROVALS = membersOf<BreakStatus>({
-  "not-requested": true, "awaiting-decision": true, granted: true, "starting-after-task": true, "on-break": true,
+  "not-requested": true, "awaiting-approval": true, granted: true, "starting-after-task": true, "on-break": true,
 });
 const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
   ready: true, "on-task": true, "on-break": true, reserved: true, "signed-out": true,
@@ -147,8 +147,8 @@ const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>[
   reconnected: true, "provider-requested": true,
 });
 const SESSION_CAPABILITIES = membersOf<keyof UserCapabilities>({ breaks: true, team: true, preferences: true });
-const MEMBER_BREAKS = membersOf<Extract<BreakStatus, "awaiting-decision" | "granted" | "starting-after-task">>({
-  "awaiting-decision": true, granted: true, "starting-after-task": true,
+const MEMBER_BREAKS = membersOf<Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">>({
+  "awaiting-approval": true, granted: true, "starting-after-task": true,
 });
 const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
   pending: true,
@@ -1507,8 +1507,8 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
     "the target must be another member of the current authorized team member list");
   if (command.type === "decide-break-request") {
     into.require(command.decision === "granted" || command.decision === "denied", "team.break.command.decision", path, "decide granted or denied");
-    into.require(isPlainObject(member) && member.break === "awaiting-decision", "team.break.command.awaiting", path,
-      "decide only a currently awaiting-decision request");
+    into.require(isPlainObject(member) && member.break === "awaiting-approval", "team.break.command.awaiting", path,
+      "decide only a currently awaiting-approval request");
   } else {
     validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
@@ -1577,7 +1577,7 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
     into.require(request === undefined, "break.command.arguments", path, "this break method takes no arguments");
     if (method === "commitBreak") into.require(status === "granted" || status === "starting-after-task" || status === "on-break",
       "break.command.commit.grant", path, "commit requires a grant; repeated committed state is idempotent");
-    if (method === "cancelBreak") into.require(status === "awaiting-decision" || status === "granted",
+    if (method === "cancelBreak") into.require(status === "awaiting-approval" || status === "granted",
       "break.command.cancel.precommit", path, "cancel only a pre-commit request; a raced commit requires commit recovery");
     if (method === "endBreak") {
       into.require(status === "starting-after-task" || status === "on-break", "break.command.end.started", path,
@@ -1603,14 +1603,14 @@ export function validateBreakTransition(before: unknown, after: unknown, path = 
   const from = before.status as BreakStatus;
   const to = after.status as BreakStatus;
   const committed = to === "starting-after-task" || to === "on-break";
-  if (committed && (from === "not-requested" || from === "awaiting-decision") && after.forced === undefined) {
+  if (committed && (from === "not-requested" || from === "awaiting-approval") && after.forced === undefined) {
     into.add("stream.breakState.commitBeforeGrant", `${path}.after.status`,
       `${to} follows a commit, and a commit follows granted; the break stood at ${from}`);
   }
   const backwards =
-    (from === "on-break" && (to === "awaiting-decision" || to === "granted" || to === "starting-after-task")) ||
-    (from === "starting-after-task" && (to === "awaiting-decision" || to === "granted")) ||
-    (from === "granted" && to === "awaiting-decision");
+    (from === "on-break" && (to === "awaiting-approval" || to === "granted" || to === "starting-after-task")) ||
+    (from === "starting-after-task" && (to === "awaiting-approval" || to === "granted")) ||
+    (from === "granted" && to === "awaiting-approval");
   if (backwards) into.add("stream.breakState.backwards", `${path}.after.status`,
     `a break does not go from ${from} back to ${to}; a new request passes through not-requested`);
   return into.violations;
