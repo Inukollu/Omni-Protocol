@@ -619,7 +619,7 @@ export interface DispositionRules {
 /**
  * One item the queue configured for the agent to send a contact to: a button or a menu item. The
  * protocol does not say what it does -- a queue, a menu, a line -- the provider executes it when a
- * command names its `id`. Never a named agent: who takes a contact next is the queue's decision.
+ * command names its `id`. The provider may publish a queue, IVR, named agent or other supported destination; the host does not invent one.
  */
 export interface Destination {
   id: string;
@@ -660,7 +660,7 @@ export type TaskCapabilities<C extends Channel = Channel> =
     ? SharedTaskCapabilities & {
         decline?: Lockable<true>;
         hold?: Lockable<true>;
-        /** The agent may end the whole call: everyone leaves and the media ends, the task stays for its wrap-up. */
+        /** The provider ends the caller connection and agent-added channels owned by this handling, including inherited channels after transfer/takeover. Handling disposal remains separate. */
         endCall?: Lockable<true>;
         /** Connect back to the party while `completing`, whoever placed the call; the task returns to `in-progress`. */
         connectBack?: Lockable<true>;
@@ -1057,7 +1057,7 @@ export type VoiceTaskCommand =
   | { type: "call"; dialId: DialId }
   | { type: "hold" }
   | { type: "resume" }
-  /** End the whole call: everyone leaves and the task's media ends; the task stays for its wrap-up. Gated by `endCall`. */
+  /** End the caller connection and all agent-added channels owned or inherited by this handling. Wrap/disposal remain separate. Gated by `endCall`. */
   | { type: "end-call" }
   /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
   | { type: "connect-back"; dialId: DialId }

@@ -2519,6 +2519,25 @@ provider is told through `refused` exactly which rule, so the state that looked 
 is named on its side. The task past preview has no deadline to wait for, so it carries neither
 field.
 
+**Provider execution and host controls are distinct.** Answer, hold/resume, transfer (including
+IVR routing), conference and handling completion are executed by the provider
+through the adapter. The task's applicable capability, phase, completion mode and command-specific
+prerequisites decide which controls are offered. Caller disconnect also executes at the provider. Microphone mute is host-owned, never a provider
+TaskCommand or task capability. The separately declared host recording facility keeps its existing
+recording contract; this distinction does not remove it or move provider call operations to the host.
+
+A caller journey may revisit the same agent while an earlier handling still wraps. Public task
+IDs must remain distinct for concurrently open handlings. For source-owned handling IDs allocated
+before offer and never reused per assignment, both public task ID and allocation ID may equal that
+handling ID. Restore them unchanged on reconnect. Commands, media, endings and handling reports
+retain the exact pair; never retarget an old command to the newest handling of a journey.
+`validateTaskCommandRequest` checks the request's pair against the supplied published task and
+then its command prerequisites. The caller must select that task within the correct provider/login
+and recheck at the provider; the validator cannot prove source freshness or authorization.
+`task-ended` retires only that handling's resources. Another handling, caller channel or IVR/queue
+portion must not be cleared because this task ended. Snapshot counts include all still-owned wrap
+and active handlings; task disposal is not caller hangup.
+
 **Voice describes the agent's handling within the wider call.** The task defines that agent's
 workspace, tools, permissions, media participation and completion work. The caller's channel may
 continue through IVR, queues, other agents, holds or conferences while this handling ends or wraps.
@@ -3082,7 +3101,7 @@ See **Which commands need a capability**.
 | --- | --- | --- |
 | `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when provisioning also permits declining. |
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
-| `endCall` | Primary button: End call | Omni may end the whole call: everyone leaves, the media ends, and the task stays for its wrap-up. See **Ending a call, and removing one person from it**. |
+| `endCall` | Primary button: End call | The provider ends the caller connection and all owned/inherited agent-added channels; wrap/disposal remain separate. See **Ending a call, and removing one person from it**. |
 | `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance disposes at provider end. See **Connecting back during completion**. |
 | `coldTransfer` | Secondary menu item: Cold transfer | Omni may hand the customer straight to a destination, with nobody spoken to first. |
 | `warmTransfer` | Secondary menu item: Warm transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Warm transfer**. |
@@ -3148,12 +3167,12 @@ kind travels, nothing is typed, and a control with an empty directory has nothin
 refused (`task.destinations.offer`). A control declared as bare `true` is refused for the same
 reason (`task.destinations.shape`): once nothing is typed, the directory is the control.
 
-**An agent never transfers to a named agent**, warm or cold. A contact that needs another pair of
-hands goes back to a queue or a menu the queue configured, and who takes it next is the queue's
-decision: routing by skill, availability and fairness is what the queue is for, and a hand-off to a
-chosen colleague bypasses all three. The desk shows no agent picker and no dial pad on a transfer.
-The one way a named person ends up with an agent's call is a lead taking it over through lead
-assist, which is the lead's act, not a transfer the agent chose.
+**The provider chooses the supported destinations.** A published item may route to an IVR,
+queue, named agent or another configured destination. No destination kind is inferred from its
+label. The host offers only the directory attached to this task's specific transfer capability,
+and sends the exact destination ID; it does not invent an agent picker or arbitrary dial target.
+The provider rechecks eligibility and executes the routing. Returning to an IVR or queue does not
+end the caller journey; a later assignment to the same agent is a new handling.
 
 #### Ending a call, and removing one person from it
 
@@ -3161,18 +3180,44 @@ A call has everyone on `Task.onCall`, and two commands take people off it, both 
 provider.
 
 ```ts
-{ type: "end-call" }                                             // everyone leaves; the media ends; the task stays for its wrap-up
+{ type: "end-call" }                                             // provider ends caller and owned/inherited agent-added channels; wrap/disposal are separate
 { type: "conference", action: "remove", party: true }            // the customer leaves; the agent stays with the colleague
 { type: "conference", action: "remove", destinationId: "tier2" } // the conferenced person leaves; ringing, this calls the dial off
 ```
 
-`end-call` ends the whole conversation for everyone on it, and is gated by `endCall`. The task does
-not end with it: `task-media-ended` follows, any wrap allowance runs, and the agent dispositions
-the call. `conference` `remove` takes one person off, named as the room names them, and the call
-goes on for the rest; it is gated by `conference`, since it only means something with a third
-person on the line. Removing the party leaves the agent with the colleague, a warm hand-over in
-reverse. A remove that would leave the agent alone is not a remove but an `end-call`, and a
-provider answers it `failed`. The consulted destination of a warm transfer is not removed this way:
+The host sends the ordinary task-scoped `execute` request with `command: { type: "end-call" }`.
+The provider knows the caller and agent-added channel bindings; no channel list or owner details
+are sent by the host. The task's `endCall` capability is permission, not an executor selection.
+`validateTaskCommandRequest` checks the exact handling/allocation and delegates the command's
+policy/phase checks. The provider rechecks current ownership atomically; no client validator can
+prove that its view is fresh. The host does not implement agent end-call; low-level removal of individual channels is not
+this agent action. There is no host end-call execution API or fallback route.
+
+`end-call` is gated by `endCall` on the current handling. It ends the caller connection and
+all agent-added channels owned by that handling, including channels originally added by previous
+agents and inherited through transfer or takeover. Ownership is not inferred from who originally
+dialed, the current UI selection, or a person's label. The provider maintains that authority
+and checks the exact handling/allocation when acting. Agent-added channels are not left behind
+merely because another agent added them.
+
+On a successful transfer or takeover, ownership of those channels passes to the receiving
+handling (lead or another agent), not just ownership of the caller leg. The outgoing handling may
+still have its allowed wrap work, but cannot disconnect channels it no longer owns. A pending or
+unknown handover is not a confirmed ownership change: retain source reservations and reconcile.
+The provider must serialize handover and end-call so a delayed outgoing command cannot tear down
+the recipient's call. No public channel-owner field or guessed identity is introduced here;
+the source must provide authoritative ownership and command fencing before declaring permission.
+
+The resulting end of this agent's media is published as `task-media-ended`. Any wrap remains
+until its own completion/disposal; `end-call` is not `task-ended`, and `complete` is not an implicit
+caller/channel disconnect. Other agents' independent tasks end or wrap only on their own source
+transitions. Neither disposal nor transfer itself ends the continuing caller journey.
+
+`conference` `remove` remains a person-specific provider operation, gated by `conference`.
+It does not implicitly dispose any other handling. Its person/consultation prerequisites
+remain separate from the permission to disconnect the caller. A remove that would leave the
+agent alone is not a remove but an `end-call`, and the provider answers it `failed`.
+The consulted destination of a warm transfer is not removed this way:
 `transfer` `cancel` is its own step, which returns the agent to the parked customer, and a remove
 never promises that.
 
@@ -4352,7 +4397,7 @@ an affordance, never the enforcement: the host asks, and the provider does or de
 answers `failed` for a command whose capability it did not publish, and that is the provider
 honouring its own declaration, not the host deciding policy -- a host that refuses a command on
 its own reading of a queue's flag has decided something that was never its to decide. What a
-command means on the platform is the provider's to work out: `end-call` ends the conversation, and
+command means on the platform is the provider's to work out: `end-call` disconnects the caller channel, and
 which legs on which bridge that touches is a fact about the switch, never a choice the host makes.
 The one thing the host performs physically is the microphone, and that is not a command at all.
 

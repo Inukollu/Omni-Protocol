@@ -2391,6 +2391,24 @@ const LEAD_ASSIST_ACTIONS = ["request", "cancel", "take-over", "leave"] as const
 const CONFERENCE_ACTIONS = ["add", "remove"] as const;
 
 
+/** Validate the exact handling/allocation target before provider command dispatch. */
+export function validateTaskCommandRequest(request: unknown, task: unknown, path = "request",
+  taskContext?: Omit<TaskValidationContext, "channel">): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(request) || !isPlainObject(task)) {
+    into.add("command.request.shape", path, "a request and the current published task are required");
+    return into.violations;
+  }
+  into.filled(request.taskId, "command.request.taskId", `${path}.taskId`, "name the handling task");
+  into.filled(request.allocationId, "command.request.allocationId", `${path}.allocationId`, "name its allocation");
+  into.require(request.taskId === task.id, "command.request.taskId.mismatch", `${path}.taskId`, "the command must target this exact handling");
+  into.require(request.allocationId === task.allocationId, "command.request.allocationId.mismatch", `${path}.allocationId`, "the command must target this exact allocation");
+  for (const key of Object.keys(request)) into.require(["taskId", "allocationId", "command"].includes(key),
+    "command.request.field", `${path}.${key}`, "unsupported task command request field");
+  into.violations.push(...validateTaskCommand(request.command, task, `${path}.command`, taskContext));
+  return into.violations;
+}
+
 /**
  * What a command needs to be issuable, checked against the task it names: the capability the
  * guide's table gates it on, the phase it belongs to, and the state that has to stand -- a
