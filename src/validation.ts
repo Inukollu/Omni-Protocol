@@ -1265,19 +1265,16 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateTaskAttributes(task.attributes, `${path}.attributes`, into, context.levels);
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into, { phase: task.phase, media: task.media });
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
-  // The room is who is on the call now, and a task outlives its call by the whole of wrap-up: a
-  // task whose call has ended -- completing, or media ended -- carries nobody, or the last thing the
-  // wire said about the call stays true for ever. Empty and absent both say nobody.
-  // A completing task's call is over: its media has ended, or it never started. Audio still stated
-  // as started on a task in wrap-up is a call whose audio never ended -- the customer heard through
-  // the agent's notes -- and a task stating it contradicts itself.
+  // Media and onCall describe this agent's handling, not the continuing caller journey.
+  // Once the handling's media ends or it enters wrap, its live room is cleared. Other
+  // channels may remain connected under another handling or in IVR/queue stages.
   if (task.phase === "completing" && task.media === "started") {
     into.add("task.media.completing", `${path}.media`,
-      "a completing task's media has ended or never started: the call is over, and media still started is audio that never ended");
+      "a completing task's handling media has ended or never started; it cannot still be started during wrap");
   }
   if (Array.isArray(task.onCall) && task.onCall.length > 0 && (task.phase === "completing" || task.media === "ended")) {
     into.add("task.onCall.ended", `${path}.onCall`,
-      `the call has ended (${task.phase === "completing" ? "the task is completing" : "its media ended"}) and onCall still names people on it: the room is who is on the call now, and now nobody is`);
+      `this handling is no longer connected (${task.phase === "completing" ? "the task is completing" : "its media ended"}); clear its onCall view without implying that other channels ended`);
   }
   validateTaskMedia(task, task.media, context.channel, task.phase, `${path}.media`, into);
   validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
@@ -2434,6 +2431,29 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     channel === undefined ? `unsupported command: ${describeValue(type)}` : `a ${channel} task has no ${describeValue(type)} command`)) {
     return into.violations;
   }
+  // Built-in commands carry only their declared fields; custom controls own their payload.
+  // Recording already applies its action-specific field check below.
+  if (type !== "custom" && type !== "recording") {
+    let fields = ["type"];
+    switch (type) {
+      case "call": case "connect-back": fields.push("dialId"); break;
+      case "complete": fields.push("disposition", "notes"); break;
+      case "transfer":
+        fields.push("action");
+        if (command.action === "cold" || command.action === "warm") fields.push("dialId", "destinationId");
+        break;
+      case "lead-assist":
+        fields.push("action");
+        if (command.action === "request") fields.push("note");
+        break;
+      case "conference":
+        fields.push("action", "destinationId");
+        fields.push(command.action === "add" ? "dialId" : "party");
+        break;
+    }
+    for (const key of Object.keys(command)) into.require(fields.includes(key), "command.field", `${path}.${key}`,
+      "field is not supported for this command");
+  }
   const dial = (rule: string) => into.filled(command.dialId, rule, `${path}.dialId`, "a command that dials carries the host's dialId");
   switch (type) {
     case "call":
@@ -2532,8 +2552,8 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   const inPhase = (rule: string, ...phases: string[]) =>
     into.require(typeof task.phase === "string" && phases.includes(task.phase), rule, path, `${describeValue(type)} belongs to ${phases.join(" or ")}, and the task is ${describeValue(task.phase)}`);
   // A control on the contact acts on a contact being handled. Before in-progress there is nothing
-  // to act on yet, and in completing the handling has ended: a call with nobody on it, a
-  // conversation closed. What a capability offers, the phase decides whether there is anything to use it on.
+  // to act on yet, and in completing this agent's handling has ended. The caller and other
+  // channels may continue elsewhere; this task's phase no longer permits these controls.
   const handling = () => inPhase("command.phase.handling", "in-progress", "paused");
   // A destination is one the directory offered: the id Omni sends is the id the provider published.
   const listed = (name: string) => {

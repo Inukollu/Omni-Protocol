@@ -2488,8 +2488,9 @@ answer at that exact instant. Scheduling/dispatch delay must remain visible, and
 prevented initiation must be reported rather than leaving a silently expired countdown.
 A source eligibility threshold that may never trigger an attempt is not this promise.
 
-The two deadline fields travel together and only in preview. The host uses a trusted provider
-clock estimate and monotonic aging, not an assumed local clock match. Without a usable estimate
+The two deadline fields travel together and only in preview. The host uses trusted provider-domain
+time; clock estimation is allowed only under the explicit host-triggered preview exception below.
+Without usable provider-domain time
 it cannot safely auto-trigger and must expose the uncertainty and reconcile. No zero-duration,
 receipt-time or local-default deadline is inferred. Neither elapsed time nor submission changes
 the task phase: subsequent authoritative events state ringing, answer, media and completion.
@@ -4499,12 +4500,13 @@ declared:
 
 **A control on the contact belongs to the handling phases**, `in-progress` and `paused`:
 `hold`, `resume` and `pause`, `end-call`, every `transfer` and `conference` action, and
-every `lead-assist` action. Each acts on the call or the conversation, and only while there is one.
-Before `in-progress` nothing has been placed or opened; in `completing` the handling has ended -- a
-call with nobody on it, a conversation closed -- and a wrap-up that still shows Transfer shows it
-for nothing. The capability stays declared, because it is a property of the task and the task is
-still open; the phase says there is nothing to use it on. Omni shows none of these controls outside
-the two phases, and `validateTaskCommand` refuses each of them there (`command.phase.handling`).
+every `lead-assist` action. These controls act within this agent's current handling.
+In `completing`, that handling has ended and its wrap work remains. The caller may still be in
+an IVR, queue or another agent's handling, and other channels may remain connected. Completion
+of this handling does not establish that the caller or bridge ended. The capability stays
+declared while the task remains open; the phase prevents this task from controlling a handling
+it no longer owns. Omni shows these controls only in the two handling phases, and
+`validateTaskCommand` refuses them outside those phases (`command.phase.handling`).
 The commands with a phase of their own -- `answer`, `accept` and `decline` in `pending`,
 `call` in `preview`, `connect-back` in `completing`, `complete` in any -- are not among them.
 
@@ -4584,22 +4586,35 @@ They are published as `OMNI_FAILURE_CODES`.
 | `occurredAt` | Valid RFC-3339 timestamp with an explicit timezone, representing provider observation time. |
 | `event` | Typed `ProviderEvent` payload. |
 
-#### Provider instants are read against a provider clock
+#### Timestamp standard and explicit exceptions
 
-Every deadline in this contract is a provider instant that Omni counts down: `allocationExpiresAt`,
-`previewEndsAt`, and the wrap deadline of `task-media-ended` plus `wrapAllowance` where
-one is stated.
-Comparing those against the host clock is wrong by whatever the two machines disagree by, and the
-damaging direction is early — **Accept** withdrawn from an offer still ringing, a wrap timer
-expiring before the agent has finished.
+Every provider event envelope carries `occurredAt` as an ISO timestamp in the contract's RFC-3339
+form, with `Z` or an explicit numeric timezone offset. Preserve the original instant. Payloads
+carry their source event/observation instants wherever available and declared by their type;
+publication and receipt time must not be substituted for a missing source instant. A required
+instant that the source cannot establish makes that evidence unavailable, not permission to
+invent a timestamp or silently omit a required field.
 
-`occurredAt` is what fixes it. Omni notes the host time at which each envelope arrives, keeps the
-running offset against the `occurredAt` inside it, and translates provider instants through that
-offset before counting down. What remains is network delay, which biases every deadline later —
-the direction that costs a second rather than an action.
+Clock estimation is an exception, not the standard interpretation of events. An ISO timestamp
+identifies an instant; it does not prove that the host and provider clocks are synchronized.
+Use an explicitly trusted clock in the relevant domain. Do not infer a general clock offset
+from event arrivals, shift source timestamps, or use an estimate to order events or create history.
 
-**Report `seconds`; never expect Omni to derive it** is the same hazard from the provider's side:
-neither party recomputes a duration across a clock it does not own.
+The current exceptions and their reasons are:
+
+| Case | Exception and reason |
+| --- | --- |
+| Host display of provider deadlines (`allocationExpiresAt`, `previewEndsAt`, wrap deadline) | A countdown may use an explicitly bounded provider-clock estimate when a trusted direct clock is unavailable, because the deadline belongs to another clock domain. This estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
+| Host-triggered preview deadline | A bounded clock estimate with monotonic aging may schedule the host's Call command because the provider owns the deadline but the host owns the trigger. Do not trigger before the deadline is known to have passed; invalidate on clock discontinuity and reconcile when uncertain. |
+| Recording evidence expiry | A bounded observer-domain clock estimate with monotonic aging may assess freshness because observation and expiry belong to the recorder's clock. If time cannot be trusted, recording state is unknown; never renew evidence from receipt or replay. |
+| Unknown recording state | `observedAt` and `validUntil` are absent because there is no confirmed observation. The containing provider event still has its own `occurredAt`; that publication is not a recorder observation. |
+| Direct snapshot reads and method requests/results | These are reads/operations, not event envelopes, and their current types have no general event timestamp. A snapshot event still carries `occurredAt`; embedded source instants remain unchanged. Do not treat a method result or read completion time as an occurrence boundary. |
+| Optional source instants and deadlines | Omit only where the declared type permits absence and the source has no evidence or the policy has no deadline (for example unlimited preview). Do not replace absence with host time. |
+
+Every additional exception must be listed with its scope and reason before adoption. Estimates
+must specify their uncertainty and validity; elapsed time should use monotonic aging, and a clock
+jump invalidates the estimate. This guide does not introduce a clock-exchange API or a new wire
+field. Report source-measured durations where required; timestamp subtraction is not a substitute.
 
 #### Nothing is lost until the connection drops
 
@@ -5055,10 +5070,10 @@ another id (`drive.store.retained`); an adapter whose keys never named the task 
 unevaluated, and the result says so rather than passing it: a task's keys go
 with the task, or the next offer of the same id inherits them. Outside the
 handling phases with `hold` still declared -- in
-`confirmed`, where the provider publishes it, and in `completing` once the call has ended -- the
+`confirmed`, where the provider publishes it, and in `completing` once this agent's handling has ended -- the
 drive sends `hold` past the validator that would hold it back, and expects `failed`: the adapter
-is the second gate on a control on the contact, and one that applies it where there is nothing to
-hold is named (`drive.command.handling`). The drive cannot put a task into a phase the provider
+is the second gate on a control on the contact, and one that applies it outside this task's
+current handling is named (`drive.command.handling`). The drive cannot put a task into a phase the provider
 never publishes, so a provider that goes straight from `pending` to `in-progress` is checked in
 `completing` alone. A task the agent completes is
 completed from wherever it stands once the drive has nothing left to do on it -- from `completing`
@@ -5192,7 +5207,8 @@ observation instant and an exclusive expiry. These times describe current eviden
 capture boundaries. A trusted observer-domain current time must satisfy observedAt <= now < validUntil.
 Use `effectiveRecordingState` with that explicitly trusted time; an unavailable clock yields unknown.
 Receipt, replay and task publication never extend freshness. Clock discontinuity invalidates evidence;
-consumers must invalidate their clock estimate and use monotonic aging so clock rollback cannot
+consumers using the explicit recording-expiry clock-estimation exception must invalidate that
+estimate and use monotonic aging so clock rollback cannot
 revive expired evidence. The executor compares observation identity and recording identity against
 its latest state atomically before I/O. An intervening observation or allocation change refuses the
 stale command; it never acts on a replacement recorder. Providers lacking trustworthy current-state

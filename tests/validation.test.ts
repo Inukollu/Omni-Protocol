@@ -1810,10 +1810,10 @@ describe("validateTaskCommand", () => {
     expect(rules(validateTaskCommand({ type: "call" }))).toEqual(["command.call.dialId"]);
     expect(rules(validateTaskCommand({ type: "connect-back" }))).toEqual(["command.connectBack.dialId"]);
     expect(rules(validateTaskCommand({ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" }))).toEqual([]);
-    expect(rules(validateTaskCommand({ type: "transfer", action: "blind", dialId: "dial-2", destinationId: "tier2" }))).toEqual(["command.transfer.action"]);
+    expect(rules(validateTaskCommand({ type: "transfer", action: "blind", dialId: "dial-2", destinationId: "tier2" }))).toContain("command.transfer.action");
     expect(rules(validateTaskCommand({ type: "transfer", action: "warm", destinationId: "tier2" }))).toEqual(["command.transfer.dialId"]);
     expect(rules(validateTaskCommand({ type: "transfer", action: "warm", dialId: "dial-2" }))).toEqual(["command.transfer.destinationId"]);
-    expect(rules(validateTaskCommand({ type: "transfer", action: "complete", destinationId: "tier2" }))).toEqual(["command.transfer.unexpected"]);
+    expect(rules(validateTaskCommand({ type: "transfer", action: "complete", destinationId: "tier2" }))).toEqual(["command.field", "command.transfer.unexpected"]);
     expect(rules(validateTaskCommand({ type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "conference", action: "add", destinationId: "tier2" }))).toEqual(["command.conference.dialId"]);
     expect(rules(validateTaskCommand({ type: "conference", action: "remove", party: true }))).toEqual([]);

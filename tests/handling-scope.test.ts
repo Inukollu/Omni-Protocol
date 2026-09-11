@@ -16,6 +16,20 @@ describe("provider handling controls", () => {
     expect(validateTaskCommandRequest(request, undefined)).not.toEqual([]);
     expect(validateTaskCommandRequest(null, task)).not.toEqual([]);
   });
+  it("rejects extra built-in fields without restricting custom payloads", () => {
+    for (const extra of [{ executor: "host" }, { channels: ["invented"] }]) {
+      expect(validateTaskCommandRequest({ ...request, command: { ...request.command, ...extra } }, task)
+        .some(v => v.rule === "command.field")).toBe(true);
+    }
+    for (const command of [
+      { type: "hold", dialId: "extra" },
+      { type: "transfer", action: "cancel", notes: "extra" },
+      { type: "lead-assist", action: "leave", note: "extra" },
+      { type: "conference", action: "remove", party: true, dialId: "extra" },
+    ]) expect(validateTaskCommand(command).some(v => v.rule === "command.field")).toBe(true);
+    expect(validateTaskCommand({ type: "custom", name: "control", extra: "payload" })).toEqual([]);
+    expect(validateTaskCommand({ type: "lead-assist", action: "request", note: "help" })).toEqual([]);
+  });
   it("gates caller disconnect by provider policy, handling phase", () => {
     expect(validateTaskCommand(request.command, { ...task, capabilities: {} })).not.toEqual([]);
     expect(validateTaskCommand(request.command, { ...task, phase: "completing" })).not.toEqual([]);
