@@ -156,7 +156,7 @@ const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
 const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, "host-calls": true, waits: true });
 const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
 const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, monitorControl: true });
-const MONITOR_MODES = membersOf<MonitorMode>({ monitor: true, whisper: true, "join-call": true });
+const MONITOR_MODES = membersOf<MonitorMode>({ monitor: true, coach: true, "join-call": true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
 const CANCELLED_BY = membersOf<Extract<TaskOutcome, { type: "cancelled" }>["by"]>({ agent: true, provider: true, party: true });
 const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
@@ -2928,7 +2928,7 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
 }
 
 /**
- * The modes a lead may listen in, as a list: whisper and join-call begin from a monitor, so a list
+ * The modes a lead may listen in, as a list: coach and join-call begin from a monitor, so a list
  * without `monitor` names modes the lead could never reach.
  */
 function validateMonitorControl(value: unknown, path: string, into: Collector): void {
@@ -2943,7 +2943,7 @@ function validateMonitorControl(value: unknown, path: string, into: Collector): 
     }
   });
   into.require(value.includes("monitor"), "authentication.capability.team.monitorControl.monitor", path,
-    "whisper and join-call begin from a monitor: a lead who may listen in any mode may monitor");
+    "coach and join-call begin from a monitor: a lead who may listen in any mode may monitor");
 }
 
 /** What a login is validated against beyond its own shape. */

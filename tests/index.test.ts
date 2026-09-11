@@ -212,8 +212,8 @@ describe("sameCapabilities", () => {
     expect(sameCapabilities({ team: { breakControl: true } }, { team: {} })).toBe(false);
     expect(sameCapabilities({ team: { leadAssistControl: true } }, { team: { breakControl: true } })).toBe(false);
     // The monitor modes are a set: order is not a difference, a missing mode is.
-    expect(sameCapabilities({ team: { monitorControl: ["monitor", "whisper"] } }, { team: { monitorControl: ["whisper", "monitor"] } })).toBe(true);
-    expect(sameCapabilities({ team: { monitorControl: ["monitor", "whisper"] } }, { team: { monitorControl: ["monitor"] } })).toBe(false);
+    expect(sameCapabilities({ team: { monitorControl: ["monitor", "coach"] } }, { team: { monitorControl: ["coach", "monitor"] } })).toBe(true);
+    expect(sameCapabilities({ team: { monitorControl: ["monitor", "coach"] } }, { team: { monitorControl: ["monitor"] } })).toBe(false);
     expect(sameCapabilities({ team: { monitorControl: ["monitor"] } }, { team: {} })).toBe(false);
     // Every field: a lead's policy control, and the preferences the login declares, by id, label, enabled and who set or locked them.
     expect(sameCapabilities({ team: { policyControl: true } }, { team: {} })).toBe(false);

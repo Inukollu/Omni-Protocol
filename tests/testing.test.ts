@@ -1834,7 +1834,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("executeTeamMonitor(), when the login declares team.monitorControl", async () => {
-    const listening = { team: { monitorControl: ["monitor", "whisper"] as ("monitor" | "whisper")[] } };
+    const listening = { team: { monitorControl: ["monitor", "coach"] as ("monitor" | "coach")[] } };
     expect(await rules({ capabilities: listening, snapshot: leadSnapshot, connection: { executeTeamMonitor: undefined } })).toContain("connection.executeTeamMonitor.required");
     expect(await rules({ capabilities: listening, snapshot: leadSnapshot, connection: { executeTeamMonitor: async () => ({ status: "applied" }) } })).toEqual([]);
     // The control: a lead who may not listen owes no method.

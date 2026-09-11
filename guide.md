@@ -40,7 +40,7 @@ are used precisely throughout and mean nothing looser here.
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, team member list. |
 | **Dial** | One outbound call the host asks a provider to place — from the idle dialpad, a cold or warm transfer, a conference add, or a connect-back. Identified by the host's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
-| **Monitor** | A lead listening to a member's call unasked, from the team member list: `monitor` in silence, `whisper` heard by the agent alone, `join-call` heard by everyone. Nothing of it reaches the member's task, and there is no take-over in it. See **Monitoring a call**. |
+| **Monitor** | A lead listening to a member's call unasked, from the team member list: `monitor` in silence, `coach` heard by the agent alone, `join-call` heard by everyone. Nothing of it reaches the member's task, and there is no take-over in it. See **Monitoring a call**. |
 | **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in from the moment their dial is placed. |
 
 Six words describe *what state a thing is in*, and they are not interchangeable: each belongs to
@@ -246,7 +246,7 @@ type AuthenticationContext = {
   log?: (entry: unknown) => void;
 };
 
-type MonitorMode = "monitor" | "whisper" | "join-call";
+type MonitorMode = "monitor" | "coach" | "join-call";
 
 type TeamCapabilities = {
   breakControl?: true;
@@ -1049,7 +1049,7 @@ type TeamLeadAssistCommandRequest = {
 
 type TeamMonitorCommand =
   | { type: "monitor"; memberId: UserId }
-  | { type: "whisper" }
+  | { type: "coach" }
   | { type: "join-call" }
   | { type: "leave" };
 
@@ -1926,7 +1926,7 @@ them from what arrives later.
 | `team` | This login leads a team. The provider publishes a `TeamMembers` object to it on every snapshot — `members: []` when nobody is in it — and to nobody else. |
 | `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — place, release, decide, set policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-decision`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
 | `team.leadAssistControl` | This lead may join a member's call on request. Requires `executeTeamLeadAssist`. |
-| `team.monitorControl` | This lead may listen to a member's call unasked, in the listed modes and no others: `monitor`, `whisper`, `join-call`. The list always includes `monitor`, since the other two begin from one. Requires `executeTeamMonitor`. See **Monitoring a call**. |
+| `team.monitorControl` | This lead may listen to a member's call unasked, in the listed modes and no others: `monitor`, `coach`, `join-call`. The list always includes `monitor`, since the other two begin from one. Requires `executeTeamMonitor`. See **Monitoring a call**. |
 | `team.policyControl` | This lead sets the team's policy per capability — on, off, or the person's — within what the queue allows. Requires `executeTeamPolicy`; the team member list carries `policies`. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
@@ -4185,6 +4185,13 @@ Lead and member alike are `UserId`s of this provider, so an adapter publishing t
 
 ### Monitoring a call
 
+**Coach** lets the lead speak privately to the agent; the caller cannot hear the lead.
+The command and monitoring mode are `coach`. Migration: replace the former whisper literal
+in `TeamMonitorCommand`, `MonitorMode`, `team.monitorControl`, and the task’s `monitoring.mode`.
+`MONITOR_MODES` exports `coach`; update command producers, permissions and retained snapshots
+together. No legacy alias is accepted. The lead must already be monitoring and permitted to
+coach. This mode does not join the audible caller conversation or take over the task.
+
 The user-facing action is **Join call**. The command and monitoring mode are `join-call`.
 Migration: replace the former barge literal in `TeamMonitorCommand`, `MonitorMode`,
 `team.monitorControl`, and the task’s `monitoring.mode`. `MONITOR_MODES` exports the new literal;
@@ -4200,13 +4207,13 @@ three modes determine who hears the lead:
 | Mode | Who hears the lead |
 | --- | --- |
 | `monitor` | Nobody. The lead hears both sides in silence. |
-| `whisper` | The agent alone. The customer hears nothing. |
+| `coach` | The agent alone. The customer hears nothing. |
 | `join-call` | Everyone on the call. |
 
 The login says which modes this lead has, as a list on `team.monitorControl`, and it always
-includes `monitor`, because whisper and join-call begin from one
+includes `monitor`, because coach and join-call begin from one
 (`authentication.capability.team.monitorControl.monitor`). A centre that lets every lead listen but
-reserves joining the call declares `["monitor", "whisper"]`, and Omni offers no Join call to that lead. The
+reserves joining the call declares `["monitor", "coach"]`, and Omni offers no Join call to that lead. The
 declaration requires `executeTeamMonitor`, gated exactly as `executeTeamLeadAssist` is by
 `team.leadAssistControl`.
 
@@ -4219,7 +4226,7 @@ executeTeamMonitor({ command: { type: "monitor", memberId: "A-1" } })
 //    monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "monitor", since }
 
 // 3. The lead changes how they are heard; the provider restates the task with the new mode.
-executeTeamMonitor({ command: { type: "whisper" } })
+executeTeamMonitor({ command: { type: "coach" } })
 executeTeamMonitor({ command: { type: "join-call" } })
 
 // 4. The lead leaves; their task ends with `{ type: "left" }`. The member's call goes on.
@@ -4228,7 +4235,7 @@ executeTeamMonitor({ command: { type: "leave" } })
 
 **The lead's task is what gives them audio**: Omni opens media on it as on any voice task, and the
 provider bridges the lead's leg into the member's call in the mode stated. `monitoring.mode` is
-the state, restated on every change, and a `whisper` or `join-call` the login's list does not include
+the state, restated on every change, and a `coach` or `join-call` the login's list does not include
 is answered `failed`. **A lead listens to one call at a time** (`snapshot.monitoring.single`), and
 a task carries lead assistance or monitoring, never both (`task.monitoring.assisting`).
 The `join-call` mode still belongs to monitoring; it does not create `assisting`. The member's
@@ -4246,7 +4253,7 @@ during a break whose active reason is of any other kind, or of no stated kind, i
 listening during a break declares that break `coaching`, `administrative` or `training`.
 
 **Nothing reaches the member.** The member's task carries no trace of a monitoring lead in any
-mode: not on `onCall`, not in the record. Whether a whisper is announced to the agent is the
+mode: not on `onCall`, not in the record. Whether coaching is announced to the agent is the
 platform's business and travels on the audio, not on this wire.
 
 ```ts
@@ -4254,7 +4261,7 @@ const monitoringLead = {
   channel: "voice",
   capabilities: {},
   phase: "in-progress",
-  monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "whisper", since: "2026-08-21T09:04:00Z" },
+  monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "coach", since: "2026-08-21T09:04:00Z" },
 } satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "monitoring">;
 ```
 

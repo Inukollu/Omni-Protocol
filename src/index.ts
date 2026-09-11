@@ -304,7 +304,7 @@ export interface TeamCapabilities {
   /** This lead may join a member's call on request. Requires `executeTeamLeadAssist`. */
   leadAssistControl?: true;
   /**
-   * This lead may listen to a member's call unasked, in these modes and no others. Whisper and
+   * This lead may listen to a member's call unasked, in these modes and no others. Coach and
    * join-call begin from a monitor, so the list always includes `monitor`. Nothing of it reaches the
    * member's task. Requires `executeTeamMonitor`.
    */
@@ -315,11 +315,11 @@ export interface TeamCapabilities {
 
 /**
  * How a lead listening to a member's call is heard: `monitor` hears both sides in silence,
- * `whisper` is heard by the agent alone, `join-call` by everyone on the call.
+ * `coach` is heard by the agent alone, `join-call` by everyone on the call.
  */
-export type MonitorMode = "monitor" | "whisper" | "join-call";
+export type MonitorMode = "monitor" | "coach" | "join-call";
 
-export const MONITOR_MODES = ["monitor", "whisper", "join-call"] as const satisfies readonly MonitorMode[];
+export const MONITOR_MODES = ["monitor", "coach", "join-call"] as const satisfies readonly MonitorMode[];
 
 /**
  * What this login may do, beyond any one task. It travels with the identity because it is part
@@ -1344,12 +1344,12 @@ export interface TeamLeadAssistCommandRequest {
 
 /**
  * A lead listening to a member's call. `monitor` starts one, silent, on a member from the team member list;
- * `whisper` and `join-call` change how the standing one is heard; `leave` ends it. One member at a
+ * `coach` and `join-call` change how the standing one is heard; `leave` ends it. One member at a
  * time, and only the modes the login's `monitorControl` lists.
  */
 export type TeamMonitorCommand =
   | { type: "monitor"; memberId: UserId }
-  | { type: "whisper" }
+  | { type: "coach" }
   | { type: "join-call" }
   | { type: "leave" };
 
