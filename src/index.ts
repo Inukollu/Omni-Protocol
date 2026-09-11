@@ -1229,10 +1229,10 @@ export interface BreakRequest {
  * A break placed on the agent rather than requested by them.
  *
  * `by` is required in both arms. Who put somebody off the floor survives whether or not the
- * break ends on a clock -- an imposed break with no origin is a state the agent cannot reason
+ * break ends on a clock -- a forced break with no origin is a state the agent cannot reason
  * about, and one that ends on a condition is still somebody's decision.
  */
-export type ImposedBreak =
+export type ForcedBreak =
   | { by: UserId; endsAutomatically: true; endsAt: IsoTimestamp }
   | { by: UserId; endsAutomatically: false; endsAt?: never };
 
@@ -1246,9 +1246,9 @@ export interface BreakState {
   retryAfterMs?: number;
   /** Not-ready codes this provider offers. Omitted when it defines none. */
   reasons?: BreakReason[];
-  /** Which reason the current break is on, a published `BreakReason.id`. Omitted when there is no break; required on a break in effect or starting after the task where the provider publishes `reasons`, an imposed one included. */
+  /** Which reason the current break is on, a published `BreakReason.id`. Omitted when there is no break; required on a break in effect or starting after the task where the provider publishes `reasons`, a forced one included. */
   activeReasonId?: string;
-  imposed?: ImposedBreak;
+  forced?: ForcedBreak;
 }
 
 /** Capacity is a statement, not a request: it is taken, never refused. A provider that cannot carry the count allocates within what it can and says so on a `diagnostic`. */
@@ -1360,7 +1360,7 @@ export interface TeamListenCommandRequest {
 export type TeamBreakCommand =
   | { type: "decide"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "policy"; policy: "ask" | "auto-approve" | "suspended" }
-  /** `reasonId` names a published `BreakReason.id`, required whenever the provider publishes reasons: the member's imposed break carries it as `activeReasonId`. */
+  /** `reasonId` names a published `BreakReason.id`, required whenever the provider publishes reasons: the member's forced break carries it as `activeReasonId`. */
   | { type: "place"; memberId: UserId; reasonId?: string; reason?: string }
   | { type: "release"; memberId: UserId };
 
@@ -1618,7 +1618,7 @@ export interface Connection<C extends Channel = Channel> {
   execute(request: TaskCommandRequest<C>): Promise<TaskCommandResult>;
   disconnect(): Promise<void>;
 
-  /** Required of any adapter publishing a `UserId` -- on an imposed break, a team member list, or history. */
+  /** Required of any adapter publishing a `UserId` -- on a forced break, a team member list, or history. */
   describeUsers?(ids: UserId[]): Promise<User[]>;
   /** Required when the manifest declares `idleCapabilities.dial`. */
   dial?(request: DialRequest): Promise<DialResult>;

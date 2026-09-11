@@ -245,8 +245,8 @@ describe("assertBreakFollowsItsRequests", () => {
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("not-requested")], idle))).toEqual([]);
     // Placed on the agent: in effect with nobody asking, and it says so -- or starting after the
     // call the member is on, which is the same placing reported while the work finishes.
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect", { imposed: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task", { imposed: { by: "M-1", endsAutomatically: false } }), state("in-effect", { imposed: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect", { forced: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task", { forced: { by: "M-1", endsAutomatically: false } }), state("in-effect", { forced: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
     // A reconnect snapshot resets where the break stands; the same state twice is nothing.
     const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { approval: "granted", mayAsk: true } } } };
     expect(rulesOf(() => assertBreakFollowsItsRequests([reconnect, state("starting-after-task"), state("starting-after-task", {}, "again")], idle))).toEqual([]);
@@ -1087,7 +1087,7 @@ describe("exerciseAdapter", () => {
 
   it("says what the run never reached, so a clean result is read for what it covers", async () => {
     // The rich fixture carries a task, a contact and an activity but no team member list, no break reasons,
-    // no imposed break, and delivers no event; the bare fixture reaches nothing at all.
+    // no forced break, and delivers no event; the bare fixture reaches nothing at all.
     const run = async (overrides: AdapterOverrides) =>
       (await exerciseAdapter(makeAdapter(overrides).adapter, context, { collectOnly: true })).notExercised;
     const state = (subjects: readonly ContractSubject[]) => subjects.filter(subject => !subject.startsWith("event."));
@@ -1100,18 +1100,18 @@ describe("exerciseAdapter", () => {
     // The rich task carries browsers, history, an outcome policy, transfer destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.listening", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.listening", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.requests", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.interactionHistory", "task.onCall", "task.leadAssist", "task.assisting", "task.listening",
-      "task.media", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
+      "task.media", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.requests",
       "contacts", "scheduledActivities", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.
     const reached = {
       ...conformingSnapshot,
-      break: { approval: "in-effect", mayAsk: true, reasons: [{ id: "lunch", label: "Lunch" }], imposed: { by: "M-1", endsAutomatically: false } },
+      break: { approval: "in-effect", mayAsk: true, reasons: [{ id: "lunch", label: "Lunch" }], forced: { by: "M-1", endsAutomatically: false } },
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", allocationId: "alloc-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { leadAssistControl: true } }, snapshot: reached })))
@@ -1122,7 +1122,7 @@ describe("exerciseAdapter", () => {
     };
     const teamMembersOnly = { ...conformingSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
     const withEvent = await run({ capabilities: { team: {} }, snapshot: teamMembersOnly, emit: listener => listener(later) });
-    expect(state(withEvent)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.listening", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
+    expect(state(withEvent)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.listening", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.requests", "team.policies"]);
     expect(events(withEvent)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
   });
 
@@ -2169,12 +2169,12 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
-    // The conforming snapshot names A-1 in a interaction step; a team member list and an imposed break count too.
+    // The conforming snapshot names A-1 in a interaction step; a team member list and a forced break count too.
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     const teamMembers = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: teamMembers, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
-    const imposed = { ...minimalSnapshot, break: { approval: "in-effect", mayAsk: true, imposed: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
-    expect(await rules({ snapshot: imposed, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
+    const forced = { ...minimalSnapshot, break: { approval: "in-effect", mayAsk: true, forced: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
+    expect(await rules({ snapshot: forced, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     expect(await rules({ snapshot: minimalSnapshot, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
     // Present is not enough: the names the snapshot published are looked up, and the answer is held to the shape.
     // The conforming snapshot names A-1: it is looked up and the answer stands, or the answer is named.

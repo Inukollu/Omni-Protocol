@@ -1411,24 +1411,24 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
 // Breaks, team, snapshot.
 // ---------------------------------------------------------------------------
 
-function validateImposedBreak(value: unknown, path: string, into: Collector): void {
+function validateForcedBreak(value: unknown, path: string, into: Collector): void {
   if (!isPlainObject(value)) {
-    into.add("break.imposed.shape", path, "an imposed break must be an object");
+    into.add("break.forced.shape", path, "a forced break must be an object");
     return;
   }
   // `by` is required either way. Who put somebody off the floor survives whether or not the
-  // break ends on a clock -- an imposed break with no origin is a state the agent cannot
+  // break ends on a clock -- a forced break with no origin is a state the agent cannot
   // reason about.
-  into.require(isUserId(value.by), "break.imposed.by", `${path}.by`, "an imposed break must say who placed it");
+  into.require(isUserId(value.by), "break.forced.by", `${path}.by`, "a forced break must say who placed it");
 
   if (value.endsAutomatically === true) {
-    into.timestamp(value.endsAt, "break.imposed.endsAt", `${path}.endsAt`);
+    into.timestamp(value.endsAt, "break.forced.endsAt", `${path}.endsAt`);
   } else if (value.endsAutomatically === false) {
-    into.require(value.endsAt === undefined, "break.imposed.endsAt.unexpected", `${path}.endsAt`,
+    into.require(value.endsAt === undefined, "break.forced.endsAt.unexpected", `${path}.endsAt`,
       "a break that does not end automatically must not carry an end time");
   } else {
-    into.add("break.imposed.endsAutomatically", `${path}.endsAutomatically`,
-      "an imposed break must say whether it ends automatically");
+    into.add("break.forced.endsAutomatically", `${path}.endsAutomatically`,
+      "a forced break must say whether it ends automatically");
   }
 }
 
@@ -1517,8 +1517,8 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   } else {
     validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
-    if (command.type === "release") into.require(state.imposed !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
-      "team.break.command.release", path, "release a currently imposed break");
+    if (command.type === "release") into.require(state.forced !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
+      "team.break.command.release", path, "release a currently forced break");
     if (command.type === "place") {
       if (command.reasonId !== undefined) into.filled(command.reasonId, "team.break.command.reasonId", path, "reasonId must not be empty");
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
@@ -1584,7 +1584,7 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
     if (method === "endBreak") {
       into.require(approval === "starting-after-task" || approval === "in-effect", "break.command.end.started", path,
         "end a committed break, including a returning provider still finishing work");
-      into.require(state.imposed === undefined, "break.command.end.imposed", path, "an agent cannot end an imposed break; an authorized lead releases it");
+      into.require(state.forced === undefined, "break.command.end.forced", path, "an agent cannot end a forced break; an authorized lead releases it");
     }
   }
   return into.violations;
@@ -1605,7 +1605,7 @@ export function validateBreakTransition(before: unknown, after: unknown, path = 
   const from = before.approval as BreakApproval;
   const to = after.approval as BreakApproval;
   const committed = to === "starting-after-task" || to === "in-effect";
-  if (committed && (from === "not-requested" || from === "awaiting-decision") && after.imposed === undefined) {
+  if (committed && (from === "not-requested" || from === "awaiting-decision") && after.forced === undefined) {
     into.add("stream.breakState.commitBeforeGrant", `${path}.after.approval`,
       `${to} follows a commit, and a commit follows granted; the break stood at ${from}`);
   }
@@ -1623,6 +1623,8 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     into.add("break.shape", path, "break state must be an object");
     return;
   }
+  into.require(!Object.hasOwn(value, "imposed"), "break.forced.renamed", `${path}.imposed`,
+    "imposed was renamed to forced; use only forced");
   into.oneOf(value.approval, BREAK_APPROVALS, "break.approval", `${path}.approval`);
   into.require(typeof value.mayAsk === "boolean", "break.mayAsk", `${path}.mayAsk`, "mayAsk says whether the agent may ask for a break: a boolean");
 
@@ -1648,13 +1650,13 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     into.require(value.approval !== "not-requested", "break.activeReasonId.approval", `${path}.activeReasonId`,
       "activeReasonId must be omitted when no break is requested or in effect");
   }
-  if (value.imposed !== undefined) {
-    validateImposedBreak(value.imposed, `${path}.imposed`, into);
-    // An imposed break is a break somebody placed; beside `not-requested` there is no break.
-    // An imposed break is a break in progress or about to be: it travels with in-effect or
+  if (value.forced !== undefined) {
+    validateForcedBreak(value.forced, `${path}.forced`, into);
+    // A forced break is a break somebody placed; beside `not-requested` there is no break.
+    // A forced break is a break in progress or about to be: it travels with in-effect or
     // starting-after-task and nothing else. Beside granted, the host would commit a break nobody asked for.
-    into.require(value.approval === "in-effect" || value.approval === "starting-after-task", "break.imposed.approval", `${path}.imposed`,
-      `an imposed break is in effect or starting after the task; ${describeValue(value.approval)} says the agent asked, or that there is none`);
+    into.require(value.approval === "in-effect" || value.approval === "starting-after-task", "break.forced.approval", `${path}.forced`,
+      `a forced break is in effect or starting after the task; ${describeValue(value.approval)} says the agent asked, or that there is none`);
   }
 
   if (value.reasons === undefined) return;
@@ -1690,7 +1692,7 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
       `activeReasonId names a reason the provider did not publish: ${value.activeReasonId}`);
   }
   // A break in effect, or about to be, on a provider that publishes reasons is on one of them: an
-  // imposed one included, since the lead's place named it. A break of no kind is a break whose
+  // forced one included, since the lead's place named it. A break of no kind is a break whose
   // rules -- who may listen through it, whether it counts -- nobody can apply.
   ruleEvaluated("break.activeReasonId.required");
   if (seen.size > 0 && (value.approval === "in-effect" || value.approval === "starting-after-task")) {
