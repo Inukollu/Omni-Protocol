@@ -3,10 +3,17 @@ import type { BreakApproval, BreakState } from "../src/index.js";
 import { validateBreakTransition, validateBreakCommand, validateBreakStatus, validateTeamBreakCommand, validateResult, type BreakMethod } from "../src/validation.js";
 import { BreakStream } from "../src/testing.js";
 
-const state = (approval: BreakApproval): BreakState => ({ approval, canRequestBreak: true });
-const event = (approval: BreakApproval) => ({ event: { type: "break-state", break: state(approval) } });
+const state = (status: BreakApproval): BreakState => ({ status, canRequestBreak: true });
+const event = (status: BreakApproval) => ({ event: { type: "break-state", break: state(status) } });
 
 describe("runtime break ordering", () => {
+  it("rejects the retired BreakState field, even alongside status", () => {
+    for (const value of [{ approval: "granted", canRequestBreak: true }, { ...state("granted"), approval: "granted" }]) {
+      expect(validateBreakStatus(value, []).map(v => v.rule)).toContain("break.status.renamed");
+      expect(validateBreakTransition(state("not-requested"), value).map(v => v.rule)).toContain("break.status.renamed");
+    }
+  });
+
   it("validates break retry delays and rejects the old or mixed field", () => {
     for (const retryRequestAfterMs of [0, 500, 0.5]) {
       expect(validateBreakStatus({ ...state("not-requested"), retryRequestAfterMs }, [])).toEqual([]);
@@ -20,9 +27,9 @@ describe("runtime break ordering", () => {
   });
 
   it("rejects the retired active break state", () => {
-    const retired = { ...state("on-break"), approval: "in-effect" };
-    expect(validateBreakStatus(retired, []).map(v => v.rule)).toContain("break.approval");
-    expect(validateBreakTransition(state("granted"), retired).map(v => v.rule)).toContain("break.approval");
+    const retired = { ...state("on-break"), status: "in-effect" };
+    expect(validateBreakStatus(retired, []).map(v => v.rule)).toContain("break.status");
+    expect(validateBreakTransition(state("granted"), retired).map(v => v.rule)).toContain("break.status");
   });
 
   it("rejects the retired request-unavailable reason even alongside the new field", () => {
@@ -36,7 +43,7 @@ describe("runtime break ordering", () => {
 
   it("rejects the old eligibility field, including alongside the new field", () => {
     for (const value of [
-      { approval: "not-requested", mayAsk: true },
+      { status: "not-requested", mayAsk: true },
       { ...state("not-requested"), mayAsk: true },
     ]) {
       expect(validateBreakStatus(value, []).map(v => v.rule)).toContain("break.canRequestBreak.renamed");
@@ -78,13 +85,13 @@ describe("runtime break ordering", () => {
     const before = Object.freeze(state("on-break"));
     expect(validateBreakTransition(before, state("awaiting-decision")).map(v => v.rule))
       .toContain("stream.breakState.backwards");
-    expect(before.approval).toBe("on-break");
+    expect(before.status).toBe("on-break");
     expect(validateBreakTransition(before, state("not-requested"))).toEqual([]);
     expect(validateBreakTransition(state("not-requested"), state("awaiting-decision"))).toEqual([]);
   });
 
   it("rejects malformed previous and next states without throwing", () => {
-    for (const bad of [null, undefined, [], {}, { approval: "started", canRequestBreak: true }, { approval: "granted" }]) {
+    for (const bad of [null, undefined, [], {}, { status: "started", canRequestBreak: true }, { status: "granted" }]) {
       expect(validateBreakTransition(bad, state("granted"))).not.toEqual([]);
       expect(validateBreakTransition(state("granted"), bad)).not.toEqual([]);
     }
@@ -133,7 +140,7 @@ describe("runtime break ordering", () => {
     const stream = new BreakStream();
     stream.seed({ break: state("granted") });
     expect(stream.apply({ event: { type: "break-state", break: {} } })).not.toEqual([]);
-    expect(stream.seed({ break: { approval: "granted" } })).not.toEqual([]);
+    expect(stream.seed({ break: { status: "granted" } })).not.toEqual([]);
     expect(stream.needsRecovery).toBe(true);
     expect(stream.apply(event("on-break"))).not.toEqual([]);
     expect(stream.seed({ break: state("on-break") })).toEqual([]);
@@ -160,9 +167,9 @@ describe("break prerequisites", () => {
       cancelBreak: ["awaiting-decision", "granted"], endBreak: ["starting-after-task", "on-break"],
     };
     const approvals: BreakApproval[] = ["not-requested", "awaiting-decision", "granted", "starting-after-task", "on-break"];
-    for (const method of Object.keys(allowed) as BreakMethod[]) for (const approval of approvals) {
-      const found = validateBreakCommand(method, method === "requestBreak" ? {} : undefined, state(approval), context);
-      expect(found.length === 0, `${method} from ${approval}`).toBe(allowed[method].includes(approval));
+    for (const method of Object.keys(allowed) as BreakMethod[]) for (const status of approvals) {
+      const found = validateBreakCommand(method, method === "requestBreak" ? {} : undefined, state(status), context);
+      expect(found.length === 0, `${method} from ${status}`).toBe(allowed[method].includes(status));
     }
   });
   it("requires explicit live capability and active transport on every method", () => {
@@ -246,7 +253,7 @@ describe("lead break prerequisites", () => {
     for (const bad of [context, { ...current, transport: "connecting" }, { ...current, team: { members: [] } }, { ...current, memberBreak: undefined }]) {
       expect(validateTeamBreakCommand({ command }, bad)).not.toEqual([]);
     }
-    expect(validateTeamBreakCommand({ command }, { ...current, memberBreak: { ...current.memberBreak, approval: "starting-after-task" } })).toEqual([]);
+    expect(validateTeamBreakCommand({ command }, { ...current, memberBreak: { ...current.memberBreak, status: "starting-after-task" } })).toEqual([]);
   });
   it("checks the forced-break reason and end without assuming the same lead does both", () => {
     expect(validateTeamBreakCommand({ command: { type: "force-break", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);

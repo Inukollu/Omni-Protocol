@@ -43,9 +43,8 @@ are used precisely throughout and mean nothing looser here.
 | **Listen** | A lead listening to a member's call unasked, from the team member list: `listen` in silence, `coach` heard by the agent alone, `join-call` heard by everyone. Nothing of it reaches the member's task, and there is no take-over in it. See **Listening to a call**. |
 | **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in from the moment their dial is placed. |
 
-Six words describe *what state a thing is in*, and they are not interchangeable: each belongs to
-one thing, so a bare "status" in conversation is always the authentication session's, and a
-transport, a task, a break and a call each have a word of their own:
+These fields describe state within their containing objects. Both authentication and break
+state use `status`; name the object when discussing them to avoid ambiguity.
 
 | Word | Belongs to | Values |
 | --- | --- | --- |
@@ -53,7 +52,7 @@ transport, a task, a break and a call each have a word of their own:
 | `media` | A task's audio | `started`, `ended` |
 | `transport` | A connection | `connecting`, `active`, `error` |
 | `status` | An authentication session | `signed-out`, `authenticating`, `authenticated`, `refreshing`, `expired` |
-| `approval` | A break request | `not-requested`, `awaiting-decision`, `granted`, `starting-after-task`, `on-break` |
+| `status` | The agent’s break lifecycle | `not-requested`, `awaiting-decision`, `granted`, `starting-after-task`, `on-break` |
 | `availability` | A team member | `ready`, `on-task`, `on-break`, `signed-out` |
 
 ## Versioning
@@ -954,7 +953,7 @@ type ForcedBreak =
   | { by: UserId; endsAutomatically: false; endsAt?: never };
 
 type BreakState = {
-  approval: BreakApproval;
+  status: BreakApproval;
   canRequestBreak: boolean;
   requestUnavailableReason?: string;
   decisionReason?: string;
@@ -2131,7 +2130,7 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | --- | --- |
 | `transport` | Current `TransportStatus` — whether this provider's transport can serve the login. Defined under **`transport-status`**. |
 | `loginId` | Identity of this login. It must match the connection context. |
-| `break` | Complete break state, including approval, whether the agent may ask, reasons, retry details, and any forced break. |
+| `break` | Complete break state, including status, whether the agent may ask, reasons, retry details, and any forced break. |
 | `tasks` | Complete set of tasks currently offered to or owned by this agent. |
 | `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
@@ -3607,8 +3606,8 @@ nothing while none are being accepted — so they are not published separately.
 
 | Field | Contract |
 | --- | --- |
-| `approval` | Where the agent's current request stands. See the states below. |
-| `canRequestBreak` | Whether the agent may ask at all. Distinct from `approval`. |
+| `status` | Where the agent’s break lifecycle stands. See the states below. |
+| `canRequestBreak` | Whether the agent may ask at all. Distinct from `status`. |
 | `requestUnavailableReason` | Display-ready reason shown when `canRequestBreak` is false — a standing gate that applies to everyone. |
 | `decisionReason` | The words whoever decided attached, from `decide.reason`. About one request and one decision, not a standing gate. |
 | `retryRequestAfterMs` | Milliseconds until the agent may retry a break request, when the provider can say. |
@@ -3619,7 +3618,7 @@ nothing while none are being accepted — so they are not published separately.
 A request can be waiting for two unrelated things, and they are separate values because
 rendering one as the other tells an agent to wait for somebody who is never coming:
 
-| `approval` | Meaning |
+| `status` | Meaning |
 | --- | --- |
 | `not-requested` | No request outstanding. |
 | `awaiting-decision` | A person has to decide. The agent is waiting on somebody. |
@@ -3630,7 +3629,7 @@ rendering one as the other tells an agent to wait for somebody who is never comi
 A denial is a decision, not a standing approval state. The provider transitions the request directly
 to `not-requested`; Omni returns the agent to idle and never asks again on their behalf. They saw the
 answer and ask again when they want to. `decisionReason` may carry the words attached to that
-decision, but `approval` does not remain denied.
+decision, but `status` does not remain denied.
 
 A provider reports `starting-after-task` only after Omni commits a `granted` request while
 work is still active. Omni does not send the request again, because asking again would not move
@@ -3641,6 +3640,11 @@ refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest 
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
 ### Forced breaks
+
+Migration: `BreakState.status` replaces the former approval field. It covers the full break
+lifecycle. The old field is rejected even alongside status; related diagnostics now use status.
+The `BreakApproval` union and its values, `reasons`, `activeReasonId`, and the separate testing
+helper BreakOnTaskStep.approval are unchanged. Hosts and providers must update together.
 
 Migration: the break-state field formerly named retryAfterMs is now `BreakState.retryRequestAfterMs`,
 with diagnostic `break.retryRequestAfterMs`. It remains an optional non-negative finite number
@@ -3700,7 +3704,7 @@ a display name.
 
 **A forced break travels with `on-break` or `starting-after-task`, and nothing else.** It is a
 break in progress or about to be; beside `granted` or `awaiting-decision` the host would read a
-request the agent never made and commit it (`break.forced.approval`). Where the provider publishes
+request the agent never made and commit it (`break.forced.status`). Where the provider publishes
 `reasons`, the lead's `force-break` named one, and the member's state carries it as `activeReasonId`.
 
 For example:
@@ -4044,11 +4048,11 @@ asked for, but only until the session ends — after a reload or reconnect, or w
 the agent on the break itself, the provider is the only one who knows.
 
 Omit it when you cannot say, and when there is no break: reporting a reason alongside
-`approval: "not-requested"` describes a break that is not happening, and is rejected.
+`status: "not-requested"` describes a break that is not happening, and is rejected.
 
 ### `cancelBreak()`
 
-Cancels the active pre-commit request while its approval is `awaiting-decision` or `granted`.
+Cancels the active pre-commit request while its status is `awaiting-decision` or `granted`.
 Cancellation releases the request but does not restore work because work never stopped. If
 commit already won, the provider returns `omni.break-already-committed`. The resulting state is
 reported through `break-state`.
@@ -4194,7 +4198,7 @@ they joined -- is answered `failed`, whatever their ceiling; the request stands 
 or until it is withdrawn or declined.
 
 **A lead on a break does not join.** A break is a reported state in which the agent is not working,
-and a join is work. Omni offers Join to a lead only while their own `BreakState.approval` is neither
+and a join is work. Omni offers Join to a lead only while their own `BreakState.status` is neither
 `starting-after-task` nor `on-break` -- a committed break waiting for the lead's current work to
 finish is not given more -- and a provider answers a `join` from a lead on such a break `failed`.
 The request stands for another lead, as it does when this one is already on a call.
@@ -4980,7 +4984,7 @@ covers a `diagnostic`: shown where the agent works, and counted.
 
 ### `break-state`
 
-Replaces this provider's complete `break` object. Its `approval` uses the canonical
+Replaces this provider's complete `break` object. Its `status` uses the canonical
 `not-requested`, `awaiting-decision`, `granted`, `starting-after-task` and
 `on-break` states defined under Breaks; the event also carries the corresponding may-ask state,
 reasons, retry details, and any forced break.
@@ -5012,7 +5016,7 @@ provider rechecks current permission and state atomically before acting. The pro
 the resulting break/task state before publication and serializes those publications. The host
 validates the envelope, transition and full task consistency before replacing local state. A
 request result does not optimistically advance break state, and a delayed command cannot apply
-to a later attempt merely because its approval happens to look compatible. Keep at most one
+to a later attempt merely because its status happens to look compatible. Keep at most one
 unresolved operation per provider/attempt; recovery must resolve uncertainty before another
 operation is dispatched. The source must fence delayed operations against its own attempt state.
 
@@ -5029,7 +5033,7 @@ A fresh authoritative snapshot establishes a new baseline; do not run this event
 check across it. A snapshot may legitimately establish a later request or an already active
 break after reconnect. Its freshness must be established by the source/adapter's ordered
 snapshot/publication boundary and fencing of obsolete callbacks and reads. A delayed old
-snapshot is not detectable from break approval alone. Neither envelope time nor event ID
+snapshot is not detectable from break status alone. Neither envelope time nor event ID
 supplies a break revision. Do not suppress all requests after an active break: a later attempt
 passes through `not-requested`, and then may request again. Do not replay earlier ProviderEvents
 after recovery. Raw backend break handlers must preserve source order too; this helper does

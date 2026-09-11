@@ -1237,7 +1237,7 @@ export type ForcedBreak =
   | { by: UserId; endsAutomatically: false; endsAt?: never };
 
 export interface BreakState {
-  approval: BreakApproval;
+  status: BreakApproval;
   /** Whether the agent may ask at all. Distinct from the fate of a request already made. */
   canRequestBreak: boolean;
   /** Shown when `canRequestBreak` is false, such as "Busy hours". */

@@ -79,7 +79,7 @@ describe("assertCapabilityWithdrawal", () => {
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, team: { breakControl: true } } } satisfies AuthenticationState;
   const demoted = { status: "authenticated", identity: ada, capabilities: { breaks: true } } satisfies AuthenticationState;
-  const bare: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+  const bare: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
   const withMembers: Snapshot<"voice"> = { ...bare, team: { members: [{ id: "A-2", availability: "ready" }] } };
 
   it("accepts a team member list gone with the capability that entitled it, and rejects one that stayed", () => {
@@ -203,11 +203,11 @@ describe("assertDuplicateEventDelivery", () => {
 });
 
 describe("assertReconnectWithMissedAssignments", () => {
-  const before: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+  const before: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
   const reconnect = {
     id: "event-2", loginId: "session-1",
     occurredAt: "2026-08-21T01:01:00Z",
-    event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [voiceTask], taskCount: 1 } },
+    event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [voiceTask], taskCount: 1 } },
   } as const satisfies ProviderEventEnvelope<"voice">;
 
   it("accepts a reconnect snapshot carrying the missed assignment", () => {
@@ -231,10 +231,10 @@ describe("assertReconnectWithMissedAssignments", () => {
 
 describe("assertBreakFollowsItsRequests", () => {
   const at = "2026-08-21T09:00:00Z";
-  const state = (approval: BreakApproval, over: Record<string, unknown> = {}, id: string = approval): ProviderEventEnvelope<"voice"> =>
-    ({ id, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, canRequestBreak: true, ...over } } }) as ProviderEventEnvelope<"voice">;
+  const state = (status: BreakApproval, over: Record<string, unknown> = {}, id: string = status): ProviderEventEnvelope<"voice"> =>
+    ({ id, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { status, canRequestBreak: true, ...over } } }) as ProviderEventEnvelope<"voice">;
   const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
-  const idle: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+  const idle: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
 
   it("accepts every move the guide describes", () => {
     // Asked, decided, committed while working, begun when the work ended, ended.
@@ -248,7 +248,7 @@ describe("assertBreakFollowsItsRequests", () => {
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break", { forced: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task", { forced: { by: "M-1", endsAutomatically: false } }), state("on-break", { forced: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
     // A reconnect snapshot resets where the break stands; the same state twice is nothing.
-    const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { approval: "granted", canRequestBreak: true } } } };
+    const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { status: "granted", canRequestBreak: true } } } };
     expect(rulesOf(() => assertBreakFollowsItsRequests([reconnect, state("starting-after-task"), state("starting-after-task", {}, "again")], idle))).toEqual([]);
     // No implied baseline: a first delta cannot establish its own ordering preconditions.
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break")]))).toEqual(["stream.breakState.baseline"]);
@@ -283,7 +283,7 @@ describe("assertMediaFollowsTheTask", () => {
   it("rejects media events on non-voice tasks without changing their state", () => {
     for (const channel of ["chat", "email"] as const) {
       const work: Task = { ...voiceTask, channel, capabilities: {}, browsers: [], phase: "in-progress" };
-      const initial: Snapshot = { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [work], taskCount: 1 };
+      const initial: Snapshot = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [work], taskCount: 1 };
       expect(rulesOf(() => assertMediaFollowsTheTask([mediaReady(), mediaEnded, ended], initial))).toEqual([
         "stream.taskMedia.channel", "stream.taskMedia.channel",
       ]);
@@ -293,7 +293,7 @@ describe("assertMediaFollowsTheTask", () => {
   it("accepts a call offered, started, made ready, whose media ends, completing, then ending", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), ended]))).toEqual([]);
     // A snapshot may carry the task in with its media ready; connecting back puts media back and it ends again.
-    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), connectingBack("e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [{ ...call("in-progress"), media: "started" }], taskCount: 1 }))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), connectingBack("e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...call("in-progress"), media: "started" }], taskCount: 1 }))).toEqual([]);
   });
 
   it("refuses a task that completes around its audio: completing while the media the stream holds is still started", () => {
@@ -364,7 +364,7 @@ describe("assertMediaFollowsTheTask", () => {
 
   it("holds a resync snapshot to what the stream knew: no phase backwards, and no audio forgotten on a task still at work", () => {
     const resync = (task: Record<string, unknown>, id = "s1") => ({ id, loginId: "session-1", occurredAt: at,
-      event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [task], taskCount: 1 } } }) as unknown as ProviderEventEnvelope<"voice">;
+      event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [task], taskCount: 1 } } }) as unknown as ProviderEventEnvelope<"voice">;
     // The audio was up; a snapshot carrying the task at work without it lost state. One carrying it started, or completing with it ended, did not.
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync(call("in-progress"))]))).toEqual(["stream.snapshot.media"]);
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync({ ...call("paused") })]))).toEqual(["stream.snapshot.media"]);
@@ -518,7 +518,7 @@ describe("TaskStream holds a record once read", () => {
   const update = (steps: unknown[] | undefined): ProviderEventEnvelope<"voice"> =>
     ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: withRecord(steps) } });
   const resync = (steps: unknown[] | undefined): ProviderEventEnvelope<"voice"> =>
-    ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [withRecord(steps)], taskCount: 1 } } });
+    ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [withRecord(steps)], taskCount: 1 } } });
 
   it("lets a record grow or stand, and refuses its loss on an update", () => {
     expect(rulesOf(seeded([answered]).apply(update([answered, held])))).toEqual([]);
@@ -567,7 +567,7 @@ describe("TaskStream holds terms once read", () => {
 
   it("holds a snapshot to the same rule: a resync may not say a task lost the terms it had", () => {
     const resync = (capabilitySource: Task["capabilitySource"]): ProviderEventEnvelope<"voice"> =>
-      ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [{ ...voiceTask, capabilitySource }], taskCount: 1 } } });
+      ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...voiceTask, capabilitySource }], taskCount: 1 } } });
     expect(rulesOf(seeded("queue").apply(resync("undetermined")))).toEqual(["stream.snapshot.capabilitySource"]);
     expect(rulesOf(seeded("ungoverned").apply(resync("undetermined")))).toEqual(["stream.snapshot.capabilitySource"]);
     // The control: terms arriving on a snapshot, or restated by one, are what a snapshot is for.
@@ -855,7 +855,7 @@ const conformingManifest = {
 const conformingSnapshot = {
   transport: "active",
   loginId: "session-1",
-  break: { approval: "not-requested", canRequestBreak: true },
+  break: { status: "not-requested", canRequestBreak: true },
   tasks: [{
     id: "call-42",
     title: "Customer call",
@@ -893,7 +893,7 @@ const conformingSnapshot = {
 const minimalSnapshot = {
   transport: "active",
   loginId: "session-1",
-  break: { approval: "not-requested", canRequestBreak: true },
+  break: { status: "not-requested", canRequestBreak: true },
   tasks: [], taskCount: 0,
 } satisfies Snapshot<"voice">;
 
@@ -1111,7 +1111,7 @@ describe("exerciseAdapter", () => {
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.
     const reached = {
       ...conformingSnapshot,
-      break: { approval: "on-break", canRequestBreak: true, reasons: [{ id: "lunch", label: "Lunch" }], forced: { by: "M-1", endsAutomatically: false } },
+      break: { status: "on-break", canRequestBreak: true, reasons: [{ id: "lunch", label: "Lunch" }], forced: { by: "M-1", endsAutomatically: false } },
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", allocationId: "alloc-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { leadAssistControl: true } }, snapshot: reached })))
@@ -2077,7 +2077,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   it("holds the break's moves to where it stood, from the connect snapshot on", async () => {
     // The conforming snapshot stands at not-requested: a grant may follow, a commit's state may not.
     const at = "2026-08-21T09:05:00Z";
-    const moved = (approval: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${approval}`, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, canRequestBreak: true } } }) as ProviderEventEnvelope<"voice">;
+    const moved = (status: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${status}`, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { status, canRequestBreak: true } } }) as ProviderEventEnvelope<"voice">;
     const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
       let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
       return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { deliver?.(envelope); return { status: "applied" as const }; } } };
@@ -2173,7 +2173,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     const teamMembers = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: teamMembers, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
-    const forced = { ...minimalSnapshot, break: { approval: "on-break", canRequestBreak: true, forced: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
+    const forced = { ...minimalSnapshot, break: { status: "on-break", canRequestBreak: true, forced: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: forced, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     expect(await rules({ snapshot: minimalSnapshot, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
     // Present is not enough: the names the snapshot published are looked up, and the answer is held to the shape.

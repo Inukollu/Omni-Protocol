@@ -243,7 +243,7 @@ export const audiolessEmailTask = { ...emailTask, id: "email-9",
   // @ts-expect-error Real-time media is a voice affair; an email task carries no state for it.
   media: "started" } satisfies Task<"email">;
 // @ts-expect-error A snapshot states its task count; a blank state cannot pass as a confirmed empty.
-export const uncountedSnapshot = { transport: "active", loginId: "s-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [] } satisfies Snapshot<"voice">;
+export const uncountedSnapshot = { transport: "active", loginId: "s-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [] } satisfies Snapshot<"voice">;
 export const hiddenUrlBrowser = { id: "crm", name: "CRM", url: "https://crm.example.com/42", purpose: "Customer record", sharedSession: false, urlVisibility: "hidden" } satisfies TaskBrowser;
 export const plainUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", sharedSession: false } satisfies TaskBrowser;
 export const partialUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", sharedSession: false,
@@ -251,12 +251,12 @@ export const partialUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb
   urlVisibility: "partial" } satisfies TaskBrowser;
 export const agentsOwnTab = { id: "tab-1", name: "Intranet", url: "https://intranet.example.com/" } satisfies PersonalBrowser;
 // The renamed keys are refused by the type, so a fixture kept from an older release fails the build.
-export const staleLogin = { transport: "active", break: { approval: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0,
+export const staleLogin = { transport: "active", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0,
   // @ts-expect-error The login is identified by loginId.
   sessionId: "session-1" } satisfies Snapshot<"voice">;
 export const staleBreak = { transport: "active", loginId: "login-1", tasks: [], taskCount: 0,
   // @ts-expect-error Whether the agent may ask is canRequestBreak.
-  break: { approval: "not-requested", accepting: true } } satisfies Snapshot<"voice">;
+  break: { status: "not-requested", accepting: true } } satisfies Snapshot<"voice">;
 export const staleLadder = { ...voiceManifest,
   // @ts-expect-error The org's ladder is orgLevels.
   orgTiers: [{ id: "org", label: "Your organisation" }] } satisfies Manifest<"voice">;
@@ -353,7 +353,7 @@ export const expiredWithCapabilities: AuthenticationState = { status: "expired",
 export const completed: CompleteAuthenticationResult = { status: "authenticated", identity: asha, capabilities: { breaks: true } };
 // @ts-expect-error Completion says what the login may do, like the state it becomes.
 export const completedSilently: CompleteAuthenticationResult = { status: "authenticated", identity: asha };
-export const bareSnapshot: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+export const bareSnapshot: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
 // @ts-expect-error Capabilities live on the login, not the snapshot.
 export const staleSnapshot: Snapshot<"voice"> = { ...bareSnapshot, sessionCapabilities: {} };
 export const teamMembers: TeamMembers = { members: [], requests: [] };
@@ -432,7 +432,7 @@ export type FormerListenMethod = import("../src/index.js").Connection["executeTe
 export const retiredLeadTakeOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over" };
 
 export const forcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAutomatically: false };
-export const forcedBreakState: import("../src/index.js").BreakState = { approval: "on-break", canRequestBreak: false, forced: forcedBreak };
+export const forcedBreakState: import("../src/index.js").BreakState = { status: "on-break", canRequestBreak: false, forced: forcedBreak };
 // @ts-expect-error The old break type has no compatibility alias.
 import type { ImposedBreak } from "../src/index.js";
 // @ts-expect-error Use forced, including when the new field is also present.
@@ -472,15 +472,18 @@ export const retiredSuspendedPolicy: import("../src/index.js").TeamBreakCommand 
 export const retiredAutoApprovePolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "auto-approve" };
 
 // @ts-expect-error Use canRequestBreak, not the retired mayAsk field.
-export const retiredBreakEligibility: import("../src/index.js").BreakState = { approval: "not-requested", canRequestBreak: true, mayAsk: true };
+export const retiredBreakEligibility: import("../src/index.js").BreakState = { status: "not-requested", canRequestBreak: true, mayAsk: true };
 
-export const unavailableBreakRequest: import("../src/index.js").BreakState = { approval: "not-requested", canRequestBreak: false, requestUnavailableReason: "Busy hours" };
+export const unavailableBreakRequest: import("../src/index.js").BreakState = { status: "not-requested", canRequestBreak: false, requestUnavailableReason: "Busy hours" };
 // @ts-expect-error Use requestUnavailableReason, not the retired refusedReason field.
 export const retiredBreakRefusal: import("../src/index.js").BreakState = { ...unavailableBreakRequest, refusedReason: "Busy hours" };
 
 // @ts-expect-error Use on-break, not the retired in-effect approval.
 export const retiredActiveBreakState: import("../src/index.js").BreakApproval = "in-effect";
 
-export const breakRequestRetry: import("../src/index.js").BreakState = { approval: "not-requested", canRequestBreak: true, retryRequestAfterMs: 500 };
+export const breakRequestRetry: import("../src/index.js").BreakState = { status: "not-requested", canRequestBreak: true, retryRequestAfterMs: 500 };
 // @ts-expect-error BreakState uses retryRequestAfterMs, not the old retryAfterMs field.
 export const retiredBreakRetry: import("../src/index.js").BreakState = { ...breakRequestRetry, retryAfterMs: 500 };
+
+// @ts-expect-error BreakState uses status, without an approval alias.
+export const retiredBreakApprovalField: import("../src/index.js").BreakState = { status: "granted", canRequestBreak: true, approval: "granted" };
