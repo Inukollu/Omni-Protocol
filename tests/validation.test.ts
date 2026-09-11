@@ -1917,7 +1917,7 @@ describe("validateTaskCommand", () => {
       [{ type: "conference", action: "remove", party: true }, { onCall: [{ role: "party", since }, { role: "conferenced", destinationId: "tier2", stage: "joined", since }] }],
       [{ type: "lead-assist", action: "request", note: "Angry customer" }, { capabilities: { leadAssist: true } }],
       [{ type: "lead-assist", action: "cancel" }, { capabilities: { leadAssist: true }, leadAssist: { stage: "requested", since } }],
-      [{ type: "lead-assist", action: "take-over" }, { assisting: { memberId: "a-17", note: "Angry customer", since } }],
+      [{ type: "lead-assist", action: "take-over-call" }, { assisting: { memberId: "a-17", note: "Angry customer", since } }],
       [{ type: "lead-assist", action: "leave" }, { assisting: { memberId: "a-17", note: "Angry customer", since } }],
     ];
     for (const [command, state] of controls) {
@@ -1968,7 +1968,9 @@ describe("validateTaskCommand", () => {
     expect(cmd({ type: "lead-assist", action: "cancel" }, task({ capabilities: { leadAssist: true } }))).toEqual(["command.leadAssist.requested"]);
     expect(cmd({ type: "lead-assist", action: "cancel" }, task({ capabilities: { leadAssist: true }, leadAssist: { stage: "requested", since } }))).toEqual([]);
     expect(cmd({ type: "lead-assist", action: "leave" }, task({ capabilities: {} }))).toEqual(["command.leadAssist.assisting"]);
-    expect(cmd({ type: "lead-assist", action: "take-over" }, task({ capabilities: {}, assisting: { memberId: "A-1", since } }))).toEqual([]);
+    expect(cmd({ type: "lead-assist", action: "take-over-call" }, task({ capabilities: {}, assisting: { memberId: "A-1", since } }))).toEqual([]);
+    expect(cmd({ type: "lead-assist", action: "take-over-call" }, task({ capabilities: {} }))).toEqual(["command.leadAssist.assisting"]);
+    expect(cmd({ type: "lead-assist", action: "take-over" }, task({ capabilities: {}, assisting: { memberId: "A-1", since } }))).toContain("command.leadAssist.action");
     expect(cmd({ type: "complete" })).toEqual([]);
     expect(cmd({ type: "complete" }, task({ completionMode: "provider-automatic", wrapAllowance: 10 }))).toEqual(["command.complete.mode"]);
   });

@@ -231,7 +231,7 @@ export interface Manifest<C extends Channel = Channel> {
    */
   runningStepReports?: true;
   /**
-   * How long after an applied completion -- `complete`, or a lead's `take-over` -- the provider's
+   * How long after an applied completion -- `complete`, or a lead's `take-over-call` -- the provider's
    * `task-ended` is owed, in milliseconds. A warm transfer's `complete` is not one: the agent's
    * wrap runs after it as after any call. `applied` says the provider
    * has completed the task; the ending follows within this, or the host resyncs and shows the
@@ -901,7 +901,7 @@ export type TaskLeadAssist = { note?: string; since: IsoTimestamp } & (
 
 /**
  * On the lead's own task for a call they joined: which member asked, with their note. Its
- * presence is what makes `lead-assist` `take-over` and `leave` issuable.
+ * presence is what makes `lead-assist` `take-over-call` and `leave` issuable.
  */
 export interface TaskAssisting {
   memberId: UserId;
@@ -1094,7 +1094,7 @@ export type VoiceTaskCommand =
   /** Withdraw a standing request. Needs `Task.leadAssist` with status `requested`. */
   | { type: "lead-assist"; action: "cancel" }
   /** The lead keeps the customer; the agent's task ends `transferred`. Needs `Task.assisting`. */
-  | { type: "lead-assist"; action: "take-over" }
+  | { type: "lead-assist"; action: "take-over-call" }
   /** The lead drops; the agent continues. The lead's task ends `left`. Needs `Task.assisting`. */
   | { type: "lead-assist"; action: "leave" }
   /** Dial the directory item `destinationId` into the call. Gated by `conference`. */
