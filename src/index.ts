@@ -1215,7 +1215,7 @@ export interface BreakReason {
   label: string;
   group?: string;
   kind?: BreakKind;
-  /** Survives `mayAsk: false`: a mandatory rest is not something a busy hour can cancel. */
+  /** Survives `canRequestBreak: false`: a mandatory rest is not something a busy hour can cancel. */
   alwaysAvailable?: true;
 }
 
@@ -1239,8 +1239,8 @@ export type ForcedBreak =
 export interface BreakState {
   approval: BreakApproval;
   /** Whether the agent may ask at all. Distinct from the fate of a request already made. */
-  mayAsk: boolean;
-  /** Shown when `mayAsk` is false, such as "Busy hours". */
+  canRequestBreak: boolean;
+  /** Shown when `canRequestBreak` is false, such as "Busy hours". */
   refusedReason?: string;
   decisionReason?: string;
   retryAfterMs?: number;

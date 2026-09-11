@@ -1573,8 +1573,8 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
     if (state.reasons !== undefined) into.require(selected !== undefined, "break.request.reasonId", path,
       "choose a currently published reasonId; free text is not a substitute");
     else into.require(request.reasonId === undefined, "break.request.reasonId.unexpected", path, "no reason codes were published");
-    into.require(state.mayAsk === true || (isPlainObject(selected) && selected.alwaysAvailable === true),
-      "break.request.mayAsk", path, "asking is disabled except for the selected alwaysAvailable reason");
+    into.require(state.canRequestBreak === true || (isPlainObject(selected) && selected.alwaysAvailable === true),
+      "break.request.canRequestBreak", path, "asking is disabled except for the selected alwaysAvailable reason");
   } else {
     into.require(request === undefined, "break.command.arguments", path, "this break method takes no arguments");
     if (method === "commitBreak") into.require(approval === "granted" || approval === "starting-after-task" || approval === "in-effect",
@@ -1626,17 +1626,19 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   into.require(!Object.hasOwn(value, "imposed"), "break.forced.renamed", `${path}.imposed`,
     "imposed was renamed to forced; use only forced");
   into.oneOf(value.approval, BREAK_APPROVALS, "break.approval", `${path}.approval`);
-  into.require(typeof value.mayAsk === "boolean", "break.mayAsk", `${path}.mayAsk`, "mayAsk says whether the agent may ask for a break: a boolean");
+  into.require(!Object.hasOwn(value, "mayAsk"), "break.canRequestBreak.renamed", `${path}.mayAsk`,
+    "mayAsk was renamed to canRequestBreak; use only canRequestBreak");
+  into.require(typeof value.canRequestBreak === "boolean", "break.canRequestBreak", `${path}.canRequestBreak`, "canRequestBreak says whether the agent may ask for a break: a boolean");
 
   for (const field of ["refusedReason", "decisionReason"] as const) {
     if (value[field] !== undefined) {
       into.filled(value[field], `break.${field}`, `${path}.${field}`, `${field} must not be empty when present`);
     }
   }
-  // The refusal is the reason the control is withdrawn; beside `mayAsk: true` it explains nothing.
+  // The refusal is the reason the control is withdrawn; beside `canRequestBreak: true` it explains nothing.
   if (value.refusedReason !== undefined) {
-    into.require(value.mayAsk !== true, "break.refusedReason.mayAsk", `${path}.refusedReason`,
-      "refusedReason is shown when mayAsk is false; omit it while the agent may ask");
+    into.require(value.canRequestBreak !== true, "break.refusedReason.canRequestBreak", `${path}.refusedReason`,
+      "refusedReason is shown when canRequestBreak is false; omit it while the agent may ask");
   }
   if (value.retryAfterMs !== undefined) {
     into.require(typeof value.retryAfterMs === "number" && Number.isFinite(value.retryAfterMs) && value.retryAfterMs >= 0,

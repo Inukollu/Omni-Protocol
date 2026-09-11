@@ -3,10 +3,20 @@ import type { BreakApproval, BreakState } from "../src/index.js";
 import { validateBreakTransition, validateBreakCommand, validateBreakStatus, validateTeamBreakCommand, validateResult, type BreakMethod } from "../src/validation.js";
 import { BreakStream } from "../src/testing.js";
 
-const state = (approval: BreakApproval): BreakState => ({ approval, mayAsk: true });
+const state = (approval: BreakApproval): BreakState => ({ approval, canRequestBreak: true });
 const event = (approval: BreakApproval) => ({ event: { type: "break-state", break: state(approval) } });
 
 describe("runtime break ordering", () => {
+  it("rejects the old eligibility field, including alongside the new field", () => {
+    for (const value of [
+      { approval: "not-requested", mayAsk: true },
+      { ...state("not-requested"), mayAsk: true },
+    ]) {
+      expect(validateBreakStatus(value, []).map(v => v.rule)).toContain("break.canRequestBreak.renamed");
+      expect(validateBreakTransition(state("not-requested"), value).map(v => v.rule)).toContain("break.canRequestBreak.renamed");
+    }
+  });
+
   it("rejects the retired break field even beside the new field", () => {
     const forced = { by: "manager", endsAutomatically: false };
     for (const fields of [{ imposed: forced }, { imposed: forced, forced }]) {
@@ -47,7 +57,7 @@ describe("runtime break ordering", () => {
   });
 
   it("rejects malformed previous and next states without throwing", () => {
-    for (const bad of [null, undefined, [], {}, { approval: "started", mayAsk: true }, { approval: "granted" }]) {
+    for (const bad of [null, undefined, [], {}, { approval: "started", canRequestBreak: true }, { approval: "granted" }]) {
       expect(validateBreakTransition(bad, state("granted"))).not.toEqual([]);
       expect(validateBreakTransition(state("granted"), bad)).not.toEqual([]);
     }
@@ -138,7 +148,7 @@ describe("break prerequisites", () => {
     }
   });
   it("requires published reasons and permits only selected alwaysAvailable exceptions", () => {
-    const current = { ...state("not-requested"), mayAsk: false, reasons: [
+    const current = { ...state("not-requested"), canRequestBreak: false, reasons: [
       { id: "bio", label: "Bio", alwaysAvailable: true }, { id: "lunch", label: "Lunch" },
     ] };
     expect(validateBreakCommand("requestBreak", { reasonId: "bio" }, current, context)).toEqual([]);
@@ -146,8 +156,8 @@ describe("break prerequisites", () => {
       expect(validateBreakCommand("requestBreak", request, current, context)).not.toEqual([]);
     }
     expect(validateBreakCommand("requestBreak", { reasonId: "bio" }, state("not-requested"), context)).not.toEqual([]);
-    // mayAsk is not a withdrawal of an already granted request.
-    expect(validateBreakCommand("commitBreak", undefined, { ...state("granted"), mayAsk: false }, context)).toEqual([]);
+    // canRequestBreak is not a withdrawal of an already granted request.
+    expect(validateBreakCommand("commitBreak", undefined, { ...state("granted"), canRequestBreak: false }, context)).toEqual([]);
   });
   it("forbids agent ending forced breaks and rejects extra arguments or methods", () => {
     expect(validateBreakCommand("endBreak", undefined, { ...state("in-effect"), forced: { by: "lead", endsAutomatically: false } }, context))

@@ -955,7 +955,7 @@ type ForcedBreak =
 
 type BreakState = {
   approval: BreakApproval;
-  mayAsk: boolean;
+  canRequestBreak: boolean;
   refusedReason?: string;
   decisionReason?: string;
   retryAfterMs?: number;
@@ -3608,8 +3608,8 @@ nothing while none are being accepted — so they are not published separately.
 | Field | Contract |
 | --- | --- |
 | `approval` | Where the agent's current request stands. See the states below. |
-| `mayAsk` | Whether the agent may ask at all. Distinct from `approval`. |
-| `refusedReason` | Display-ready reason shown when `mayAsk` is false — a standing gate that applies to everyone. |
+| `canRequestBreak` | Whether the agent may ask at all. Distinct from `approval`. |
+| `refusedReason` | Display-ready reason shown when `canRequestBreak` is false — a standing gate that applies to everyone. |
 | `decisionReason` | The words whoever decided attached, from `decide.reason`. About one request and one decision, not a standing gate. |
 | `retryAfterMs` | How long until the agent may retry, when the provider can say. |
 | `reasons` | Not-ready codes this provider offers. Omitted when it defines none; an empty list is refused, being a second spelling of the same fact. |
@@ -3636,11 +3636,16 @@ A provider reports `starting-after-task` only after Omni commits a `granted` req
 work is still active. Omni does not send the request again, because asking again would not move
 it; it sends the commit again only from a reconnect snapshot that shows the grant still standing.
 
-`mayAsk: false` is what lets Omni withdraw the control rather than let an agent ask and be
+`canRequestBreak: false` is what lets Omni withdraw the control rather than let an agent ask and be
 refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest period is not
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
 ### Forced breaks
+
+Migration: the former mayAsk field is now `BreakState.canRequestBreak`. The old field is
+rejected even beside the new field. Validation diagnostics use canRequestBreak in place of
+mayAsk. Request eligibility remains distinct from approval; existing alwaysAvailable reason
+exceptions are unchanged. Hosts and providers must update together.
 
 Migration: ImposedBreak is now `ForcedBreak`, and the former imposed field is now
 `BreakState.forced`. Diagnostic and harness coverage names use `break.forced`; the agent-end
@@ -3781,8 +3786,8 @@ request object only to the request method, and undefined to the other three.
 
 | Method | Required current state |
 | --- | --- |
-| `requestBreak` | `not-requested`; selected current reason code when codes exist; `mayAsk` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
-| `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `mayAsk` does not revoke the grant. |
+| `requestBreak` | `not-requested`; selected current reason code when codes exist; `canRequestBreak` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
+| `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `canRequestBreak` does not revoke the grant. |
 | `cancelBreak` | `awaiting-decision` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
 | `endBreak` | `in-effect` or `starting-after-task` during reconciliation; an agent cannot end a forced break. |
 
@@ -4126,7 +4131,7 @@ never an identifier from another provider, and Omni does not translate between t
 from `describeUsers()`.
 
 `requests-suspended` means requests are **rejected outright** rather than left pending — nobody is coming to
-approve them. A provider that suspends break requests must also publish `mayAsk: false` to the team's
+approve them. A provider that suspends break requests must also publish `canRequestBreak: false` to the team's
 agents so they see it before asking. A `force-break` must likewise reach that member as a `forced` break
 on their own `BreakState`, or they are stopped from working with no way to see why.
 
