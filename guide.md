@@ -949,7 +949,7 @@ type BreakRequest = {
   reasonId?: string;
 };
 
-type ImposedBreak =
+type ForcedBreak =
   | { by: UserId; endsAutomatically: true; endsAt: IsoTimestamp }
   | { by: UserId; endsAutomatically: false; endsAt?: never };
 
@@ -961,7 +961,7 @@ type BreakState = {
   retryAfterMs?: number;
   reasons?: BreakReason[];
   activeReasonId?: string;
-  imposed?: ImposedBreak;
+  forced?: ForcedBreak;
 };
 
 type BreakRequestResult =
@@ -2023,7 +2023,7 @@ failure:
 ```
 
 The `User` it carries is the **root of this provider's user namespace**. Every other person this
-provider names — a team member, the manager on an imposed break, the agent on an interaction step —
+provider names — a team member, the manager on a forced break, the agent on an interaction step —
 is identified from the same directory and carries the same `UserId` type.
 
 | Field | Contract |
@@ -2131,7 +2131,7 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | --- | --- |
 | `transport` | Current `TransportStatus` — whether this provider's transport can serve the login. Defined under **`transport-status`**. |
 | `loginId` | Identity of this login. It must match the connection context. |
-| `break` | Complete break state, including approval, whether the agent may ask, reasons, retry details, and any imposed break. |
+| `break` | Complete break state, including approval, whether the agent may ask, reasons, retry details, and any forced break. |
 | `tasks` | Complete set of tasks currently offered to or owned by this agent. |
 | `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
@@ -2153,7 +2153,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `refused(report)` | Always. The host tells the adapter what it would not take -- a snapshot it did not replace its state with, an event it dropped -- with every rule broken, so a refusal is visible on both sides. See **What the host does with what it refuses**. |
 | `setCapacity(capacity)` | Always. Nothing may be allocated until a capacity is stated, so there is no connection that does not receive it. |
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability**. |
-| `describeUsers(ids)` | The adapter publishes any `UserId`: on `ImposedBreak.by`, a team member list, or `interactionHistory[].by`. Each `User` carries its `timeZone`; a person whose zone the provider cannot name is omitted from the answer, as any unresolvable id is. |
+| `describeUsers(ids)` | The adapter publishes any `UserId`: on `ForcedBreak.by`, a team member list, or `interactionHistory[].by`. Each `User` carries its `timeZone`; a person whose zone the provider cannot name is omitted from the answer, as any unresolvable id is. |
 | `dial(request)` | The manifest declares `idleCapabilities.dial`, and with it `dialOutcomes`. |
 | `requestBreak(request)` | The login declares `capabilities.breaks`. |
 | `commitBreak()` | The login declares `capabilities.breaks`. Commit and cancel are not optional halves of it. |
@@ -2211,7 +2211,7 @@ Turns `UserId` values into something an agent can read.
 describeUsers(ids: UserId[]): Promise<User[]>
 ```
 
-Required of any adapter that publishes a `UserId` — on `ImposedBreak.by`, a team member list, or
+Required of any adapter that publishes a `UserId` — on `ForcedBreak.by`, a team member list, or
 `interactionHistory[].by`. Publishing an identifier Omni cannot resolve puts a name on screen
 that reads as a database key.
 
@@ -2856,7 +2856,7 @@ Four rules a provider has to keep:
   conversation, and on live data that is the ordinary case rather than an edge. A zero is rejected.
 - **`by` is a bare `UserId`, and not necessarily an agent.** A lead or a manager takes part
   during an interaction too — a transfer accepted, a call conferenced in — so the field names whoever it was,
-  the same way `ImposedBreak.by` does. It comes from this provider's own directory, the same
+  the same way `ForcedBreak.by` does. It comes from this provider's own directory, the same
   namespace as `AuthenticationState.identity.id` and the team member list, so entries pair
   within a provider and never across one.
 - **A task carries no names.** Omni resolves what to display with `describeUsers()`. Two people
@@ -3613,8 +3613,8 @@ nothing while none are being accepted — so they are not published separately.
 | `decisionReason` | The words whoever decided attached, from `decide.reason`. About one request and one decision, not a standing gate. |
 | `retryAfterMs` | How long until the agent may retry, when the provider can say. |
 | `reasons` | Not-ready codes this provider offers. Omitted when it defines none; an empty list is refused, being a second spelling of the same fact. |
-| `activeReasonId` | The `BreakReason.id` the current break is on. Omitted when there is no break. Required on a break `in-effect` or `starting-after-task` where the provider publishes `reasons`, an imposed break included (`break.activeReasonId.required`): a break with a kind the provider cannot name is a break whose rules nobody can apply. |
-| `imposed` | Set when the break was placed on the agent rather than requested. |
+| `activeReasonId` | The `BreakReason.id` the current break is on. Omitted when there is no break. Required on a break `in-effect` or `starting-after-task` where the provider publishes `reasons`, a forced break included (`break.activeReasonId.required`): a break with a kind the provider cannot name is a break whose rules nobody can apply. |
+| `forced` | Set when the break was placed on the agent rather than requested. |
 
 A request can be waiting for two unrelated things, and they are separate values because
 rendering one as the other tells an agent to wait for somebody who is never coming:
@@ -3640,42 +3640,48 @@ it; it sends the commit again only from a reconnect snapshot that shows the gran
 refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest period is not
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
-### Imposed breaks
+### Forced breaks
 
-`ImposedBreak` says who placed the break, whether automatic ending is enabled, and, when enabled,
+Migration: ImposedBreak is now `ForcedBreak`, and the former imposed field is now
+`BreakState.forced`. Diagnostic and harness coverage names use `break.forced`; the agent-end
+diagnostic is `break.command.end.forced`. Update hosts and providers together. The old field
+is rejected, including when both spellings are sent; no compatibility alias is provided.
+The `place` and `release` commands and break ordering rules are unchanged.
+
+`ForcedBreak` says who placed the break, whether automatic ending is enabled, and, when enabled,
 when the provider will end it. A break the agent did not choose is not manually resumable by them.
 
-**Every imposed break has a person behind it.** A lead or a manager placed it; there is no such
-thing as a break the platform imposed on its own. Where a platform applies one automatically, it is
+**Every forced break has a person behind it.** A lead or a manager placed it; there is no such
+thing as a break the platform forced on its own. Where a platform applies one automatically, it is
 executing a preference somebody configured, and that person is the owner of the action — `by` names
 them, not the machinery that carried it out.
 
 Omni resolves the name to show with `describeUsers()`, so a provider sends the identifier and never
 a display name.
 
-**An imposed break travels with `in-effect` or `starting-after-task`, and nothing else.** It is a
+**A forced break travels with `in-effect` or `starting-after-task`, and nothing else.** It is a
 break in progress or about to be; beside `granted` or `awaiting-decision` the host would read a
-request the agent never made and commit it (`break.imposed.approval`). Where the provider publishes
+request the agent never made and commit it (`break.forced.approval`). Where the provider publishes
 `reasons`, the lead's `place` named one, and the member's state carries it as `activeReasonId`.
 
 For example:
 
 ```ts
-imposed: {
+forced: {
   by: "manager-1042",
   endsAutomatically: true,
   endsAt: "2026-08-21T10:00:00.000Z"
 }
 ```
 
-The presence of `imposed` means the agent cannot end the break manually, so Omni withdraws its
+The presence of `forced` means the agent cannot end the break manually, so Omni withdraws its
 Resume control from that agent. With `endsAutomatically: true`, the provider ends the break at
 `endsAt`; with `endsAutomatically: false`, it does not end the break on a timer. An authorized lead
 may end either form with **Resume**, not only whoever placed it. Omni shows **Stopped by <who>**,
 resolving the name with `describeUsers()`, and shows when the break will end where automatic ending
 is enabled.
 
-A break applies to the **agent**, not to one provider. When a provider imposes one, Omni immediately
+A break applies to the **agent**, not to one provider. When a provider forces one, Omni immediately
 requests a break on every other connected provider, or they would keep routing work to somebody who
 is not there. Providers should expect that follow-on request.
 
@@ -3760,13 +3766,13 @@ request object only to the request method, and undefined to the other three.
 | `requestBreak` | `not-requested`; selected current reason code when codes exist; `mayAsk` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
 | `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `mayAsk` does not revoke the grant. |
 | `cancelBreak` | `awaiting-decision` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
-| `endBreak` | `in-effect` or `starting-after-task` during reconciliation; an agent cannot end an imposed break. |
+| `endBreak` | `in-effect` or `starting-after-task` during reconciliation; an agent cannot end a forced break. |
 
 Use `validateTeamBreakCommand(request, context)` for lead decisions, placement, release and
 policy commands. It requires the live lead capability and active transport, a current target
 team member list for member commands, and the target's complete break state for placement/release.
 Approve/deny requires an awaiting decision; placement uses the target's reason codes; release
-requires an imposed committed break. The context's target state must belong to the named member;
+requires a forced committed break. The context's target state must belong to the named member;
 that association and backend authorization are provider responsibilities.
 
 Use `validateBreakStatus(state, tasks)` on the complete retained task view after each transaction,
@@ -3855,7 +3861,7 @@ specificity: about this agent's own work is `coaching`, else something they must
 `training`, else `meeting`.
 
 **A break somebody placed on the agent is not automatically one of these.** Where the agent was
-stopped rather than choosing to stop — see **Imposed breaks** — set `BreakState.imposed` and prefer
+stopped rather than choosing to stop — see **Forced breaks** — set `BreakState.forced` and prefer
 omitting `kind` to reaching for `other`. None of the ten describes "something was done to this
 agent", and `other` claims a classification that was never made.
 
@@ -3984,8 +3990,8 @@ If cancel races with a late approval, the provider remains on the cancel path. I
 won, cancel returns `omni.break-already-committed`, and Omni resumes commit recovery rather than
 returning the agent to `working`.
 
-An imposed break is not rolled back by this algorithm. If one appears during either the request or
-cancellation, Omni follows the imposed-break rule on the other providers and commits each grant as
+A forced break is not rolled back by this algorithm. If one appears during either the request or
+cancellation, Omni follows the forced-break rule on the other providers and commits each grant as
 soon as it reaches `granted`; it does not wait for unanimity because the agent has already
 stopped elsewhere.
 
@@ -4094,8 +4100,8 @@ One method, `executeTeamBreak`, taking a discriminated command exactly as `execu
 | --- | --- |
 | `{ type: "decide", memberId: UserId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
 | `{ type: "policy", policy }` | `ask`, `auto-approve`, or `suspended`. |
-| `{ type: "place", memberId: UserId, reasonId?, reason? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's imposed break carries it as `activeReasonId`, so its kind is known. |
-| `{ type: "release", memberId: UserId }` | Ends an imposed break on that member, whoever placed it. |
+| `{ type: "place", memberId: UserId, reasonId?, reason? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. |
+| `{ type: "release", memberId: UserId }` | Ends a forced break on that member, whoever placed it. |
 
 `memberId` is this provider's own identifier for the member, as published on its team member list. It is
 never an identifier from another provider, and Omni does not translate between them; names come
@@ -4103,7 +4109,7 @@ from `describeUsers()`.
 
 `suspended` means requests are **rejected outright** rather than left pending — nobody is coming to
 approve them. A provider that suspends breaks must also publish `mayAsk: false` to the team's
-agents so they see it before asking. A `place` must likewise reach that member as an `imposed` break
+agents so they see it before asking. A `place` must likewise reach that member as an `forced` break
 on their own `BreakState`, or they are stopped from working with no way to see why.
 
 What happens when no lead is online — auto-approving, for instance — is the provider's decision and is
@@ -4938,11 +4944,11 @@ covers a `diagnostic`: shown where the agent works, and counted.
 Replaces this provider's complete `break` object. Its `approval` uses the canonical
 `not-requested`, `awaiting-decision`, `granted`, `starting-after-task` and
 `in-effect` states defined under Breaks; the event also carries the corresponding may-ask state,
-reasons, retry details, and any imposed break.
+reasons, retry details, and any forced break.
 
 Each state is also held to the one before it. A commit's states, `starting-after-task` and
 `in-effect`, follow a grant — the one arrival in a committed state nobody asked for is a placed
-break, which says so with `imposed`: in effect at once, or `starting-after-task` while the member
+break, which says so with `forced`: in effect at once, or `starting-after-task` while the member
 finishes the call they are on (`stream.breakState.commitBeforeGrant`); and a break never moves backwards —
 from `in-effect` or `starting-after-task` to a grant or a request, or from `granted` to
 `awaiting-decision` — a new request passes through `not-requested` (`stream.breakState.backwards`).
@@ -4975,8 +4981,8 @@ Normal order is `not-requested` → `awaiting-decision` → `granted` →
 `starting-after-task` → `in-effect` → `not-requested`. Auto-approval may go directly to
 `granted`; a commit with no outstanding work may go directly to `in-effect`. Denial/cancel
 returns a precommit request to `not-requested`; an authorized end/release returns a committed
-break there. Same-state restatements are allowed. An evidenced imposed break is the explicit
-exception to requesting/granting, and must carry its imposed actor/state. Neither skipped
+break there. Same-state restatements are allowed. An evidenced forced break is the explicit
+exception to requesting/granting, and must carry its forced actor/state. Neither skipped
 publication nor a host-local guess creates another exception. A later normal attempt starts
 from `not-requested`, never by regressing an active break into a request.
 
@@ -5145,7 +5151,7 @@ issued by each provider independently, so two providers will eventually issue th
 different people. Encode and join before storing or comparing.
 
 Use it for every `UserId` — `interactionHistory[].by`, team members, `memberId` on a
-lead command, `ImposedBreak.by`. A bare one is only ever compared against another from the **same** provider; anything
+lead command, `ForcedBreak.by`. A bare one is only ever compared against another from the **same** provider; anything
 wider goes through this key.
 
 ### `sameCapabilities(a, b)`
@@ -5256,7 +5262,7 @@ A capability granted by a later login requires its methods just as one declared 
 
 `result.notExercised` lists what the run never reached — one subject per family of rules: each
 optional part of a task (`task.browsers`, `task.interactionHistory`, `task.leadAssist`, …), the break's
-`reasons` and `imposed`, the team member list's `members` and `requests`, each declared contribution, and
+`reasons` and `forced`, the team member list's `members` and `requests`, each declared contribution, and
 each event type (`event.task-ended`, …) — and so what a clean `violations` says nothing about.
 Nothing there is a violation: an adapter with no team has nothing to exercise. But a fixture with
 no tasks exercises no task rule, and a pass over it reads as coverage it is not.
@@ -5374,7 +5380,7 @@ cannot be established from TypeScript structure alone.
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
 | `stillHost(report?, guarantees?, mute?)` | A host that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a softphone voice adapter, and never for a desk phone. |
 | `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for a host that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |
-| `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a placed break arriving in effect with `imposed`. The harness applies the same rules after the connect snapshot. |
+| `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a placed break arriving in effect with `forced`. The harness applies the same rules after the connect snapshot. |
 | `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-started` and `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what follows the media ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no media satisfies it by never testing it — pair it with the assertion that the media end is present. |
 | `assertBreakAttemptProviders(candidates, asked)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `in-effect` only once nothing is outstanding — never beside a task, never later than the step that has none. |

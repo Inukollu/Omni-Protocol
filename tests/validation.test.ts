@@ -588,41 +588,41 @@ describe("break state", () => {
     expect(reasons([{ id: "rest", label: "Rest", alwaysAvailable: true }])).toEqual([]);
   });
 
-  it("lets an imposed break travel with in-effect or starting-after-task, and nothing else", () => {
+  it("lets a forced break travel with in-effect or starting-after-task, and nothing else", () => {
     const placed = { by: "lead-3", endsAutomatically: false };
-    expect(check({ approval: "in-effect", imposed: placed })).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ break: { approval: "starting-after-task", mayAsk: false, imposed: placed }, tasks: [task()] }), manifest()))).toEqual([]);
+    expect(check({ approval: "in-effect", forced: placed })).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ break: { approval: "starting-after-task", mayAsk: false, forced: placed }, tasks: [task()] }), manifest()))).toEqual([]);
     // Beside granted or awaiting-decision the host would commit a break nobody asked for.
-    expect(check({ approval: "granted", imposed: placed })).toEqual(["break.imposed.approval"]);
-    expect(check({ approval: "awaiting-decision", imposed: placed })).toEqual(["break.imposed.approval"]);
-    expect(check({ approval: "not-requested", imposed: placed })).toEqual(["break.imposed.approval"]);
+    expect(check({ approval: "granted", forced: placed })).toEqual(["break.forced.approval"]);
+    expect(check({ approval: "awaiting-decision", forced: placed })).toEqual(["break.forced.approval"]);
+    expect(check({ approval: "not-requested", forced: placed })).toEqual(["break.forced.approval"]);
   });
 
-  it("requires a break in effect on a provider that publishes reasons to name the one it is on, an imposed one included", () => {
+  it("requires a break in effect on a provider that publishes reasons to name the one it is on, a forced one included", () => {
     const reasons = [{ id: "meal", label: "Meal", kind: "meal" }, { id: "coach", label: "Coaching", kind: "coaching" }];
     expect(check({ approval: "in-effect", reasons, activeReasonId: "meal" })).toEqual([]);
     expect(check({ approval: "in-effect", reasons })).toEqual(["break.activeReasonId.required"]);
-    expect(check({ approval: "in-effect", reasons, imposed: { by: "lead-3", endsAutomatically: false } })).toEqual(["break.activeReasonId.required"]);
+    expect(check({ approval: "in-effect", reasons, forced: { by: "lead-3", endsAutomatically: false } })).toEqual(["break.activeReasonId.required"]);
     // No reasons published, nothing to name; not in effect, nothing to name yet.
     expect(check({ approval: "in-effect" })).toEqual([]);
     expect(check({ approval: "granted", reasons })).toEqual([]);
   });
 
-  it("keeps who placed an imposed break whether or not it ends on a clock", () => {
-    const imposed = (value: unknown) => check({ approval: "in-effect", imposed: value });
-    // Both arms are legal. The origin is required in both, because an imposed break with no
+  it("keeps who placed a forced break whether or not it ends on a clock", () => {
+    const forced = (value: unknown) => check({ approval: "in-effect", forced: value });
+    // Both arms are legal. The origin is required in both, because a forced break with no
     // origin is a state the agent cannot reason about.
-    expect(imposed({ by: "lead-3", endsAutomatically: true, endsAt: "2026-08-21T10:00:00Z" })).toEqual([]);
-    expect(imposed({ by: "lead-3", endsAutomatically: false })).toEqual([]);
+    expect(forced({ by: "lead-3", endsAutomatically: true, endsAt: "2026-08-21T10:00:00Z" })).toEqual([]);
+    expect(forced({ by: "lead-3", endsAutomatically: false })).toEqual([]);
 
-    expect(imposed({ endsAutomatically: false })).toContain("break.imposed.by");
-    expect(imposed({ by: "", endsAutomatically: false })).toContain("break.imposed.by");
-    expect(imposed({ by: "lead-3" })).toContain("break.imposed.endsAutomatically");
-    expect(imposed({ by: "lead-3", endsAutomatically: true })).toContain("break.imposed.endsAt");
-    expect(imposed({ by: "lead-3", endsAutomatically: true, endsAt: "soon" })).toContain("break.imposed.endsAt");
+    expect(forced({ endsAutomatically: false })).toContain("break.forced.by");
+    expect(forced({ by: "", endsAutomatically: false })).toContain("break.forced.by");
+    expect(forced({ by: "lead-3" })).toContain("break.forced.endsAutomatically");
+    expect(forced({ by: "lead-3", endsAutomatically: true })).toContain("break.forced.endsAt");
+    expect(forced({ by: "lead-3", endsAutomatically: true, endsAt: "soon" })).toContain("break.forced.endsAt");
     // A break that does not end automatically must not claim an end.
-    expect(imposed({ by: "lead-3", endsAutomatically: false, endsAt: "2026-08-21T10:00:00Z" }))
-      .toContain("break.imposed.endsAt.unexpected");
+    expect(forced({ by: "lead-3", endsAutomatically: false, endsAt: "2026-08-21T10:00:00Z" }))
+      .toContain("break.forced.endsAt.unexpected");
   });
 });
 
@@ -1183,8 +1183,8 @@ describe("the other direction, everywhere", () => {
     expect(check({ mayAsk: false, refusedReason: "Busy hours" })).toEqual([]);
     expect(check({ mayAsk: true, refusedReason: "Busy hours" })).toEqual(["break.refusedReason.mayAsk"]);
     const placed = { by: "M-1", endsAutomatically: false };
-    expect(check({ approval: "in-effect", imposed: placed })).toEqual([]);
-    expect(check({ approval: "not-requested", imposed: placed })).toEqual(["break.imposed.approval"]);
+    expect(check({ approval: "in-effect", forced: placed })).toEqual([]);
+    expect(check({ approval: "not-requested", forced: placed })).toEqual(["break.forced.approval"]);
     const reasons = [{ id: "lunch", label: "Lunch" }];
     expect(check({ approval: "in-effect", reasons, activeReasonId: "lunch" })).toEqual([]);
     expect(check({ approval: "in-effect", activeReasonId: "lunch" })).toEqual([]);

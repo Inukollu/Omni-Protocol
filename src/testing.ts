@@ -79,7 +79,7 @@ const STATE_SUBJECTS = [
   "task.custom",
   "task.locked",
   "break.reasons",
-  "break.imposed",
+  "break.forced",
   "team.members",
   "team.requests",
   "contacts",
@@ -129,7 +129,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
 function observeBreak(value: unknown, seen: Set<ContractSubject>): void {
   if (!isRecord(value)) return;
   if (some(value.reasons)) seen.add("break.reasons");
-  if (value.imposed !== undefined) seen.add("break.imposed");
+  if (value.forced !== undefined) seen.add("break.forced");
 }
 
 function observeTeam(value: unknown, seen: Set<ContractSubject>): void {
@@ -668,17 +668,17 @@ export async function exerciseAdapter<C extends Channel>(
  * its shape.
  */
 function publishesUserIds(snapshot: Snapshot | undefined): boolean {
-  if (snapshot?.break?.imposed?.by !== undefined) return true;
+  if (snapshot?.break?.forced?.by !== undefined) return true;
   if (teamNamesUsers(snapshot?.team)) return true;
   if (!Array.isArray(snapshot?.tasks)) return false;
   return snapshot.tasks.some(taskNamesUsers);
 }
 
-/** Every UserId a snapshot publishes: on the record, the room, a lead request, an imposed break, the team member list. */
+/** Every UserId a snapshot publishes: on the record, the room, a lead request, a forced break, the team member list. */
 function userIdsIn(snapshot: Snapshot | undefined): string[] {
   const ids = new Set<string>();
   const add = (value: unknown) => { if (typeof value === "string" && value.length > 0) ids.add(value); };
-  add(snapshot?.break?.imposed?.by);
+  add(snapshot?.break?.forced?.by);
   const team = snapshot?.team as Record<string, unknown> | undefined;
   if (isRecord(team)) {
     for (const member of Array.isArray(team.members) ? team.members : []) if (isRecord(member)) add(member.id);
@@ -712,7 +712,7 @@ function eventNamesUsers(envelope: unknown): boolean {
   if (!isRecord(event)) return false;
   switch (event.type) {
     case "snapshot": return publishesUserIds(event.snapshot as Snapshot);
-    case "break-state": return isRecord(event.break) && isRecord(event.break.imposed) && event.break.imposed.by !== undefined;
+    case "break-state": return isRecord(event.break) && isRecord(event.break.forced) && event.break.forced.by !== undefined;
     case "task-offered":
     case "task-updated": return taskNamesUsers(event.task);
     case "team-updated": return teamNamesUsers(event.team);
@@ -1920,7 +1920,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
 // A request goes not-requested -> awaiting-decision | granted; a commit goes granted ->
 // starting-after-task | in-effect; work ending goes starting-after-task -> in-effect; a denial,
 // a cancel, an end or a release goes back to not-requested; a placed break arrives in-effect
-// with `imposed`. Nothing else is a move the guide describes.
+// with `forced`. Nothing else is a move the guide describes.
 /** What a stream has said about the agent's break, and the moves it may not make. */
 export class BreakStream {
   private state: unknown;
@@ -1958,7 +1958,7 @@ export class BreakStream {
 /**
  * A break follows its requests. Given a provider's stream -- seeded with its initial snapshot,
  * either supplied separately or carried by a snapshot event -- every `break-state` moves the way the guide describes: a commit's states only
- * after a grant, never backwards, and a break placed on the agent arriving in effect with `imposed`.
+ * after a grant, never backwards, and a break placed on the agent arriving in effect with `forced`.
  */
 export function assertBreakFollowsItsRequests(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
   const stream = new BreakStream();

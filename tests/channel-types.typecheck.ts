@@ -430,3 +430,10 @@ export type FormerListenMethod = import("../src/index.js").Connection["executeTe
 
 // @ts-expect-error The former lead-assist action has no compatibility alias.
 export const retiredLeadTakeOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over" };
+
+export const forcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAutomatically: false };
+export const forcedBreakState: import("../src/index.js").BreakState = { approval: "in-effect", mayAsk: false, forced: forcedBreak };
+// @ts-expect-error The old break type has no compatibility alias.
+import type { ImposedBreak } from "../src/index.js";
+// @ts-expect-error Use forced, including when the new field is also present.
+export const retiredBreakField: import("../src/index.js").BreakState = { ...forcedBreakState, imposed: forcedBreak };
