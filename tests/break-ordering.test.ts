@@ -189,8 +189,10 @@ describe("lead break prerequisites", () => {
     expect(validateTeamBreakCommand({ command: { ...request.command, decision: "maybe" } }, lead)).not.toEqual([]);
   });
   it("rejects the retired command and preserves force prerequisites", () => {
-    const command = { type: "force", memberId: "member", reasonId: "bio" };
-    expect(validateTeamBreakCommand({ command: { ...command, type: "place" } }, lead).map(v => v.rule)).toContain("team.break.command.type");
+    const command = { type: "force-break", memberId: "member", reasonId: "bio" };
+    for (const type of ["place", "force"]) {
+      expect(validateTeamBreakCommand({ command: { ...command, type } }, lead).map(v => v.rule)).toContain("team.break.command.type");
+    }
     for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [] } }, { ...lead, memberBreak: undefined }]) {
       expect(validateTeamBreakCommand({ command }, bad)).not.toEqual([]);
     }
@@ -208,8 +210,8 @@ describe("lead break prerequisites", () => {
     expect(validateTeamBreakCommand({ command }, { ...current, memberBreak: { ...current.memberBreak, approval: "starting-after-task" } })).toEqual([]);
   });
   it("checks the forced-break reason and end without assuming the same lead does both", () => {
-    expect(validateTeamBreakCommand({ command: { type: "force", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
-    expect(validateTeamBreakCommand({ command: { type: "force", memberId: "member" } }, lead)).not.toEqual([]);
+    expect(validateTeamBreakCommand({ command: { type: "force-break", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
+    expect(validateTeamBreakCommand({ command: { type: "force-break", memberId: "member" } }, lead)).not.toEqual([]);
     const end = { command: { type: "end-forced-break", memberId: "member" } };
     expect(validateTeamBreakCommand(end, lead)).not.toEqual([]);
     expect(validateTeamBreakCommand(end, { ...lead, memberBreak: { ...state("in-effect"), forced: { by: "another-lead", endsAutomatically: false } } })).toEqual([]);

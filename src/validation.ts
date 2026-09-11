@@ -1473,7 +1473,7 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
 
 /**
  * Checks lead break dispatch using current authentication, transport, team member list (`team`) and,
- * for force/end-forced-break, the target's full `memberBreak`. The provider must authorize the target
+ * for force-break/end-forced-break, the target's full `memberBreak`. The provider must authorize the target
  * and recheck the decision atomically; a team member list is not authority to act after it has changed.
  */
 export function validateTeamBreakCommand(request: unknown, context: unknown, path = "teamBreakCommand"): ProtocolViolation[] {
@@ -1492,7 +1492,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   const command = request.command;
   const allowed: Record<string, readonly string[]> = {
     decide: ["type", "memberId", "decision", "reason"], policy: ["type", "policy"],
-    force: ["type", "memberId", "reasonId", "reason"], "end-forced-break": ["type", "memberId"],
+    "force-break": ["type", "memberId", "reasonId", "reason"], "end-forced-break": ["type", "memberId"],
   };
   const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
   if (!fields) { into.add("team.break.command.type", path, "unknown lead break command"); return into.violations; }
@@ -1519,11 +1519,11 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
     if (command.type === "end-forced-break") into.require(state.forced !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
       "team.break.command.endForcedBreak", path, "end a currently forced break");
-    if (command.type === "force") {
+    if (command.type === "force-break") {
       if (command.reasonId !== undefined) into.filled(command.reasonId, "team.break.command.reasonId", path, "reasonId must not be empty");
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
       into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
-        "team.break.command.reasonId", path, "force uses the target's currently published reason codes");
+        "team.break.command.reasonId", path, "force-break uses the target's currently published reason codes");
     }
   }
   return into.violations;
@@ -1692,7 +1692,7 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
       `activeReasonId names a reason the provider did not publish: ${value.activeReasonId}`);
   }
   // A break in effect, or about to be, on a provider that publishes reasons is on one of them: an
-  // forced one included, since the lead's force command named it. A break of no kind is a break whose
+  // forced one included, since the lead's force-break command named it. A break of no kind is a break whose
   // rules -- who may listen through it, whether it counts -- nobody can apply.
   ruleEvaluated("break.activeReasonId.required");
   if (seen.size > 0 && (value.approval === "in-effect" || value.approval === "starting-after-task")) {
