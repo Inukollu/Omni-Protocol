@@ -1,3 +1,12 @@
+# Current PR118 revision: Descriptive end-forced-break command
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-end-forced-break; branch refactor/end-forced-break.
+Implementation b5ae16712ea1fbb6c22e673962efd09ade45f0f5.
+PR https://github.com/Inukollu/Omni-Protocol/pull/118.
+Team command is now end-forced-break, diagnostic team.break.command.endForcedBreak. Supersedes the earlier end name below. Retired release/end/end-break rejected; agent endBreak and existing permissions/state rules unchanged. Hosts/providers must update together; no aliases or version changes.
+Build/typechecks, all 432 tests, guide examples, package verification and diff check passed. Log /private/tmp/end-forced-break-specific-check.log.
+Existing observer monitor remains responsible for CI/reviews; retain worktree/branch while open. Next action: respond to CI/review failures; no release or merge performed.
+
 # Current delivery: End forced break command
 
 Repository: /Users/vasu/Dev/Personal/Omni-Protocol
@@ -303,6 +312,6 @@ PID 44983; command python3 /private/tmp/omni-force-break-command/.agent-memory/r
 <!-- force-break-command-monitor:end -->
 
 <!-- end-forced-break-monitor:begin -->
-Monitor omni-protocol-pr118-end-forced-break: OPEN at 2026-09-11T08:49:23.583007+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr118-end-forced-break: OPEN at 2026-09-11T08:52:26.048065+00:00. Await CI/review; monitor never merges.
 PID 66818; command python3 /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break-monitor.py; state /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.state.json; log /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.log; PID file /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.pid; process log /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-end-forced-break, branch refactor/end-forced-break, PR https://github.com/Inukollu/Omni-Protocol/pull/118.
 <!-- end-forced-break-monitor:end -->
