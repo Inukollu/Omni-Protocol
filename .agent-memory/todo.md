@@ -1,3 +1,15 @@
+# Current delivery: Take over call API
+
+Repository: /Users/vasu/Dev/Personal/Omni-Protocol
+Worktree: /private/tmp/omni-take-over-call-api
+Branch: refactor/take-over-call-api
+Implementation: 10303cc72e7e1e4321e6143b715955b563906e0b
+PR: https://github.com/Inukollu/Omni-Protocol/pull/115
+
+Renamed lead-assist take-over to take-over-call in API, validator and guide. Retired literal rejected. Assisting prerequisite, taken-over outcome and no-completing-window behavior preserved. Hosts/providers must update together; no alias. No package/wire version changes.
+Validation: build, test typecheck, all 429 tests, compiled guide examples, package verification (10 files/3 entrypoints), git diff --check passed. Log: /private/tmp/take-over-call-check.log.
+Next action: observe CI/review; respond to failures. Keep branch/worktree while PR is open. No release/merge/cleanup performed. PR114 independently verified merged.
+
 # Listen API rename — PR114 — 2026-09-11
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-listen-api; branch refactor/listen-api; implementation 84d02829a2616428959d35cea156622a7406577d; PR https://github.com/Inukollu/Omni-Protocol/pull/114.
@@ -238,3 +250,8 @@ PID 78236; command python3 /private/tmp/omni-coach-api/.agent-memory/runtime/coa
 Monitor omni-protocol-pr114-listen-api: OPEN at 2026-09-11T07:50:19.279786+00:00. Await CI/review; monitor never merges.
 PID 10407; command python3 /private/tmp/omni-listen-api/.agent-memory/runtime/listen-monitor.py; state /private/tmp/omni-listen-api/.agent-memory/runtime/listen.state.json; log /private/tmp/omni-listen-api/.agent-memory/runtime/listen.log; PID file /private/tmp/omni-listen-api/.agent-memory/runtime/listen.pid; process log /private/tmp/omni-listen-api/.agent-memory/runtime/listen.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-listen-api, branch refactor/listen-api, PR https://github.com/Inukollu/Omni-Protocol/pull/114.
 <!-- listen-monitor:end -->
+
+<!-- take-over-call-monitor:begin -->
+Monitor omni-protocol-pr115-take-over-call-api: OPEN at 2026-09-11T08:12:17.120212+00:00. Await CI/review; monitor never merges.
+PID 6842; command python3 /private/tmp/omni-take-over-call-api/.agent-memory/runtime/take-over-call-monitor.py; state /private/tmp/omni-take-over-call-api/.agent-memory/runtime/take-over-call.state.json; log /private/tmp/omni-take-over-call-api/.agent-memory/runtime/take-over-call.log; PID file /private/tmp/omni-take-over-call-api/.agent-memory/runtime/take-over-call.pid; process log /private/tmp/omni-take-over-call-api/.agent-memory/runtime/take-over-call.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-take-over-call-api, branch refactor/take-over-call-api, PR https://github.com/Inukollu/Omni-Protocol/pull/115.
+<!-- take-over-call-monitor:end -->
