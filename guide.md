@@ -53,7 +53,7 @@ transport, a task, a break and a call each have a word of their own:
 | `media` | A task's audio | `started`, `ended` |
 | `transport` | A connection | `connecting`, `active`, `error` |
 | `status` | An authentication session | `signed-out`, `authenticating`, `authenticated`, `refreshing`, `expired` |
-| `approval` | A break request | `not-requested`, `awaiting-decision`, `granted`, `starting-after-task`, `in-effect` |
+| `approval` | A break request | `not-requested`, `awaiting-decision`, `granted`, `starting-after-task`, `on-break` |
 | `availability` | A team member | `ready`, `on-task`, `on-break`, `signed-out` |
 
 ## Versioning
@@ -934,7 +934,7 @@ type BreakApproval =
   | "awaiting-decision"
   | "granted"
   | "starting-after-task"
-  | "in-effect";
+  | "on-break";
 
 type BreakReason = {
   id: string;
@@ -3613,7 +3613,7 @@ nothing while none are being accepted — so they are not published separately.
 | `decisionReason` | The words whoever decided attached, from `decide.reason`. About one request and one decision, not a standing gate. |
 | `retryAfterMs` | How long until the agent may retry, when the provider can say. |
 | `reasons` | Not-ready codes this provider offers. Omitted when it defines none; an empty list is refused, being a second spelling of the same fact. |
-| `activeReasonId` | The `BreakReason.id` the current break is on. Omitted when there is no break. Required on a break `in-effect` or `starting-after-task` where the provider publishes `reasons`, a forced break included (`break.activeReasonId.required`): a break with a kind the provider cannot name is a break whose rules nobody can apply. |
+| `activeReasonId` | The `BreakReason.id` the current break is on. Omitted when there is no break. Required on a break `on-break` or `starting-after-task` where the provider publishes `reasons`, a forced break included (`break.activeReasonId.required`): a break with a kind the provider cannot name is a break whose rules nobody can apply. |
 | `forced` | Set when the break was forced on the agent rather than requested. |
 
 A request can be waiting for two unrelated things, and they are separate values because
@@ -3624,8 +3624,8 @@ rendering one as the other tells an agent to wait for somebody who is never comi
 | `not-requested` | No request outstanding. |
 | `awaiting-decision` | A person has to decide. The agent is waiting on somebody. |
 | `granted` | A person decided yes. Omni may now tell this provider to stop the agent; until it does, work continues normally, and this says nothing about why Omni has not. |
-| `starting-after-task` | Omni has told the provider to stop; the break begins when the current task ends. No new work arrives meanwhile, and nobody needs to act. It waits on a task, so beside no task it is refused (`break.starting-after-task.tasks`): a committed break with nothing outstanding is `in-effect`. |
-| `in-effect` | The agent is on the break now. It holds no task: a break begins when the work ends, so a snapshot reporting `in-effect` beside a task is refused as `break.in-effect.tasks`. The one exception is a lead's listening task during a `coaching`, `administrative` or `training` break -- see **Listening to a call**. |
+| `starting-after-task` | Omni has told the provider to stop; the break begins when the current task ends. No new work arrives meanwhile, and nobody needs to act. It waits on a task, so beside no task it is refused (`break.starting-after-task.tasks`): a committed break with nothing outstanding is `on-break`. |
+| `on-break` | The agent is on the break now. It holds no task: a break begins when the work ends, so a snapshot reporting `on-break` beside a task is refused as `break.on-break.tasks`. The one exception is a lead's listening task during a `coaching`, `administrative` or `training` break -- see **Listening to a call**. |
 
 A denial is a decision, not a standing approval state. The provider transitions the request directly
 to `not-requested`; Omni returns the agent to idle and never asks again on their behalf. They saw the
@@ -3641,6 +3641,12 @@ refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest 
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
 ### Forced breaks
+
+Migration: the former in-effect break approval value is now `on-break`. It means the
+agent is on the break, not merely granted permission. The old value is rejected without an
+alias. The task prerequisite, supported listening exceptions and ordering rules are unchanged;
+the task-conflict diagnostic is `break.on-break.tasks`. Team member availability already uses
+`on-break` and is unchanged.
 
 Migration: the former refusedReason field is now `BreakState.requestUnavailableReason`.
 It explains why requests are unavailable when `canRequestBreak` is false; `decisionReason`
@@ -3687,7 +3693,7 @@ them, not the machinery that carried it out.
 Omni resolves the name to show with `describeUsers()`, so a provider sends the identifier and never
 a display name.
 
-**A forced break travels with `in-effect` or `starting-after-task`, and nothing else.** It is a
+**A forced break travels with `on-break` or `starting-after-task`, and nothing else.** It is a
 break in progress or about to be; beside `granted` or `awaiting-decision` the host would read a
 request the agent never made and commit it (`break.forced.approval`). Where the provider publishes
 `reasons`, the lead's `force-break` named one, and the member's state carries it as `activeReasonId`.
@@ -3794,7 +3800,7 @@ request object only to the request method, and undefined to the other three.
 | `requestBreak` | `not-requested`; selected current reason code when codes exist; `canRequestBreak` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
 | `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `canRequestBreak` does not revoke the grant. |
 | `cancelBreak` | `awaiting-decision` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
-| `endBreak` | `in-effect` or `starting-after-task` during reconciliation; an agent cannot end a forced break. |
+| `endBreak` | `on-break` or `starting-after-task` during reconciliation; an agent cannot end a forced break. |
 
 Use `validateTeamBreakCommand(request, context)` for lead decisions, forcing a break, ending a forced break and
 policy commands. It requires the live lead capability and active transport, a current target
@@ -3953,11 +3959,11 @@ Omni coordinates one break attempt as follows:
    causes Omni to take the cancel path.
 4. If every asked provider reports `granted`, durably choose commit, enter `committing-break`,
    and send `commitBreak()` to each of them. A provider then stops offering new work
-   and reports `starting-after-task` or `in-effect`. The **commit bound** — ten seconds from the
+   and reports `starting-after-task` or `on-break`. The **commit bound** — ten seconds from the
    decision, tunable per deployment — decides who is kept: a provider that has not applied the
    commit by then, still `granted` or unreachable, is set aside as unreconciled and the break
-   begins without it. `in-effect` decides `on-break`: Omni enters it once every kept provider
-   reports `in-effect`. A kept provider reporting `starting-after-task` has applied the commit
+   begins without it. `on-break` decides `on-break`: Omni enters it once every kept provider
+   reports `on-break`. A kept provider reporting `starting-after-task` has applied the commit
    and is finishing a task; the bound is on delivery, not on that task. Omni shows the break as
    settled and beginning when the task ends, and offers no cancel, because the commit is durable.
 5. If any asked provider fails or denies the request, cannot be reconciled within the bounded
@@ -3990,7 +3996,7 @@ Setting a provider aside is not a rollback and not a cancel. The commit stands a
 obligation stands: until that provider is stopped it has not stopped. When it returns it emits a
 snapshot before anything else, and the snapshot decides:
 
-- `in-effect` or `starting-after-task` — the commit arrived after all. Nothing to send.
+- `on-break` or `starting-after-task` — the commit arrived after all. Nothing to send.
 - still `granted` — the commit was lost. Omni sends `commitBreak()` now. If the original turns up
   late behind it, the provider stops an agent who is already stopped; nothing happens, because a
   commit is a state to be in, not an act to be done.
@@ -4003,7 +4009,7 @@ no capacity until it is reconciled.
 
 **If the agent has already ended the break elsewhere, the break attempt is over** and the returning
 provider is reconciled to that instead: still `granted` gets `cancelBreak()`, because committing
-would stop an agent who is working again; `starting-after-task` or `in-effect` gets `endBreak()`.
+would stop an agent who is working again; `starting-after-task` or `on-break` gets `endBreak()`.
 Never rolling back is about a break that is still on, not one the agent has finished.
 
 Omni may tell the agent which platforms the break has not yet reached, as it already does when a
@@ -4046,7 +4052,7 @@ reported through `break-state`.
 
 Commits the `granted` request. Once the provider has reported `granted`, it cannot fail for a
 business reason. On commit the provider stops offering new work and reports
-`starting-after-task` while existing work finishes, or `in-effect` when the break is in effect.
+`starting-after-task` while existing work finishes, or `on-break` when the break is in effect.
 Committing a break that is already in effect changes nothing and answers `committed`.
 
 ### `endBreak()`
@@ -4184,7 +4190,7 @@ or until it is withdrawn or declined.
 
 **A lead on a break does not join.** A break is a reported state in which the agent is not working,
 and a join is work. Omni offers Join to a lead only while their own `BreakState.approval` is neither
-`starting-after-task` nor `in-effect` -- a committed break waiting for the lead's current work to
+`starting-after-task` nor `on-break` -- a committed break waiting for the lead's current work to
 finish is not given more -- and a provider answers a `join` from a lead on such a break `failed`.
 The request stands for another lead, as it does when this one is already on a call.
 
@@ -4339,7 +4345,7 @@ about whether anybody has to act on it, and the difference is a lead's entire ac
 | `starting-after-task` | Already granted; it begins when their current task ends. Nobody needs to act. |
 
 Those three are the only values that appear here. `not-requested` is absence — omit `break`
-instead. `in-effect` is `availability: "on-break"`, and a denial transitions to `not-requested`,
+instead. `on-break` is `availability: "on-break"`, and a denial transitions to `not-requested`,
 so neither survives to be reported. It is otherwise the same `BreakApproval` the member's own
 break state uses, rather than a parallel vocabulary for the lead's view, so the two cannot drift
 apart.
@@ -4971,14 +4977,14 @@ covers a `diagnostic`: shown where the agent works, and counted.
 
 Replaces this provider's complete `break` object. Its `approval` uses the canonical
 `not-requested`, `awaiting-decision`, `granted`, `starting-after-task` and
-`in-effect` states defined under Breaks; the event also carries the corresponding may-ask state,
+`on-break` states defined under Breaks; the event also carries the corresponding may-ask state,
 reasons, retry details, and any forced break.
 
 Each state is also held to the one before it. A commit's states, `starting-after-task` and
-`in-effect`, follow a grant — the one arrival in a committed state nobody asked for is a forced
+`on-break`, follow a grant — the one arrival in a committed state nobody asked for is a forced
 break, which says so with `forced`: in effect at once, or `starting-after-task` while the member
 finishes the call they are on (`stream.breakState.commitBeforeGrant`); and a break never moves backwards —
-from `in-effect` or `starting-after-task` to a grant or a request, or from `granted` to
+from `on-break` or `starting-after-task` to a grant or a request, or from `granted` to
 `awaiting-decision` — a new request passes through `not-requested` (`stream.breakState.backwards`).
 `exerciseAdapter` holds the stream to that from the connect snapshot on;
 `assertBreakFollowsItsRequests` holds any sequence.
@@ -5006,8 +5012,8 @@ unresolved operation per provider/attempt; recovery must resolve uncertainty bef
 operation is dispatched. The source must fence delayed operations against its own attempt state.
 
 Normal order is `not-requested` → `awaiting-decision` → `granted` →
-`starting-after-task` → `in-effect` → `not-requested`. Auto-approval may go directly to
-`granted`; a commit with no outstanding work may go directly to `in-effect`. Denial/cancel
+`starting-after-task` → `on-break` → `not-requested`. Auto-approval may go directly to
+`granted`; a commit with no outstanding work may go directly to `on-break`. Denial/cancel
 returns a precommit request to `not-requested`; an authorized agent or lead end returns a committed
 break there. Same-state restatements are allowed. An evidenced forced break is the explicit
 exception to requesting/granting, and must carry its forced actor/state. Neither skipped
@@ -5028,7 +5034,7 @@ not implement or assume invocation of Protocol's two-phase request/commit coordi
 For a multi-provider break attempt, "every provider" is the set of providers frozen when the
 attempt entered `requesting-break`. Omni commits only after every asked provider reports `granted` —
 that one is unconditional, because nothing has stopped yet and waiting costs only time. It enters
-`on-break` once every kept provider reports `in-effect`; the commit bound decides who is kept,
+`on-break` once every kept provider reports `on-break`; the commit bound decides who is kept,
 setting aside a provider that has not applied the commit rather than holding a break that has
 already begun elsewhere. Otherwise it follows the two-phase rules under **Coordinating a
 multi-provider break**.
@@ -5411,7 +5417,7 @@ cannot be established from TypeScript structure alone.
 | `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a forced break arriving in effect with `forced`. The harness applies the same rules after the connect snapshot. |
 | `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-started` and `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what follows the media ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no media satisfies it by never testing it — pair it with the assertion that the media end is present. |
 | `assertBreakAttemptProviders(candidates, asked)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
-| `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `in-effect` only once nothing is outstanding — never beside a task, never later than the step that has none. |
+| `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `on-break` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
 | `assertWrapTimeout(task, mediaEndedAt, deadline, toleranceMs?)` | The wrap deadline equals media end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |
 | `assertBrowserSessionIsolation(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |

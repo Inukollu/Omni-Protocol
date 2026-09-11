@@ -432,7 +432,7 @@ export type FormerListenMethod = import("../src/index.js").Connection["executeTe
 export const retiredLeadTakeOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over" };
 
 export const forcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAutomatically: false };
-export const forcedBreakState: import("../src/index.js").BreakState = { approval: "in-effect", canRequestBreak: false, forced: forcedBreak };
+export const forcedBreakState: import("../src/index.js").BreakState = { approval: "on-break", canRequestBreak: false, forced: forcedBreak };
 // @ts-expect-error The old break type has no compatibility alias.
 import type { ImposedBreak } from "../src/index.js";
 // @ts-expect-error Use forced, including when the new field is also present.
@@ -477,3 +477,6 @@ export const retiredBreakEligibility: import("../src/index.js").BreakState = { a
 export const unavailableBreakRequest: import("../src/index.js").BreakState = { approval: "not-requested", canRequestBreak: false, requestUnavailableReason: "Busy hours" };
 // @ts-expect-error Use requestUnavailableReason, not the retired refusedReason field.
 export const retiredBreakRefusal: import("../src/index.js").BreakState = { ...unavailableBreakRequest, refusedReason: "Busy hours" };
+
+// @ts-expect-error Use on-break, not the retired in-effect approval.
+export const retiredActiveBreakState: import("../src/index.js").BreakApproval = "in-effect";

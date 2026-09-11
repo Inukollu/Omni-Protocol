@@ -120,7 +120,7 @@ const AUTHENTICATION_STATUSES = membersOf<AuthenticationState["status"]>({
   "signed-out": true, authenticating: true, authenticated: true, refreshing: true, expired: true,
 });
 const BREAK_APPROVALS = membersOf<BreakApproval>({
-  "not-requested": true, "awaiting-decision": true, granted: true, "starting-after-task": true, "in-effect": true,
+  "not-requested": true, "awaiting-decision": true, granted: true, "starting-after-task": true, "on-break": true,
 });
 const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
   ready: true, "on-task": true, "on-break": true, reserved: true, "signed-out": true,
@@ -1451,13 +1451,13 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
   if (isPlainObject(state) && state.approval === "starting-after-task"
     && Array.isArray(tasks) && tasks.length === 0) {
     into.add("break.starting-after-task.tasks", `${path}.break.approval`,
-      "a break starting after the task waits on a task, and the snapshot carries none: with nothing outstanding the break is in-effect");
+      "a break starting after the task waits on a task, and the snapshot carries none: with nothing outstanding the break is on-break");
   }
-  if (isPlainObject(state) && state.approval === "in-effect"
+  if (isPlainObject(state) && state.approval === "on-break"
     && Array.isArray(tasks) && tasks.length > 0) {
     const listening = tasks.every((task: unknown) => isPlainObject(task) && task.listening !== undefined);
     if (!listening) {
-      into.add("break.in-effect.tasks", `${path}.tasks`,
+      into.add("break.on-break.tasks", `${path}.tasks`,
         "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task");
     } else {
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
@@ -1517,7 +1517,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   } else {
     validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
-    if (command.type === "end-forced-break") into.require(state.forced !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
+    if (command.type === "end-forced-break") into.require(state.forced !== undefined && (state.approval === "on-break" || state.approval === "starting-after-task"),
       "team.break.command.endForcedBreak", path, "end a currently forced break");
     if (command.type === "force-break") {
       if (command.reasonId !== undefined) into.filled(command.reasonId, "team.break.command.reasonId", path, "reasonId must not be empty");
@@ -1577,12 +1577,12 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
       "break.request.canRequestBreak", path, "asking is disabled except for the selected alwaysAvailable reason");
   } else {
     into.require(request === undefined, "break.command.arguments", path, "this break method takes no arguments");
-    if (method === "commitBreak") into.require(approval === "granted" || approval === "starting-after-task" || approval === "in-effect",
+    if (method === "commitBreak") into.require(approval === "granted" || approval === "starting-after-task" || approval === "on-break",
       "break.command.commit.grant", path, "commit requires a grant; repeated committed state is idempotent");
     if (method === "cancelBreak") into.require(approval === "awaiting-decision" || approval === "granted",
       "break.command.cancel.precommit", path, "cancel only a pre-commit request; a raced commit requires commit recovery");
     if (method === "endBreak") {
-      into.require(approval === "starting-after-task" || approval === "in-effect", "break.command.end.started", path,
+      into.require(approval === "starting-after-task" || approval === "on-break", "break.command.end.started", path,
         "end a committed break, including a returning provider still finishing work");
       into.require(state.forced === undefined, "break.command.end.forced", path, "an agent cannot end a forced break; an authorized lead ends it");
     }
@@ -1604,13 +1604,13 @@ export function validateBreakTransition(before: unknown, after: unknown, path = 
   if (into.violations.length || !isPlainObject(before) || !isPlainObject(after)) return into.violations;
   const from = before.approval as BreakApproval;
   const to = after.approval as BreakApproval;
-  const committed = to === "starting-after-task" || to === "in-effect";
+  const committed = to === "starting-after-task" || to === "on-break";
   if (committed && (from === "not-requested" || from === "awaiting-decision") && after.forced === undefined) {
     into.add("stream.breakState.commitBeforeGrant", `${path}.after.approval`,
       `${to} follows a commit, and a commit follows granted; the break stood at ${from}`);
   }
   const backwards =
-    (from === "in-effect" && (to === "awaiting-decision" || to === "granted" || to === "starting-after-task")) ||
+    (from === "on-break" && (to === "awaiting-decision" || to === "granted" || to === "starting-after-task")) ||
     (from === "starting-after-task" && (to === "awaiting-decision" || to === "granted")) ||
     (from === "granted" && to === "awaiting-decision");
   if (backwards) into.add("stream.breakState.backwards", `${path}.after.approval`,
@@ -1657,9 +1657,9 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   if (value.forced !== undefined) {
     validateForcedBreak(value.forced, `${path}.forced`, into);
     // A forced break is a break somebody forced; beside `not-requested` there is no break.
-    // A forced break is a break in progress or about to be: it travels with in-effect or
+    // A forced break is a break in progress or about to be: it travels with on-break or
     // starting-after-task and nothing else. Beside granted, the host would commit a break nobody asked for.
-    into.require(value.approval === "in-effect" || value.approval === "starting-after-task", "break.forced.approval", `${path}.forced`,
+    into.require(value.approval === "on-break" || value.approval === "starting-after-task", "break.forced.approval", `${path}.forced`,
       `a forced break is in effect or starting after the task; ${describeValue(value.approval)} says the agent asked, or that there is none`);
   }
 
@@ -1699,7 +1699,7 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   // forced one included, since the lead's force-break command named it. A break of no kind is a break whose
   // rules -- who may listen through it, whether it counts -- nobody can apply.
   ruleEvaluated("break.activeReasonId.required");
-  if (seen.size > 0 && (value.approval === "in-effect" || value.approval === "starting-after-task")) {
+  if (seen.size > 0 && (value.approval === "on-break" || value.approval === "starting-after-task")) {
     into.require(typeof value.activeReasonId === "string" && value.activeReasonId.length > 0, "break.activeReasonId.required", `${path}.activeReasonId`,
       `a break ${describeValue(value.approval)} on a provider that publishes reasons names the one it is on`);
   }
@@ -1821,7 +1821,7 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Re
     into.oneOf(member.availability, TEAM_AVAILABILITIES, "team.member.availability", `${at}.availability`);
     if (member.since !== undefined) into.timestamp(member.since, "team.member.since", `${at}.since`);
     if (member.break !== undefined) {
-      // Only an outstanding request appears here: `not-requested` is absence, `in-effect` is
+      // Only an outstanding request appears here: `not-requested` is absence, `on-break` is
       // `availability: "on-break"`, and a denial never survives to be reported.
       if (into.oneOf(member.break, MEMBER_BREAKS, "team.member.break", `${at}.break`)) {
         into.require(member.availability !== "signed-out" && member.availability !== "on-break", "team.member.break.availability",

@@ -1184,7 +1184,7 @@ export type BreakApproval =
   | "granted"
   /** Granted and begins when the current task ends. Nobody needs to act. */
   | "starting-after-task"
-  | "in-effect";
+  | "on-break";
 
 export const BREAK_KINDS = [
   "short-break", "meal", "rest", "training", "coaching",
@@ -1284,7 +1284,7 @@ export interface TeamMember {
   availability: TeamMemberAvailability;
   /** Omitted rather than invented: Omni renders it as a duration. */
   since?: IsoTimestamp;
-  /** A request in flight or a grant not yet in effect. `not-requested` is absence, and `in-effect` is `availability: "on-break"`. */
+  /** A request in flight or a grant not yet in effect. `not-requested` is absence, and `on-break` is `availability: "on-break"`. */
   break?: Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">;
 }
 

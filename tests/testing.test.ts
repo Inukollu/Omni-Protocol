@@ -238,30 +238,30 @@ describe("assertBreakFollowsItsRequests", () => {
 
   it("accepts every move the guide describes", () => {
     // Asked, decided, committed while working, begun when the work ended, ended.
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("granted"), state("starting-after-task"), state("in-effect"), state("not-requested")], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("granted"), state("starting-after-task"), state("on-break"), state("not-requested")], idle))).toEqual([]);
     // Granted at once and committed with nothing outstanding; denied; cancelled after a grant.
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("in-effect"), state("not-requested")], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("on-break"), state("not-requested")], idle))).toEqual([]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("not-requested")], idle))).toEqual([]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("not-requested")], idle))).toEqual([]);
     // Placed on the agent: in effect with nobody asking, and it says so -- or starting after the
     // call the member is on, which is the same placing reported while the work finishes.
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect", { forced: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task", { forced: { by: "M-1", endsAutomatically: false } }), state("in-effect", { forced: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break", { forced: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task", { forced: { by: "M-1", endsAutomatically: false } }), state("on-break", { forced: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
     // A reconnect snapshot resets where the break stands; the same state twice is nothing.
     const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { approval: "granted", canRequestBreak: true } } } };
     expect(rulesOf(() => assertBreakFollowsItsRequests([reconnect, state("starting-after-task"), state("starting-after-task", {}, "again")], idle))).toEqual([]);
     // No implied baseline: a first delta cannot establish its own ordering preconditions.
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect")]))).toEqual(["stream.breakState.baseline"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break")]))).toEqual(["stream.breakState.baseline"]);
   });
 
   it("refuses a commit's states with no grant behind them", () => {
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("in-effect")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("on-break")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
   });
 
   it("refuses a break that goes backwards", () => {
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("in-effect"), state("granted", {}, "g2")], idle))).toEqual(["stream.breakState.backwards"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("on-break"), state("granted", {}, "g2")], idle))).toEqual(["stream.breakState.backwards"]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("starting-after-task"), state("awaiting-decision")], idle))).toEqual(["stream.breakState.backwards"]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("awaiting-decision")], idle))).toEqual(["stream.breakState.backwards"]);
   });
@@ -668,21 +668,21 @@ describe("assertBreakAttemptProviders", () => {
 });
 
 describe("assertBreakBeginsAfterTask", () => {
-  const on = (approval: "not-requested" | "awaiting-decision" | "granted" | "starting-after-task" | "in-effect", outstanding: number) => ({ approval, outstanding });
+  const on = (approval: "not-requested" | "awaiting-decision" | "granted" | "starting-after-task" | "on-break", outstanding: number) => ({ approval, outstanding });
 
   it("accepts a break asked for on a task that begins when the task ends, decided or granted at once", () => {
-    expect(() => assertBreakBeginsAfterTask([on("not-requested", 1), on("awaiting-decision", 1), on("granted", 1), on("starting-after-task", 1), on("in-effect", 0)])).not.toThrow();
-    expect(() => assertBreakBeginsAfterTask([on("granted", 2), on("starting-after-task", 2), on("starting-after-task", 1), on("in-effect", 0)])).not.toThrow();
+    expect(() => assertBreakBeginsAfterTask([on("not-requested", 1), on("awaiting-decision", 1), on("granted", 1), on("starting-after-task", 1), on("on-break", 0)])).not.toThrow();
+    expect(() => assertBreakBeginsAfterTask([on("granted", 2), on("starting-after-task", 2), on("starting-after-task", 1), on("on-break", 0)])).not.toThrow();
   });
 
   it("rejects a break that begins beside a task, or waits after the work is gone", () => {
-    expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("starting-after-task", 1), on("in-effect", 1)])).toThrow(/begins when the work ends/);
-    expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("starting-after-task", 0), on("in-effect", 0)])).toThrow(/should have begun/);
+    expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("starting-after-task", 1), on("on-break", 1)])).toThrow(/begins when the work ends/);
+    expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("starting-after-task", 0), on("on-break", 0)])).toThrow(/should have begun/);
   });
 
   it("rejects a request that was not made on a task, or a commit not reported as starting-after-task", () => {
-    expect(() => assertBreakBeginsAfterTask([on("granted", 0), on("in-effect", 0)])).toThrow(/while a task is outstanding/);
-    expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("in-effect", 0)])).toThrow(/starting-after-task while the work remains/);
+    expect(() => assertBreakBeginsAfterTask([on("granted", 0), on("on-break", 0)])).toThrow(/while a task is outstanding/);
+    expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("on-break", 0)])).toThrow(/starting-after-task while the work remains/);
     expect(() => assertBreakBeginsAfterTask([on("not-requested", 1)])).toThrow(/requires a request/);
     expect(() => assertBreakBeginsAfterTask([on("granted", 1), on("starting-after-task", 1)])).toThrow(/must end in effect/);
   });
@@ -693,14 +693,14 @@ describe("assertDeniedAndRetriedBreak", () => {
     // There is no `denied` approval: a refusal leaves nothing pending, because a request
     // nobody is coming to decide is worse than none.
     expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "awaiting-decision", "granted"])).not.toThrow();
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "awaiting-decision", "in-effect"])).not.toThrow();
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "awaiting-decision", "on-break"])).not.toThrow();
   });
 
   it("accepts a provider that decides alone: granted at once, refused, granted again", () => {
     // No approver, so the request never waits on a person -- it is granted the moment it is
     // made. The rule is unchanged: the refusal still has to return to not-requested first.
     expect(() => assertDeniedAndRetriedBreak(["granted", "not-requested", "granted"])).not.toThrow();
-    expect(() => assertDeniedAndRetriedBreak(["granted", "not-requested", "granted", "in-effect"])).not.toThrow();
+    expect(() => assertDeniedAndRetriedBreak(["granted", "not-requested", "granted", "on-break"])).not.toThrow();
   });
 
   it("rejects a sequence that was never asked for", () => {
@@ -710,7 +710,7 @@ describe("assertDeniedAndRetriedBreak", () => {
 
   it("rejects a grant that was never refused, however the request was made", () => {
     expect(() => assertDeniedAndRetriedBreak(["granted"])).toThrow(/leaving nothing pending/);
-    expect(() => assertDeniedAndRetriedBreak(["granted", "in-effect"])).toThrow(/leaving nothing pending/);
+    expect(() => assertDeniedAndRetriedBreak(["granted", "on-break"])).toThrow(/leaving nothing pending/);
   });
 
   it("rejects a refusal that leaves the request pending", () => {
@@ -1111,7 +1111,7 @@ describe("exerciseAdapter", () => {
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.
     const reached = {
       ...conformingSnapshot,
-      break: { approval: "in-effect", canRequestBreak: true, reasons: [{ id: "lunch", label: "Lunch" }], forced: { by: "M-1", endsAutomatically: false } },
+      break: { approval: "on-break", canRequestBreak: true, reasons: [{ id: "lunch", label: "Lunch" }], forced: { by: "M-1", endsAutomatically: false } },
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", allocationId: "alloc-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { leadAssistControl: true } }, snapshot: reached })))
@@ -2083,13 +2083,13 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { deliver?.(envelope); return { status: "applied" as const }; } } };
     };
     expect(await rules(after(moved("granted")))).toEqual([]);
-    expect(await rules(after(moved("in-effect")))).toEqual(["stream.breakState.commitBeforeGrant"]);
+    expect(await rules(after(moved("on-break")))).toEqual(["stream.breakState.commitBeforeGrant"]);
     // And backwards, through the harness: granted, in effect, then granted again.
     const both = (...envelopes: ProviderEventEnvelope<"voice">[]): AdapterOverrides => {
       let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
       return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { envelopes.forEach(envelope => deliver?.(envelope)); return { status: "applied" as const }; } } };
     };
-    expect(await rules(both(moved("granted"), moved("in-effect"), { ...moved("granted"), id: "evt-again" }))).toEqual(["stream.breakState.backwards"]);
+    expect(await rules(both(moved("granted"), moved("on-break"), { ...moved("granted"), id: "evt-again" }))).toEqual(["stream.breakState.backwards"]);
   });
 
   it("holds the snapshot and every event to the login's session", async () => {
@@ -2173,7 +2173,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     const teamMembers = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: teamMembers, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
-    const forced = { ...minimalSnapshot, break: { approval: "in-effect", canRequestBreak: true, forced: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
+    const forced = { ...minimalSnapshot, break: { approval: "on-break", canRequestBreak: true, forced: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: forced, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     expect(await rules({ snapshot: minimalSnapshot, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
     // Present is not enough: the names the snapshot published are looked up, and the answer is held to the shape.
