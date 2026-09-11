@@ -1419,7 +1419,7 @@ function validateForcedBreak(value: unknown, path: string, into: Collector): voi
   // `by` is required either way. Who put somebody off the floor survives whether or not the
   // break ends on a clock -- a forced break with no origin is a state the agent cannot
   // reason about.
-  into.require(isUserId(value.by), "break.forced.by", `${path}.by`, "a forced break must say who placed it");
+  into.require(isUserId(value.by), "break.forced.by", `${path}.by`, "a forced break must say who forced it");
 
   if (value.endsAutomatically === true) {
     into.timestamp(value.endsAt, "break.forced.endsAt", `${path}.endsAt`);
@@ -1473,7 +1473,7 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
 
 /**
  * Checks lead break dispatch using current authentication, transport, team member list (`team`) and,
- * for place/release, the target's full `memberBreak`. The provider must authorize the target
+ * for force/release, the target's full `memberBreak`. The provider must authorize the target
  * and recheck the decision atomically; a team member list is not authority to act after it has changed.
  */
 export function validateTeamBreakCommand(request: unknown, context: unknown, path = "teamBreakCommand"): ProtocolViolation[] {
@@ -1492,7 +1492,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   const command = request.command;
   const allowed: Record<string, readonly string[]> = {
     decide: ["type", "memberId", "decision", "reason"], policy: ["type", "policy"],
-    place: ["type", "memberId", "reasonId", "reason"], release: ["type", "memberId"],
+    force: ["type", "memberId", "reasonId", "reason"], release: ["type", "memberId"],
   };
   const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
   if (!fields) { into.add("team.break.command.type", path, "unknown lead break command"); return into.violations; }
@@ -1519,11 +1519,11 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
     if (command.type === "release") into.require(state.forced !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
       "team.break.command.release", path, "release a currently forced break");
-    if (command.type === "place") {
+    if (command.type === "force") {
       if (command.reasonId !== undefined) into.filled(command.reasonId, "team.break.command.reasonId", path, "reasonId must not be empty");
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
       into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
-        "team.break.command.reasonId", path, "place uses the target's currently published reason codes");
+        "team.break.command.reasonId", path, "force uses the target's currently published reason codes");
     }
   }
   return into.violations;
@@ -1652,7 +1652,7 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   }
   if (value.forced !== undefined) {
     validateForcedBreak(value.forced, `${path}.forced`, into);
-    // A forced break is a break somebody placed; beside `not-requested` there is no break.
+    // A forced break is a break somebody forced; beside `not-requested` there is no break.
     // A forced break is a break in progress or about to be: it travels with in-effect or
     // starting-after-task and nothing else. Beside granted, the host would commit a break nobody asked for.
     into.require(value.approval === "in-effect" || value.approval === "starting-after-task", "break.forced.approval", `${path}.forced`,
@@ -1692,7 +1692,7 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
       `activeReasonId names a reason the provider did not publish: ${value.activeReasonId}`);
   }
   // A break in effect, or about to be, on a provider that publishes reasons is on one of them: an
-  // forced one included, since the lead's place named it. A break of no kind is a break whose
+  // forced one included, since the lead's force command named it. A break of no kind is a break whose
   // rules -- who may listen through it, whether it counts -- nobody can apply.
   ruleEvaluated("break.activeReasonId.required");
   if (seen.size > 0 && (value.approval === "in-effect" || value.approval === "starting-after-task")) {

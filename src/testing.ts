@@ -1919,7 +1919,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
 
 // A request goes not-requested -> awaiting-decision | granted; a commit goes granted ->
 // starting-after-task | in-effect; work ending goes starting-after-task -> in-effect; a denial,
-// a cancel, an end or a release goes back to not-requested; a placed break arrives in-effect
+// a cancel, an end or a release goes back to not-requested; a forced break arrives in-effect
 // with `forced`. Nothing else is a move the guide describes.
 /** What a stream has said about the agent's break, and the moves it may not make. */
 export class BreakStream {
@@ -1958,7 +1958,7 @@ export class BreakStream {
 /**
  * A break follows its requests. Given a provider's stream -- seeded with its initial snapshot,
  * either supplied separately or carried by a snapshot event -- every `break-state` moves the way the guide describes: a commit's states only
- * after a grant, never backwards, and a break placed on the agent arriving in effect with `forced`.
+ * after a grant, never backwards, and a break forced on the agent arriving in effect with `forced`.
  */
 export function assertBreakFollowsItsRequests(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
   const stream = new BreakStream();

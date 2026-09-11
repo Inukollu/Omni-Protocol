@@ -1,3 +1,15 @@
+# Current delivery: Force break command
+
+Repository: /Users/vasu/Dev/Personal/Omni-Protocol
+Worktree: /private/tmp/omni-force-break-command
+Branch: refactor/force-break-command
+Implementation: c090bd9607b483d9b549cb8fa940d10b4cd8e69c
+PR: https://github.com/Inukollu/Omni-Protocol/pull/117
+
+TeamBreakCommand place renamed to force, including validator and guide. Old literal rejected without alias; hosts/providers must update together. Permissions, current target state/reasons, release and ordering preserved. No package or wire version changes.
+Validation: build/test typecheck, 431 tests, compiled guide examples, package verification (10 files/3 entrypoints), diff check passed. Log /private/tmp/force-break-command-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. No release/merge/cleanup performed. PR116 independently verified merged.
+
 # Current delivery: Forced break API
 
 Repository: /Users/vasu/Dev/Personal/Omni-Protocol
@@ -272,3 +284,8 @@ PID 6842; command python3 /private/tmp/omni-take-over-call-api/.agent-memory/run
 Monitor omni-protocol-pr116-forced-break-api: OPEN at 2026-09-11T08:31:33.396884+00:00. Await CI/review; monitor never merges.
 PID 89428; command python3 /private/tmp/omni-forced-break-api/.agent-memory/runtime/forced-break-monitor.py; state /private/tmp/omni-forced-break-api/.agent-memory/runtime/forced-break.state.json; log /private/tmp/omni-forced-break-api/.agent-memory/runtime/forced-break.log; PID file /private/tmp/omni-forced-break-api/.agent-memory/runtime/forced-break.pid; process log /private/tmp/omni-forced-break-api/.agent-memory/runtime/forced-break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-forced-break-api, branch refactor/forced-break-api, PR https://github.com/Inukollu/Omni-Protocol/pull/116.
 <!-- forced-break-monitor:end -->
+
+<!-- force-break-command-monitor:begin -->
+Monitor omni-protocol-pr117-force-break-command: OPEN at 2026-09-11T08:44:24.441504+00:00. Await CI/review; monitor never merges.
+PID 44983; command python3 /private/tmp/omni-force-break-command/.agent-memory/runtime/force-break-command-monitor.py; state /private/tmp/omni-force-break-command/.agent-memory/runtime/force-break-command.state.json; log /private/tmp/omni-force-break-command/.agent-memory/runtime/force-break-command.log; PID file /private/tmp/omni-force-break-command/.agent-memory/runtime/force-break-command.pid; process log /private/tmp/omni-force-break-command/.agent-memory/runtime/force-break-command.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-force-break-command, branch refactor/force-break-command, PR https://github.com/Inukollu/Omni-Protocol/pull/117.
+<!-- force-break-command-monitor:end -->

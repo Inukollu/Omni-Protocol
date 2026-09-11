@@ -188,9 +188,16 @@ describe("lead break prerequisites", () => {
     }
     expect(validateTeamBreakCommand({ command: { ...request.command, decision: "maybe" } }, lead)).not.toEqual([]);
   });
-  it("checks placement reason and release of a forced break without assuming the placer is the releaser", () => {
-    expect(validateTeamBreakCommand({ command: { type: "place", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
-    expect(validateTeamBreakCommand({ command: { type: "place", memberId: "member" } }, lead)).not.toEqual([]);
+  it("rejects the retired command and preserves force prerequisites", () => {
+    const command = { type: "force", memberId: "member", reasonId: "bio" };
+    expect(validateTeamBreakCommand({ command: { ...command, type: "place" } }, lead).map(v => v.rule)).toContain("team.break.command.type");
+    for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [] } }, { ...lead, memberBreak: undefined }]) {
+      expect(validateTeamBreakCommand({ command }, bad)).not.toEqual([]);
+    }
+  });
+  it("checks the forced-break reason and release without assuming the same lead does both", () => {
+    expect(validateTeamBreakCommand({ command: { type: "force", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
+    expect(validateTeamBreakCommand({ command: { type: "force", memberId: "member" } }, lead)).not.toEqual([]);
     const release = { command: { type: "release", memberId: "member" } };
     expect(validateTeamBreakCommand(release, lead)).not.toEqual([]);
     expect(validateTeamBreakCommand(release, { ...lead, memberBreak: { ...state("in-effect"), forced: { by: "another-lead", endsAutomatically: false } } })).toEqual([]);

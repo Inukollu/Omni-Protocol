@@ -437,3 +437,7 @@ export const forcedBreakState: import("../src/index.js").BreakState = { approval
 import type { ImposedBreak } from "../src/index.js";
 // @ts-expect-error Use forced, including when the new field is also present.
 export const retiredBreakField: import("../src/index.js").BreakState = { ...forcedBreakState, imposed: forcedBreak };
+
+export const forceMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "force", memberId: "member-1", reasonId: "bio" };
+// @ts-expect-error The retired place command has no compatibility alias.
+export const retiredPlaceBreak: import("../src/index.js").TeamBreakCommand = { type: "place", memberId: "member-1" };

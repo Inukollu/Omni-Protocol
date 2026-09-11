@@ -608,7 +608,7 @@ describe("break state", () => {
     expect(check({ approval: "granted", reasons })).toEqual([]);
   });
 
-  it("keeps who placed a forced break whether or not it ends on a clock", () => {
+  it("keeps who forced a break whether or not it ends on a clock", () => {
     const forced = (value: unknown) => check({ approval: "in-effect", forced: value });
     // Both arms are legal. The origin is required in both, because a forced break with no
     // origin is a state the agent cannot reason about.
