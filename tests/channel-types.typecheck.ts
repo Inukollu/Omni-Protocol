@@ -460,7 +460,7 @@ export const setTeamBreakPolicy: import("../src/index.js").TeamBreakCommand = { 
 // @ts-expect-error Use set-break-policy, not the retired generic policy command.
 export const ambiguousBreakPolicy: import("../src/index.js").TeamBreakCommand = { type: "policy", policy: "approval-required" };
 
-export const requireBreakApproval: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "approval-required" };
+export const requireBreakStatus: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "approval-required" };
 // @ts-expect-error The old ask policy has no compatibility alias.
 export const retiredAskPolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "ask" };
 
@@ -479,11 +479,14 @@ export const unavailableBreakRequest: import("../src/index.js").BreakState = { s
 export const retiredBreakRefusal: import("../src/index.js").BreakState = { ...unavailableBreakRequest, refusedReason: "Busy hours" };
 
 // @ts-expect-error Use on-break, not the retired in-effect approval.
-export const retiredActiveBreakState: import("../src/index.js").BreakApproval = "in-effect";
+export const retiredActiveBreakState: import("../src/index.js").BreakStatus = "in-effect";
 
 export const breakRequestRetry: import("../src/index.js").BreakState = { status: "not-requested", canRequestBreak: true, retryRequestAfterMs: 500 };
 // @ts-expect-error BreakState uses retryRequestAfterMs, not the old retryAfterMs field.
 export const retiredBreakRetry: import("../src/index.js").BreakState = { ...breakRequestRetry, retryAfterMs: 500 };
 
 // @ts-expect-error BreakState uses status, without an approval alias.
-export const retiredBreakApprovalField: import("../src/index.js").BreakState = { status: "granted", canRequestBreak: true, approval: "granted" };
+export const retiredBreakStatusField: import("../src/index.js").BreakState = { status: "granted", canRequestBreak: true, approval: "granted" };
+
+// @ts-expect-error BreakApproval was renamed to BreakStatus without an alias.
+import type { BreakApproval } from "../src/index.js";

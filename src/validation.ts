@@ -28,7 +28,7 @@ import {
   type AuthenticationMethod,
   type AuthenticationChallenge,
   type AuthenticationState,
-  type BreakApproval,
+  type BreakStatus,
   type BrowserAccess,
   type HostAudioUnavailableReason,
   type UrlVisibility,
@@ -119,7 +119,7 @@ const AUTHENTICATION_BROWSERS = membersOf<Extract<AuthenticationChallenge, { met
 const AUTHENTICATION_STATUSES = membersOf<AuthenticationState["status"]>({
   "signed-out": true, authenticating: true, authenticated: true, refreshing: true, expired: true,
 });
-const BREAK_APPROVALS = membersOf<BreakApproval>({
+const BREAK_APPROVALS = membersOf<BreakStatus>({
   "not-requested": true, "awaiting-decision": true, granted: true, "starting-after-task": true, "on-break": true,
 });
 const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
@@ -147,7 +147,7 @@ const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>[
   reconnected: true, "provider-requested": true,
 });
 const SESSION_CAPABILITIES = membersOf<keyof UserCapabilities>({ breaks: true, team: true, preferences: true });
-const MEMBER_BREAKS = membersOf<Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">>({
+const MEMBER_BREAKS = membersOf<Extract<BreakStatus, "awaiting-decision" | "granted" | "starting-after-task">>({
   "awaiting-decision": true, granted: true, "starting-after-task": true,
 });
 const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
@@ -1602,8 +1602,8 @@ export function validateBreakTransition(before: unknown, after: unknown, path = 
   validateBreakState(before, `${path}.before`, into);
   validateBreakState(after, `${path}.after`, into);
   if (into.violations.length || !isPlainObject(before) || !isPlainObject(after)) return into.violations;
-  const from = before.status as BreakApproval;
-  const to = after.status as BreakApproval;
+  const from = before.status as BreakStatus;
+  const to = after.status as BreakStatus;
   const committed = to === "starting-after-task" || to === "on-break";
   if (committed && (from === "not-requested" || from === "awaiting-decision") && after.forced === undefined) {
     into.add("stream.breakState.commitBeforeGrant", `${path}.after.status`,

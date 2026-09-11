@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { BreakApproval, BreakState } from "../src/index.js";
+import type { BreakStatus, BreakState } from "../src/index.js";
 import { validateBreakTransition, validateBreakCommand, validateBreakStatus, validateTeamBreakCommand, validateResult, type BreakMethod } from "../src/validation.js";
 import { BreakStream } from "../src/testing.js";
 
-const state = (status: BreakApproval): BreakState => ({ status, canRequestBreak: true });
-const event = (status: BreakApproval) => ({ event: { type: "break-state", break: state(status) } });
+const state = (status: BreakStatus): BreakState => ({ status, canRequestBreak: true });
+const event = (status: BreakStatus) => ({ event: { type: "break-state", break: state(status) } });
 
 describe("runtime break ordering", () => {
   it("rejects the retired BreakState field, even alongside status", () => {
@@ -61,14 +61,14 @@ describe("runtime break ordering", () => {
   });
 
   it("checks every pair against the allowed event transitions", () => {
-    const allowed: Record<BreakApproval, BreakApproval[]> = {
+    const allowed: Record<BreakStatus, BreakStatus[]> = {
       "not-requested": ["not-requested", "awaiting-decision", "granted"],
       "awaiting-decision": ["not-requested", "awaiting-decision", "granted"],
       granted: ["not-requested", "granted", "starting-after-task", "on-break"],
       "starting-after-task": ["not-requested", "starting-after-task", "on-break"],
       "on-break": ["not-requested", "on-break"],
     };
-    const phases = Object.keys(allowed) as BreakApproval[];
+    const phases = Object.keys(allowed) as BreakStatus[];
     for (const from of phases) for (const to of phases) {
       expect(validateBreakTransition(state(from), state(to)).length === 0, `${from} -> ${to}`)
         .toBe(allowed[from].includes(to));
@@ -162,11 +162,11 @@ const context = {
 };
 describe("break prerequisites", () => {
   it("checks all four methods against every approval", () => {
-    const allowed: Record<BreakMethod, BreakApproval[]> = {
+    const allowed: Record<BreakMethod, BreakStatus[]> = {
       requestBreak: ["not-requested"], commitBreak: ["granted", "starting-after-task", "on-break"],
       cancelBreak: ["awaiting-decision", "granted"], endBreak: ["starting-after-task", "on-break"],
     };
-    const approvals: BreakApproval[] = ["not-requested", "awaiting-decision", "granted", "starting-after-task", "on-break"];
+    const approvals: BreakStatus[] = ["not-requested", "awaiting-decision", "granted", "starting-after-task", "on-break"];
     for (const method of Object.keys(allowed) as BreakMethod[]) for (const status of approvals) {
       const found = validateBreakCommand(method, method === "requestBreak" ? {} : undefined, state(status), context);
       expect(found.length === 0, `${method} from ${status}`).toBe(allowed[method].includes(status));

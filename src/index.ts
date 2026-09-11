@@ -1176,7 +1176,7 @@ export type DialResult =
 // Breaks.
 // ---------------------------------------------------------------------------
 
-export type BreakApproval =
+export type BreakStatus =
   | "not-requested"
   /** Somebody has to decide. The agent is waiting on a person. */
   | "awaiting-decision"
@@ -1237,7 +1237,7 @@ export type ForcedBreak =
   | { by: UserId; endsAutomatically: false; endsAt?: never };
 
 export interface BreakState {
-  status: BreakApproval;
+  status: BreakStatus;
   /** Whether the agent may ask at all. Distinct from the fate of a request already made. */
   canRequestBreak: boolean;
   /** Shown when `canRequestBreak` is false, such as "Busy hours". */
@@ -1285,7 +1285,7 @@ export interface TeamMember {
   /** Omitted rather than invented: Omni renders it as a duration. */
   since?: IsoTimestamp;
   /** A request in flight or a grant not yet in effect. `not-requested` is absence, and `on-break` is `availability: "on-break"`. */
-  break?: Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">;
+  break?: Extract<BreakStatus, "awaiting-decision" | "granted" | "starting-after-task">;
 }
 
 /** A member asking this lead to join their call. */

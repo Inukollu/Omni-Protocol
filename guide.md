@@ -928,7 +928,7 @@ keeps a choice about it. See **The station is the host's**.
 ## Breaks
 
 ```ts
-type BreakApproval =
+type BreakStatus =
   | "not-requested"
   | "awaiting-decision"
   | "granted"
@@ -953,7 +953,7 @@ type ForcedBreak =
   | { by: UserId; endsAutomatically: false; endsAt?: never };
 
 type BreakState = {
-  status: BreakApproval;
+  status: BreakStatus;
   canRequestBreak: boolean;
   requestUnavailableReason?: string;
   decisionReason?: string;
@@ -989,7 +989,7 @@ type TeamMember = {
   id: UserId;
   availability: TeamMemberAvailability;
   since?: IsoTimestamp;
-  break?: Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">;
+  break?: Extract<BreakStatus, "awaiting-decision" | "granted" | "starting-after-task">;
 };
 
 type LeadRequest = {
@@ -3641,9 +3641,12 @@ something a busy hour can cancel, and Omni keeps offering those while the rest a
 
 ### Forced breaks
 
+Migration: the former BreakApproval type is now `BreakStatus`, matching `BreakState.status`.
+The former type is not exported as an alias; its values and behavior are unchanged.
+
 Migration: `BreakState.status` replaces the former approval field. It covers the full break
 lifecycle. The old field is rejected even alongside status; related diagnostics now use status.
-The `BreakApproval` union and its values, `reasons`, `activeReasonId`, and the separate testing
+The `BreakStatus` union and its values, `reasons`, `activeReasonId`, and the separate testing
 helper BreakOnTaskStep.approval are unchanged. Hosts and providers must update together.
 
 Migration: the break-state field formerly named retryAfterMs is now `BreakState.retryRequestAfterMs`,
@@ -4355,7 +4358,7 @@ about whether anybody has to act on it, and the difference is a lead's entire ac
 
 Those three are the only values that appear here. `not-requested` is absence — omit `break`
 instead. `on-break` is `availability: "on-break"`, and a denial transitions to `not-requested`,
-so neither survives to be reported. It is otherwise the same `BreakApproval` the member's own
+so neither survives to be reported. It is otherwise the same `BreakStatus` the member's own
 break state uses, rather than a parallel vocabulary for the lead's view, so the two cannot drift
 apart.
 

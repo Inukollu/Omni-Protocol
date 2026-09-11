@@ -9,7 +9,7 @@ import {
   type Snapshot,
   type Task,
   type TaskCompletion,
-  type BreakApproval,
+  type BreakStatus,
   type BrowserSessionKeyInput,
   type Channel,
   type ConnectContext,
@@ -990,7 +990,7 @@ export function assertReconnectWithMissedAssignments<C extends Channel>(
  * the provider decides alone; either is the request being made, and the rule is the same for
  * both.
  */
-export function assertDeniedAndRetriedBreak(approvals: readonly BreakApproval[]): void {
+export function assertDeniedAndRetriedBreak(approvals: readonly BreakStatus[]): void {
   const asked = approvals.findIndex(approval => approval === "awaiting-decision" || approval === "granted");
   if (asked < 0) throw new Error("Break retry scenario requires an initial request");
   const refused = approvals.indexOf("not-requested", asked + 1);
@@ -2053,7 +2053,7 @@ export function assertBreakAttemptProviders(candidates: readonly BreakCandidate[
 
 /** One published moment of a break asked for on a task: the approval, and how many tasks were outstanding. */
 export interface BreakOnTaskStep {
-  approval: BreakApproval;
+  approval: BreakStatus;
   outstanding: number;
 }
 

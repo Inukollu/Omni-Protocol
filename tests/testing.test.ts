@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakApproval, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
+import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
 import type { LoginStore, Refusal } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
 import { memoryStore, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
@@ -231,7 +231,7 @@ describe("assertReconnectWithMissedAssignments", () => {
 
 describe("assertBreakFollowsItsRequests", () => {
   const at = "2026-08-21T09:00:00Z";
-  const state = (status: BreakApproval, over: Record<string, unknown> = {}, id: string = status): ProviderEventEnvelope<"voice"> =>
+  const state = (status: BreakStatus, over: Record<string, unknown> = {}, id: string = status): ProviderEventEnvelope<"voice"> =>
     ({ id, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { status, canRequestBreak: true, ...over } } }) as ProviderEventEnvelope<"voice">;
   const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
   const idle: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
