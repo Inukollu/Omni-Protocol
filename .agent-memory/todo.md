@@ -1,3 +1,13 @@
+# Team members API rename — PR111 — 2026-09-11
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-team-members-api; branch refactor/team-members-api; implementation ea0b90a1d73464fb9ff9980e1bbdfddc9241ad2f; PR https://github.com/Inukollu/Omni-Protocol/pull/111.
+
+TeamMembers and validateTeamMembers replace TeamRoster and validateTeamRoster without aliases. Guide, README, harness, examples and callers updated. Snapshot.team, team-updated and team payload/members/requests/policies retain their names and semantics; empty team is an object with members: []. Compile-time refusal checks cover retired exports. No wire/package version changes, release or client adoption.
+
+Validation: build and test typecheck, all 426 tests, guide examples, packed-package verification (10 files, all three runtime/type entry points) and diff check passed. Risk: consumers must migrate imports and validator calls; wire payload shape is unchanged. Next: monitor CI/review; user merges. Retain dedicated worktree/branch while open.
+
+PR110 independently verified MERGED at 777bc51d587b2a54a6d1088588bc2b985816283a. New branch starts at upstream main 2c93a2a, with its existing package version 0.1.85 unchanged. Earlier worktrees retained; no cleanup requested. Following sections are historical handover records.
+
 # Outcome API rename — PR110 — 2026-09-11
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-outcome-api; branch refactor/outcome-api; implementation 6ca86af87c9bfc6e1f7000d80d95f58590cc7527; PR https://github.com/Inukollu/Omni-Protocol/pull/110.
@@ -178,3 +188,8 @@ PID 10809; command python3 /private/tmp/omni-interaction-guide/.agent-memory/run
 Monitor omni-protocol-pr110-outcome-api: OPEN at 2026-09-11T06:57:16.097980+00:00. Await CI/review; monitor never merges.
 PID 77110; command python3 /private/tmp/omni-outcome-api/.agent-memory/runtime/outcome-monitor.py; state /private/tmp/omni-outcome-api/.agent-memory/runtime/outcome.state.json; log /private/tmp/omni-outcome-api/.agent-memory/runtime/outcome.log; PID file /private/tmp/omni-outcome-api/.agent-memory/runtime/outcome.pid; process log /private/tmp/omni-outcome-api/.agent-memory/runtime/outcome.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-outcome-api, branch refactor/outcome-api, PR https://github.com/Inukollu/Omni-Protocol/pull/110.
 <!-- outcome-monitor:end -->
+
+<!-- team-members-monitor:begin -->
+Monitor omni-protocol-pr111-team-members-api: OPEN at 2026-09-11T07:30:37.948493+00:00. Await CI/review; monitor never merges.
+PID 18952; command python3 /private/tmp/omni-team-members-api/.agent-memory/runtime/team-members-monitor.py; state /private/tmp/omni-team-members-api/.agent-memory/runtime/team-members.state.json; log /private/tmp/omni-team-members-api/.agent-memory/runtime/team-members.log; PID file /private/tmp/omni-team-members-api/.agent-memory/runtime/team-members.pid; process log /private/tmp/omni-team-members-api/.agent-memory/runtime/team-members.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-team-members-api, branch refactor/team-members-api, PR https://github.com/Inukollu/Omni-Protocol/pull/111.
+<!-- team-members-monitor:end -->

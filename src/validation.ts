@@ -1470,9 +1470,9 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
 }
 
 /**
- * Checks lead break dispatch using current authentication, transport, roster (`team`) and,
+ * Checks lead break dispatch using current authentication, transport, team member list (`team`) and,
  * for place/release, the target's full `memberBreak`. The provider must authorize the target
- * and recheck the decision atomically; a roster is not authority to act after it has changed.
+ * and recheck the decision atomically; a team member list is not authority to act after it has changed.
  */
 export function validateTeamBreakCommand(request: unknown, context: unknown, path = "teamBreakCommand"): ProtocolViolation[] {
   const into = new Collector();
@@ -1507,7 +1507,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   const member = members.find((m: unknown) => isPlainObject(m) && m.id === command.memberId);
   const self = isPlainObject(auth.identity) ? auth.identity.id : undefined;
   into.require(isPlainObject(member) && command.memberId !== self, "team.break.command.member", path,
-    "the target must be another member of the current authorized roster");
+    "the target must be another member of the current authorized team member list");
   if (command.type === "decide") {
     into.require(command.decision === "granted" || command.decision === "denied", "team.break.command.decision", path, "decide granted or denied");
     into.require(isPlainObject(member) && member.break === "awaiting-decision", "team.break.command.awaiting", path,
@@ -1704,12 +1704,12 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
 export interface ReaderContext {
   /**
    * The signed-in agent, `AuthenticationState.identity.id`. A lead does not report to themself:
-   * a roster that lists them in `members`, or their own ask in `requests`, is a violation.
+   * a team member list that lists them in `members`, or their own ask in `requests`, is a violation.
    */
   self?: UserId;
   /**
    * The login's `AuthenticationState.capabilities`. The login is the permission: a lead's
-   * snapshot carries a roster, nobody else's does, and `requests` need `team.leadAssistControl`.
+   * snapshot carries a team member list, nobody else's does, and `requests` need `team.leadAssistControl`.
    */
   capabilities?: UserCapabilities;
   /** The level ids in force. Filled from the manifest by `validateSnapshot` and `validateEventEnvelope`; the defaults otherwise. */
@@ -1726,40 +1726,40 @@ export interface ReaderContext {
   autoAcceptTasks?: boolean;
 }
 
-export function validateTeamRoster(roster: unknown, path = "team", context: ReaderContext = {}): ProtocolViolation[] {
+export function validateTeamMembers(teamMembers: unknown, path = "team", context: ReaderContext = {}): ProtocolViolation[] {
   const into = new Collector();
-  validateTeamRosterInto(roster, path, context, into);
+  validateTeamMembersInto(teamMembers, path, context, into);
   return into.violations;
 }
 
-function validateTeamRosterInto(roster: unknown, path: string, context: ReaderContext, into: Collector): void {
-  if (!isPlainObject(roster)) {
-    into.add("team.shape", path, "a team roster must be an object");
+function validateTeamMembersInto(teamMembers: unknown, path: string, context: ReaderContext, into: Collector): void {
+  if (!isPlainObject(teamMembers)) {
+    into.add("team.shape", path, "a team member list must be an object");
     return;
   }
-  // The login is the permission: a roster reaches a login that declares `capabilities.team` and
+  // The login is the permission: a team member list reaches a login that declares `capabilities.team` and
   // nobody else. Only a caller holding the login can check it.
   if (context.capabilities !== undefined && context.capabilities.team === undefined) {
     into.add("team.unentitled", path,
-      "a roster published to a login that does not declare capabilities.team: the login is the permission");
+      "a team member list published to a login that does not declare capabilities.team: the login is the permission");
   }
-  // The team's policies travel with the roster exactly when the login may set them.
+  // The team's policies travel with the team member list exactly when the login may set them.
   if (context.capabilities !== undefined) {
     const may = context.capabilities.team?.policyControl === true;
-    if (may && roster.policies === undefined) {
-      into.add("team.policies.required", `${path}.policies`, "the login declares team.policyControl, so the roster carries the team's policies");
+    if (may && teamMembers.policies === undefined) {
+      into.add("team.policies.required", `${path}.policies`, "the login declares team.policyControl, so the team member list carries the team's policies");
     }
-    if (!may && roster.policies !== undefined) {
+    if (!may && teamMembers.policies !== undefined) {
       into.add("team.policies.capability", `${path}.policies`, "policies require team.policyControl on the login: a lead who may not set them has nothing to see");
     }
   }
-  if (roster.policies !== undefined) validateTeamPoliciesInto(roster.policies, `${path}.policies`, into, context.levels);
-  if (roster.requests === undefined) {
+  if (teamMembers.policies !== undefined) validateTeamPoliciesInto(teamMembers.policies, `${path}.policies`, into, context.levels);
+  if (teamMembers.requests === undefined) {
     // `[]` says nobody is asking; omission says the lead may not be asked. A login that may be
     // asked therefore always carries the list.
     if (context.capabilities?.team?.leadAssistControl === true) {
       into.add("team.requests.required", `${path}.requests`,
-        "the login declares team.leadAssistControl, so the roster carries requests: [] when nobody is asking");
+        "the login declares team.leadAssistControl, so the team member list carries requests: [] when nobody is asking");
     }
   } else {
     // Requests are what a lead acts on, so a lead who may not act has no business receiving them.
@@ -1768,11 +1768,11 @@ function validateTeamRosterInto(roster: unknown, path: string, context: ReaderCo
       into.require(context.capabilities.team?.leadAssistControl === true, "team.requests.capability", `${path}.requests`,
         "requests require team.leadAssistControl on the login: a lead who may not join has nothing to decide");
     }
-    if (!Array.isArray(roster.requests)) {
+    if (!Array.isArray(teamMembers.requests)) {
       into.add("team.requests.shape", `${path}.requests`, "requests must be an array when present");
     } else {
       const seenRequests = new Set<string>();
-      roster.requests.forEach((request: unknown, index: number) => {
+      teamMembers.requests.forEach((request: unknown, index: number) => {
         const at = `${path}.requests[${index}]`;
         if (!isPlainObject(request)) {
           into.add("team.request.shape", at, "each request must be an object");
@@ -1784,7 +1784,7 @@ function validateTeamRosterInto(roster: unknown, path: string, context: ReaderCo
         }
         if (into.require(isUserId(request.memberId), "team.request.memberId", `${at}.memberId`, "a request names the member asking")) {
           into.require(request.memberId !== context.self, "team.request.self", `${at}.memberId`,
-            "the roster carries the reader's own ask: an agent's request for a lead goes to whoever leads them");
+            "the team member list carries the reader's own ask: an agent's request for a lead goes to whoever leads them");
         }
         into.require(isTaskId(request.taskId), "team.request.taskId", `${at}.taskId`, "a request names the task the lead would join");
         into.require(isAllocationId(request.allocationId), "team.request.allocationId", `${at}.allocationId`, "a request names the task by its allocation too");
@@ -1793,22 +1793,22 @@ function validateTeamRosterInto(roster: unknown, path: string, context: ReaderCo
       });
     }
   }
-  if (!Array.isArray(roster.members)) {
-    into.add("team.members.shape", `${path}.members`, "a roster must carry a members array");
+  if (!Array.isArray(teamMembers.members)) {
+    into.add("team.members.shape", `${path}.members`, "a team member list must carry a members array");
     return;
   }
   const seen = new Set<string>();
-  roster.members.forEach((member: unknown, index: number) => {
+  teamMembers.members.forEach((member: unknown, index: number) => {
     const at = `${path}.members[${index}]`;
     if (!isPlainObject(member)) {
-      into.add("team.member.shape", at, "each roster member must be an object");
+      into.add("team.member.shape", at, "each team member must be an object");
       return;
     }
-    if (into.require(isUserId(member.id), "team.member.id", `${at}.id`, "a roster member needs a user id")) {
-      if (seen.has(member.id as string)) into.add("team.member.unique", `${at}.id`, `duplicate roster member: ${member.id}`);
+    if (into.require(isUserId(member.id), "team.member.id", `${at}.id`, "a team member needs a user id")) {
+      if (seen.has(member.id as string)) into.add("team.member.unique", `${at}.id`, `duplicate team member: ${member.id}`);
       seen.add(member.id as string);
       into.require(member.id !== context.self, "team.member.self", `${at}.id`,
-        "the roster carries the agent it is published to: a lead does not report to themself");
+        "the team member list carries the agent it is published to: a lead does not report to themself");
     }
     into.oneOf(member.availability, TEAM_AVAILABILITIES, "team.member.availability", `${at}.availability`);
     if (member.since !== undefined) into.timestamp(member.since, "team.member.since", `${at}.since`);
@@ -1924,13 +1924,13 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       into.add("snapshot.calendar.shape", `${path}.scheduledActivities`, "scheduledActivities must be an array when present");
     }
   }
-  // The login is the permission: a lead's snapshot carries a roster, `[]` included. The other
-  // direction -- a roster to a login that does not lead -- is the roster's own rule.
+  // The login is the permission: a lead's snapshot carries a team member list, `[]` included. The other
+  // direction -- a team member list to a login that does not lead -- is the team member list's own rule.
   if (context.capabilities?.team !== undefined && snapshot.team === undefined) {
     into.add("team.required", `${path}.team`,
-      "the login declares capabilities.team, so every snapshot carries a roster: [] when nobody is in it");
+      "the login declares capabilities.team, so every snapshot carries a team member list: [] when nobody is in it");
   }
-  if (snapshot.team !== undefined) validateTeamRosterInto(snapshot.team, `${path}.team`, { ...context, levels }, into);
+  if (snapshot.team !== undefined) validateTeamMembersInto(snapshot.team, `${path}.team`, { ...context, levels }, into);
 
   return into.violations;
 }
@@ -2128,7 +2128,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       validateQueueSummary(event.summary, `${at}.summary`, into);
       break;
     case "team-updated":
-      validateTeamRosterInto(event.team, `${at}.team`, { ...context, levels }, into);
+      validateTeamMembersInto(event.team, `${at}.team`, { ...context, levels }, into);
       break;
     case "contacts-updated":
       into.require(idle.contacts === true, "event.contacts.capability", `${at}.contacts`,

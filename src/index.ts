@@ -331,7 +331,7 @@ export interface UserCapabilities {
   breaks?: true;
   /** The choices the team left to this person, with where each stands. Omitted when there are none. Requires `setPreference`. */
   preferences?: AgentPreference[];
-  /** This login leads a team: a `TeamRoster` is published to it on every snapshot, `[]` included. */
+  /** This login leads a team: a `TeamMembers` object is published to it on every snapshot, including `members: []`. */
   team?: TeamCapabilities;
 }
 
@@ -1302,7 +1302,7 @@ export interface LeadRequest {
  * The login is the permission: published to a login that declares `capabilities.team`, on every
  * snapshot, and to nobody else. What the lead may do with it is on the login too, not here.
  */
-export interface TeamRoster {
+export interface TeamMembers {
   members: TeamMember[];
   /** Omitted when the login lacks `team.leadAssistControl`; `[]` when nobody is asking. */
   requests?: LeadRequest[];
@@ -1343,7 +1343,7 @@ export interface TeamLeadAssistCommandRequest {
 }
 
 /**
- * A lead listening to a member's call. `monitor` starts one, silent, on a member from the roster;
+ * A lead listening to a member's call. `monitor` starts one, silent, on a member from the team member list;
  * `whisper` and `barge` change how the standing one is heard; `leave` ends it. One member at a
  * time, and only the modes the login's `monitorControl` lists.
  */
@@ -1479,7 +1479,7 @@ export interface Snapshot<C extends Channel = Channel> {
   taskCount: number;
   contacts?: Contact[];
   scheduledActivities?: ScheduledActivity[];
-  team?: TeamRoster;
+  team?: TeamMembers;
 }
 
 /**
@@ -1536,7 +1536,7 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
   | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId; allocationId?: AllocationId }
-  | { type: "team-updated"; team: TeamRoster }
+  | { type: "team-updated"; team: TeamMembers }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
 
@@ -1618,7 +1618,7 @@ export interface Connection<C extends Channel = Channel> {
   execute(request: TaskCommandRequest<C>): Promise<TaskCommandResult>;
   disconnect(): Promise<void>;
 
-  /** Required of any adapter publishing a `UserId` -- on an imposed break, a roster, or history. */
+  /** Required of any adapter publishing a `UserId` -- on an imposed break, a team member list, or history. */
   describeUsers?(ids: UserId[]): Promise<User[]>;
   /** Required when the manifest declares `idleCapabilities.dial`. */
   dial?(request: DialRequest): Promise<DialResult>;

@@ -156,7 +156,7 @@ describe("Omni protocol", () => {
 
   it("exercises the smallest conforming adapter", async () => {
     // Channels are a closed set, so the smallest adapter is on a real channel with nothing
-    // optional declared: no idle capabilities, no breaks, no roster, no tasks -- and so no
+    // optional declared: no idle capabilities, no breaks, no team member list, no tasks -- and so no
     // optional method is required of it.
     const disconnect = vi.fn(async () => undefined);
     const adapter = defineAdapter({

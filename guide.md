@@ -23,7 +23,7 @@ are used precisely throughout and mean nothing looser here.
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
 | **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; transfer destinations may include an agent when the provider publishes that directory item. |
-| **Lead** | An agent whose login declares `capabilities.team`. The provider publishes a `TeamRoster` to them and to nobody else: **the login is the permission**. |
+| **Lead** | An agent whose login declares `capabilities.team`. The provider publishes a `TeamMembers` object to them and to nobody else: **the login is the permission**. |
 | **Provisioning** | Omni-side policy about this agent, configured outside the protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and provisioning disagree, the stricter wins. |
 | **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. |
 | **Interaction** | One agent’s part in the call or conversation. The same call may return to that agent for a new interaction. |
@@ -38,9 +38,9 @@ are used precisely throughout and mean nothing looser here.
 | **Snapshot** | The provider's complete state at one moment. It replaces what Omni holds; it is never a patch. |
 | **Event** | One completed transaction reported after a snapshot established the baseline. |
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
-| **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, roster. |
+| **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, team member list. |
 | **Dial** | One outbound call the host asks a provider to place — from the idle dialpad, a cold or warm transfer, a conference add, or a connect-back. Identified by the host's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
-| **Monitor** | A lead listening to a member's call unasked, from the roster: `monitor` in silence, `whisper` heard by the agent alone, `barge` heard by everyone. Nothing of it reaches the member's task, and there is no take-over in it. See **Monitoring a call**. |
+| **Monitor** | A lead listening to a member's call unasked, from the team member list: `monitor` in silence, `whisper` heard by the agent alone, `barge` heard by everyone. Nothing of it reaches the member's task, and there is no take-over in it. See **Monitoring a call**. |
 | **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in from the moment their dial is placed. |
 
 Six words describe *what state a thing is in*, and they are not interchangeable: each belongs to
@@ -54,7 +54,7 @@ transport, a task, a break and a call each have a word of their own:
 | `transport` | A connection | `connecting`, `active`, `error` |
 | `status` | An authentication session | `signed-out`, `authenticating`, `authenticated`, `refreshing`, `expired` |
 | `approval` | A break request | `not-requested`, `awaiting-decision`, `granted`, `starting-after-task`, `in-effect` |
-| `availability` | A roster member | `ready`, `on-task`, `on-break`, `signed-out` |
+| `availability` | A team member | `ready`, `on-task`, `on-break`, `signed-out` |
 
 ## Versioning
 
@@ -120,7 +120,7 @@ identifier of its own for an agent or a manager, and none crosses this boundary 
 operating-system account, not a directory identity, not a licence.
 
 So a `UserId` means nothing outside the provider that issued it. Provider A's
-`interactionHistory[].by` and provider B's roster `memberId` are unrelated strings that will
+`interactionHistory[].by` and provider B's team member list `memberId` are unrelated strings that will
 eventually collide, and one person on several providers has several identities that nothing here
 pairs. Scope every user identifier with its provider ID before storing or comparing it, exactly as
 `taskKey()` already does for tasks — see `userKey()` under **Utilities**.
@@ -485,7 +485,7 @@ type Snapshot = {
   taskCount: number;
   contacts?: Contact[];
   scheduledActivities?: ScheduledActivity[];
-  team?: TeamRoster;
+  team?: TeamMembers;
 };
 
 type AgentCapacity = {
@@ -901,11 +901,11 @@ or email states those values in `lockedValues`, since a run that cannot ask the 
 pass. A host never has the value and never asks. A name is not locked. What the queue provides rather than permits — browsers, outcomes, custom
 controls — is content, and is never locked.
 
-**A lead sets the team's policy from their roster.** A login that declares
+**A lead sets the team's policy from their team member list.** A login that declares
 `capabilities.team.policyControl` may `executeTeamPolicy({ type: "set", capability, setting })`
 with `on`, `off`, or `person`, for any task control, `dial`, or a skill — and only `hold`
 and skills may be `person`; connect back and new call are the team's, on or off, within what the queue
-allows. The roster carries `policies` for such a login: every policy as it stands, who set it, and
+allows. The team member list carries `policies` for such a login: every policy as it stands, who set it, and
 `lockedBy` where a level above the team made it theirs to keep, which the lead sees and cannot
 change — `executeTeamPolicy` on it answers `failed` with `omni.capability-not-enabled`.
 
@@ -1002,7 +1002,7 @@ type LeadRequest = {
   since: IsoTimestamp;
 };
 
-type TeamRoster = {
+type TeamMembers = {
   members: TeamMember[];
   requests?: LeadRequest[];
   policies?: TeamPolicies;
@@ -1115,7 +1115,7 @@ type ProviderEvent =
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
   | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId; allocationId?: AllocationId }
-  | { type: "team-updated"; team: TeamRoster }
+  | { type: "team-updated"; team: TeamMembers }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
 
@@ -1923,11 +1923,11 @@ them from what arrives later.
 | Field | Contract |
 | --- | --- |
 | `breaks` | This login may request a break. Requires the four break methods on the connection. |
-| `team` | This login leads a team. The provider publishes a `TeamRoster` to it on every snapshot — `[]` when nobody is in it — and to nobody else. |
+| `team` | This login leads a team. The provider publishes a `TeamMembers` object to it on every snapshot — `members: []` when nobody is in it — and to nobody else. |
 | `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — place, release, decide, set policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-decision`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
 | `team.leadAssistControl` | This lead may join a member's call on request. Requires `executeTeamLeadAssist`. |
 | `team.monitorControl` | This lead may listen to a member's call unasked, in the listed modes and no others: `monitor`, `whisper`, `barge`. The list always includes `monitor`, since the other two begin from one. Requires `executeTeamMonitor`. See **Monitoring a call**. |
-| `team.policyControl` | This lead sets the team's policy per capability — on, off, or the person's — within what the queue allows. Requires `executeTeamPolicy`; the roster carries `policies`. |
+| `team.policyControl` | This lead sets the team's policy per capability — on, off, or the person's — within what the queue allows. Requires `executeTeamPolicy`; the team member list carries `policies`. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
 A session action is available only when both the capability and Omni provisioning permit it.
@@ -1937,7 +1937,7 @@ state. A provider that reads roles live — a lead demoted mid-shift — republi
 with the new set through `subscribe()` on the authentication session, which Omni keeps open for
 the life of the connection for exactly this reason, and the next snapshot agrees with it. Omni
 provisions what the capabilities call for at sign-in — a team panel for a lead, empty until the
-roster arrives, and nothing for anybody else — and withdraws it on the next render when the
+team member list arrives, and nothing for anybody else — and withdraws it on the next render when the
 capability goes. A command that arrives after its capability was withdrawn is answered `failed`
 with `omni.capability-not-enabled`: the provider names it, so Omni never has to infer from a
 capability change it may not have rendered yet that "you are no longer a lead" is the message
@@ -2023,7 +2023,7 @@ failure:
 ```
 
 The `User` it carries is the **root of this provider's user namespace**. Every other person this
-provider names — a roster member, the manager on an imposed break, the agent on an interaction step —
+provider names — a team member, the manager on an imposed break, the agent on an interaction step —
 is identified from the same directory and carries the same `UserId` type.
 
 | Field | Contract |
@@ -2136,7 +2136,7 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
 | `scheduledActivities` | Required complete calendar contribution when the manifest declares `calendar`; `[]` clears it. Omitted only when it does not. |
-| `team` | Required `TeamRoster` when the login declares `capabilities.team`, `[]` when nobody is in it. Forbidden otherwise — the login is the permission. |
+| `team` | Required `TeamMembers` when the login declares `capabilities.team`, `members: []` when nobody is in it. Forbidden otherwise — the login is the permission. |
 
 ## Live connection
 
@@ -2153,7 +2153,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `refused(report)` | Always. The host tells the adapter what it would not take -- a snapshot it did not replace its state with, an event it dropped -- with every rule broken, so a refusal is visible on both sides. See **What the host does with what it refuses**. |
 | `setCapacity(capacity)` | Always. Nothing may be allocated until a capacity is stated, so there is no connection that does not receive it. |
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability**. |
-| `describeUsers(ids)` | The adapter publishes any `UserId`: on `ImposedBreak.by`, a roster, or `interactionHistory[].by`. Each `User` carries its `timeZone`; a person whose zone the provider cannot name is omitted from the answer, as any unresolvable id is. |
+| `describeUsers(ids)` | The adapter publishes any `UserId`: on `ImposedBreak.by`, a team member list, or `interactionHistory[].by`. Each `User` carries its `timeZone`; a person whose zone the provider cannot name is omitted from the answer, as any unresolvable id is. |
 | `dial(request)` | The manifest declares `idleCapabilities.dial`, and with it `dialOutcomes`. |
 | `requestBreak(request)` | The login declares `capabilities.breaks`. |
 | `commitBreak()` | The login declares `capabilities.breaks`. Commit and cancel are not optional halves of it. |
@@ -2211,14 +2211,14 @@ Turns `UserId` values into something an agent can read.
 describeUsers(ids: UserId[]): Promise<User[]>
 ```
 
-Required of any adapter that publishes a `UserId` — on `ImposedBreak.by`, a team roster, or
+Required of any adapter that publishes a `UserId` — on `ImposedBreak.by`, a team member list, or
 `interactionHistory[].by`. Publishing an identifier Omni cannot resolve puts a name on screen
 that reads as a database key.
 
 - **Omit an id you cannot resolve; do not invent a name for it.** A missing entry says *I do not
   know this person*, which Omni renders as such. Ordering is not significant and the response may
   be shorter than the request.
-- **Take the whole list in one call.** Omni resolves a roster or an interaction history as a batch, and
+- **Take the whole list in one call.** Omni resolves a team member list or an interaction history as a batch, and
   a per-id round trip multiplies that by its length.
 - **Omni caches a result for one hour, then resolves it again.** The identifier is stable across
   logins but the name behind it is not, so the cache expires on a clock rather than living for the
@@ -2857,7 +2857,7 @@ Four rules a provider has to keep:
 - **`by` is a bare `UserId`, and not necessarily an agent.** A lead or a manager takes part
   during an interaction too — a transfer accepted, a call conferenced in — so the field names whoever it was,
   the same way `ImposedBreak.by` does. It comes from this provider's own directory, the same
-  namespace as `AuthenticationState.identity.id` and the team roster, so entries pair
+  namespace as `AuthenticationState.identity.id` and the team member list, so entries pair
   within a provider and never across one.
 - **A task carries no names.** Omni resolves what to display with `describeUsers()`. Two people
   called Arun on one site is ordinary, and anything pairing entries on a display name pairs them
@@ -3726,7 +3726,7 @@ Your own tasks are the only ones you count. What the agent holds at other provid
 concern — Omni set `count` knowing it, and this is how: the agent is one person on several
 providers, and the host divides their capacity among them rather than telling each the whole. A
 provider that has none of it for now is told **`count: 0`, host-stopped**: allocate nothing, show
-the member as `reserved` on the roster -- signed in here, capacity held by the host for elsewhere,
+the member as `reserved` on the team member list -- signed in here, capacity held by the host for elsewhere,
 a fact this provider holds, where `on-task` would assert work it cannot see -- and take the next
 count as any other when the host has capacity for this provider again. Zero is the one restatement
 that follows work rather than provisioning.
@@ -3764,7 +3764,7 @@ request object only to the request method, and undefined to the other three.
 
 Use `validateTeamBreakCommand(request, context)` for lead decisions, placement, release and
 policy commands. It requires the live lead capability and active transport, a current target
-roster for member commands, and the target's complete break state for placement/release.
+team member list for member commands, and the target's complete break state for placement/release.
 Approve/deny requires an awaiting decision; placement uses the target's reason codes; release
 requires an imposed committed break. The context's target state must belong to the named member;
 that association and backend authorization are provider responsibilities.
@@ -4026,19 +4026,27 @@ so there is nothing on it to resume.
 ## Team leads
 
 A lead who also takes calls sees their team on the idle dashboard. `Snapshot.team` carries a
-`TeamRoster`, replaced whole by `team-updated`.
+`TeamMembers` object, replaced whole by `team-updated`.
+
+Migration: TeamRoster is now `TeamMembers`, and validateTeamRoster is now
+`validateTeamMembers`. Update type imports and validator calls; no legacy export aliases exist.
+The object still contains `members` and the permitted `requests` and `policies`; it is not a
+bare array. `Snapshot.team`, the `team-updated` event and its `team` payload, login permissions,
+and `team.*` validation rules keep their names and semantics. An empty team has `members: []`;
+an absent `team` still means the login is not entitled to that contribution.
+
 
 | Field | Contract |
 | --- | --- |
-| `members` | Every member of this lead's team, whatever their state. `[]` says the lead has a team with nobody in it; omitting the roster says something else entirely — see **The login is the permission** below. |
+| `members` | Every member of this lead's team, whatever their state. `[]` says the lead has a team with nobody in it; omitting the team member list says something else entirely — see **The login is the permission** below. |
 | `requests` | The members currently asking this lead to join a call, each with the task and the note. Required when the login declares `team.leadAssistControl`, `[]` when nobody is asking; omitted when it does not. See **Lead assist**. |
 | `policies` | The team's policy per capability as it stands — the setting, who set it, and `lockedBy` where a level above the team made it theirs to keep. Required when the login declares `team.policyControl`; omitted when it does not. See **Who decides what an agent may do**. |
 
 | `TeamMember` field | Contract |
 | --- | --- |
-| `id` | Required `UserId`. A task carries no names and neither does a roster: Omni resolves what to display with `describeUsers()`. |
+| `id` | Required `UserId`. A task carries no names and neither does a team member list: Omni resolves what to display with `describeUsers()`. |
 | `availability` | Required. What the member is doing now. |
-| `since` | Optional. When the current `availability` began — not when they signed in, and not when the roster was read. |
+| `since` | Optional. When the current `availability` began — not when they signed in, and not when the team member list was read. |
 | `break` | Present only while the member has an outstanding break request. See **A member waiting for a break**. |
 
 Each availability value means one thing:
@@ -4051,7 +4059,7 @@ Each availability value means one thing:
 | `reserved` | Signed in here, and the host holds this agent's capacity for another provider (`count: 0`, host-stopped): not receiving this provider's work, and not on a break. See **Capacity**. |
 | `signed-out` | Known to this team but not signed in to this provider. |
 
-**Always publish the complete roster, never a change to it.** Team presence typically reaches an
+**Always publish the complete team member list, never a change to it.** Team presence typically reaches an
 adapter over a best-effort channel with no ordering and no delivery guarantee, so a stream of deltas
 cannot be trusted to reconstruct the truth. The adapter reconciles against its own authoritative
 read and publishes the result.
@@ -4062,15 +4070,15 @@ everybody — worse than showing nothing, because it looks like data. Send it on
 knows when the state actually began. It times the current `availability`, so it moves every time
 that value does.
 
-**The login is the permission.** A roster goes to a login that declares `capabilities.team`, on
+**The login is the permission.** A team member list goes to a login that declares `capabilities.team`, on
 every snapshot, and to nobody else. Omni never decides who leads a team: the provider said so at
-sign-in, and the roster agrees with it — present, `[]` included, for a lead; absent for everybody
+sign-in, and the team member list agrees with it — present, `[]` included, for a lead; absent for everybody
 else, which is the correct rendering for an agent who leads nobody. What the lead may do with the
-roster is on the login too, `team.breakControl` and `team.leadAssistControl`, never on the roster.
+team member list is on the login too, `team.breakControl` and `team.leadAssistControl`, never on the team member list.
 
-**The roster never carries the agent it is published to — not in `members`, and not in
+**The team member list never carries the agent it is published to — not in `members`, and not in
 `requests`.** A lead does not report to themself: their own break request and their own ask for a
-lead go up to whoever leads them and appear on *that* person's roster, while the requester sees
+lead go up to whoever leads them and appear on *that* person's team member list, while the requester sees
 only their own `BreakState` and their task's `leadAssist` move. An adapter whose platform lists the lead
 among their own members filters the signed-in identity out before publishing. **Being a lead is a
 role the provider knows, never inferred from who is listed:** it is declared at sign-in, a lead
@@ -4089,7 +4097,7 @@ One method, `executeTeamBreak`, taking a discriminated command exactly as `execu
 | `{ type: "place", memberId: UserId, reasonId?, reason? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's imposed break carries it as `activeReasonId`, so its kind is known. |
 | `{ type: "release", memberId: UserId }` | Ends an imposed break on that member, whoever placed it. |
 
-`memberId` is this provider's own identifier for the member, as published on its roster. It is
+`memberId` is this provider's own identifier for the member, as published on its team member list. It is
 never an identifier from another provider, and Omni does not translate between them; names come
 from `describeUsers()`.
 
@@ -4105,7 +4113,7 @@ never expressed here.
 
 An agent on a call may ask a lead to join it -- a dispute that needs approval, a customer who
 asks for a manager, a moment the agent wants a second pair of ears. A call centre calls this
-assistance or escalation, and the name says who assists: the capability is `leadAssist` on the task; the lead's side is the roster, which is already the lead's view of the
+assistance or escalation, and the name says who assists: the capability is `leadAssist` on the task; the lead's side is the team member list, which is already the lead's view of the
 team, and a second lead method beside `executeTeamBreak`:
 
 ```ts
@@ -4120,7 +4128,7 @@ Required when the login declares `capabilities.team.leadAssistControl`, and gate
 execute({ taskId: "call-42", command: { type: "lead-assist", action: "request", note: "Refund dispute, needs approval" } })
 //    task.leadAssist = { stage: "requested", note: "Refund dispute, needs approval", since }
 
-// 2. Every lead entitled to it sees the request on their roster.
+// 2. Every lead entitled to it sees the request on their team member list.
 //    team-updated: requests: [{ id: "req-7", memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", note, since }]
 
 // 3. A lead joins, or declines.
@@ -4147,7 +4155,7 @@ finish is not given more -- and a provider answers a `join` from a lead on such 
 The request stands for another lead, as it does when this one is already on a call.
 
 **On `decline`, or a request the agent withdraws with `{ type: "lead-assist", action: "cancel" }`, the
-provider clears `leadAssist` from the agent's task** and drops the request from every roster. Nothing
+provider clears `leadAssist` from the agent's task** and drops the request from every team member list. Nothing
 else changes; the agent is still on the call.
 
 The lead then has two commands on their copy, gated by `assisting` being present, and a third
@@ -4173,7 +4181,7 @@ const leadAssistCapable = {
 ```
 
 Lead and member alike are `UserId`s of this provider, so an adapter publishing them implements
-`describeUsers()`; names never travel on a task or a roster.
+`describeUsers()`; names never travel on a task or a team member list.
 
 ### Monitoring a call
 
@@ -4196,7 +4204,7 @@ declaration requires `executeTeamMonitor`, gated exactly as `executeTeamLeadAssi
 `team.leadAssistControl`.
 
 ```ts
-// 1. The lead picks a member from the roster and starts silent.
+// 1. The lead picks a member from the team member list and starts silent.
 executeTeamMonitor({ command: { type: "monitor", memberId: "A-1" } })
 
 // 2. The lead's own task arrives -- task-offered with `automatic`, as a joined call does -- and
@@ -4264,7 +4272,7 @@ Omni offers Approve and Deny only while a member is `awaiting-decision`, shows `
 but not started, and shows `starting-after-task` as settled.
 
 **Live status, not a record.** The provider derives it from what is true now — not stored, not
-historical, carrying no decision made earlier. Like the roster it belongs to, it is published
+historical, carrying no decision made earlier. Like the team member list it belongs to, it is published
 whole and replaced whole, and a provider that cannot say omits it.
 
 **An agent is not waiting on one person.** Authority is held by several, everyone who holds it
@@ -4829,8 +4837,8 @@ direction — the provider asking Omni to reconcile — and neither replaces the
 
 Carries a complete `Snapshot` after reconnect or when the provider explicitly requests
 reconciliation. `reason` is `reconnected` or `provider-requested`. Omni replaces the provider's
-current status, break state, tasks, contacts, scheduled activities and team roster with this
-snapshot. It carries what the login's capabilities call for — a roster for a lead, on every
+current status, break state, tasks, contacts, scheduled activities and team member list with this
+snapshot. It carries what the login's capabilities call for — a team member list for a lead, on every
 snapshot — and nothing they do not; a capability is withdrawn by a republished `authenticated`,
 never by an omission from a snapshot.
 
@@ -5066,9 +5074,9 @@ each connected provider.
 
 ### `team-updated`
 
-Replaces this provider's complete `TeamRoster`. It is emitted only for an agent the provider
-publishes a roster to, and it carries the whole team every time — never a change to it, for the
-reason set out under **Team leads**. A lead's snapshot always carries the roster; it goes only when
+Replaces this provider's complete `TeamMembers`. It is emitted only for an agent the provider
+publishes a team member list to, and it carries the whole team every time — never a change to it, for the
+reason set out under **Team leads**. A lead's snapshot always carries the team member list; it goes only when
 a republished `authenticated` no longer declares `capabilities.team`.
 
 ### `contacts-updated`
@@ -5094,7 +5102,7 @@ The same treatment for a `UserId`, and needed for the same reason: user identifi
 issued by each provider independently, so two providers will eventually issue the same string for
 different people. Encode and join before storing or comparing.
 
-Use it for every `UserId` — `interactionHistory[].by`, roster members, `memberId` on a
+Use it for every `UserId` — `interactionHistory[].by`, team members, `memberId` on a
 lead command, `ImposedBreak.by`. A bare one is only ever compared against another from the **same** provider; anything
 wider goes through this key.
 
@@ -5114,7 +5122,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | --- | --- |
 | `validateManifest(manifest)` | Identity, protocol-version interoperability, authentication methods, and idle-capability shapes. |
 | `validateTask(task, { channel, locked? })` | Identity, channel agreement, phase, wrap allowance, capability shapes, custom controls, and browsers. Given `locked`, the values the queue locked, a task whose party stands locked carries none of them anywhere else (`task.locked.leak`). |
-| `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team roster, the stated `taskCount` reconciled against the tasks carried, and every task, contact, and activity, including idle-capability gating both ways: a contribution the manifest never declared is refused, and one it declares is required, `[]` included. |
+| `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team member list, the stated `taskCount` reconciled against the tasks carried, and every task, contact, and activity, including idle-capability gating both ways: a contribution the manifest never declared is refused, and one it declares is required, `[]` included. |
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
@@ -5137,13 +5145,13 @@ Each returns `ProtocolViolation[]` rather than throwing, so a caller can report 
 once. A violation carries a stable `rule` id such as `task.browser.url.scheme`, the `path` it was
 found at such as `snapshot.tasks[0].browsers[1].url`, and a `message`.
 
-Some rules need to know who is reading. `validateTeamRoster`, `validateSnapshot`, and
+Some rules need to know who is reading. `validateTeamMembers`, `validateSnapshot`, and
 `validateEventEnvelope` take an optional final `{ self, capabilities }` — the signed-in agent's
-`AuthenticationState.identity.id` and their login's `capabilities`. Given `self`, a roster that
+`AuthenticationState.identity.id` and their login's `capabilities`. Given `self`, a team member list that
 carries that agent reports `team.member.self` or `team.request.self`. Given `capabilities`, a lead's
-snapshot without a roster reports `team.required`, a roster published to a login that does not lead
-reports `team.unentitled`, `requests` on a roster whose login lacks `team.leadAssistControl` reports
-`team.requests.capability`, and a roster without them on a login that declares it reports
+snapshot without a team member list reports `team.required`, a team member list published to a login that does not lead
+reports `team.unentitled`, `requests` on a team member list whose login lacks `team.leadAssistControl` reports
+`team.requests.capability`, and a team member list without them on a login that declares it reports
 `team.requests.required`. Without them those rules are not checked, because they cannot be.
 `exerciseAdapter` always passes both.
 
@@ -5206,7 +5214,7 @@ A capability granted by a later login requires its methods just as one declared 
 
 `result.notExercised` lists what the run never reached — one subject per family of rules: each
 optional part of a task (`task.browsers`, `task.interactionHistory`, `task.leadAssist`, …), the break's
-`reasons` and `imposed`, the roster's `members` and `requests`, each declared contribution, and
+`reasons` and `imposed`, the team member list's `members` and `requests`, each declared contribution, and
 each event type (`event.task-ended`, …) — and so what a clean `violations` says nothing about.
 Nothing there is a violation: an adapter with no team has nothing to exercise. But a fixture with
 no tasks exercises no task rule, and a pass over it reads as coverage it is not.
@@ -5291,7 +5299,7 @@ expect(driven.violations).toEqual([]);
 assertReached(driven, ["task.onCall", "task.media", "event.task-ended"]);
 ```
 `assertReached(result, subjects)` is the paired assertion: it throws naming every subject the run
-never met, so a test that meant to check a roster cannot pass on a fixture that never produced one.
+never met, so a test that meant to check a team member list cannot pass on a fixture that never produced one.
 It reads like a guarantee and is a claim the adopter keeps making: it catches an adapter that
 stopped reaching a subject, not a list that stopped asking, so a list can rot to nothing and stay
 green. Keep it honest with a control beside it -- one subject the run genuinely cannot reach,
@@ -5316,7 +5324,7 @@ cannot be established from TypeScript structure alone.
 
 | Helper | Contract checked |
 | --- | --- |
-| `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no roster for a login that no longer leads, no requests for one that may no longer join. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
+| `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no team member list for a login that no longer leads, no requests for one that may no longer join. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
 | `assertTaskCapabilityWithdrawal(tasks, manifest, command)` | A capability withdrawn by a republish of the task is gone from the task: every task in the sequence is validated, all carry the offer's id, at least one capability the offer declared is absent at the end (a locked control is present, not withdrawn), and `command` is clean against the first task and refused against the last for want of a withdrawn capability and nothing else. Pair it with `assertCommandRefusedAfterWithdrawal` on the provider's answer. |
 | `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. The same assertion serves a command the provider never supported under a capability it declares. |
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |

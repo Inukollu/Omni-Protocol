@@ -42,9 +42,9 @@ assertNoViolations(violations);
 A violation carries a stable `rule` id such as `task.browser.url.scheme`, the `path` it was found
 at such as `snapshot.tasks[0].browsers[1].url`, and a `message`.
 
-Some rules need more than the object in hand. A roster never carries the agent it is published to,
+Some rules need more than the object in hand. A team member list never carries the agent it is published to,
 a lead's snapshot always carries one and nobody else's ever does — and a validator cannot know who
-is reading, or what their login declares, from the snapshot alone. `validateTeamRoster`,
+is reading, or what their login declares, from the snapshot alone. `validateTeamMembers`,
 `validateSnapshot`, and `validateEventEnvelope` each take an optional final `{ self, capabilities }`
 from the `authenticated` state; given them, they report `team.member.self`, `team.request.self`,
 `team.required`, `team.unentitled`, `team.requests.capability`, and `team.requests.required`.
@@ -61,7 +61,7 @@ validateSnapshot(snapshot, manifest, "snapshot", { self: identity.id, capabiliti
 required capability methods, subscribes, validates the snapshot, every delivered event, and every
 authentication state published during the run — against the latest login — states a capacity,
 then unsubscribes and disconnects. `result.notExercised` names what the run never reached — each
-optional part of a task, of the break state and roster, each contribution, each event type — so a
+optional part of a task, of the break state and team member list, each contribution, each event type — so a
 clean result is read for what it covers and not for the whole contract; `assertReached(result,
 subjects)` is the paired assertion.
 

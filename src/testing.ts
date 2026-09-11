@@ -60,7 +60,7 @@ type Login = Extract<AuthenticationState, { status: "authenticated" }>;
 /**
  * A part of the contract a run may never reach: state nothing obliges an adapter to publish, so
  * a fixture without it exercises none of its rules and passes clean. One subject per family of
- * rules -- each optional part of a task, each optional part of the break state and roster, each
+ * rules -- each optional part of a task, each optional part of the break state and team member list, each
  * declared contribution, and each event type.
  */
 const STATE_SUBJECTS = [
@@ -279,7 +279,7 @@ export async function exerciseAdapter<C extends Channel>(
     }
 
     // The harness knows who is signed in and what their login declares, so it can hold the
-    // adapter to rules the structural validators cannot check alone: a roster never carries the
+    // adapter to rules the structural validators cannot check alone: a team member list never carries the
     // agent it is published to, a lead's snapshot always carries one, nobody else's ever does.
     // Capabilities are current, not fixed, so the login is read when something is validated,
     // never captured at sign-in: a provider that withdraws one republishes `authenticated`, and
@@ -516,7 +516,7 @@ export async function exerciseAdapter<C extends Channel>(
       if (publishesUserIds(read as Snapshot)) {
         requireMethod(source, "describeUsers", "the snapshot publishes a UserId");
         // Required by presence is not enough: the names the snapshot published are looked up, and what
-        // comes back is held to the shape -- an empty answer to a roster of colleagues is named.
+        // comes back is held to the shape -- an empty answer to a team member list of colleagues is named.
         const named = userIdsIn(read as Snapshot);
         if (typeof source.describeUsers === "function" && named.length > 0) {
           let described: unknown;
@@ -674,7 +674,7 @@ function publishesUserIds(snapshot: Snapshot | undefined): boolean {
   return snapshot.tasks.some(taskNamesUsers);
 }
 
-/** Every UserId a snapshot publishes: on the record, the room, a lead request, an imposed break, the roster. */
+/** Every UserId a snapshot publishes: on the record, the room, a lead request, an imposed break, the team member list. */
 function userIdsIn(snapshot: Snapshot | undefined): string[] {
   const ids = new Set<string>();
   const add = (value: unknown) => { if (typeof value === "string" && value.length > 0) ids.add(value); };
@@ -706,7 +706,7 @@ const taskNamesUsers = (task: unknown): boolean =>
     isRecord(task.monitoring));
 
 
-/** Whether an event publishes a `UserId`, on a roster, a task, or the snapshot a reconnect carries. */
+/** Whether an event publishes a `UserId`, on a team member list, a task, or the snapshot a reconnect carries. */
 function eventNamesUsers(envelope: unknown): boolean {
   const event = isRecord(envelope) ? envelope.event : undefined;
   if (!isRecord(event)) return false;
@@ -822,7 +822,7 @@ function undeterminedTasks(tasks: readonly unknown[], path: string): ProtocolVio
  * session published, first to last: beginning and ending `authenticated` for the same identity,
  * passing only through usable states (`expired` or `signed-out` ends the login instead), with at
  * least one capability gone by the end. `snapshot` is the first snapshot published after the last
- * state, validated against that login -- so a roster still published to a login that no longer
+ * state, validated against that login -- so a team member list still published to a login that no longer
  * leads, or requests to one that may no longer join, is the failure.
  */
 export function assertCapabilityWithdrawal(
@@ -932,7 +932,7 @@ export function assertTaskCapabilityWithdrawal(
 
 /**
  * Throws unless the run reached every subject named: the paired assertion beside a clean result,
- * so a fixture that never produced a roster cannot pass a test that meant to check one.
+ * so a fixture that never produced a team member list cannot pass a test that meant to check one.
  */
 export function assertReached(result: AdapterContractResult, subjects: readonly ContractSubject[]): void {
   const missed = subjects.filter(subject => result.notExercised.includes(subject));
