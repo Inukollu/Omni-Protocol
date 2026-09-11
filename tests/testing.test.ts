@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakApproval, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
+import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
 import type { LoginStore, Refusal } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
 import { memoryStore, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertMediaFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
@@ -79,7 +79,7 @@ describe("assertCapabilityWithdrawal", () => {
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, team: { breakControl: true } } } satisfies AuthenticationState;
   const demoted = { status: "authenticated", identity: ada, capabilities: { breaks: true } } satisfies AuthenticationState;
-  const bare: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+  const bare: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
   const withMembers: Snapshot<"voice"> = { ...bare, team: { members: [{ id: "A-2", availability: "ready" }] } };
 
   it("accepts a team member list gone with the capability that entitled it, and rejects one that stayed", () => {
@@ -203,11 +203,11 @@ describe("assertDuplicateEventDelivery", () => {
 });
 
 describe("assertReconnectWithMissedAssignments", () => {
-  const before: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+  const before: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
   const reconnect = {
     id: "event-2", loginId: "session-1",
     occurredAt: "2026-08-21T01:01:00Z",
-    event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [voiceTask], taskCount: 1 } },
+    event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [voiceTask], taskCount: 1 } },
   } as const satisfies ProviderEventEnvelope<"voice">;
 
   it("accepts a reconnect snapshot carrying the missed assignment", () => {
@@ -231,24 +231,24 @@ describe("assertReconnectWithMissedAssignments", () => {
 
 describe("assertBreakFollowsItsRequests", () => {
   const at = "2026-08-21T09:00:00Z";
-  const state = (approval: BreakApproval, over: Record<string, unknown> = {}, id: string = approval): ProviderEventEnvelope<"voice"> =>
-    ({ id, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, canRequestBreak: true, ...over } } }) as ProviderEventEnvelope<"voice">;
+  const state = (status: BreakStatus, over: Record<string, unknown> = {}, id: string = status): ProviderEventEnvelope<"voice"> =>
+    ({ id, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { status, canRequestBreak: true, ...over } } }) as ProviderEventEnvelope<"voice">;
   const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
-  const idle: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+  const idle: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
 
   it("accepts every move the guide describes", () => {
     // Asked, decided, committed while working, begun when the work ended, ended.
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("granted"), state("starting-after-task"), state("on-break"), state("not-requested")], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-approval"), state("granted"), state("starting-after-task"), state("on-break"), state("not-requested")], idle))).toEqual([]);
     // Granted at once and committed with nothing outstanding; denied; cancelled after a grant.
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("on-break"), state("not-requested")], idle))).toEqual([]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("not-requested")], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-approval"), state("not-requested")], idle))).toEqual([]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("not-requested")], idle))).toEqual([]);
     // Placed on the agent: in effect with nobody asking, and it says so -- or starting after the
     // call the member is on, which is the same placing reported while the work finishes.
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break", { forced: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task", { forced: { by: "M-1", endsAutomatically: false } }), state("on-break", { forced: { by: "M-1", endsAutomatically: false } })], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break", { forced: { by: "M-1" } })], idle))).toEqual([]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task", { forced: { by: "M-1" } }), state("on-break", { forced: { by: "M-1" } })], idle))).toEqual([]);
     // A reconnect snapshot resets where the break stands; the same state twice is nothing.
-    const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { approval: "granted", canRequestBreak: true } } } };
+    const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { status: "granted", canRequestBreak: true } } } };
     expect(rulesOf(() => assertBreakFollowsItsRequests([reconnect, state("starting-after-task"), state("starting-after-task", {}, "again")], idle))).toEqual([]);
     // No implied baseline: a first delta cannot establish its own ordering preconditions.
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break")]))).toEqual(["stream.breakState.baseline"]);
@@ -257,13 +257,13 @@ describe("assertBreakFollowsItsRequests", () => {
   it("refuses a commit's states with no grant behind them", () => {
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-decision"), state("on-break")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("awaiting-approval"), state("on-break")], idle))).toEqual(["stream.breakState.commitBeforeGrant"]);
   });
 
   it("refuses a break that goes backwards", () => {
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("on-break"), state("granted", {}, "g2")], idle))).toEqual(["stream.breakState.backwards"]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("starting-after-task"), state("awaiting-decision")], idle))).toEqual(["stream.breakState.backwards"]);
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("awaiting-decision")], idle))).toEqual(["stream.breakState.backwards"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("starting-after-task"), state("awaiting-approval")], idle))).toEqual(["stream.breakState.backwards"]);
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("granted"), state("awaiting-approval")], idle))).toEqual(["stream.breakState.backwards"]);
   });
 });
 
@@ -283,7 +283,7 @@ describe("assertMediaFollowsTheTask", () => {
   it("rejects media events on non-voice tasks without changing their state", () => {
     for (const channel of ["chat", "email"] as const) {
       const work: Task = { ...voiceTask, channel, capabilities: {}, browsers: [], phase: "in-progress" };
-      const initial: Snapshot = { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [work], taskCount: 1 };
+      const initial: Snapshot = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [work], taskCount: 1 };
       expect(rulesOf(() => assertMediaFollowsTheTask([mediaReady(), mediaEnded, ended], initial))).toEqual([
         "stream.taskMedia.channel", "stream.taskMedia.channel",
       ]);
@@ -293,7 +293,7 @@ describe("assertMediaFollowsTheTask", () => {
   it("accepts a call offered, started, made ready, whose media ends, completing, then ending", () => {
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), mediaEnded, updated("completing", "e5"), ended]))).toEqual([]);
     // A snapshot may carry the task in with its media ready; connecting back puts media back and it ends again.
-    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), connectingBack("e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [{ ...call("in-progress"), media: "started" }], taskCount: 1 }))).toEqual([]);
+    expect(rulesOf(() => assertMediaFollowsTheTask([mediaEnded, updated("completing"), connectingBack("e5"), mediaReady("e5b"), { ...mediaEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...call("in-progress"), media: "started" }], taskCount: 1 }))).toEqual([]);
   });
 
   it("refuses a task that completes around its audio: completing while the media the stream holds is still started", () => {
@@ -364,7 +364,7 @@ describe("assertMediaFollowsTheTask", () => {
 
   it("holds a resync snapshot to what the stream knew: no phase backwards, and no audio forgotten on a task still at work", () => {
     const resync = (task: Record<string, unknown>, id = "s1") => ({ id, loginId: "session-1", occurredAt: at,
-      event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [task], taskCount: 1 } } }) as unknown as ProviderEventEnvelope<"voice">;
+      event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [task], taskCount: 1 } } }) as unknown as ProviderEventEnvelope<"voice">;
     // The audio was up; a snapshot carrying the task at work without it lost state. One carrying it started, or completing with it ended, did not.
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync(call("in-progress"))]))).toEqual(["stream.snapshot.media"]);
     expect(rulesOf(() => assertMediaFollowsTheTask([offered(), updated("in-progress"), mediaReady(), resync({ ...call("paused") })]))).toEqual(["stream.snapshot.media"]);
@@ -518,7 +518,7 @@ describe("TaskStream holds a record once read", () => {
   const update = (steps: unknown[] | undefined): ProviderEventEnvelope<"voice"> =>
     ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: withRecord(steps) } });
   const resync = (steps: unknown[] | undefined): ProviderEventEnvelope<"voice"> =>
-    ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [withRecord(steps)], taskCount: 1 } } });
+    ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [withRecord(steps)], taskCount: 1 } } });
 
   it("lets a record grow or stand, and refuses its loss on an update", () => {
     expect(rulesOf(seeded([answered]).apply(update([answered, held])))).toEqual([]);
@@ -567,7 +567,7 @@ describe("TaskStream holds terms once read", () => {
 
   it("holds a snapshot to the same rule: a resync may not say a task lost the terms it had", () => {
     const resync = (capabilitySource: Task["capabilitySource"]): ProviderEventEnvelope<"voice"> =>
-      ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { approval: "not-requested", canRequestBreak: true }, tasks: [{ ...voiceTask, capabilitySource }], taskCount: 1 } } });
+      ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...voiceTask, capabilitySource }], taskCount: 1 } } });
     expect(rulesOf(seeded("queue").apply(resync("undetermined")))).toEqual(["stream.snapshot.capabilitySource"]);
     expect(rulesOf(seeded("ungoverned").apply(resync("undetermined")))).toEqual(["stream.snapshot.capabilitySource"]);
     // The control: terms arriving on a snapshot, or restated by one, are what a snapshot is for.
@@ -668,10 +668,10 @@ describe("assertBreakAttemptProviders", () => {
 });
 
 describe("assertBreakBeginsAfterTask", () => {
-  const on = (approval: "not-requested" | "awaiting-decision" | "granted" | "starting-after-task" | "on-break", outstanding: number) => ({ approval, outstanding });
+  const on = (approval: "not-requested" | "awaiting-approval" | "granted" | "starting-after-task" | "on-break", outstanding: number) => ({ approval, outstanding });
 
   it("accepts a break asked for on a task that begins when the task ends, decided or granted at once", () => {
-    expect(() => assertBreakBeginsAfterTask([on("not-requested", 1), on("awaiting-decision", 1), on("granted", 1), on("starting-after-task", 1), on("on-break", 0)])).not.toThrow();
+    expect(() => assertBreakBeginsAfterTask([on("not-requested", 1), on("awaiting-approval", 1), on("granted", 1), on("starting-after-task", 1), on("on-break", 0)])).not.toThrow();
     expect(() => assertBreakBeginsAfterTask([on("granted", 2), on("starting-after-task", 2), on("starting-after-task", 1), on("on-break", 0)])).not.toThrow();
   });
 
@@ -692,8 +692,8 @@ describe("assertDeniedAndRetriedBreak", () => {
   it("accepts a refusal that returns to not-requested and a later grant", () => {
     // There is no `denied` approval: a refusal leaves nothing pending, because a request
     // nobody is coming to decide is worse than none.
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "awaiting-decision", "granted"])).not.toThrow();
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "awaiting-decision", "on-break"])).not.toThrow();
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "not-requested", "awaiting-approval", "granted"])).not.toThrow();
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "not-requested", "awaiting-approval", "on-break"])).not.toThrow();
   });
 
   it("accepts a provider that decides alone: granted at once, refused, granted again", () => {
@@ -714,15 +714,15 @@ describe("assertDeniedAndRetriedBreak", () => {
   });
 
   it("rejects a refusal that leaves the request pending", () => {
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "granted"])).toThrow(/leaving nothing pending/);
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "granted"])).toThrow(/leaving nothing pending/);
   });
 
   it("rejects a sequence that never grants after the refusal", () => {
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested"])).toThrow(/must grant a later request/);
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "not-requested"])).toThrow(/must grant a later request/);
   });
 
   it("rejects a sequence that ends back at not-requested", () => {
-    expect(() => assertDeniedAndRetriedBreak(["awaiting-decision", "not-requested", "granted", "not-requested"]))
+    expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "not-requested", "granted", "not-requested"]))
       .toThrow(/must end granted or in effect/);
   });
 });
@@ -855,7 +855,7 @@ const conformingManifest = {
 const conformingSnapshot = {
   transport: "active",
   loginId: "session-1",
-  break: { approval: "not-requested", canRequestBreak: true },
+  break: { status: "not-requested", canRequestBreak: true },
   tasks: [{
     id: "call-42",
     title: "Customer call",
@@ -893,7 +893,7 @@ const conformingSnapshot = {
 const minimalSnapshot = {
   transport: "active",
   loginId: "session-1",
-  break: { approval: "not-requested", canRequestBreak: true },
+  break: { status: "not-requested", canRequestBreak: true },
   tasks: [], taskCount: 0,
 } satisfies Snapshot<"voice">;
 
@@ -1111,7 +1111,7 @@ describe("exerciseAdapter", () => {
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.
     const reached = {
       ...conformingSnapshot,
-      break: { approval: "on-break", canRequestBreak: true, reasons: [{ id: "lunch", label: "Lunch" }], forced: { by: "M-1", endsAutomatically: false } },
+      break: { status: "on-break", canRequestBreak: true, reasons: [{ id: "lunch", label: "Lunch" }], forced: { by: "M-1" } },
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ id: "req-7", memberId: "A-2", taskId: "call-42", allocationId: "alloc-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { team: { leadAssistControl: true } }, snapshot: reached })))
@@ -2077,7 +2077,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   it("holds the break's moves to where it stood, from the connect snapshot on", async () => {
     // The conforming snapshot stands at not-requested: a grant may follow, a commit's state may not.
     const at = "2026-08-21T09:05:00Z";
-    const moved = (approval: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${approval}`, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { approval, canRequestBreak: true } } }) as ProviderEventEnvelope<"voice">;
+    const moved = (status: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${status}`, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { status, canRequestBreak: true } } }) as ProviderEventEnvelope<"voice">;
     const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
       let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
       return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { deliver?.(envelope); return { status: "applied" as const }; } } };
@@ -2173,7 +2173,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     const teamMembers = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: teamMembers, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
-    const forced = { ...minimalSnapshot, break: { approval: "on-break", canRequestBreak: true, forced: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
+    const forced = { ...minimalSnapshot, break: { status: "on-break", canRequestBreak: true, forced: { by: "M-1" } } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: forced, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     expect(await rules({ snapshot: minimalSnapshot, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
     // Present is not enough: the names the snapshot published are looked up, and the answer is held to the shape.

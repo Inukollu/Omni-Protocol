@@ -149,9 +149,9 @@ describe("Omni protocol", () => {
     const event: ProviderEvent = {
       type: "snapshot",
       reason: "reconnected",
-      snapshot: { transport: "active", loginId: "session-1", break: { approval: "starting-after-task", canRequestBreak: true }, tasks: [], taskCount: 0 },
+      snapshot: { transport: "active", loginId: "session-1", break: { status: "starting-after-task", canRequestBreak: true }, tasks: [], taskCount: 0 },
     };
-    expect(event.snapshot.break.approval).toBe("starting-after-task");
+    expect(event.snapshot.break.status).toBe("starting-after-task");
   });
 
   it("exercises the smallest conforming adapter", async () => {
@@ -181,7 +181,7 @@ describe("Omni protocol", () => {
       },
       async connect() {
         return {
-          snapshot: () => ({ transport: "active" as const, loginId: "session-1", break: { approval: "not-requested" as const, canRequestBreak: true }, tasks: [], taskCount: 0 }),
+          snapshot: () => ({ transport: "active" as const, loginId: "session-1", break: { status: "not-requested" as const, canRequestBreak: true }, tasks: [], taskCount: 0 }),
           subscribe: listener => {
             listener({ id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
             return () => undefined;

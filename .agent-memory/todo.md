@@ -1,3 +1,54 @@
+# Current PR120 revision: Awaiting approval
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-status-field; branch refactor/break-status-field.
+Implementation 2cb98e83dfcac4f1120dae754a9524d267193160.
+PR https://github.com/Inukollu/Omni-Protocol/pull/120.
+Pending break status awaiting-decision renamed to awaiting-approval, including team member state, ordering and conformance checks. Former value rejected without alias. Grant/denial/cancellation rules unchanged; hosts/providers update together. No version changes.
+All 443 tests, build/typecheck, compiled guide examples, package verification and diff check passed. Log /private/tmp/awaiting-approval-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. No merge/release performed.
+
+# Current PR120 revision: Optional reason text
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-status-field; branch refactor/break-status-field.
+Implementation 8f94558d87a7c08f9ce837e7a8b3ecc058f11f19.
+PR https://github.com/Inukollu/Omni-Protocol/pull/120.
+Clarified existing optional reason text for agent BreakRequest and lead force-break. Added no-text checks with/without published choices. reasonId remains separate and required when choices are published; supplied text must be nonempty. No runtime behavior or version changes in this revision.
+Build/typecheck, 37 focused break/guide/hygiene tests and package verification passed; prior manual-resume implementation passed all 440 tests. Log /private/tmp/optional-break-reason-check.log.
+Next: monitor CI/reviews, respond to failures; retain branch/worktree while open. No merge/release performed.
+
+# Current PR120 revision: Manual resumption and advisory duration
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-status-field; branch refactor/break-status-field.
+Implementation d35ad8425d9adc9f673af73f986408e49d088c1b.
+PR https://github.com/Inukollu/Omni-Protocol/pull/120.
+ForcedBreak now contains by and optional positive finite expectedDurationMs; force-break may carry the duration. Removed endsAutomatically/endsAt; old fields rejected. Duration is from actual on-break start, excludes task finishing, and never resumes work. Agents may explicitly end forced breaks. Lead end-forced-break only clears forced metadata, preserving committed status and activeReasonId; authenticated agent resumption is required for readiness. User resolved the lead question: lift restriction only. Provider must establish action causality; state-only helpers cannot. No version changes.
+Build/type checks, all 440 tests, guide examples, package verification and diff check passed. Log /private/tmp/manual-break-resume-final-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. No merge or release performed. Previous unpublished-draft note below is superseded by this tested publication.
+
+# Superseded draft: manual-resume decision now resolved and published
+
+Worktree /private/tmp/omni-break-status-field, branch refactor/break-status-field, PR https://github.com/Inukollu/Omni-Protocol/pull/120.
+Uncommitted changes remove ForcedBreak.endsAutomatically/endsAt, permit agent endBreak for forced breaks and add optional advisory expectedDurationMs to ForcedBreak and force-break command. Expected duration excludes starting-after-task wait and never restores readiness. Old timer fields rejected. 439 tests, build/type checks, guide examples and package checks passed; log /private/tmp/manual-break-resume-check.log.
+Pending user decision: remove lead end-forced-break entirely, or retain only as lifting restriction while agent remains on break until explicit resume. Existing lead-command semantics are not reconciled yet, so this draft must not be published as complete. Existing PR monitor remains for already-published work.
+
+# Current PR120 revision: BreakStatus type
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-status-field; branch refactor/break-status-field.
+Implementation 34a2c662283f53667c4870f0533bd0738ed0b92a.
+PR https://github.com/Inukollu/Omni-Protocol/pull/120.
+BreakApproval renamed to BreakStatus, matching BreakState.status. Former export has no alias. Values, reasons, activeReasonId and lifecycle rules unchanged. BreakOnTaskStep.approval field remains, now typed BreakStatus. Hosts/providers must update together; no version changes.
+Build/type checks, all 438 tests, guide examples, package verification and diff check passed. Log /private/tmp/break-status-type-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. Existing named monitor remains responsible. No merge or release performed.
+
+# Current delivery: BreakState status field
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-status-field; branch refactor/break-status-field.
+Implementation 02cacfd16d3432fce329dcb4240819e1a84d2649.
+PR https://github.com/Inukollu/Omni-Protocol/pull/120.
+BreakState.status replaces approval; old/mixed fields rejected. Diagnostic names/paths updated. BreakApproval union, reasons, activeReasonId, values and prerequisites unchanged; separate BreakOnTaskStep.approval helper retained. Hosts/providers must update together; no aliases or version changes.
+Build/test typecheck, all 438 tests, guide examples, package verification (10 files/3 entrypoints), diff check passed. Log /private/tmp/break-status-field-check.log.
+Next: monitor CI/reviews and respond to failures; retain worktree/branch while open. No merge/release/cleanup performed. PR119 independently verified merged.
+
 # Current PR119 revision: Break request retry delay
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
@@ -410,3 +461,8 @@ PID 66818; command python3 /private/tmp/omni-end-forced-break/.agent-memory/runt
 Monitor omni-protocol-pr119-set-break-policy: OPEN at 2026-09-11T09:40:42.810800+00:00. Await CI/review; monitor never merges.
 PID 61280; command python3 /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy-monitor.py; state /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.state.json; log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.log; PID file /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.pid; process log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-set-break-policy, branch refactor/set-break-policy, PR https://github.com/Inukollu/Omni-Protocol/pull/119.
 <!-- set-break-policy-monitor:end -->
+
+<!-- break-status-field-monitor:begin -->
+Monitor omni-protocol-pr120-break-status-field: OPEN at 2026-09-11T10:31:38.910377+00:00. Await CI/review; monitor never merges.
+PID 77759; command python3 /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field-monitor.py; state /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.state.json; log /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.log; PID file /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.pid; process log /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-status-field, branch refactor/break-status-field, PR https://github.com/Inukollu/Omni-Protocol/pull/120.
+<!-- break-status-field-monitor:end -->

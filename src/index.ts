@@ -1176,10 +1176,10 @@ export type DialResult =
 // Breaks.
 // ---------------------------------------------------------------------------
 
-export type BreakApproval =
+export type BreakStatus =
   | "not-requested"
   /** Somebody has to decide. The agent is waiting on a person. */
-  | "awaiting-decision"
+  | "awaiting-approval"
   /** Granted, and a promise to honour a later commit. */
   | "granted"
   /** Granted and begins when the current task ends. Nobody needs to act. */
@@ -1220,24 +1220,21 @@ export interface BreakReason {
 }
 
 export interface BreakRequest {
+  /** Optional explanatory text. Omit when no explanation is needed; separate from reasonId. */
   reason?: string;
   /** The chosen `BreakReason.id`, where the provider publishes codes. */
   reasonId?: string;
 }
 
-/**
- * A break forced on the agent rather than requested by them.
- *
- * `by` is required in both arms. Who put somebody off the floor survives whether or not the
- * break ends on a clock -- a forced break with no origin is a state the agent cannot reason
- * about, and one that ends on a condition is still somebody's decision.
- */
-export type ForcedBreak =
-  | { by: UserId; endsAutomatically: true; endsAt: IsoTimestamp }
-  | { by: UserId; endsAutomatically: false; endsAt?: never };
+/** A break forced on the agent; the agent must explicitly resume when ready. */
+export type ForcedBreak = {
+  by: UserId;
+  /** Optional expected time on break, in milliseconds from actual start. Advisory only. */
+  expectedDurationMs?: number;
+};
 
 export interface BreakState {
-  approval: BreakApproval;
+  status: BreakStatus;
   /** Whether the agent may ask at all. Distinct from the fate of a request already made. */
   canRequestBreak: boolean;
   /** Shown when `canRequestBreak` is false, such as "Busy hours". */
@@ -1285,7 +1282,7 @@ export interface TeamMember {
   /** Omitted rather than invented: Omni renders it as a duration. */
   since?: IsoTimestamp;
   /** A request in flight or a grant not yet in effect. `not-requested` is absence, and `on-break` is `availability: "on-break"`. */
-  break?: Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">;
+  break?: Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">;
 }
 
 /** A member asking this lead to join their call. */
@@ -1360,8 +1357,9 @@ export interface TeamListenCommandRequest {
 export type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
-  /** `reasonId` names a published `BreakReason.id`, required whenever the provider publishes reasons: the member's forced break carries it as `activeReasonId`. */
-  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string }
+  /** `reason` text is optional. `reasonId` selects a published `BreakReason.id`, required when reasons are published; the forced break carries it as `activeReasonId`. */
+  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationMs?: number }
+  /** Clears forced metadata only; preserves the committed break until the agent explicitly resumes. */
   | { type: "end-forced-break"; memberId: UserId };
 
 export type TeamCommandResult =
