@@ -305,21 +305,21 @@ export interface TeamCapabilities {
   leadAssistControl?: true;
   /**
    * This lead may listen to a member's call unasked, in these modes and no others. Coach and
-   * join-call begin from a monitor, so the list always includes `monitor`. Nothing of it reaches the
-   * member's task. Requires `executeTeamMonitor`.
+   * join-call begin with silent listening, so the list always includes `listen`. Nothing of it reaches the
+   * member's task. Requires `executeTeamListen`.
    */
-  monitorControl?: MonitorMode[];
+  listeningControl?: ListeningMode[];
   /** This lead sets the team's policy per capability -- on, off, or the agent's -- within what the queue allows. Requires `executeTeamPolicy`. */
   policyControl?: true;
 }
 
 /**
- * How a lead listening to a member's call is heard: `monitor` hears both sides in silence,
+ * How a lead listening to a member's call is heard: `listen` hears both sides in silence,
  * `coach` is heard by the agent alone, `join-call` by everyone on the call.
  */
-export type MonitorMode = "monitor" | "coach" | "join-call";
+export type ListeningMode = "listen" | "coach" | "join-call";
 
-export const MONITOR_MODES = ["monitor", "coach", "join-call"] as const satisfies readonly MonitorMode[];
+export const LISTENING_MODES = ["listen", "coach", "join-call"] as const satisfies readonly ListeningMode[];
 
 /**
  * What this login may do, beyond any one task. It travels with the identity because it is part
@@ -914,13 +914,13 @@ export interface TaskAssisting {
  * lead is heard, restated on every change of mode. Nothing of it reaches the member's task. There
  * is no take-over here; a lead who wants the call uses lead assist. It is the lead's only task:
  * a lead listens while holding no work of their own, idle or on a break of a kind in
- * `MONITORING_BREAK_KINDS`.
+ * `LISTENING_BREAK_KINDS`.
  */
-export interface TaskMonitoring {
+export interface TaskListening {
   memberId: UserId;
   taskId: TaskId;
   allocationId: AllocationId;
-  mode: MonitorMode;
+  mode: ListeningMode;
   since: IsoTimestamp;
 }
 
@@ -1003,7 +1003,7 @@ export type Task<C extends Channel = Channel> = {
    * snapshot says it too: an offer the host never received is not accepted on the person's behalf
    * for want of a word. Required while `pending` when Omni said it may auto-accept
    * (`autoAcceptTasks: true`) or the work is the agent's own -- a dial, a connect-back, a join, a
-   * monitor, which then say `automatic` under either provisioning -- forbidden on routed work when
+   * listen, which then say `automatic` under either provisioning -- forbidden on routed work when
    * Omni said not, and absent past `pending`.
    */
   acceptance?: AcceptanceMode;
@@ -1023,8 +1023,8 @@ export type Task<C extends Channel = Channel> = {
   // onCall is this interaction's current room, not the lifetime of the caller or whole bridge.
   // Its room, a lead on it or listening to it, and real-time media are voice affairs; forbidden elsewhere.
   & (C extends "voice"
-    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
-    : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never });
+    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; listening?: TaskListening; media?: TaskMediaState }
+    : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; listening?: never; media?: never });
 
 /**
  * What the provider wants of Omni's acceptance policy for one offer. On routed work, present only
@@ -1203,12 +1203,12 @@ export type BreakKind = (typeof BREAK_KINDS)[number];
 
 /**
  * The breaks during which a lead may listen to a member's call: work of another sort, not rest.
- * A monitoring task is the one task a break in effect may hold, and only on one of these.
+ * A listening task is the one task a break in effect may hold, and only on one of these.
  */
-export const MONITORING_BREAK_KINDS = ["coaching", "administrative", "training"] as const satisfies readonly BreakKind[];
+export const LISTENING_BREAK_KINDS = ["coaching", "administrative", "training"] as const satisfies readonly BreakKind[];
 
-export const breakKindAllowsMonitoring = (kind: BreakKind | undefined): boolean =>
-  kind !== undefined && (MONITORING_BREAK_KINDS as readonly BreakKind[]).includes(kind);
+export const breakKindAllowsListening = (kind: BreakKind | undefined): boolean =>
+  kind !== undefined && (LISTENING_BREAK_KINDS as readonly BreakKind[]).includes(kind);
 
 export interface BreakReason {
   id: string;
@@ -1343,18 +1343,18 @@ export interface TeamLeadAssistCommandRequest {
 }
 
 /**
- * A lead listening to a member's call. `monitor` starts one, silent, on a member from the team member list;
+ * A lead listening to a member's call. `listen` starts one, silent, on a member from the team member list;
  * `coach` and `join-call` change how the standing one is heard; `leave` ends it. One member at a
- * time, and only the modes the login's `monitorControl` lists.
+ * time, and only the modes the login's `listeningControl` lists.
  */
-export type TeamMonitorCommand =
-  | { type: "monitor"; memberId: UserId }
+export type TeamListenCommand =
+  | { type: "listen"; memberId: UserId }
   | { type: "coach" }
   | { type: "join-call" }
   | { type: "leave" };
 
-export interface TeamMonitorCommandRequest {
-  command: TeamMonitorCommand;
+export interface TeamListenCommandRequest {
+  command: TeamListenCommand;
 }
 
 export type TeamBreakCommand =
@@ -1637,8 +1637,8 @@ export interface Connection<C extends Channel = Channel> {
   executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
   /** Required when the login declares `capabilities.team.leadAssistControl`. */
   executeTeamLeadAssist?(request: TeamLeadAssistCommandRequest): Promise<TeamCommandResult>;
-  /** Required when the login declares `capabilities.team.monitorControl`. */
-  executeTeamMonitor?(request: TeamMonitorCommandRequest): Promise<TeamCommandResult>;
+  /** Required when the login declares `capabilities.team.listeningControl`. */
+  executeTeamListen?(request: TeamListenCommandRequest): Promise<TeamCommandResult>;
   /** Required when the login declares `capabilities.team.policyControl`. */
   executeTeamPolicy?(request: TeamPolicyCommandRequest): Promise<TeamCommandResult>;
   /** Required of a voice adapter whose manifest lists `softphone`: on one, the call's audio lands in Omni. */
@@ -1751,16 +1751,16 @@ export interface BrowserSessionKeyInput {
  */
 export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): boolean {
   const modes = (team: TeamCapabilities | undefined): string | undefined =>
-    team?.monitorControl === undefined ? undefined : [...team.monitorControl].sort().join(",");
+    team?.listeningControl === undefined ? undefined : [...team.listeningControl].sort().join(",");
   // Every field, so a capability added later cannot be missed here: `satisfies` pins the field
   // lists to the types, and a new key is a compile error until it is compared.
-  const teamKeys = { breakControl: true, leadAssistControl: true, monitorControl: true, policyControl: true } satisfies Record<keyof TeamCapabilities, true>;
+  const teamKeys = { breakControl: true, leadAssistControl: true, listeningControl: true, policyControl: true } satisfies Record<keyof TeamCapabilities, true>;
   void ({ breaks: true, preferences: true, team: true } satisfies Record<keyof UserCapabilities, true>);
   const preferences = (list: AgentPreference[] | undefined): string | undefined =>
     list === undefined ? undefined : list.map(p => [p.id, p.label, p.enabled, p.setBy, p.lockedBy ?? "", p.reason ?? ""].join("\u0000")).sort().join("\u0001");
   return a.breaks === b.breaks &&
     (a.team === undefined) === (b.team === undefined) &&
-    (Object.keys(teamKeys) as (keyof TeamCapabilities)[]).every(key => key === "monitorControl" || a.team?.[key] === b.team?.[key]) &&
+    (Object.keys(teamKeys) as (keyof TeamCapabilities)[]).every(key => key === "listeningControl" || a.team?.[key] === b.team?.[key]) &&
     modes(a.team) === modes(b.team) &&
     preferences(a.preferences) === preferences(b.preferences);
 }

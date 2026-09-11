@@ -8,8 +8,8 @@ import {
   CAPABILITY_SOURCES,
   HOST_MUTES,
   MUTED_BY,
-  MONITORING_BREAK_KINDS,
-  breakKindAllowsMonitoring,
+  LISTENING_BREAK_KINDS,
+  breakKindAllowsListening,
   INTERACTION_STEPS_THAT_DIAL,
   INTERACTION_STEPS_WITH_A_PERSON,
   IDLE_CAPABILITIES,
@@ -211,10 +211,10 @@ describe("sameCapabilities", () => {
     expect(sameCapabilities({ breaks: true }, {})).toBe(false);
     expect(sameCapabilities({ team: { breakControl: true } }, { team: {} })).toBe(false);
     expect(sameCapabilities({ team: { leadAssistControl: true } }, { team: { breakControl: true } })).toBe(false);
-    // The monitor modes are a set: order is not a difference, a missing mode is.
-    expect(sameCapabilities({ team: { monitorControl: ["monitor", "coach"] } }, { team: { monitorControl: ["coach", "monitor"] } })).toBe(true);
-    expect(sameCapabilities({ team: { monitorControl: ["monitor", "coach"] } }, { team: { monitorControl: ["monitor"] } })).toBe(false);
-    expect(sameCapabilities({ team: { monitorControl: ["monitor"] } }, { team: {} })).toBe(false);
+    // The listen modes are a set: order is not a difference, a missing mode is.
+    expect(sameCapabilities({ team: { listeningControl: ["listen", "coach"] } }, { team: { listeningControl: ["coach", "listen"] } })).toBe(true);
+    expect(sameCapabilities({ team: { listeningControl: ["listen", "coach"] } }, { team: { listeningControl: ["listen"] } })).toBe(false);
+    expect(sameCapabilities({ team: { listeningControl: ["listen"] } }, { team: {} })).toBe(false);
     // Every field: a lead's policy control, and the preferences the login declares, by id, label, enabled and who set or locked them.
     expect(sameCapabilities({ team: { policyControl: true } }, { team: {} })).toBe(false);
     expect(sameCapabilities({ team: { policyControl: true } }, { team: { policyControl: true } })).toBe(true);
@@ -282,12 +282,12 @@ describe("interactionStepExpectsAPerson", () => {
   });
 });
 
-describe("monitoring during a break", () => {
+describe("listening during a break", () => {
   it("allows the working kinds of break and no other", () => {
-    expect(MONITORING_BREAK_KINDS).toEqual(["coaching", "administrative", "training"]);
-    for (const kind of MONITORING_BREAK_KINDS) expect(breakKindAllowsMonitoring(kind)).toBe(true);
-    for (const kind of ["short-break", "meal", "rest", "meeting", "technical", "personal", "other"] as const) expect(breakKindAllowsMonitoring(kind)).toBe(false);
-    expect(breakKindAllowsMonitoring(undefined)).toBe(false);
+    expect(LISTENING_BREAK_KINDS).toEqual(["coaching", "administrative", "training"]);
+    for (const kind of LISTENING_BREAK_KINDS) expect(breakKindAllowsListening(kind)).toBe(true);
+    for (const kind of ["short-break", "meal", "rest", "meeting", "technical", "personal", "other"] as const) expect(breakKindAllowsListening(kind)).toBe(false);
+    expect(breakKindAllowsListening(undefined)).toBe(false);
   });
 });
 

@@ -71,7 +71,7 @@ const STATE_SUBJECTS = [
   "task.onCall",
   "task.leadAssist",
   "task.assisting",
-  "task.monitoring",
+  "task.listening",
   "task.media",
   "task.acceptance",
   "task.outcomes",
@@ -113,7 +113,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (some(value.onCall)) seen.add("task.onCall");
   if (value.leadAssist !== undefined) seen.add("task.leadAssist");
   if (value.assisting !== undefined) seen.add("task.assisting");
-  if (value.monitoring !== undefined) seen.add("task.monitoring");
+  if (value.listening !== undefined) seen.add("task.listening");
   if (value.media !== undefined) seen.add("task.media");
   if (value.acceptance !== undefined) seen.add("task.acceptance");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
@@ -321,7 +321,7 @@ export async function exerciseAdapter<C extends Channel>(
       }
       if (capabilities.team?.breakControl === true) requireMethod(on, "executeTeamBreak", "the login declares capabilities.team.breakControl");
       if (capabilities.team?.leadAssistControl === true) requireMethod(on, "executeTeamLeadAssist", "the login declares capabilities.team.leadAssistControl");
-      if (capabilities.team?.monitorControl !== undefined) requireMethod(on, "executeTeamMonitor", "the login declares capabilities.team.monitorControl");
+      if (capabilities.team?.listeningControl !== undefined) requireMethod(on, "executeTeamListen", "the login declares capabilities.team.listeningControl");
       if (capabilities.team?.policyControl === true) requireMethod(on, "executeTeamPolicy", "the login declares capabilities.team.policyControl");
       if (some(capabilities.preferences)) requireMethod(on, "setPreference", "the login declares capabilities.preferences");
     };
@@ -690,7 +690,7 @@ function userIdsIn(snapshot: Snapshot | undefined): string[] {
     if (Array.isArray(t.onCall)) for (const entry of t.onCall) if (isRecord(entry)) add(entry.userId);
     if (isRecord(t.leadAssist)) add(t.leadAssist.leadId);
     if (isRecord(t.assisting)) add(t.assisting.memberId);
-    if (isRecord(t.monitoring)) { add(t.monitoring.memberId); add(t.monitoring.agentId); }
+    if (isRecord(t.listening)) { add(t.listening.memberId); add(t.listening.agentId); }
   }
   return [...ids];
 }
@@ -703,7 +703,7 @@ const taskNamesUsers = (task: unknown): boolean =>
     (isRecord(task.interactionHistory) && Array.isArray(task.interactionHistory.steps) && task.interactionHistory.steps.some(step => isRecord(step) && step.by !== undefined)) ||
     (isRecord(task.leadAssist) && task.leadAssist.leadId !== undefined) ||
     isRecord(task.assisting) ||
-    isRecord(task.monitoring));
+    isRecord(task.listening));
 
 
 /** Whether an event publishes a `UserId`, on a team member list, a task, or the snapshot a reconnect carries. */
@@ -850,7 +850,7 @@ export function assertCapabilityWithdrawal(
     (before.team !== undefined && after.team === undefined) ||
     (before.team?.breakControl === true && after.team?.breakControl !== true) ||
     (before.team?.leadAssistControl === true && after.team?.leadAssistControl !== true) ||
-    (before.team?.monitorControl !== undefined && after.team?.monitorControl === undefined) ||
+    (before.team?.listeningControl !== undefined && after.team?.listeningControl === undefined) ||
     (before.team?.policyControl === true && after.team?.policyControl !== true) ||
     (before.preferences ?? []).some(was => !(after.preferences ?? []).some(now => now.id === was.id));
   if (!withdrawn) {

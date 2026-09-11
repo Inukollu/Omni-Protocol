@@ -160,8 +160,8 @@ describe("break prerequisites", () => {
     expect(validateBreakStatus(state("in-effect"), undefined)).not.toEqual([]);
     expect(validateBreakStatus(state("starting-after-task"), [{ id: "task" }])).toEqual([]);
     const listening = { ...state("in-effect"), activeReasonId: "training", reasons: [{ id: "training", label: "Training", kind: "training" }] };
-    expect(validateBreakStatus(listening, [{ monitoring: {} }])).toEqual([]);
-    expect(validateBreakStatus(state("in-effect"), [{ monitoring: {} }])).not.toEqual([]);
+    expect(validateBreakStatus(listening, [{ listening: {} }])).toEqual([]);
+    expect(validateBreakStatus(state("in-effect"), [{ listening: {} }])).not.toEqual([]);
   });
 });
 
