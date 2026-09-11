@@ -1,3 +1,12 @@
+# Current PR119 revision: Approval-required break policy
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation d1a7adaa6c9eaa6f0184cb38f010aec08763da38.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+set-break-policy now accepts approval-required (formerly ask), auto-approve or suspended. Old ask value rejected without alias; behavior and permissions unchanged. Hosts/providers update together. No version changes.
+Build/type checks, all 433 tests, guide examples, package verification and diff check passed. Log /private/tmp/approval-required-check.log.
+Next: monitor CI/reviews and respond to failures; keep worktree/branch while open. Existing named monitor remains responsible; no merge or release performed.
+
 # Current delivery: Set break policy command
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
@@ -344,6 +353,6 @@ PID 66818; command python3 /private/tmp/omni-end-forced-break/.agent-memory/runt
 <!-- end-forced-break-monitor:end -->
 
 <!-- set-break-policy-monitor:begin -->
-Monitor omni-protocol-pr119-set-break-policy: OPEN at 2026-09-11T09:09:17.817200+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr119-set-break-policy: OPEN at 2026-09-11T09:13:20.883670+00:00. Await CI/review; monitor never merges.
 PID 61280; command python3 /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy-monitor.py; state /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.state.json; log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.log; PID file /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.pid; process log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-set-break-policy, branch refactor/set-break-policy, PR https://github.com/Inukollu/Omni-Protocol/pull/119.
 <!-- set-break-policy-monitor:end -->
