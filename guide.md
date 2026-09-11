@@ -958,7 +958,7 @@ type BreakState = {
   canRequestBreak: boolean;
   requestUnavailableReason?: string;
   decisionReason?: string;
-  retryAfterMs?: number;
+  retryRequestAfterMs?: number;
   reasons?: BreakReason[];
   activeReasonId?: string;
   forced?: ForcedBreak;
@@ -3611,7 +3611,7 @@ nothing while none are being accepted — so they are not published separately.
 | `canRequestBreak` | Whether the agent may ask at all. Distinct from `approval`. |
 | `requestUnavailableReason` | Display-ready reason shown when `canRequestBreak` is false — a standing gate that applies to everyone. |
 | `decisionReason` | The words whoever decided attached, from `decide.reason`. About one request and one decision, not a standing gate. |
-| `retryAfterMs` | How long until the agent may retry, when the provider can say. |
+| `retryRequestAfterMs` | Milliseconds until the agent may retry a break request, when the provider can say. |
 | `reasons` | Not-ready codes this provider offers. Omitted when it defines none; an empty list is refused, being a second spelling of the same fact. |
 | `activeReasonId` | The `BreakReason.id` the current break is on. Omitted when there is no break. Required on a break `on-break` or `starting-after-task` where the provider publishes `reasons`, a forced break included (`break.activeReasonId.required`): a break with a kind the provider cannot name is a break whose rules nobody can apply. |
 | `forced` | Set when the break was forced on the agent rather than requested. |
@@ -3641,6 +3641,11 @@ refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest 
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
 ### Forced breaks
+
+Migration: the break-state field formerly named retryAfterMs is now `BreakState.retryRequestAfterMs`,
+with diagnostic `break.retryRequestAfterMs`. It remains an optional non-negative finite number
+of milliseconds; the former break field is rejected even alongside the new field.
+The separate authentication and general failure retryAfterMs fields are unchanged.
 
 Migration: the former in-effect break approval value is now `on-break`. It means the
 agent is on the break, not merely granted permission. The old value is rejected without an

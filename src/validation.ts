@@ -1642,9 +1642,11 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     into.require(value.canRequestBreak !== true, "break.requestUnavailableReason.canRequestBreak", `${path}.requestUnavailableReason`,
       "requestUnavailableReason is shown when canRequestBreak is false; omit it while the agent may ask");
   }
-  if (value.retryAfterMs !== undefined) {
-    into.require(typeof value.retryAfterMs === "number" && Number.isFinite(value.retryAfterMs) && value.retryAfterMs >= 0,
-      "break.retryAfterMs", `${path}.retryAfterMs`, "retryAfterMs must be a non-negative number when present");
+  into.require(!Object.hasOwn(value, "retryAfterMs"), "break.retryRequestAfterMs.renamed", `${path}.retryAfterMs`,
+    "retryAfterMs was renamed to retryRequestAfterMs on BreakState");
+  if (value.retryRequestAfterMs !== undefined) {
+    into.require(typeof value.retryRequestAfterMs === "number" && Number.isFinite(value.retryRequestAfterMs) && value.retryRequestAfterMs >= 0,
+      "break.retryRequestAfterMs", `${path}.retryRequestAfterMs`, "retryRequestAfterMs must be a non-negative number when present");
   }
   if (value.activeReasonId !== undefined) {
     into.filled(value.activeReasonId, "break.activeReasonId", `${path}.activeReasonId`,

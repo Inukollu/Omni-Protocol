@@ -7,6 +7,18 @@ const state = (approval: BreakApproval): BreakState => ({ approval, canRequestBr
 const event = (approval: BreakApproval) => ({ event: { type: "break-state", break: state(approval) } });
 
 describe("runtime break ordering", () => {
+  it("validates break retry delays and rejects the old or mixed field", () => {
+    for (const retryRequestAfterMs of [0, 500, 0.5]) {
+      expect(validateBreakStatus({ ...state("not-requested"), retryRequestAfterMs }, [])).toEqual([]);
+    }
+    for (const retryRequestAfterMs of [-1, Infinity, NaN, "500", null]) {
+      expect(validateBreakStatus({ ...state("not-requested"), retryRequestAfterMs }, []).map(v => v.rule)).toContain("break.retryRequestAfterMs");
+    }
+    for (const fields of [{ retryAfterMs: 500 }, { retryAfterMs: 500, retryRequestAfterMs: 500 }]) {
+      expect(validateBreakStatus({ ...state("not-requested"), ...fields }, []).map(v => v.rule)).toContain("break.retryRequestAfterMs.renamed");
+    }
+  });
+
   it("rejects the retired active break state", () => {
     const retired = { ...state("on-break"), approval: "in-effect" };
     expect(validateBreakStatus(retired, []).map(v => v.rule)).toContain("break.approval");
