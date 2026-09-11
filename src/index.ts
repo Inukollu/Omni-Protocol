@@ -52,7 +52,7 @@ export type TaskId = string;
 /**
  * One life of a task on the wire. A platform retires a task id minutes after closing it and a
  * requeue takes seconds, so the same `TaskId` comes back for another customer while a late dial
- * outcome or a late handling report for the first is still in flight. The allocation id is minted
+ * outcome or a late interaction report for the first is still in flight. The allocation id is minted
  * once per offer and never reused for the life of the login, and every event, command and report
  * that names a task names its allocation too, so nothing lands on the next life of the id.
  */
@@ -231,13 +231,13 @@ export interface Manifest<C extends Channel = Channel> {
    */
   runningStepReports?: true;
   /**
-   * How long after an applied disposal -- `complete`, or a lead's `take-over` -- the provider's
+   * How long after an applied completion -- `complete`, or a lead's `take-over` -- the provider's
    * `task-ended` is owed, in milliseconds. A warm transfer's `complete` is not one: the agent's
    * wrap runs after it as after any call. `applied` says the provider
-   * has disposed of the task; the ending follows within this, or the host resyncs and shows the
+   * has completed the task; the ending follows within this, or the host resyncs and shows the
    * task as unsettled. Stated per provider, since platforms settle at different speeds.
    */
-  disposalSettleMs: number;
+  completionSettleMs: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ export interface SecretStore {
 
 /**
  * A small store for one login's operational state -- what an adapter holds about open work that
- * its platform cannot hold for it, such as the handling legs a host reported. Kept by the host for
+ * its platform cannot hold for it, such as the interaction legs a host reported. Kept by the host for
  * the life of the login, across a reload of the host, and cleared at sign-out. Never for anything
  * sensitive: that is `SecretStore`, whose contract is that a host may clear it aggressively.
  */
@@ -401,7 +401,7 @@ export interface AuthenticationSession {
 /**
  * Who silenced a device that is present and permitted: the host, by its own Mute, or the station --
  * a slider on the headset, the operating system -- which the host observes and, on a browser,
- * cannot touch. The same word on a `muted` handling leg says whose the silence was.
+ * cannot touch. The same word on a `muted` interaction leg says whose the silence was.
  */
 export type MutedBy = "host" | "station";
 export const MUTED_BY = ["host", "station"] as const satisfies readonly MutedBy[];
@@ -679,7 +679,7 @@ export type TaskCapabilities<C extends Channel = Channel> =
     ? SharedTaskCapabilities & {
         decline?: Lockable<true>;
         hold?: Lockable<true>;
-        /** The provider ends the caller connection and agent-added channels owned by this handling, including inherited channels after transfer/takeover. Handling disposal remains separate. */
+        /** The provider ends the caller connection and agent-added channels owned by this interaction, including inherited channels after transfer/takeover. Interaction completion remains separate. */
         endCall?: Lockable<true>;
         /** Connect back to the party while `completing`, whoever placed the call; the task returns to `in-progress`. */
         connectBack?: Lockable<true>;
@@ -795,7 +795,7 @@ export type TaskAttribute = TaskAttributeBase & (
   | { type: "timestamp"; at: IsoTimestamp }
 );
 
-export type HandlingStep =
+export type InteractionStep =
   | "queued"
   | "offered"
   | "answered"
@@ -812,10 +812,10 @@ export type HandlingStep =
  * absent when it does not; a plausible nought is the fallback the no-fallbacks rule forbids. The
  * record rides on the task and is replaced with it, so a late entry corrects the sums.
  */
-export interface TaskHandlingHistory {
-  steps: TaskHandlingStep[];
-  /** Seconds others spent handling it before this agent. */
-  handleSeconds?: DurationSeconds;
+export interface TaskInteractionHistory {
+  steps: TaskInteractionStep[];
+  /** Seconds others spent working on it before this agent. */
+  interactionSeconds?: DurationSeconds;
   /** Seconds the caller spent on hold at others' hands. */
   holdSeconds?: DurationSeconds;
   /** Seconds waiting before anyone answered. */
@@ -824,8 +824,8 @@ export interface TaskHandlingHistory {
   transfers?: number;
 }
 
-export interface TaskHandlingStep {
-  step: HandlingStep;
+export interface TaskInteractionStep {
+  step: InteractionStep;
   at: IsoTimestamp;
   /**
    * On a step that dialled -- `transferred`, `conferenced`, `unanswered` -- the host's identity for
@@ -849,7 +849,7 @@ export interface TaskHandlingStep {
 }
 
 /**
- * How the task ends, and how long after handling the provider allows for it.
+ * How the task ends, and how long after interaction the provider allows for it.
  *
  * The allowance is coupled to the mode. Under `provider-automatic` the provider acts on it, so it
  * is required. Under `agent-command` the provider will not complete the task itself, so it may
@@ -1018,9 +1018,9 @@ export type Task<C extends Channel = Channel> = {
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
   attributes?: TaskAttribute[];
-  handlingHistory?: TaskHandlingHistory;
+  interactionHistory?: TaskInteractionHistory;
 } & TaskCompletion
-  // onCall is this handling's current room, not the lifetime of the caller or whole bridge.
+  // onCall is this interaction's current room, not the lifetime of the caller or whole bridge.
   // Its room, a lead on it or listening to it, and real-time media are voice affairs; forbidden elsewhere.
   & (C extends "voice"
     ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
@@ -1077,7 +1077,7 @@ export type VoiceTaskCommand =
   | { type: "call"; dialId: DialId }
   | { type: "hold" }
   | { type: "resume" }
-  /** End the caller connection and all agent-added channels owned or inherited by this handling. Wrap/disposal remain separate. Gated by `endCall`. */
+  /** End the caller connection and all agent-added channels owned or inherited by this interaction. Wrap/completion remain separate. Gated by `endCall`. */
   | { type: "end-call" }
   /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
   | { type: "connect-back"; dialId: DialId }
@@ -1378,7 +1378,7 @@ export interface TeamBreakCommandRequest {
 
 /**
  * The task's real-time audio as the provider holds it: `started` while audio should be attached,
- * `ended` once primary handling's audio ended, and the field omitted while none should be. The
+ * `ended` once primary interaction's audio ended, and the field omitted while none should be. The
  * provider's word -- a desk attaches and renders audio from it, never from its own senses.
  */
 export type TaskMediaState = "started" | "ended";
@@ -1445,23 +1445,23 @@ export type SetPreferenceRequest =
   | { id: PreferenceId; inherit: true };
 
 /**
- * The host's report of a handling leg it performed itself -- a mute, which is the host's and
+ * The host's report of an interaction leg it performed itself -- a mute, which is the host's and
  * never the provider's -- so the provider's record has an account of it. Keyed by `step` and `at`: the
  * same entry is reported when it begins, as often as the host cares to while it runs, and once
  * more with `ended`, when `seconds` is the final duration. The host is the authority for the
  * legs it performs, so `seconds` may say how long so far at any time; the end is stated, never
  * inferred from a number's presence. What the adapter forwards upstream, and how often, is its own.
  */
-export type HandlingReport = { taskId: TaskId; allocationId: AllocationId; at: IsoTimestamp } & (
+export type InteractionReport = { taskId: TaskId; allocationId: AllocationId; at: IsoTimestamp } & (
   /** A muted leg says whose the silence was: the host's own Mute, or the station's slider or system. */
   | { step: "muted"; mutedBy: MutedBy }
-  | { step: Exclude<HandlingStep, "muted">; mutedBy?: never }
+  | { step: Exclude<InteractionStep, "muted">; mutedBy?: never }
 ) & (
   | { ended: true; seconds: DurationSeconds }
   | { ended?: never; seconds?: DurationSeconds }
 );
 
-export type HandlingReportResult =
+export type InteractionReportResult =
   | { status: "recorded"; at: IsoTimestamp }
   | { status: "failed"; failure: ProtocolFailure };
 
@@ -1645,8 +1645,8 @@ export interface Connection<C extends Channel = Channel> {
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
   /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
-  /** Records a handling leg the host performed. Required of a softphone login's connection: the host mutes its microphone on any call, and the record is the provider's. */
-  recordStep?(report: HandlingReport): Promise<HandlingReportResult>;
+  /** Records an interaction leg the host performed. Required of a softphone login's connection: the host mutes its microphone on any call, and the record is the provider's. */
+  recordStep?(report: InteractionReport): Promise<InteractionReportResult>;
 }
 
 export interface Adapter<C extends Channel = Channel> {
@@ -1712,24 +1712,24 @@ export const taskKey = (providerId: string, taskId: TaskId): string =>
 export const userKey = (providerId: string, userId: UserId): string =>
   `${encodeURIComponent(providerId)}:${encodeURIComponent(userId)}`;
 
-/** Every handling step somebody takes part in. `queued` is the one nobody does. */
-export const HANDLING_STEPS_WITH_A_PERSON = [
+/** Every interaction step somebody takes part in. `queued` is the one nobody does. */
+export const INTERACTION_STEPS_WITH_A_PERSON = [
   "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered",
-] as const satisfies readonly HandlingStep[];
+] as const satisfies readonly InteractionStep[];
 
 /** The steps a dial writes, and so the only ones that carry a `dialId` and a `destinationId`. */
-export const HANDLING_STEPS_THAT_DIAL = ["transferred", "conferenced", "unanswered"] as const satisfies readonly HandlingStep[];
+export const INTERACTION_STEPS_THAT_DIAL = ["transferred", "conferenced", "unanswered"] as const satisfies readonly InteractionStep[];
 
-export const handlingStepDials = (step: HandlingStep): boolean =>
-  (HANDLING_STEPS_THAT_DIAL as readonly HandlingStep[]).includes(step);
+export const interactionStepDials = (step: InteractionStep): boolean =>
+  (INTERACTION_STEPS_THAT_DIAL as readonly InteractionStep[]).includes(step);
 
-// Pinned both ways: a step added to `HandlingStep` has to be placed here, and a step listed here
+// Pinned both ways: a step added to `InteractionStep` has to be placed here, and a step listed here
 // has to exist there. `satisfies` on the list covers the second; this statement covers the first.
-true satisfies [Exclude<HandlingStep, "queued">] extends [(typeof HANDLING_STEPS_WITH_A_PERSON)[number]] ? true : false;
+true satisfies [Exclude<InteractionStep, "queued">] extends [(typeof INTERACTION_STEPS_WITH_A_PERSON)[number]] ? true : false;
 
 /** Whether an absent `by` means "could not attribute" rather than "nobody was involved". */
-export function handlingStepExpectsAPerson(step: HandlingStep): boolean {
-  return (HANDLING_STEPS_WITH_A_PERSON as readonly HandlingStep[]).includes(step);
+export function interactionStepExpectsAPerson(step: InteractionStep): boolean {
+  return (INTERACTION_STEPS_WITH_A_PERSON as readonly InteractionStep[]).includes(step);
 }
 
 export interface BrowserSessionKeyInput {

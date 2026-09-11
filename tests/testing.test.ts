@@ -74,7 +74,7 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
 describe("assertCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
-    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], disposalSettleMs: 150,
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], completionSettleMs: 150,
   } satisfies Manifest<"voice">;
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, team: { breakControl: true } } } satisfies AuthenticationState;
@@ -139,7 +139,7 @@ describe("assertCapabilityWithdrawal", () => {
 describe("assertTaskCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
-    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], disposalSettleMs: 150,
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], completionSettleMs: 150,
   } satisfies Manifest<"voice">;
   const withHold = { ...voiceTask, capabilities: { hold: true, endCall: true } } satisfies Task<"voice">;
   const withoutHold = { ...voiceTask, capabilities: { endCall: true } } satisfies Task<"voice">;
@@ -513,7 +513,7 @@ describe("TaskStream holds a record once read", () => {
   const held = { step: "held" as const, at: "2026-08-21T09:02:10Z", seconds: 35, by: "a-17" };
   const muted = { step: "muted" as const, at: "2026-08-21T09:04:00Z", seconds: 4, by: "a-17", mutedBy: "host" as const };
   const withRecord = (steps: unknown[] | undefined): Task<"voice"> =>
-    ({ ...voiceTask, handlingHistory: steps === undefined ? undefined : { steps } }) as unknown as Task<"voice">;
+    ({ ...voiceTask, interactionHistory: steps === undefined ? undefined : { steps } }) as unknown as Task<"voice">;
   const seeded = (steps: unknown[] | undefined) => { const s = new TaskStream(); s.seed({ tasks: [withRecord(steps)] }); return s; };
   const update = (steps: unknown[] | undefined): ProviderEventEnvelope<"voice"> =>
     ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: withRecord(steps) } });
@@ -527,21 +527,21 @@ describe("TaskStream holds a record once read", () => {
     // A record that arrives where there was none is a record arriving.
     expect(rulesOf(seeded(undefined).apply(update([answered])))).toEqual([]);
     // Lost: an entry the host read is gone, or the whole record is.
-    expect(rulesOf(seeded([answered, held]).apply(update([answered])))).toEqual(["stream.taskUpdated.handlingHistory"]);
-    expect(rulesOf(seeded([answered, held]).apply(update(undefined)))).toEqual(["stream.taskUpdated.handlingHistory"]);
+    expect(rulesOf(seeded([answered, held]).apply(update([answered])))).toEqual(["stream.taskUpdated.interactionHistory"]);
+    expect(rulesOf(seeded([answered, held]).apply(update(undefined)))).toEqual(["stream.taskUpdated.interactionHistory"]);
     // An entry is known by its step and instant: the same hold restated with its final seconds is the same entry.
     expect(rulesOf(seeded([answered, { ...held, seconds: undefined }]).apply(update([answered, held])))).toEqual([]);
   });
 
   it("holds a resync snapshot to the same rule", () => {
-    expect(rulesOf(seeded([answered, held]).apply(resync([answered])))).toEqual(["stream.snapshot.handlingHistory"]);
-    expect(rulesOf(seeded([answered, held]).apply(resync(undefined)))).toEqual(["stream.snapshot.handlingHistory"]);
+    expect(rulesOf(seeded([answered, held]).apply(resync([answered])))).toEqual(["stream.snapshot.interactionHistory"]);
+    expect(rulesOf(seeded([answered, held]).apply(resync(undefined)))).toEqual(["stream.snapshot.interactionHistory"]);
     // The control: a snapshot restating the record, or adding to it, is what a snapshot is for.
     expect(rulesOf(seeded([answered, held]).apply(resync([answered, held])))).toEqual([]);
     expect(rulesOf(seeded([answered]).apply(resync([answered, held, muted])))).toEqual([]);
     // And a snapshot replaces what is known: after it, the shorter record is the one held.
     const stream = seeded([answered]); stream.apply(resync([answered, held]));
-    expect(rulesOf(stream.apply(update([answered])))).toEqual(["stream.taskUpdated.handlingHistory"]);
+    expect(rulesOf(stream.apply(update([answered])))).toEqual(["stream.taskUpdated.interactionHistory"]);
   });
 });
 
@@ -605,7 +605,7 @@ describe("TaskStream places a dial outcome", () => {
 
   it("knows a dial from the record or from who is on the call, which is how a dial made before a transfer is placed", () => {
     const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-3c9", stage: "joined", since: at }],
-      handlingHistory: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", destinationId: "tier3" }] } };
+      interactionHistory: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", destinationId: "tier3" }] } };
     const s = new TaskStream();
     s.seed({ tasks: [inherited] });
     expect(rulesOf(s.apply(outcome("dial-3c9")))).toEqual([]);
@@ -839,7 +839,7 @@ const conformingManifest = {
   channel: "voice",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
   authenticationMethods: ["browser-sso"],
-  disposalSettleMs: 150,
+  completionSettleMs: 150,
   idleCapabilities: {
     dial: { destinations: "any-number" },
     contacts: true,
@@ -879,7 +879,7 @@ const conformingSnapshot = {
       { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedSession: true, isolationScheme: "ProviderName.TaskTypeName.TabName" },
       { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedSession: false },
     ],
-    handlingHistory: { steps: [
+    interactionHistory: { steps: [
         { step: "queued", at: "2026-08-21T08:59:19Z", seconds: 41 },
         { step: "answered", at: "2026-08-21T09:00:00Z", by: "A-1" },
     ] },
@@ -1073,7 +1073,7 @@ describe("exerciseAdapter", () => {
   it("catches a preview task that leaves preview still carrying its deadline, through the full run", async () => {
     // The natural provider implementation spreads the old task into the new one, and its own
     // state looks right; only the host's boundary sees the deadline a task past preview cannot have.
-    const previewed = { ...conformingSnapshot.tasks[0]!, id: "call-77", capabilities: {}, browsers: [], phase: "preview" as const, media: undefined, handlingHistory: undefined,
+    const previewed = { ...conformingSnapshot.tasks[0]!, id: "call-77", capabilities: {}, browsers: [], phase: "preview" as const, media: undefined, interactionHistory: undefined,
       previewEndsAt: "2026-08-21T09:02:00Z", atDeadline: "calls" as const };
     const withPreview = { ...conformingSnapshot, tasks: [previewed], taskCount: 1 } satisfies Snapshot<"voice">;
     const update = (task: Task<"voice">): ProviderEventEnvelope<"voice"> =>
@@ -1104,7 +1104,7 @@ describe("exerciseAdapter", () => {
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
-      "tasks", "task.browsers", "task.attributes", "task.handlingHistory", "task.onCall", "task.leadAssist", "task.assisting", "task.monitoring",
+      "tasks", "task.browsers", "task.attributes", "task.interactionHistory", "task.onCall", "task.leadAssist", "task.assisting", "task.monitoring",
       "task.media", "task.acceptance", "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
       "contacts", "scheduledActivities", "team.policies",
     ]);
@@ -1306,7 +1306,7 @@ describe("exerciseAdapter drives one call", () => {
     const id = () => `drv-${drvSeq += 1}`;
     const base: Record<string, unknown> = {
       ...conformingSnapshot.tasks[0]!, id: "call-77", allocationId: myAllocation, capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), dispositions: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
-      browsers: [], handlingHistory: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
+      browsers: [], interactionHistory: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
     };
     let phase = "pending";
     let offeredOnce = false;
@@ -1347,13 +1347,13 @@ describe("exerciseAdapter drives one call", () => {
       // A reloaded instance that forgot the audio was up, or that reads the task as not yet begun, serves a snapshot that lost state.
       const media = script.reloadAs === "without-media" ? {} : { media: "started" };
       const phase = script.reloadAs === "gone-backwards" ? "confirmed" : "in-progress";
-      return { ...conformingSnapshot, tasks: [t({ phase, ...media, onCall: room, handlingHistory: { steps }, allocationId: myAllocation })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
+      return { ...conformingSnapshot, tasks: [t({ phase, ...media, onCall: room, interactionHistory: { steps }, allocationId: myAllocation })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
     };
     // A provider that restates its record does so on every publication once work has begun, never only at the end.
     const t = (over: Record<string, unknown>) => {
       if (typeof over.phase === "string") phase = over.phase;
       const begun = over.phase !== "pending" && over.phase !== "confirmed";
-      return { ...base, ...(begun && script.restateHistory !== undefined ? { handlingHistory: history() } : {}), ...over } as unknown as Task<"voice">;
+      return { ...base, ...(begun && script.restateHistory !== undefined ? { interactionHistory: history() } : {}), ...over } as unknown as Task<"voice">;
     };
     const emit = (event: ProviderEventEnvelope<"voice">["event"]) => listener?.({ id: id(), loginId: "session-1", occurredAt: at, event });
     const room = [{ role: "party" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
@@ -1541,7 +1541,7 @@ describe("exerciseAdapter drives one call", () => {
     // One that leaves the leg as it found it publishes a completing task with a mute still running; one that will not take the
     // late report refuses a report the contract says changes nothing.
     const open = (await drive(driveable({ restateHistory: "with-mute", leavesHostLegOpen: true }))).violations.map(v => v.rule);
-    expect(open).toEqual(["task.handlingHistory.muted.open", "command.task"]);
+    expect(open).toEqual(["task.interactionHistory.muted.open", "command.task"]);
     const refused = (await drive(driveable({ refusesLateClose: true }))).violations.map(v => v.rule);
     expect(refused).toEqual(["drive.recordStep.failed"]);
   });
@@ -1602,7 +1602,7 @@ describe("exerciseAdapter drives one call", () => {
     };
     expect(await misbehaving("another-provider")).toEqual(["drive.reload.manifest"]);
     // A record that shrank across the reload is named by the stream, as on any resync, and by the drive's check of the leg's word.
-    expect(await misbehaving("without-answered")).toEqual(["stream.snapshot.handlingHistory", "drive.reload.history"]);
+    expect(await misbehaving("without-answered")).toEqual(["stream.snapshot.interactionHistory", "drive.reload.history"]);
     expect(await misbehaving("miscounted")).toEqual(["snapshot.taskCount.mismatch"]);
     // The reload is a restore before it is anything else: a second adapter that does not come up signed in as this login is named first.
     expect(await misbehaving("signed-out")).toEqual(["drive.reload.login"]);
@@ -1714,11 +1714,11 @@ describe("exerciseAdapter drives one call", () => {
     expect(result.rulesEvaluated).toContain("manifest.id");
     expect(result.rulesEvaluated).toContain("task.phase");
     // A rule whose predicate never ran is not in the set: no entry without seconds, so held.open was never evaluated.
-    expect(result.rulesEvaluated).not.toContain("task.handlingHistory.held.open");
+    expect(result.rulesEvaluated).not.toContain("task.interactionHistory.held.open");
     // With the drive, the stream's rules are considered on every update it reads, and the open hold is evaluated while paused.
     const driven = await drive(driveable({ restateHistory: "with-mute" }));
     expect(driven.rulesEvaluated).toContain("stream.taskUpdated.phase");
-    expect(driven.rulesEvaluated).toContain("task.handlingHistory.held.open");
+    expect(driven.rulesEvaluated).toContain("task.interactionHistory.held.open");
     // The drive's own rules are in it too, so a collectOnly run can say whether the drive ran at all.
     expect(driven.rulesEvaluated).toContain("drive.timeout");
     expect(driven.rulesEvaluated).toContain("drive.command.failed");
@@ -1733,11 +1733,11 @@ describe("exerciseAdapter drives one call", () => {
     // the host's muted leg it restates closed, since the host ended it before the media ended.
     expect((await drive(driveable({ restateHistory: "with-mute" }))).violations).toEqual([]);
     const openHold = (await drive(driveable({ restateHistory: "with-mute", leavesHoldOpen: true }))).violations.map(v => v.rule);
-    expect(openHold).toContain("task.handlingHistory.held.open");
-    expect(openHold).not.toContain("task.handlingHistory.muted.open");
+    expect(openHold).toContain("task.interactionHistory.held.open");
+    expect(openHold).not.toContain("task.interactionHistory.muted.open");
     const openMute = (await drive(driveable({ restateHistory: "with-mute", leavesMuteOpen: true }))).violations.map(v => v.rule);
-    expect(openMute).toContain("task.handlingHistory.muted.open");
-    expect(openMute).not.toContain("task.handlingHistory.held.open");
+    expect(openMute).toContain("task.interactionHistory.muted.open");
+    expect(openMute).not.toContain("task.interactionHistory.held.open");
   });
 
   it("names a key written about the task after it had ended, when its keys had gone with it", async () => {
@@ -1751,19 +1751,19 @@ describe("exerciseAdapter drives one call", () => {
     expect((await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store" }), { ...context, store: clean }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
   });
 
-  it("holds an applied disposal to the manifest's bound: the task-ended follows within it, or the resync says what the provider did", async () => {
+  it("holds an applied completion to the manifest's bound: the task-ended follows within it, or the resync says what the provider did", async () => {
     // The conforming fixture ends the task on complete and the run is clean (the first test). These two say applied and never end it.
     const held = (await drive(driveable({ neverEnds: "held" }))).violations;
-    expect(held.map(v => v.rule)).toEqual(["drive.disposal.unsettled"]);
+    expect(held.map(v => v.rule)).toEqual(["drive.completion.unsettled"]);
     expect(held[0]!.message).toContain("a snapshot still carries call-77");
     const dropped = (await drive(driveable({ neverEnds: "dropped" }))).violations;
-    expect(dropped.map(v => v.rule)).toEqual(["drive.disposal.unsettled"]);
+    expect(dropped.map(v => v.rule)).toEqual(["drive.completion.unsettled"]);
     expect(dropped[0]!.message).toContain("a snapshot no longer carries call-77");
   });
 
   it("sends hold once more after the call has ended, past the validator, and names an adapter that applies it", async () => {
     // The conforming fixture refuses it and the run is clean (the first test); this one applies it.
-    expect((await drive(driveable({ holdAfterEnd: true }))).violations.map(v => v.rule)).toEqual(["drive.command.handling"]);
+    expect((await drive(driveable({ holdAfterEnd: true }))).violations.map(v => v.rule)).toEqual(["drive.command.interaction"]);
   });
 
   it("names an adapter whose end-call moves the task to completing with the audio still up, by the rule and not by the clock", async () => {
@@ -1780,7 +1780,7 @@ describe("exerciseAdapter drives one call", () => {
     const confirming = driveable({ confirmFirst: true });
     const clean = await exerciseAdapter(confirming, context, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
     expect(clean.violations).toEqual([]);
-    expect((await drive(driveable({ confirmFirst: true, holdBeforeStart: true }))).violations.map(v => v.rule)).toEqual(["drive.command.handling"]);
+    expect((await drive(driveable({ confirmFirst: true, holdBeforeStart: true }))).violations.map(v => v.rule)).toEqual(["drive.command.interaction"]);
     // The control: without confirmed on the way, the misbehaviour has nowhere to show.
     expect((await drive(driveable({ holdBeforeStart: true }))).violations).toEqual([]);
   });
@@ -2124,7 +2124,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
 
   it("describeUsers(), when a UserId arrives on an event or on a task's lead or assisting", async () => {
     const at = "2026-08-21T09:05:00Z";
-    const bare = { ...minimalSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, handlingHistory: { steps: [] } }] } satisfies Snapshot<"voice">;
+    const bare = { ...minimalSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, interactionHistory: { steps: [] } }] } satisfies Snapshot<"voice">;
     const joined = { ...bare, tasks: [{ ...bare.tasks[0]!, capabilities: { ...bare.tasks[0]!.capabilities, leadAssist: true }, leadAssist: { stage: "joined", leadId: "L-9", since: at } }] } satisfies Snapshot<"voice">;
     const assisting = { ...bare, tasks: [{ ...bare.tasks[0]!, assisting: { memberId: "A-1", since: at } }] } satisfies Snapshot<"voice">;
     expect(await rules({ manifest: plainManifest, snapshot: bare, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
@@ -2169,7 +2169,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
-    // The conforming snapshot names A-1 in a handling step; a roster and an imposed break count too.
+    // The conforming snapshot names A-1 in a interaction step; a roster and an imposed break count too.
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     const roster = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: roster, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");

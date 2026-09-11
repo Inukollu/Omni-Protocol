@@ -10,11 +10,11 @@ import {
   MUTED_BY,
   MONITORING_BREAK_KINDS,
   breakKindAllowsMonitoring,
-  HANDLING_STEPS_THAT_DIAL,
-  HANDLING_STEPS_WITH_A_PERSON,
+  INTERACTION_STEPS_THAT_DIAL,
+  INTERACTION_STEPS_WITH_A_PERSON,
   IDLE_CAPABILITIES,
   commandDialId,
-  handlingStepDials,
+  interactionStepDials,
   IDLE_CAPABILITY_UI,
   OMNI_FAILURE_CODES,
   OMNI_PROTOCOL_VERSION,
@@ -22,7 +22,7 @@ import {
   browserSessionKey,
   sameCapabilities,
   defineAdapter,
-  handlingStepExpectsAPerson,
+  interactionStepExpectsAPerson,
   isAllowedBrowserUrl,
   negotiateProtocolVersion,
   normalizeContactEmail,
@@ -30,7 +30,7 @@ import {
   taskKey,
   userKey,
   type BrowserSessionKeyInput,
-  type HandlingStep,
+  type InteractionStep,
   type ProviderEvent,
   type TaskBrowser,
   type TaskPhase,
@@ -165,7 +165,7 @@ describe("Omni protocol", () => {
         displayName: "Test Provider",
         channel: "chat",
         supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
-        disposalSettleMs: 5000,
+        completionSettleMs: 5000,
         authenticationMethods: ["browser-sso"],
       },
       async createAuthenticationSession() {
@@ -268,17 +268,17 @@ describe("browserSessionKey", () => {
   });
 });
 
-describe("handlingStepExpectsAPerson", () => {
+describe("interactionStepExpectsAPerson", () => {
   it("says which steps have a person, so an absent agent can be read correctly", () => {
     // queued is the only step nobody takes part in: an absent agent there is not a gap.
-    expect(handlingStepExpectsAPerson("queued")).toBe(false);
+    expect(interactionStepExpectsAPerson("queued")).toBe(false);
     // The control that matters: every other step does expect one, so an absent agent on any
     // of them means "handled, could not attribute" rather than "nobody involved".
-    const everyStep: HandlingStep[] = ["queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"];
+    const everyStep: InteractionStep[] = ["queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"];
     for (const step of everyStep.filter(step => step !== "queued")) {
-      expect(handlingStepExpectsAPerson(step)).toBe(true);
+      expect(interactionStepExpectsAPerson(step)).toBe(true);
     }
-    expect(HANDLING_STEPS_WITH_A_PERSON).toEqual(everyStep.filter(step => step !== "queued"));
+    expect(INTERACTION_STEPS_WITH_A_PERSON).toEqual(everyStep.filter(step => step !== "queued"));
   });
 });
 
@@ -312,8 +312,8 @@ describe("every dial has an outcome", () => {
     expect(CAPABILITY_SOURCES).toEqual(["queue", "ungoverned", "undetermined"]);
     expect(HOST_MUTES).toEqual(["stream", "station"]);
     expect(MUTED_BY).toEqual(["host", "station"]);
-    expect(HANDLING_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);
-    for (const step of HANDLING_STEPS_THAT_DIAL) expect(handlingStepDials(step)).toBe(true);
-    for (const step of ["queued", "offered", "answered", "held", "muted"] as const) expect(handlingStepDials(step)).toBe(false);
+    expect(INTERACTION_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);
+    for (const step of INTERACTION_STEPS_THAT_DIAL) expect(interactionStepDials(step)).toBe(true);
+    for (const step of ["queued", "offered", "answered", "held", "muted"] as const) expect(interactionStepDials(step)).toBe(false);
   });
 });

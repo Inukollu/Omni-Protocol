@@ -38,7 +38,7 @@ import {
   validateHostMute,
   validateHostRecording,
   validateLoginStore,
-  validateHandlingReport,
+  validateInteractionReport,
   validateManifest,
   validateResult,
   validateSnapshot,
@@ -67,7 +67,7 @@ const STATE_SUBJECTS = [
   "tasks",
   "task.browsers",
   "task.attributes",
-  "task.handlingHistory",
+  "task.interactionHistory",
   "task.onCall",
   "task.leadAssist",
   "task.assisting",
@@ -109,7 +109,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   seen.add("tasks");
   if (some(value.browsers)) seen.add("task.browsers");
   if (some(value.attributes)) seen.add("task.attributes");
-  if (isRecord(value.handlingHistory) && some(value.handlingHistory.steps)) seen.add("task.handlingHistory");
+  if (isRecord(value.interactionHistory) && some(value.interactionHistory.steps)) seen.add("task.interactionHistory");
   if (some(value.onCall)) seen.add("task.onCall");
   if (value.leadAssist !== undefined) seen.add("task.leadAssist");
   if (value.assisting !== undefined) seen.add("task.assisting");
@@ -686,7 +686,7 @@ function userIdsIn(snapshot: Snapshot | undefined): string[] {
   }
   for (const task of Array.isArray(snapshot?.tasks) ? snapshot.tasks : []) {
     const t = task as unknown as Record<string, unknown>;
-    if (isRecord(t.handlingHistory) && Array.isArray(t.handlingHistory.steps)) for (const step of t.handlingHistory.steps) if (isRecord(step)) add(step.by);
+    if (isRecord(t.interactionHistory) && Array.isArray(t.interactionHistory.steps)) for (const step of t.interactionHistory.steps) if (isRecord(step)) add(step.by);
     if (Array.isArray(t.onCall)) for (const entry of t.onCall) if (isRecord(entry)) add(entry.userId);
     if (isRecord(t.leadAssist)) add(t.leadAssist.leadId);
     if (isRecord(t.assisting)) add(t.assisting.memberId);
@@ -700,7 +700,7 @@ const teamNamesUsers = (team: unknown): boolean =>
 
 const taskNamesUsers = (task: unknown): boolean =>
   isRecord(task) && (
-    (isRecord(task.handlingHistory) && Array.isArray(task.handlingHistory.steps) && task.handlingHistory.steps.some(step => isRecord(step) && step.by !== undefined)) ||
+    (isRecord(task.interactionHistory) && Array.isArray(task.interactionHistory.steps) && task.interactionHistory.steps.some(step => isRecord(step) && step.by !== undefined)) ||
     (isRecord(task.leadAssist) && task.leadAssist.leadId !== undefined) ||
     isRecord(task.assisting) ||
     isRecord(task.monitoring));
@@ -1058,7 +1058,7 @@ export class TaskStream {
     if (!isRecord(task)) return;
     const entries = [
       ...(Array.isArray(task.onCall) ? task.onCall : []),
-      ...(isRecord(task.handlingHistory) && Array.isArray(task.handlingHistory.steps) ? task.handlingHistory.steps : []),
+      ...(isRecord(task.interactionHistory) && Array.isArray(task.interactionHistory.steps) ? task.interactionHistory.steps : []),
     ];
     for (const entry of entries) {
       if (isRecord(entry) && typeof entry.dialId === "string") this.dialled(entry.dialId);
@@ -1104,8 +1104,8 @@ export class TaskStream {
 
   /** The entries of a task's record, each by step and instant, or undefined where the task carries no record. */
   private static record(task: unknown): Set<string> | undefined {
-    if (!isRecord(task) || !isRecord(task.handlingHistory) || !Array.isArray(task.handlingHistory.steps)) return undefined;
-    return new Set(task.handlingHistory.steps.filter(isRecord).map(entry => `${String(entry.step)}@${String(entry.at)}`));
+    if (!isRecord(task) || !isRecord(task.interactionHistory) || !Array.isArray(task.interactionHistory.steps)) return undefined;
+    return new Set(task.interactionHistory.steps.filter(isRecord).map(entry => `${String(entry.step)}@${String(entry.at)}`));
   }
 
   /** What a restated record lost of the one read before it: nothing, or the entries by step and instant. */
@@ -1143,7 +1143,7 @@ export class TaskStream {
   resync(snapshot: unknown, at: string): ProtocolViolation[] {
     const found: ProtocolViolation[] = [];
     const refuse = (rule: string, where: string, message: string) => found.push({ rule, path: where, message });
-    ruleEvaluated("stream.snapshot.capabilitySource", "stream.snapshot.handlingHistory", "stream.snapshot.phase", "stream.snapshot.media");
+    ruleEvaluated("stream.snapshot.capabilitySource", "stream.snapshot.interactionHistory", "stream.snapshot.phase", "stream.snapshot.media");
     if (isRecord(snapshot) && Array.isArray(snapshot.tasks)) {
       snapshot.tasks.forEach((task, index) => {
         if (!isRecord(task) || typeof task.id !== "string") return;
@@ -1156,7 +1156,7 @@ export class TaskStream {
         // A record once read is not unread: a resync restates it whole, or with more, never with less.
         const lost = TaskStream.lost(was.record, TaskStream.record(task));
         if (lost.length > 0) {
-          refuse("stream.snapshot.handlingHistory", `${at}.tasks[${index}].handlingHistory`,
+          refuse("stream.snapshot.interactionHistory", `${at}.tasks[${index}].interactionHistory`,
             `${task.id}'s record lost ${lost.join(", ")} on the snapshot: an entry read by the host stays in the record until the task ends`);
         }
         const to = String(task.phase);
@@ -1229,7 +1229,7 @@ export class TaskStream {
         }
         // The rules about a known task are evaluated only once there is one.
         ruleEvaluated("stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.allocation", "stream.taskUpdated.mediaOpen",
-          "stream.taskUpdated.handlingHistory", "stream.taskMediaEnded.follow", "stream.taskUpdated.media", "stream.taskUpdated.stage", "stream.taskUpdated.stage.lingering");
+          "stream.taskUpdated.interactionHistory", "stream.taskMediaEnded.follow", "stream.taskUpdated.media", "stream.taskUpdated.stage", "stream.taskUpdated.stage.lingering");
         // Terms once read stay read. A re-read that fails is not a new fact about the task, so the
         // last statement stands and the failure is a diagnostic; undetermined is a place a task
         // starts from, never one it returns to.
@@ -1264,7 +1264,7 @@ export class TaskStream {
         {
           const lost = TaskStream.lost(known.record, TaskStream.record(event.task));
           if (lost.length > 0) {
-            refuse("stream.taskUpdated.handlingHistory", `${at}.task.handlingHistory`,
+            refuse("stream.taskUpdated.interactionHistory", `${at}.task.interactionHistory`,
               `${id}'s record lost ${lost.join(", ")} on the update: an entry read by the host stays in the record until the task ends`);
           }
         }
@@ -1377,14 +1377,14 @@ export class TaskStream {
             `${id} ended with its media still started: the audio ends first, on task-media-ended, whatever the outcome`);
         }
         // Off voice there is no media event, so the update that moves a task to completing is the
-        // provider's word that handling ended and the moment the wrap allowance starts. A provider
+        // provider's word that interaction ended and the moment the wrap allowance starts. A provider
         // that completes the task itself with an allowance to run has to have started the clock:
         // completed from in-progress, the allowance it stated was never given.
         ruleEvaluated("stream.taskEnded.unwrapped");
         if (known.channel !== "voice" && known.completionMode === "provider-automatic" && known.wrapAllowance !== undefined && known.wrapAllowance > 0
           && known.phase !== "completing" && isRecord(event.outcome) && event.outcome.type === "completed") {
           refuse("stream.taskEnded.unwrapped", `${at}.outcome`,
-            `${id} was completed from ${known.phase} with a wrap allowance of ${known.wrapAllowance}s under provider-automatic: off voice, completing is the provider's word that handling ended and the allowance's start, and it was never published`);
+            `${id} was completed from ${known.phase} with a wrap allowance of ${known.wrapAllowance}s under provider-automatic: off voice, completing is the provider's word that interaction ended and the allowance's start, and it was never published`);
         }
         this.endedAllocations.add(known.allocation);
         this.tasks.delete(id);
@@ -1546,10 +1546,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         refuse("drive.reload.allocation", "drive.reload.allocation",
           `a second adapter built from the same login carries ${taskId} as allocation ${String(carried.allocationId)}; the first published ${allocationOf()}, and a life does not change its name on a reload`);
       }
-      const history = carried.handlingHistory;
+      const history = carried.interactionHistory;
       const steps: unknown[] = isRecord(history) && Array.isArray(history.steps) ? history.steps : [];
       // A record once read is not unread across a reload either: every entry the first adapter published is here.
-      const before = latestTask().handlingHistory;
+      const before = latestTask().interactionHistory;
       const wasRead = isRecord(before) && Array.isArray(before.steps) ? before.steps.filter(isRecord) : [];
       const lost = wasRead.filter(entry => !steps.some(now => isRecord(now) && now.step === entry.step && now.at === entry.at))
         .map(entry => `${String(entry.step)}@${String(entry.at)}`);
@@ -1694,11 +1694,11 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (await send({ type: "call", dialId }, dialId) === undefined) return found;
     if (await updated(t => t.phase === "in-progress" || t.phase === "completing", "the task leaving preview after Call") === undefined) return found;
   }
-  // The other direction of step 4, wherever the task stands outside the handling phases with the
-  // control still declared: a host holds it back (command.phase.handling), and an adapter that
+  // The other direction of step 4, wherever the task stands outside the interaction phases with the
+  // control still declared: a host holds it back (command.phase.interaction), and an adapter that
   // receives it anyway must refuse it -- so the drive sends it past the validator and expects failed.
-  const holdRefusedOutsideHandling = async (): Promise<void> => {
-    ruleEvaluated("drive.command.rejected", "drive.command.handling");
+  const holdRefusedOutsideInteraction = async (): Promise<void> => {
+    ruleEvaluated("drive.command.rejected", "drive.command.interaction");
     const phase = String(latestTask().phase);
     let answer: unknown;
     try {
@@ -1707,12 +1707,12 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       refuse("drive.command.rejected", "drive.command.hold", `execute rejected rather than answered: ${String(error)}`);
     }
     if (isRecord(answer) && answer.status !== "failed") {
-      refuse("drive.command.handling", "drive.command.hold",
+      refuse("drive.command.interaction", "drive.command.hold",
         `the provider applied hold on a ${phase} task: a control on the contact belongs to in-progress or paused, and the adapter is the second gate`);
     }
   };
   if (latestTask().phase === "confirmed") {
-    if (offers("hold")) await holdRefusedOutsideHandling();
+    if (offers("hold")) await holdRefusedOutsideInteraction();
     if (await updated(t => t.phase !== "confirmed", "the task leaving confirmed") === undefined) return found;
   }
   // 3. On a softphone, the audio arrives and the host opens it.
@@ -1738,7 +1738,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   const reportedLegs: { at: string | undefined; task: Record<string, unknown>; closedAs?: number }[] = [];
   /** The duration the provider's record states for the leg at `at`, as the task stands now. */
   const closedAs = (at: string): number | undefined => {
-    const history = latestTask().handlingHistory;
+    const history = latestTask().interactionHistory;
     const leg = isRecord(history) && Array.isArray(history.steps)
       ? history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === canonicalTimes.get(at)) as Record<string, unknown> | undefined : undefined;
     return typeof leg?.seconds === "number" ? leg.seconds : undefined;
@@ -1748,7 +1748,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       ruleEvaluated("drive.recordStep.rejected", "drive.recordStep.failed");
       // The drive holds its own report to the contract before it crosses, as a host must.
       const leg = { taskId, allocationId: allocationOf(), step: "muted", mutedBy: "host", ...body };
-      const own = validateHandlingReport(leg, "drive.recordStep.report", drive.manifest);
+      const own = validateInteractionReport(leg, "drive.recordStep.report", drive.manifest);
       found.push(...own);
       if (own.length > 0) return;
       let answer: unknown;
@@ -1840,7 +1840,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         reportedLegs.push({ at: canonicalTimes.get(openLeg.at), task: openLeg.task, closedAs: before });
       }
       if (completing !== undefined && offers("hold")) {
-        await holdRefusedOutsideHandling();
+        await holdRefusedOutsideInteraction();
       }
     }
   }
@@ -1858,21 +1858,21 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       command.disposition = (dispositions.codes[0] as Record<string, unknown>).id;
     }
     if (await send(command) !== undefined) {
-      // applied says the provider has disposed of the task, and its ending follows within the bound
+      // applied says the provider has completed the task, and its ending follows within the bound
       // the manifest stated. Past it the host resyncs: a snapshot still carrying the task is a task
       // held open by a provider that said it was done, and the desk shows it as unsettled.
-      ruleEvaluated("drive.disposal.unsettled");
-      const settle = Number(drive.manifest.disposalSettleMs);
+      ruleEvaluated("drive.completion.unsettled");
+      const settle = Number(drive.manifest.completionSettleMs);
       let unsettled = false;
       const end = await ended({ ms: settle, onExpiry: () => { unsettled = true; } });
       if (end !== undefined) await storeReleased();
       else if (unsettled) {
         let resync: unknown;
-        try { resync = await drive.connection.snapshot(); } catch (error) { refuse("drive.command.rejected", "drive.disposal", `snapshot() after an unsettled disposal rejected: ${String(error)}`); }
+        try { resync = await drive.connection.snapshot(); } catch (error) { refuse("drive.command.rejected", "drive.completion", `snapshot() after an unsettled completion rejected: ${String(error)}`); }
         const still = isRecord(resync) && Array.isArray(resync.tasks) && resync.tasks.some(t => isRecord(t) && t.id === taskId && t.allocationId === allocationOf());
-        refuse("drive.disposal.unsettled", "drive.disposal",
+        refuse("drive.completion.unsettled", "drive.completion",
           still
-            ? `complete was applied and ${settle}ms later the task-ended has not come and a snapshot still carries ${taskId}: applied says the provider disposed of the task, and it has not`
+            ? `complete was applied and ${settle}ms later the task-ended has not come and a snapshot still carries ${taskId}: applied says the provider completed the task, and it has not`
             : `complete was applied and ${settle}ms later the task-ended has not come; a snapshot no longer carries ${taskId}, so the ending was owed and never sent`);
       }
     }
@@ -1892,7 +1892,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (reported.at === undefined) continue; // A refused/malformed report provides no accepted history identity.
     const published = lastPublished();
     if (published === reported.task) continue;
-    const history = published.handlingHistory;
+    const history = published.interactionHistory;
     if (isRecord(history) && Array.isArray(history.steps)) {
       const { at } = reported;
       const leg = history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined;

@@ -8,7 +8,7 @@ import {
   validateAuthenticationResult,
   validateContact,
   validateEventEnvelope,
-  validateHandlingReport,
+  validateInteractionReport,
   validateHostGuarantees,
   validateHostMute,
   validateLoginStore,
@@ -100,7 +100,7 @@ const manifest = (over: Record<string, unknown> = {}) => ({
   channel: "voice",
   supportedProtocolVersions: [1],
   authenticationMethods: ["credentials"],
-  disposalSettleMs: 5000,
+  completionSettleMs: 5000,
   // A voice manifest says which phones it supports; any other channel says nothing.
   ...(over.channel !== undefined && over.channel !== "voice" ? {} : { phones: ["softphone"] }),
   ...over,
@@ -311,37 +311,37 @@ describe("validateTask", () => {
     expect(custom({ prompt: { fields: [{ ...destination, required: false, autocomplete: "tel" }] } })).toEqual([]);
   });
   it("states what the record adds up to before this agent, each total present when known", () => {
-    const record = (over: Record<string, unknown>) => rules(validateTask(task({ handlingHistory: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], ...over } }), { channel: "voice" }));
-    expect(record({ handleSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 2 })).toEqual([]);
-    expect(record({ handleSeconds: 0, holdSeconds: 0, transfers: 0 })).toEqual([]);
+    const record = (over: Record<string, unknown>) => rules(validateTask(task({ interactionHistory: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], ...over } }), { channel: "voice" }));
+    expect(record({ interactionSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 2 })).toEqual([]);
+    expect(record({ interactionSeconds: 0, holdSeconds: 0, transfers: 0 })).toEqual([]);
     // Each total is present when the provider knows it: the rest are absent, never a plausible nought.
     expect(record({ transfers: 2 })).toEqual([]);
     expect(record({})).toEqual([]);
-    expect(record({ holdSeconds: -5 })).toEqual(["task.handlingHistory.holdSeconds"]);
-    expect(record({ queueSeconds: 1.5 })).toEqual(["task.handlingHistory.queueSeconds"]);
-    expect(record({ handleSeconds: "312" })).toEqual(["task.handlingHistory.handleSeconds"]);
-    expect(record({ transfers: -1 })).toEqual(["task.handlingHistory.transfers"]);
-    expect(rules(validateTask(task({ handlingHistory: { transfers: 2 } }), { channel: "voice" }))).toEqual(["task.handlingHistory.steps.shape"]);
-    expect(rules(validateTask(task({ handlingHistory: [] }), { channel: "voice" }))).toEqual(["task.handlingHistory.shape"]);
+    expect(record({ holdSeconds: -5 })).toEqual(["task.interactionHistory.holdSeconds"]);
+    expect(record({ queueSeconds: 1.5 })).toEqual(["task.interactionHistory.queueSeconds"]);
+    expect(record({ interactionSeconds: "312" })).toEqual(["task.interactionHistory.interactionSeconds"]);
+    expect(record({ transfers: -1 })).toEqual(["task.interactionHistory.transfers"]);
+    expect(rules(validateTask(task({ interactionHistory: { transfers: 2 } }), { channel: "voice" }))).toEqual(["task.interactionHistory.steps.shape"]);
+    expect(rules(validateTask(task({ interactionHistory: [] }), { channel: "voice" }))).toEqual(["task.interactionHistory.shape"]);
     // The entries moved under steps, and a violation says where it found them.
-    const misstep = validateTask(task({ handlingHistory: { steps: [{ step: "ringing", at: "2026-08-21T09:00:00Z" }] } }), { channel: "voice" });
-    expect(misstep.map(v => `${v.rule} @ ${v.path}`)).toEqual(["task.handlingHistory.step @ task.handlingHistory.steps[0].step"]);
+    const misstep = validateTask(task({ interactionHistory: { steps: [{ step: "ringing", at: "2026-08-21T09:00:00Z" }] } }), { channel: "voice" });
+    expect(misstep.map(v => `${v.rule} @ ${v.path}`)).toEqual(["task.interactionHistory.step @ task.interactionHistory.steps[0].step"]);
   });
 
   it("records each hold as its own entry, oldest first", () => {
-    const history = (steps: unknown) => rules(validateTask(task({ handlingHistory: { steps } }), { channel: "voice" }));
+    const history = (steps: unknown) => rules(validateTask(task({ interactionHistory: { steps } }), { channel: "voice" }));
     const answered = { step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" };
     // Two holds are two entries; the running one omits its seconds, and runs only while the task is paused.
-    const paused = (steps: unknown) => rules(validateTask(task({ phase: "paused", handlingHistory: { steps } }), { channel: "voice" }));
+    const paused = (steps: unknown) => rules(validateTask(task({ phase: "paused", interactionHistory: { steps } }), { channel: "voice" }));
     expect(paused([answered, { step: "held", at: "2026-08-21T01:02:10Z", by: "a-17" }])).toEqual([]);
-    expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", by: "a-17" }])).toEqual(["task.handlingHistory.held.open"]);
+    expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", by: "a-17" }])).toEqual(["task.interactionHistory.held.open"]);
     expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }])).toEqual([]);
     // A mute runs only while the media is up: an open one on a call that is over is a leg nobody closed.
-    const over = (steps: unknown, over: Record<string, unknown>) => rules(validateTask(task({ ...over, handlingHistory: { steps } }), { channel: "voice" }));
+    const over = (steps: unknown, over: Record<string, unknown>) => rules(validateTask(task({ ...over, interactionHistory: { steps } }), { channel: "voice" }));
     const openMute = { step: "muted", at: "2026-08-21T01:00:00Z", by: "a-17", mutedBy: "host" };
     expect(over([answered, openMute], { media: "started" })).toEqual([]);
-    expect(over([answered, openMute], { media: "ended" })).toEqual(["task.handlingHistory.muted.open"]);
-    expect(over([answered, openMute], { phase: "completing", onCall: [] })).toEqual(["task.handlingHistory.muted.open"]);
+    expect(over([answered, openMute], { media: "ended" })).toEqual(["task.interactionHistory.muted.open"]);
+    expect(over([answered, openMute], { phase: "completing", onCall: [] })).toEqual(["task.interactionHistory.muted.open"]);
     // A completing task's audio has ended or never started: stated as started, it is a call that never ended.
     expect(rules(validateTask(task({ phase: "completing", onCall: [], media: "ended" }), { channel: "voice" }))).toEqual([]);
     expect(rules(validateTask(task({ phase: "completing", onCall: [] }), { channel: "voice" }))).toEqual([]);
@@ -351,19 +351,19 @@ describe("validateTask", () => {
     expect(paused([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
     expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17", mutedBy: "host" }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9, by: "a-17", mutedBy: "station" }])).toEqual([]);
     // A muted leg names the agent: the host has one, the provider knows who. A held leg may honestly not.
-    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }])).toEqual(["task.handlingHistory.muted.by"]);
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }])).toEqual(["task.interactionHistory.muted.by"]);
     expect(history([answered, { step: "held", at: "2026-08-21T01:00:00Z", seconds: 4 }])).toEqual([]);
     // A call that joined two queues is two queued entries, one per join, and the offer follows the last of them.
     expect(history([{ step: "queued", at: "2026-08-21T00:55:00Z", seconds: 240 }, { step: "queued", at: "2026-08-21T00:59:00Z", seconds: 30 }, { step: "offered", at: "2026-08-21T00:59:30Z", by: "a-17" }, answered])).toEqual([]);
     // A muted entry says whose the silence was, as the host reported it; no other step has anyone to name.
-    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17" }])).toEqual(["task.handlingHistory.mutedBy"]);
-    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17", mutedBy: "headset" }])).toEqual(["task.handlingHistory.mutedBy"]);
-    expect(history([answered, { step: "held", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }])).toEqual(["task.handlingHistory.mutedBy.unexpected"]);
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17" }])).toEqual(["task.interactionHistory.mutedBy"]);
+    expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17", mutedBy: "headset" }])).toEqual(["task.interactionHistory.mutedBy"]);
+    expect(history([answered, { step: "held", at: "2026-08-21T01:00:00Z", seconds: 4, mutedBy: "host" }])).toEqual(["task.interactionHistory.mutedBy.unexpected"]);
     // Oldest first: a hold filed before the answer it followed is out of its turn.
-    expect(history([{ step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, answered])).toEqual(["task.handlingHistory.order"]);
+    expect(history([{ step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, answered])).toEqual(["task.interactionHistory.order"]);
     expect(paused([answered, { step: "held", at: "2026-08-21T00:59:41Z", by: "a-17" }])).toEqual([]);
     // A malformed instant is its own violation and takes no part in the ordering.
-    expect(paused([answered, { step: "held", at: "soon", by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual(["task.handlingHistory.at"]);
+    expect(paused([answered, { step: "held", at: "soon", by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual(["task.interactionHistory.at"]);
   });
 
   it("gives a task whose party the host is dialling its audio from dialling, and no other task not at work", () => {
@@ -495,21 +495,21 @@ describe("validateTask", () => {
 
   it("omits an unfinished duration rather than reporting nought", () => {
     const history = (over: Record<string, unknown>) =>
-      check({ handlingHistory: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", ...over }] } });
-    expect(history({ seconds: 0 })).toContain("task.handlingHistory.seconds");
-    expect(history({ seconds: -5 })).toContain("task.handlingHistory.seconds");
+      check({ interactionHistory: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", ...over }] } });
+    expect(history({ seconds: 0 })).toContain("task.interactionHistory.seconds");
+    expect(history({ seconds: -5 })).toContain("task.interactionHistory.seconds");
     expect(history({ seconds: 22 })).toEqual([]);
     expect(history({})).toEqual([]);
   });
 
-  it("takes a handling step without a person, and rejects an empty one", () => {
+  it("takes a interaction step without a person, and rejects an empty one", () => {
     const history = (over: Record<string, unknown>) =>
-      check({ handlingHistory: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", ...over }] } });
+      check({ interactionHistory: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", ...over }] } });
     // Absent means the provider could not attribute it, which is a legitimate report.
     expect(history({})).toEqual([]);
-    expect(history({ by: "" })).toContain("task.handlingHistory.by");
+    expect(history({ by: "" })).toContain("task.interactionHistory.by");
     expect(history({ by: "agent-17" })).toEqual([]);
-    expect(check({ handlingHistory: { steps: [{ step: "ringing", at: "2026-08-21T09:00:00Z" }] } })).toContain("task.handlingHistory.step");
+    expect(check({ interactionHistory: { steps: [{ step: "ringing", at: "2026-08-21T09:00:00Z" }] } })).toContain("task.interactionHistory.step");
   });
 
   it("validates each kind of task attribute", () => {
@@ -929,39 +929,39 @@ describe("validateHostMute", () => {
   });
 });
 
-describe("validateHandlingReport", () => {
+describe("validateInteractionReport", () => {
   it("takes a leg the host performed as it begins, runs, and ends", () => {
-    const report = (over: Record<string, unknown> = {}) => rules(validateHandlingReport({ taskId: "call-42", allocationId: "alloc-42", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host", ...over }));
+    const report = (over: Record<string, unknown> = {}) => rules(validateInteractionReport({ taskId: "call-42", allocationId: "alloc-42", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host", ...over }));
     expect(report()).toEqual([]);
     // A muted leg says whose the silence was; no other leg has anyone to name for it.
     expect(report({ mutedBy: "station" })).toEqual([]);
-    expect(report({ mutedBy: undefined })).toEqual(["handlingReport.mutedBy"]);
-    expect(report({ mutedBy: "headset" })).toEqual(["handlingReport.mutedBy"]);
+    expect(report({ mutedBy: undefined })).toEqual(["interactionReport.mutedBy"]);
+    expect(report({ mutedBy: "headset" })).toEqual(["interactionReport.mutedBy"]);
     expect(report({ step: "held", mutedBy: undefined })).toEqual([]);
-    expect(report({ step: "held" })).toEqual(["handlingReport.mutedBy.unexpected"]);
+    expect(report({ step: "held" })).toEqual(["interactionReport.mutedBy.unexpected"]);
     expect(report({ seconds: 15 })).toEqual([]);
     expect(report({ seconds: 42, ended: true })).toEqual([]);
     // The end is stated, never inferred, and it carries the final duration.
-    expect(report({ ended: true })).toEqual(["handlingReport.ended.seconds"]);
-    expect(report({ ended: false })).toEqual(["handlingReport.ended"]);
-    expect(report({ seconds: 0 })).toEqual(["handlingReport.seconds"]);
-    expect(report({ taskId: "" })).toEqual(["handlingReport.taskId"]);
-    expect(report({ step: "whispered" })).toEqual(["handlingReport.step"]);
-    expect(report({ at: "now" })).toEqual(["handlingReport.at"]);
-    expect(rules(validateHandlingReport("muted"))).toEqual(["handlingReport.shape"]);
+    expect(report({ ended: true })).toEqual(["interactionReport.ended.seconds"]);
+    expect(report({ ended: false })).toEqual(["interactionReport.ended"]);
+    expect(report({ seconds: 0 })).toEqual(["interactionReport.seconds"]);
+    expect(report({ taskId: "" })).toEqual(["interactionReport.taskId"]);
+    expect(report({ step: "whispered" })).toEqual(["interactionReport.step"]);
+    expect(report({ at: "now" })).toEqual(["interactionReport.at"]);
+    expect(rules(validateInteractionReport("muted"))).toEqual(["interactionReport.shape"]);
     // What a provider never asked for never crosses: a running report reaches only a manifest that declares it.
     const running = { taskId: "call-42", allocationId: "alloc-42", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host", seconds: 15 };
-    expect(rules(validateHandlingReport(running, "report", manifest({ runningStepReports: true })))).toEqual([]);
-    expect(rules(validateHandlingReport(running, "report", manifest()))).toEqual(["handlingReport.running.unexpected"]);
-    expect(rules(validateHandlingReport({ ...running, seconds: 42, ended: true }, "report", manifest()))).toEqual([]);
-    expect(rules(validateHandlingReport({ taskId: "call-42", allocationId: "alloc-42", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" }, "report", manifest()))).toEqual([]);
+    expect(rules(validateInteractionReport(running, "report", manifest({ runningStepReports: true })))).toEqual([]);
+    expect(rules(validateInteractionReport(running, "report", manifest()))).toEqual(["interactionReport.running.unexpected"]);
+    expect(rules(validateInteractionReport({ ...running, seconds: 42, ended: true }, "report", manifest()))).toEqual([]);
+    expect(rules(validateInteractionReport({ taskId: "call-42", allocationId: "alloc-42", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" }, "report", manifest()))).toEqual([]);
     expect(rules(validateManifest(manifest({ runningStepReports: true })))).toEqual([]);
     expect(rules(validateManifest(manifest({ runningStepReports: false })))).toEqual(["manifest.runningStepReports"]);
-    // The disposal bound is stated by every provider, as a positive whole number of milliseconds.
-    expect(rules(validateManifest(manifest({ disposalSettleMs: 5000 })))).toEqual([]);
-    expect(rules(validateManifest(manifest({ disposalSettleMs: 0 })))).toEqual(["manifest.disposalSettleMs"]);
-    expect(rules(validateManifest(manifest({ disposalSettleMs: 1.5 })))).toEqual(["manifest.disposalSettleMs"]);
-    expect(rules(validateManifest({ ...manifest(), disposalSettleMs: undefined }))).toEqual(["manifest.disposalSettleMs"]);
+    // The completion bound is stated by every provider, as a positive whole number of milliseconds.
+    expect(rules(validateManifest(manifest({ completionSettleMs: 5000 })))).toEqual([]);
+    expect(rules(validateManifest(manifest({ completionSettleMs: 0 })))).toEqual(["manifest.completionSettleMs"]);
+    expect(rules(validateManifest(manifest({ completionSettleMs: 1.5 })))).toEqual(["manifest.completionSettleMs"]);
+    expect(rules(validateManifest({ ...manifest(), completionSettleMs: undefined }))).toEqual(["manifest.completionSettleMs"]);
     expect(rules(validateResult({ status: "recorded", at: "2026-09-11T00:00:00Z" }, "recordStep"))).toEqual([]);
     expect(rules(validateResult({ status: "recorded" }, "recordStep"))).toEqual(["result.recordStep.at"]);
     expect(rules(validateResult({ status: "applied" }, "recordStep"))).toEqual(["result.status"]);
@@ -1162,10 +1162,10 @@ describe("the other direction, everywhere", () => {
   });
 
   it("names nobody on a queued step", () => {
-    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ handlingHistory: { steps: [{ at: "2026-08-21T09:00:00Z", ...entry }] } }), voice));
+    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ interactionHistory: { steps: [{ at: "2026-08-21T09:00:00Z", ...entry }] } }), voice));
     expect(step({ step: "answered", by: "A-1" })).toEqual([]);
     expect(step({ step: "queued" })).toEqual([]);
-    expect(step({ step: "queued", by: "A-1" })).toEqual(["task.handlingHistory.by.unexpected"]);
+    expect(step({ step: "queued", by: "A-1" })).toEqual(["task.interactionHistory.by.unexpected"]);
   });
 
   it("declares the capability that shows a task's browsers", () => {
@@ -1721,15 +1721,15 @@ describe("every dial has an outcome", () => {
   });
 
   it("lets a step that dialled say which dial and where, and no other step", () => {
-    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ handlingHistory: { steps: [{ at: "2026-08-21T09:00:00Z", by: "A-1", ...entry }] } }), voice));
+    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ interactionHistory: { steps: [{ at: "2026-08-21T09:00:00Z", by: "A-1", ...entry }] } }), voice));
     for (const dialled of ["transferred", "conferenced", "unanswered"]) {
       expect(step({ step: dialled, dialId: "dial-7f2", destinationId: "tier2" })).toEqual([]);
       expect(step({ step: dialled, destinationId: "tier2" })).toEqual([]);
     }
-    expect(step({ step: "transferred", dialId: "" })).toEqual(["task.handlingHistory.dialId"]);
-    expect(step({ step: "transferred", destinationId: "" })).toEqual(["task.handlingHistory.destinationId"]);
-    expect(step({ step: "held", seconds: 12, dialId: "dial-7f2" })).toEqual(["task.handlingHistory.dialId.unexpected"]);
-    expect(step({ step: "answered", destinationId: "tier2" })).toEqual(["task.handlingHistory.destinationId.unexpected"]);
+    expect(step({ step: "transferred", dialId: "" })).toEqual(["task.interactionHistory.dialId"]);
+    expect(step({ step: "transferred", destinationId: "" })).toEqual(["task.interactionHistory.destinationId"]);
+    expect(step({ step: "held", seconds: 12, dialId: "dial-7f2" })).toEqual(["task.interactionHistory.dialId.unexpected"]);
+    expect(step({ step: "answered", destinationId: "tier2" })).toEqual(["task.interactionHistory.destinationId.unexpected"]);
   });
 });
 
@@ -1927,17 +1927,17 @@ describe("validateTaskCommand", () => {
       expect(cmd(command, on("paused")), `${JSON.stringify(command)} paused`).toEqual([]);
       // Once the call is over, what a warm step put on it is gone too: the phase names the gap first.
       for (const phase of ["pending", "confirmed", "preview", "completing"]) {
-        expect(cmd(command, on(phase)), `${JSON.stringify(command)} ${phase}`).toContain("command.phase.handling");
+        expect(cmd(command, on(phase)), `${JSON.stringify(command)} ${phase}`).toContain("command.phase.interaction");
       }
     }
     // A wrap-up that still offers a transfer offers it for nothing: the capability stands, the phase refuses.
-    expect(cmd({ type: "transfer", action: "warm", dialId: "dial-2", destinationId: "tier2" }, task({ ...voice, phase: "completing" }))).toEqual(["command.phase.handling"]);
+    expect(cmd({ type: "transfer", action: "warm", dialId: "dial-2", destinationId: "tier2" }, task({ ...voice, phase: "completing" }))).toEqual(["command.phase.interaction"]);
     // The same word on a conversation: a paused chat resumes, a completing one has nothing to pause.
     const chat = (phase: string) => task({ channel: "chat", capabilities: { hold: true }, phase });
     expect(cmd({ type: "pause" }, chat("in-progress"))).toEqual([]);
     expect(cmd({ type: "resume" }, chat("paused"))).toEqual([]);
-    expect(cmd({ type: "pause" }, chat("completing"))).toEqual(["command.phase.handling"]);
-    expect(cmd({ type: "pause" }, chat("pending"))).toEqual(["command.phase.handling"]);
+    expect(cmd({ type: "pause" }, chat("completing"))).toEqual(["command.phase.interaction"]);
+    expect(cmd({ type: "pause" }, chat("pending"))).toEqual(["command.phase.interaction"]);
     // The phases with their own commands are untouched by it.
     expect(cmd({ type: "answer" }, task({ phase: "pending" }))).toEqual([]);
     expect(cmd({ type: "connect-back", dialId: "dial-1" }, task({ phase: "completing", capabilities: { connectBack: true } }))).toEqual([]);
@@ -2223,5 +2223,27 @@ describe("validateTask capabilitySource", () => {
     expect(rules(task({ capabilitySource: "undetermined", capabilities: {} }))).toEqual([]);
     expect(rules(task({ capabilitySource: "undetermined", capabilities: { hold: true, endCall: true } }))).toEqual([]);
     expect(rules(task({ capabilitySource: "queue", capabilities: {} }))).toEqual([]);
+  });
+});
+
+
+describe("interaction API migration", () => {
+  it("rejects former task history fields instead of silently ignoring their facts", () => {
+    const history = { steps: [], interactionSeconds: 12 };
+    expect(validateTask(task({ interactionHistory: history }), { channel: "voice" })).toEqual([]);
+    for (const interactionHistory of [undefined, history]) {
+      expect(rules(validateTask(task({ handlingHistory: history, interactionHistory }), { channel: "voice" })))
+        .toContain("task.interactionHistory.renamed");
+    }
+    expect(rules(validateTask(task({ interactionHistory: { ...history, handleSeconds: 12 } }), { channel: "voice" })))
+      .toContain("task.interactionHistory.interactionSeconds.renamed");
+  });
+
+  it("requires the new completion bound and rejects mixed old/new manifests", () => {
+    expect(validateManifest(manifest())).toEqual([]);
+    expect(rules(validateManifest(manifest({ completionSettleMs: undefined, disposalSettleMs: 5000 }))))
+      .toContain("manifest.completionSettleMs");
+    expect(rules(validateManifest(manifest({ disposalSettleMs: 5000 }))))
+      .toContain("manifest.completionSettleMs.renamed");
   });
 });
