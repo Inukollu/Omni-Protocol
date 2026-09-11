@@ -463,3 +463,7 @@ export const ambiguousBreakPolicy: import("../src/index.js").TeamBreakCommand = 
 export const requireBreakApproval: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "approval-required" };
 // @ts-expect-error The old ask policy has no compatibility alias.
 export const retiredAskPolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "ask" };
+
+export const suspendBreakRequests: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "requests-suspended" };
+// @ts-expect-error Use requests-suspended, not the retired suspended policy.
+export const retiredSuspendedPolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "suspended" };

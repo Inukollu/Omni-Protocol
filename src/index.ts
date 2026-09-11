@@ -1359,7 +1359,7 @@ export interface TeamListenCommandRequest {
 
 export type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
-  | { type: "set-break-policy"; policy: "approval-required" | "auto-approve" | "suspended" }
+  | { type: "set-break-policy"; policy: "approval-required" | "auto-approve" | "requests-suspended" }
   /** `reasonId` names a published `BreakReason.id`, required whenever the provider publishes reasons: the member's forced break carries it as `activeReasonId`. */
   | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string }
   | { type: "end-forced-break"; memberId: UserId };
