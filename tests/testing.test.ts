@@ -1079,17 +1079,17 @@ describe("exerciseAdapter", () => {
     const everyEvent: ContractSubject[] = [
       "event.snapshot", "event.transport-status", "event.break-state", "event.task-offered", "event.task-updated",
       "event.task-audio-started", "event.task-audio-ended", "event.task-ended", "event.dial-outcome", "event.announcement", "event.queue-summary",
-      "event.diagnostic", "event.team-updated", "event.team-audio-started", "event.team-audio-ended", "event.contacts-updated", "event.calendar-updated",
+      "event.diagnostic", "event.team-updated", "event.contacts-updated", "event.calendar-updated",
     ];
     // The rich task carries browsers, history, an outcome policy, transfer destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.requests", "team.tasks", "team.listening", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.requests", "team.tasks", "team.listening", "team.shift", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.history", "task.onCall", "task.leadAssist", "task.takenOver",
-      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.requests", "team.tasks", "team.listening",
+      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.requests", "team.tasks", "team.listening", "team.shift",
       "contacts", "calendar", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.
@@ -1099,14 +1099,14 @@ describe("exerciseAdapter", () => {
       team: { members: [{ id: "A-2", availability: "on-task" }], requests: [{ memberId: "A-2", assignmentId: "alloc-42", since: "2026-08-21T09:04:00Z" }] },
     } satisfies Snapshot<"voice">;
     expect(state(await run({ capabilities: { lead: true as const }, snapshot: reached })))
-      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "team.tasks", "team.listening", "team.policies"]);
+      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "team.tasks", "team.listening", "team.shift", "team.policies"]);
     const later: ProviderEventEnvelope<"voice"> = {
       id: "evt-team", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }], requests: [] } },
     };
     const teamMembersOnly = { ...conformingSnapshot, team: { members: [], requests: [] } } satisfies Snapshot<"voice">;
     const withEvent = await run({ capabilities: { lead: true as const }, snapshot: teamMembersOnly, emit: listener => listener(later) });
-    expect(state(withEvent)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.requests", "team.tasks", "team.listening", "team.policies"]);
+    expect(state(withEvent)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.requests", "team.tasks", "team.listening", "team.shift", "team.policies"]);
     expect(events(withEvent)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
   });
 

@@ -887,7 +887,7 @@ export type TaskLeadAssist = { note?: string; since: IsoTimestamp } & (
  * On a task that reached this agent by a lead's take-over: which member the call was taken from,
  * and when. The provider moves the call from one agent to another, and the lead is the new agent,
  * so the task is an ordinary assignment with the call's history -- offered whatever break the lead
- * is on, counted against no capacity, provided their voice channel is free.
+ * is on, counted against their capacity like any other call, provided they are under it and their voice channel is free.
  */
 export interface TaskTakenOver {
   memberId: UserId;
@@ -1046,7 +1046,7 @@ export type VoiceTaskCommand =
   | { type: "resume" }
   /** End the agent's channel and every channel the agent added; the caller continues on the provider's path. Gated by `endCall`. */
   | { type: "end-call" }
-  /** End the caller channel. Gated by `terminateCall`. */
+  /** End the whole call at the provider: every channel on it, the agent's, the caller's and anyone else's. Gated by `terminateCall`. */
   | { type: "terminate-call" }
   /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
   | { type: "connect-back"; dialId: DialId }
@@ -1242,6 +1242,8 @@ export interface TeamMember {
   tasks?: MemberTask[];
   /** Present while this lead is on the member's call, listening, coaching or joined; absent otherwise. */
   listening?: MemberListening;
+  /** The member's own history for the day: sign-in, sign-out, breaks and productivity. Omitted where the provider cannot say. */
+  shift?: MemberShift;
 }
 
 /** A member asking this lead to join their call, named by the member and the assignment. */
@@ -1277,10 +1279,39 @@ export type MemberTask<C extends Channel = Channel> = {
   ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
   : { onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
 
-/** The lead on this member's call, in the mode they are heard, since when. */
+/**
+ * The lead on this member's call: which of the member's calls, in the mode they are heard, since
+ * when. Its appearance on the team member list is the provider's word that the lead's audio is up,
+ * and the application opens `openAudio` on the assignment named; its disappearance closes it.
+ */
 export interface MemberListening {
+  assignmentId: AssignmentId;
   mode: ListeningMode;
   since: IsoTimestamp;
+}
+
+export type ShiftEventKind = "signed-in" | "signed-out" | "break-started" | "break-ended";
+
+export const SHIFT_EVENT_KINDS = ["signed-in", "signed-out", "break-started", "break-ended"] as const satisfies readonly ShiftEventKind[];
+
+export interface ShiftEvent {
+  at: IsoTimestamp;
+  kind: ShiftEventKind;
+}
+
+/**
+ * The member's own history for the day, about the person rather than any one call: when they
+ * signed in and out, today's totals as the provider counts them, each present only when the
+ * provider knows it, and the day's sign-in, sign-out and break events, oldest first.
+ */
+export interface MemberShift {
+  signedInAt: IsoTimestamp;
+  signedOutAt?: IsoTimestamp;
+  talkSeconds?: DurationSeconds;
+  holdSeconds?: DurationSeconds;
+  breakSeconds?: DurationSeconds;
+  tasksHandled?: number;
+  events?: ShiftEvent[];
 }
 
 /**
@@ -1510,13 +1541,6 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "task-updated"; task: Task<C> }
   | { type: "task-audio-started"; assignmentId: AssignmentId }
   | { type: "task-audio-ended"; assignmentId: AssignmentId }
-  /**
-   * The lead's channel is in a member's call -- listening, coaching or joined -- and its audio should
-   * attach: on a softphone the application opens audio on the member's assignment as it does for a
-   * task. Voice, to a login that declares `lead`, never to the member.
-   */
-  | { type: "team-audio-started"; memberId: UserId; assignmentId: AssignmentId }
-  | { type: "team-audio-ended"; memberId: UserId; assignmentId: AssignmentId }
   | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
   /**
    * How a dial the host placed ended, once, either way -- `answered` is stated, never read off

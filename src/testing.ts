@@ -83,6 +83,7 @@ const STATE_SUBJECTS = [
   "team.requests",
   "team.tasks",
   "team.listening",
+  "team.shift",
   "contacts",
   "calendar",
   "team.policies",
@@ -92,7 +93,7 @@ const STATE_SUBJECTS = [
 const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
   "task-audio-started": true, "task-audio-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
-  "team-updated": true, "team-audio-started": true, "team-audio-ended": true, "contacts-updated": true, "calendar-updated": true,
+  "team-updated": true, "contacts-updated": true, "calendar-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
 const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
@@ -140,6 +141,7 @@ function observeTeam(value: unknown, seen: Set<ContractSubject>): void {
     if (!isRecord(member)) continue;
     if (some(member.tasks)) seen.add("team.tasks");
     if (member.listening !== undefined) seen.add("team.listening");
+    if (member.shift !== undefined) seen.add("team.shift");
   }
   if (isRecord(value.policies) && Object.keys(value.policies).length > 0) seen.add("team.policies");
 }
