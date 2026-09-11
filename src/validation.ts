@@ -18,7 +18,7 @@ import {
   BREAK_KINDS,
   MONITORING_BREAK_KINDS,
   BROWSER_ISOLATION_SCHEMES,
-  HANDLING_STEPS_THAT_DIAL,
+  INTERACTION_STEPS_THAT_DIAL,
   IDLE_CAPABILITIES,
   OMNI_FAILURE_CODES,
   OMNI_SUPPORTED_PROTOCOL_VERSIONS,
@@ -55,7 +55,7 @@ import {
   type Phone,
   type MonitorMode,
   type DispositionRules,
-  type HandlingStep,
+  type InteractionStep,
   type IdleCapabilities,
   type IdleCapability,
   type PersonalBrowserCapability,
@@ -125,7 +125,7 @@ const BREAK_APPROVALS = membersOf<BreakApproval>({
 const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
   ready: true, "on-task": true, "on-break": true, reserved: true, "signed-out": true,
 });
-const HANDLING_STEPS = membersOf<HandlingStep>({
+const INTERACTION_STEPS = membersOf<InteractionStep>({
   queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
 });
 const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
@@ -617,9 +617,11 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
     into.require(manifest.runningStepReports === true, "manifest.runningStepReports", `${path}.runningStepReports`,
       "runningStepReports is declared by presence, as true; a provider that takes begin and end only omits it");
   }
-  into.require(typeof manifest.disposalSettleMs === "number" && Number.isInteger(manifest.disposalSettleMs) && manifest.disposalSettleMs > 0,
-    "manifest.disposalSettleMs", `${path}.disposalSettleMs`,
-    "disposalSettleMs is how long after an applied disposal the task-ended is owed, a positive whole number of milliseconds, stated by every provider");
+  into.require(!Object.hasOwn(manifest, "disposalSettleMs"), "manifest.completionSettleMs.renamed", `${path}.disposalSettleMs`,
+    "use completionSettleMs; the former field is not accepted");
+  into.require(typeof manifest.completionSettleMs === "number" && Number.isInteger(manifest.completionSettleMs) && manifest.completionSettleMs > 0,
+    "manifest.completionSettleMs", `${path}.completionSettleMs`,
+    "completionSettleMs is how long after an applied completion the task-ended is owed, a positive whole number of milliseconds, stated by every provider");
   if (manifest.orgLevels !== undefined) {
     if (!Array.isArray(manifest.orgLevels)) {
       into.add("manifest.orgLevels.shape", `${path}.orgLevels`, "orgLevels must be an array when present");
@@ -968,87 +970,89 @@ function validateTaskAttributes(value: unknown, path: string, into: Collector, l
   });
 }
 
-function validateHandlingHistory(value: unknown, path: string, into: Collector, task: { phase?: unknown; media?: unknown } = {}): void {
+function validateInteractionHistory(value: unknown, path: string, into: Collector, task: { phase?: unknown; media?: unknown } = {}): void {
   if (value === undefined) return;
   if (!isPlainObject(value)) {
-    into.add("task.handlingHistory.shape", path, "handlingHistory must be an object with its steps when present");
+    into.add("task.interactionHistory.shape", path, "interactionHistory must be an object with its steps when present");
     return;
   }
   // What the record adds up to before this agent: each total present when the provider knows it
   // and absent when it does not, never a plausible nought.
-  for (const field of ["handleSeconds", "holdSeconds", "queueSeconds"] as const) {
+  into.require(!Object.hasOwn(value, "handleSeconds"), "task.interactionHistory.interactionSeconds.renamed", `${path}.handleSeconds`,
+    "use interactionSeconds; the former field is not accepted");
+  for (const field of ["interactionSeconds", "holdSeconds", "queueSeconds"] as const) {
     if (value[field] !== undefined) {
-      into.require(isDurationSeconds(value[field]), `task.handlingHistory.${field}`, `${path}.${field}`,
+      into.require(isDurationSeconds(value[field]), `task.interactionHistory.${field}`, `${path}.${field}`,
         `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
     }
   }
   if (value.transfers !== undefined) {
     into.require(typeof value.transfers === "number" && Number.isInteger(value.transfers) && value.transfers >= 0,
-      "task.handlingHistory.transfers", `${path}.transfers`, "transfers must be a whole number, zero or more, or omitted when unknown");
+      "task.interactionHistory.transfers", `${path}.transfers`, "transfers must be a whole number, zero or more, or omitted when unknown");
   }
   if (!Array.isArray(value.steps)) {
-    into.add("task.handlingHistory.steps.shape", `${path}.steps`, "handlingHistory carries its steps as an array, empty when the task has had none");
+    into.add("task.interactionHistory.steps.shape", `${path}.steps`, "interactionHistory carries its steps as an array, empty when the task has had none");
     return;
   }
   let previous: number | undefined;
   value.steps.forEach((entry: unknown, index: number) => {
     const at = `${path}.steps[${index}]`;
     if (!isPlainObject(entry)) {
-      into.add("task.handlingHistory.entry", at, "each handling step must be an object");
+      into.add("task.interactionHistory.entry", at, "each interaction step must be an object");
       return;
     }
-    into.oneOf(entry.step, HANDLING_STEPS, "task.handlingHistory.step", `${at}.step`);
-    if (into.timestamp(entry.at, "task.handlingHistory.at", `${at}.at`)) {
+    into.oneOf(entry.step, INTERACTION_STEPS, "task.interactionHistory.step", `${at}.step`);
+    if (into.timestamp(entry.at, "task.interactionHistory.at", `${at}.at`)) {
       // The record is one entry per occurrence, oldest first: a second hold is a second entry
       // after the first, never a revision of it or an entry filed out of its turn.
       const instant = Date.parse(entry.at as string);
       if (previous !== undefined && instant < previous) {
-        into.add("task.handlingHistory.order", `${at}.at`, "handling steps are oldest first; this entry is earlier than the one before it");
+        into.add("task.interactionHistory.order", `${at}.at`, "interaction steps are oldest first; this entry is earlier than the one before it");
       }
       previous = instant;
     }
     if (entry.seconds !== undefined) {
       // Omitted while a leg is still running. Nought is a claim that it took no time.
       into.require(isDurationSeconds(entry.seconds) && (entry.seconds as number) > 0,
-        "task.handlingHistory.seconds", `${at}.seconds`,
+        "task.interactionHistory.seconds", `${at}.seconds`,
         "seconds must be a positive whole number; omit it while the step is still running");
     } else {
       // An open leg is one still running, and the task says whether it can be: a hold runs only while
       // the task is paused, and a mute only while its media is up. An open entry after that is a leg
       // nobody closed, which reads exactly like a leg running now.
       if (entry.step === "held") {
-        into.require(task.phase === "paused", "task.handlingHistory.held.open", `${at}.seconds`,
+        into.require(task.phase === "paused", "task.interactionHistory.held.open", `${at}.seconds`,
           `a held entry without seconds is a hold still running, and the task is ${describeValue(task.phase)}: the hold has ended, and its duration is stated`);
       }
       if (entry.step === "muted") {
-        into.require(task.media !== "ended" && task.phase !== "completing", "task.handlingHistory.muted.open", `${at}.seconds`,
-          "a muted entry without seconds is still running, but this handling's media has ended: the provider closes its open leg and states the duration; other channels may continue");
+        into.require(task.media !== "ended" && task.phase !== "completing", "task.interactionHistory.muted.open", `${at}.seconds`,
+          "a muted entry without seconds is still running, but this interaction's media has ended: the provider closes its open leg and states the duration; other channels may continue");
       }
     }
     // A muted entry carries whose the silence was, as the host reported it; no other step has it.
     // And it names the agent: the host has exactly one, the provider knows who, so an unattributed
     // muted leg is a record that dropped a fact it held rather than one it could not establish.
     if (entry.step === "muted") {
-      into.oneOf(entry.mutedBy, MUTED_BY, "task.handlingHistory.mutedBy", `${at}.mutedBy`);
-      into.require(entry.by !== undefined, "task.handlingHistory.muted.by", `${at}.by`,
+      into.oneOf(entry.mutedBy, MUTED_BY, "task.interactionHistory.mutedBy", `${at}.mutedBy`);
+      into.require(entry.by !== undefined, "task.interactionHistory.muted.by", `${at}.by`,
         "a muted leg is attributed to the login's agent: the host reported it, and the provider knows who the host's agent is");
     }
-    else if ((HANDLING_STEPS as readonly unknown[]).includes(entry.step)) {
-      into.require(entry.mutedBy === undefined, "task.handlingHistory.mutedBy.unexpected", `${at}.mutedBy`, "only a muted step says who silenced the microphone");
+    else if ((INTERACTION_STEPS as readonly unknown[]).includes(entry.step)) {
+      into.require(entry.mutedBy === undefined, "task.interactionHistory.mutedBy.unexpected", `${at}.mutedBy`, "only a muted step says who silenced the microphone");
     }
     if (entry.by !== undefined) {
-      into.require(isUserId(entry.by), "task.handlingHistory.by", `${at}.by`,
+      into.require(isUserId(entry.by), "task.interactionHistory.by", `${at}.by`,
         "by must be a non-empty user id; omit it when the person cannot be identified");
       // On `queued` nobody takes part, so there is nothing to name.
-      into.require(entry.step !== "queued", "task.handlingHistory.by.unexpected", `${at}.by`,
+      into.require(entry.step !== "queued", "task.interactionHistory.by.unexpected", `${at}.by`,
         "a queued step names nobody");
     }
     // A step that dialled says where to and, when a host placed it, which dial; no other step dialled.
-    const dialled = typeof entry.step === "string" && (HANDLING_STEPS_THAT_DIAL as readonly string[]).includes(entry.step);
+    const dialled = typeof entry.step === "string" && (INTERACTION_STEPS_THAT_DIAL as readonly string[]).includes(entry.step);
     for (const field of ["dialId", "destinationId"] as const) {
       if (entry[field] === undefined) continue;
-      if (into.filled(entry[field], `task.handlingHistory.${field}`, `${at}.${field}`, `${field} must not be empty when present`)) {
-        into.require(dialled, `task.handlingHistory.${field}.unexpected`, `${at}.${field}`,
+      if (into.filled(entry[field], `task.interactionHistory.${field}`, `${at}.${field}`, `${field} must not be empty when present`)) {
+        into.require(dialled, `task.interactionHistory.${field}.unexpected`, `${at}.${field}`,
           `${describeValue(entry.step)} dialled nothing; ${field} belongs on transferred, conferenced, or unanswered`);
       }
     }
@@ -1231,6 +1235,8 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.add("task.shape", path, "a task must be an object");
     return;
   }
+  into.require(!Object.hasOwn(task, "handlingHistory"), "task.interactionHistory.renamed", `${path}.handlingHistory`,
+    "use interactionHistory; the former field is not accepted");
   into.require(isTaskId(task.id), "task.id", `${path}.id`, "a task needs a non-empty id");
   into.require(isAllocationId(task.allocationId), "task.allocationId", `${path}.allocationId`,
     "a task names this life of itself: an allocation id minted once per offer, never reused for the life of the login");
@@ -1319,18 +1325,18 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   }
   validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into, context.levels);
-  validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into, { phase: task.phase, media: task.media });
+  validateInteractionHistory(task.interactionHistory, `${path}.interactionHistory`, into, { phase: task.phase, media: task.media });
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
-  // Media and onCall describe this agent's handling, not the continuing caller journey.
-  // Once the handling's media ends or it enters wrap, its live room is cleared. Other
-  // channels may remain connected under another handling or in IVR/queue stages.
+  // Media and onCall describe this agent's interaction, not the continuing caller journey.
+  // Once the interaction's media ends or it enters wrap, its live room is cleared. Other
+  // channels may remain connected under another interaction or in IVR/queue stages.
   if (task.phase === "completing" && task.media === "started") {
     into.add("task.media.completing", `${path}.media`,
-      "a completing task's handling media has ended or never started; it cannot still be started during wrap");
+      "a completing task's interaction media has ended or never started; it cannot still be started during wrap");
   }
   if (Array.isArray(task.onCall) && task.onCall.length > 0 && (task.phase === "completing" || task.media === "ended")) {
     into.add("task.onCall.ended", `${path}.onCall`,
-      `this handling is no longer connected (${task.phase === "completing" ? "the task is completing" : "its media ended"}); clear its onCall view without implying that other channels ended`);
+      `this interaction is no longer connected (${task.phase === "completing" ? "the task is completing" : "its media ended"}); clear its onCall view without implying that other channels ended`);
   }
   validateTaskMedia(task, task.media, context.channel, task.phase, `${path}.media`, into);
   validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
@@ -2320,34 +2326,34 @@ export function validateHostGuarantees(guarantees: unknown, path = "host.guarant
  * a task, a step, when it began, how long so far if the host says, and an explicit end that
  * carries the final duration.
  */
-export function validateHandlingReport(report: unknown, path = "handlingReport", manifest?: unknown): ProtocolViolation[] {
+export function validateInteractionReport(report: unknown, path = "interactionReport", manifest?: unknown): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(report)) {
-    into.add("handlingReport.shape", path, "a handling report must be an object");
+    into.add("interactionReport.shape", path, "an interaction report must be an object");
     return into.violations;
   }
-  into.require(isTaskId(report.taskId), "handlingReport.taskId", `${path}.taskId`, "a report names the task");
-  into.require(isAllocationId(report.allocationId), "handlingReport.allocationId", `${path}.allocationId`, "a report names the task's allocation, so a late one never lands on the next life of the id");
-  into.oneOf(report.step, HANDLING_STEPS, "handlingReport.step", `${path}.step`);
-  into.timestamp(report.at, "handlingReport.at", `${path}.at`);
+  into.require(isTaskId(report.taskId), "interactionReport.taskId", `${path}.taskId`, "a report names the task");
+  into.require(isAllocationId(report.allocationId), "interactionReport.allocationId", `${path}.allocationId`, "a report names the task's allocation, so a late one never lands on the next life of the id");
+  into.oneOf(report.step, INTERACTION_STEPS, "interactionReport.step", `${path}.step`);
+  into.timestamp(report.at, "interactionReport.at", `${path}.at`);
   // A muted leg says whose the silence was; no other leg has anyone to name for it.
-  if (report.step === "muted") into.oneOf(report.mutedBy, MUTED_BY, "handlingReport.mutedBy", `${path}.mutedBy`);
-  else if ((HANDLING_STEPS as readonly unknown[]).includes(report.step)) {
-    into.require(report.mutedBy === undefined, "handlingReport.mutedBy.unexpected", `${path}.mutedBy`, "only a muted leg says who silenced the microphone");
+  if (report.step === "muted") into.oneOf(report.mutedBy, MUTED_BY, "interactionReport.mutedBy", `${path}.mutedBy`);
+  else if ((INTERACTION_STEPS as readonly unknown[]).includes(report.step)) {
+    into.require(report.mutedBy === undefined, "interactionReport.mutedBy.unexpected", `${path}.mutedBy`, "only a muted leg says who silenced the microphone");
   }
   if (report.seconds !== undefined) {
-    into.require(isDurationSeconds(report.seconds) && (report.seconds as number) > 0, "handlingReport.seconds", `${path}.seconds`,
+    into.require(isDurationSeconds(report.seconds) && (report.seconds as number) > 0, "interactionReport.seconds", `${path}.seconds`,
       "seconds must be a positive whole number; omit it rather than report nought");
   }
   if (report.ended !== undefined) {
-    if (into.require(report.ended === true, "handlingReport.ended", `${path}.ended`, "ended is declared by presence, as true; a running leg omits it")) {
-      into.require(report.seconds !== undefined, "handlingReport.ended.seconds", `${path}.seconds`,
+    if (into.require(report.ended === true, "interactionReport.ended", `${path}.ended`, "ended is declared by presence, as true; a running leg omits it")) {
+      into.require(report.seconds !== undefined, "interactionReport.ended.seconds", `${path}.seconds`,
         "an ended leg states its final duration");
     }
   } else if (report.seconds !== undefined && manifest !== undefined) {
     // A running report crosses only to a provider that asked for one: begin and end are the whole
     // of what the rest receive.
-    into.require(isPlainObject(manifest) && manifest.runningStepReports === true, "handlingReport.running.unexpected", `${path}.seconds`,
+    into.require(isPlainObject(manifest) && manifest.runningStepReports === true, "interactionReport.running.unexpected", `${path}.seconds`,
       "this provider takes begin and end only; a running report was never asked for");
   }
   return into.violations;
@@ -2444,7 +2450,7 @@ const LEAD_ASSIST_ACTIONS = ["request", "cancel", "take-over", "leave"] as const
 const CONFERENCE_ACTIONS = ["add", "remove"] as const;
 
 
-/** Validate the exact handling/allocation target before provider command dispatch. */
+/** Validate the exact interaction/allocation target before provider command dispatch. */
 export function validateTaskCommandRequest(request: unknown, task: unknown, path = "request",
   taskContext?: Omit<TaskValidationContext, "channel">): ProtocolViolation[] {
   const into = new Collector();
@@ -2452,9 +2458,9 @@ export function validateTaskCommandRequest(request: unknown, task: unknown, path
     into.add("command.request.shape", path, "a request and the current published task are required");
     return into.violations;
   }
-  into.filled(request.taskId, "command.request.taskId", `${path}.taskId`, "name the handling task");
+  into.filled(request.taskId, "command.request.taskId", `${path}.taskId`, "name the interaction task");
   into.filled(request.allocationId, "command.request.allocationId", `${path}.allocationId`, "name its allocation");
-  into.require(request.taskId === task.id, "command.request.taskId.mismatch", `${path}.taskId`, "the command must target this exact handling");
+  into.require(request.taskId === task.id, "command.request.taskId.mismatch", `${path}.taskId`, "the command must target this exact interaction");
   into.require(request.allocationId === task.allocationId, "command.request.allocationId.mismatch", `${path}.allocationId`, "the command must target this exact allocation");
   for (const key of Object.keys(request)) into.require(["taskId", "allocationId", "command"].includes(key),
     "command.request.field", `${path}.${key}`, "unsupported task command request field");
@@ -2608,9 +2614,9 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   const inPhase = (rule: string, ...phases: string[]) =>
     into.require(typeof task.phase === "string" && phases.includes(task.phase), rule, path, `${describeValue(type)} belongs to ${phases.join(" or ")}, and the task is ${describeValue(task.phase)}`);
   // A control on the contact acts on a contact being handled. Before in-progress there is nothing
-  // to act on yet, and in completing this agent's handling has ended. The caller and other
+  // to act on yet, and in completing this agent's interaction has ended. The caller and other
   // channels may continue elsewhere; this task's phase no longer permits these controls.
-  const handling = () => inPhase("command.phase.handling", "in-progress", "paused");
+  const interaction = () => inPhase("command.phase.interaction", "in-progress", "paused");
   // A destination is one the directory offered: the id Omni sends is the id the provider published.
   const listed = (name: string) => {
     const declared = capabilities[name];
@@ -2627,17 +2633,17 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     case "call":
       inPhase("command.phase.preview", "preview");
       break;
-    case "hold": case "resume": case "pause": offered("hold"); handling(); break;
-    case "end-call": offered("endCall"); handling(); break;
+    case "hold": case "resume": case "pause": offered("hold"); interaction(); break;
+    case "end-call": offered("endCall"); interaction(); break;
     case "recording": {
       if (!offered("recording")) break;
       const policy = isPlainObject(capabilities.recording) ? capabilities.recording.provider : undefined;
       const state = isPlainObject(task.recording) ? task.recording.provider : undefined;
       into.violations.push(...validateRecordingCommandState(command, policy, state, path));
       if (command.action === "start" || command.action === "resume") {
-        handling();
+        interaction();
         into.require(task.media === "started", "recording.request.phase", path, "capture needs live media");
-      } else inPhase("command.phase.handling", "in-progress", "paused", "completing");
+      } else inPhase("command.phase.interaction", "in-progress", "paused", "completing");
       break;
     }
     case "connect-back":
@@ -2645,7 +2651,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       inPhase("command.phase.completing", "completing");
       break;
     case "transfer":
-      handling();
+      interaction();
       if (command.action === "cold") { if (offered("coldTransfer")) listed("coldTransfer"); }
       else if (command.action === "warm") { if (offered("warmTransfer")) listed("warmTransfer"); }
       else if (command.action === "complete" || command.action === "cancel") {
@@ -2654,7 +2660,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       }
       break;
     case "lead-assist":
-      handling();
+      interaction();
       if (command.action === "request" || command.action === "cancel") {
         offered("leadAssist");
         if (command.action === "cancel") {
@@ -2667,7 +2673,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       }
       break;
     case "conference": {
-      handling();
+      interaction();
       const conferencing = offered("conference");
       if (conferencing && command.action === "add") listed("conference");
       if (conferencing && command.action === "remove") {

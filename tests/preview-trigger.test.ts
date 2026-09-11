@@ -5,7 +5,7 @@ import { TaskStream } from "../src/testing.js";
 
 const at = "2026-09-11T10:00:00Z";
 const preview: Task<"voice"> = {
-  id: "handling-1", allocationId: "handling-1", title: "Preview", channel: "voice",
+  id: "interaction-1", allocationId: "interaction-1", title: "Preview", channel: "voice",
   taskType: "Campaign", capabilitySource: "queue", phase: "preview", capabilities: {}, browsers: [],
   completionMode: "agent-command", party: { number: "+919876543210" },
 };

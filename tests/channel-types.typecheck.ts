@@ -3,7 +3,7 @@
 import {
   ConnectContext,
   LoginStore,
-  HandlingReport,
+  InteractionReport,
   HostAudioOutput,
   BROWSER_ISOLATION_SCHEMES,
   OMNI_PROTOCOL_VERSION,
@@ -38,7 +38,7 @@ export const voiceManifest = {
   displayName: "Voice Provider",
   channel: "voice",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
-  disposalSettleMs: 5000,
+  completionSettleMs: 5000,
   authenticationMethods: ["browser-sso"],
   idleCapabilities: {
     dial: { destinations: "any-number" },
@@ -54,7 +54,7 @@ export const chatManifest = {
   displayName: "Chat Provider",
   channel: "chat",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
-  disposalSettleMs: 5000,
+  completionSettleMs: 5000,
   authenticationMethods: ["credentials"],
   idleCapabilities: {
     contacts: true,
@@ -313,11 +313,11 @@ export const silencedByNobody: HostAudioInput = { status: "available", localAudi
 export const flowingYetMuted: HostAudioInput = { status: "available", localAudio: {} as MediaStream, flowing: true, mutedBy: "host" };
 export const speakerOff: HostAudioOutput = { status: "available", flowing: false, mutedBy: "station" };
 export const speakerUnknown: HostAudioOutput = { status: "available" };
-export const hostMutedLeg: HandlingReport = { taskId: "call-1", allocationId: "alloc-1", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
+export const hostMutedLeg: InteractionReport = { taskId: "call-1", allocationId: "alloc-1", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
 // @ts-expect-error A muted leg says whose the silence was.
-export const anonymousMutedLeg: HandlingReport = { taskId: "call-1", allocationId: "alloc-1", step: "muted", at: "2026-08-21T09:00:00Z" };
+export const anonymousMutedLeg: InteractionReport = { taskId: "call-1", allocationId: "alloc-1", step: "muted", at: "2026-08-21T09:00:00Z" };
 // @ts-expect-error Only a muted leg has anyone to name for the silence.
-export const mutedHold: HandlingReport = { taskId: "call-1", allocationId: "alloc-1", step: "held", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
+export const mutedHold: InteractionReport = { taskId: "call-1", allocationId: "alloc-1", step: "held", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
 export const lyingHost: Host = {
   // @ts-expect-error A guarantee is declared by presence; a host that does not make one omits it, never false.
   guarantees: { personConsent: false }, report: () => noAudioHere, subscribe: () => () => undefined };
@@ -328,11 +328,11 @@ export const staleOfferMode = { type: "task-offered", task: { ...emailTask, id: 
 export const spokenDiagnostic = { type: "diagnostic", expected: "a party arrives with a name", observed: "party 4471 arrived id-only", taskId: "call-42" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error A diagnostic says what was observed; a rule broken with nothing observed is half a sentence.
 export const halfDiagnostic = { type: "diagnostic", expected: "a party arrives with a name" } satisfies ProviderEvent<"voice">;
-export const recordedTask = { ...emailTask, id: "email-14", handlingHistory: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], handleSeconds: 312, transfers: 1 } } satisfies Task<"email">;
-export const bareStepsTask = { ...emailTask, id: "email-15", handlingHistory: { steps: [] } } satisfies Task<"email">;
+export const recordedTask = { ...emailTask, id: "email-14", interactionHistory: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], interactionSeconds: 312, transfers: 1 } } satisfies Task<"email">;
+export const bareStepsTask = { ...emailTask, id: "email-15", interactionHistory: { steps: [] } } satisfies Task<"email">;
 export const arrayRecordTask = { ...emailTask, id: "email-16",
   // @ts-expect-error The record is an object carrying its steps and what they add up to, not a bare array.
-  handlingHistory: [{ step: "answered", at: "2026-08-21T00:59:41Z" }] } satisfies Task<"email">;
+  interactionHistory: [{ step: "answered", at: "2026-08-21T00:59:41Z" }] } satisfies Task<"email">;
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;
@@ -390,3 +390,10 @@ export const teamHold: TeamPolicy = { setting: "off", setBy: "team" };
 export const siteRecording: TeamPolicy = { setting: "on", setBy: "site", lockedBy: "site" };
 
 // team may leave to the person.
+
+// @ts-expect-error renamed away: the former report export is not a compatibility alias
+import type { HandlingReport } from "../src/index.js";
+// @ts-expect-error renamed away: task snapshots use the interaction field
+export type FormerHistoryField = Task["handlingHistory"];
+// @ts-expect-error renamed away: provider manifests require the completion bound
+export type FormerCompletionBound = Manifest["disposalSettleMs"];
