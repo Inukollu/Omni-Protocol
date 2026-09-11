@@ -1,3 +1,13 @@
+# Current preview correction and voice scope — 2026-09-11
+
+PR108 https://github.com/Inukollu/Omni-Protocol/pull/108; branch fix/break-ordering-checks; worktree /private/tmp/omni-break-ordering. Preview implementation 5273995dbcde3a2068be2f6c901929d1e09b47cc; scope documentation 8286e8400c3f98d1162e7161764f9b354bbedc47.
+
+PreviewDeadline is calls|host-calls|waits. waits leaves the task in preview after its preparation target, keeps Call available, and neither dials nor expires/disposes. Unlimited mode omits both deadline fields. Former expires deadline rejected by types/runtime; earlier candidate artifact1d75f293 and guidance are superseded for this field. No new packed adoption artifact generated this turn.
+
+Voice task scope explicitly documents the agent's workspace/tools/permissions/media participation/wrap within a wider caller journey. Disposing the agent handling does not imply caller-channel/journey termination. No new journey fields or command lifecycle redesign performed.
+
+Full pnpm check passed408 tests/build/types/guide/package for preview correction. Subsequent scope-only prose passed both guide tests and diff check. No protocol/package version changes, manual release, live test or merge. Await latest CI. Existing monitor below remains active; retain worktree/branch while open. Default handover preserved.
+
 # Preview trigger ownership — 2026-09-11
 
 - PR108 https://github.com/Inukollu/Omni-Protocol/pull/108 amended; implementation 1d75f2937f9ba20838e53a2e76835193cecb3487; branch fix/break-ordering-checks; worktree /private/tmp/omni-break-ordering.
@@ -93,6 +103,6 @@ Validation: full build/typecheck plus 392 tests passed; guide-format check faile
 <!-- pr107-monitor:end -->
 
 <!-- break-monitor:begin -->
-Monitor omni-protocol-pr108-break-ordering: OPEN at 2026-09-11T03:08:00.900316+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr108-break-ordering: OPEN at 2026-09-11T03:34:20.022984+00:00. Await CI/review; monitor never merges.
 PID 66088; command python3 /private/tmp/omni-break-ordering/.agent-memory/runtime/break-monitor.py; state /private/tmp/omni-break-ordering/.agent-memory/runtime/break.state.json; log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.log; PID file /private/tmp/omni-break-ordering/.agent-memory/runtime/break.pid; process log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-ordering, branch fix/break-ordering-checks, PR https://github.com/Inukollu/Omni-Protocol/pull/108.
 <!-- break-monitor:end -->
