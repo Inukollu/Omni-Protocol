@@ -1,3 +1,12 @@
+# Current PR119 revision: On-break state
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation 76a1e38dfb7870b63d669f923a3b7086d7f4a184.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+BreakApproval on-break replaces in-effect; diagnostic break.on-break.tasks and ordering/conformance checks updated. Old value rejected without alias. granted, decisionReason, starting-after-task and existing task/listening prerequisites preserved. Team member availability unchanged. Hosts/providers must update together; no version changes.
+Build/type checks, all 436 tests, guide examples, package verification and diff check passed. Log /private/tmp/on-break-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. Existing named monitor remains responsible. No merge or release performed.
+
 # Current PR119 revision: Request unavailable reason
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
@@ -389,6 +398,6 @@ PID 66818; command python3 /private/tmp/omni-end-forced-break/.agent-memory/runt
 <!-- end-forced-break-monitor:end -->
 
 <!-- set-break-policy-monitor:begin -->
-Monitor omni-protocol-pr119-set-break-policy: OPEN at 2026-09-11T09:29:33.550655+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr119-set-break-policy: OPEN at 2026-09-11T09:37:40.444210+00:00. Await CI/review; monitor never merges.
 PID 61280; command python3 /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy-monitor.py; state /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.state.json; log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.log; PID file /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.pid; process log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-set-break-policy, branch refactor/set-break-policy, PR https://github.com/Inukollu/Omni-Protocol/pull/119.
 <!-- set-break-policy-monitor:end -->
