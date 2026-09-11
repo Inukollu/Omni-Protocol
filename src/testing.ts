@@ -74,7 +74,7 @@ const STATE_SUBJECTS = [
   "task.monitoring",
   "task.media",
   "task.acceptance",
-  "task.dispositions",
+  "task.outcomes",
   "task.destinations",
   "task.custom",
   "task.locked",
@@ -117,7 +117,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (value.media !== undefined) seen.add("task.media");
   if (value.acceptance !== undefined) seen.add("task.acceptance");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
-  if (isRecord(capabilities.dispositions)) seen.add("task.dispositions");
+  if (isRecord(capabilities.outcomes)) seen.add("task.outcomes");
   for (const directory of ["coldTransfer", "warmTransfer", "conference"]) {
     const declared = capabilities[directory];
     if (isRecord(declared) && some(declared.destinations)) seen.add("task.destinations");
@@ -1853,9 +1853,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   const completable = latestTask().phase === "completing" || latestTask().phase === "in-progress" || latestTask().phase === "paused";
   if (latestTask().completionMode === "agent-command" && completable) {
     const command: Record<string, unknown> = { type: "complete" };
-    const dispositions = isRecord(latestTask().capabilities) ? (latestTask().capabilities as Record<string, unknown>).dispositions : undefined;
-    if (isRecord(dispositions) && dispositions.required === true && Array.isArray(dispositions.codes) && isRecord(dispositions.codes[0])) {
-      command.disposition = (dispositions.codes[0] as Record<string, unknown>).id;
+    const outcomes = isRecord(latestTask().capabilities) ? (latestTask().capabilities as Record<string, unknown>).outcomes : undefined;
+    if (isRecord(outcomes) && outcomes.required === true && Array.isArray(outcomes.codes) && isRecord(outcomes.codes[0])) {
+      command.outcome = (outcomes.codes[0] as Record<string, unknown>).id;
     }
     if (await send(command) !== undefined) {
       // applied says the provider has completed the task, and its ending follows within the bound

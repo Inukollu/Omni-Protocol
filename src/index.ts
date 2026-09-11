@@ -623,16 +623,16 @@ export interface ScheduledActivity {
 // Task capabilities.
 // ---------------------------------------------------------------------------
 
-export interface DispositionCode {
+export interface OutcomeCode {
   id: string;
   label: string;
   group?: string;
 }
 
-export interface DispositionRules {
+export interface OutcomeRules {
   required?: boolean;
   notes?: "required" | "optional" | "none";
-  codes?: DispositionCode[];
+  codes?: OutcomeCode[];
 }
 
 /**
@@ -665,7 +665,7 @@ export interface CustomCapability {
 
 export interface SharedTaskCapabilities {
   browsers?: true;
-  dispositions?: true | DispositionRules;
+  outcomes?: true | OutcomeRules;
   custom?: CustomCapability[];
 }
 
@@ -1065,8 +1065,8 @@ export const TASK_COMMAND_NAMES = {
 export type TaskCommandName<C extends keyof typeof TASK_COMMAND_NAMES> =
   (typeof TASK_COMMAND_NAMES)[C][number];
 
-export interface DispositionPayload {
-  disposition?: string;
+export interface OutcomePayload {
+  outcome?: string;
   notes?: string;
 }
 
@@ -1108,19 +1108,19 @@ export type VoiceTaskCommand =
   | { type: "conference"; action: "remove"; destinationId: string; party?: never }
   | { type: "conference"; action: "remove"; party: true; destinationId?: never }
   | (RecordingCommand & { source: "provider" })
-  | ({ type: "complete" } & DispositionPayload);
+  | ({ type: "complete" } & OutcomePayload);
 
 export type ChatTaskCommand =
   | { type: "accept" }
   | { type: "decline" }
   | { type: "pause" }
   | { type: "resume" }
-  | ({ type: "complete" } & DispositionPayload);
+  | ({ type: "complete" } & OutcomePayload);
 
 export type EmailTaskCommand =
   | { type: "accept" }
   | { type: "decline" }
-  | ({ type: "complete" } & DispositionPayload);
+  | ({ type: "complete" } & OutcomePayload);
 
 export interface CustomTaskCommand {
   type: "custom";

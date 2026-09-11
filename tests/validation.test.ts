@@ -404,10 +404,10 @@ describe("validateTask", () => {
     expect(tab({ sharedSession: false })).toEqual([]);
     // renamed away: a browser still saying reuse has not said whether its session is shared.
     expect(tab({ reuse: false })).toEqual(["task.browser.sharedSession"]);
-    const notes = (value: string) => rules(validateTask(task({ capabilities: { dispositions: { required: true, notes: value, codes: [{ id: "resolved", label: "Resolved" }] } } }), { channel: "voice" }));
+    const notes = (value: string) => rules(validateTask(task({ capabilities: { outcomes: { required: true, notes: value, codes: [{ id: "resolved", label: "Resolved" }] } } }), { channel: "voice" }));
     expect(notes("none")).toEqual([]);
     // renamed away: no notes field is none; hidden is what a URL can be.
-    expect(notes("hidden")).toEqual(["task.dispositions.notes"]);
+    expect(notes("hidden")).toEqual(["task.outcomes.notes"]);
     const offer = (acceptance: string) => rules(validateTask(task({ phase: "pending", acceptance }), { channel: "voice" }));
     expect(offer("consent")).toEqual([]);
     // renamed away: acceptance is by consent or automatic.
@@ -1144,12 +1144,12 @@ describe("the other direction, everywhere", () => {
     expect(directory({ destinations: [{ ...tier2, kind: "queue" }] })).toEqual([]);
   });
 
-  it("gives a required disposition policy a code to collect", () => {
-    const policy = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { dispositions: over } }), voice));
+  it("gives a required outcome policy a code to collect", () => {
+    const policy = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { outcomes: over } }), voice));
     expect(policy({ required: true, codes: [{ id: "resolved", label: "Resolved" }] })).toEqual([]);
     expect(policy({ required: false })).toEqual([]);
-    expect(policy({ required: true })).toEqual(["task.dispositions.required.codes"]);
-    expect(policy({ required: true, codes: [] })).toEqual(["task.dispositions.required.codes"]);
+    expect(policy({ required: true })).toEqual(["task.outcomes.required.codes"]);
+    expect(policy({ required: true, codes: [] })).toEqual(["task.outcomes.required.codes"]);
   });
 
   it("keeps browser names and attribute keys unique within a task", () => {
@@ -1313,16 +1313,16 @@ describe("rules that had no test", () => {
     expect(m({ idleCapabilities: { personalBrowser: { access: "block-all" } } })).toEqual(["manifest.personalBrowser.access.shape", "manifest.personalBrowser.accessAppliesTo"]);
   });
 
-  it("disposition policies and codes", () => {
-    const policy = (over: unknown) => rules(validateTask(task({ capabilities: { dispositions: over } }), voice));
+  it("outcome policies and codes", () => {
+    const policy = (over: unknown) => rules(validateTask(task({ capabilities: { outcomes: over } }), voice));
     const resolved = { id: "resolved", label: "Resolved" };
     expect(policy({ required: false, notes: "optional", codes: [resolved] })).toEqual([]);
-    expect(policy({ required: "yes" })).toEqual(["task.dispositions.required"]);
-    expect(policy({ notes: "sometimes" })).toEqual(["task.dispositions.notes"]);
-    expect(policy({ codes: "resolved" })).toEqual(["task.dispositions.codes"]);
-    expect(policy({ codes: [{ label: "Resolved" }] })).toEqual(["task.disposition.id"]);
-    expect(policy({ codes: [{ id: "resolved" }] })).toEqual(["task.disposition.label"]);
-    expect(policy({ codes: [resolved, resolved] })).toEqual(["task.disposition.unique"]);
+    expect(policy({ required: "yes" })).toEqual(["task.outcomes.required"]);
+    expect(policy({ notes: "sometimes" })).toEqual(["task.outcomes.notes"]);
+    expect(policy({ codes: "resolved" })).toEqual(["task.outcomes.codes"]);
+    expect(policy({ codes: [{ label: "Resolved" }] })).toEqual(["task.outcome.id"]);
+    expect(policy({ codes: [{ id: "resolved" }] })).toEqual(["task.outcome.label"]);
+    expect(policy({ codes: [resolved, resolved] })).toEqual(["task.outcome.unique"]);
   });
 
   it("custom controls", () => {
@@ -1823,7 +1823,7 @@ describe("validateTaskCommand", () => {
     expect(rules(validateTaskCommand({ type: "conference", action: "remove", party: true, destinationId: "tier2" }))).toEqual(["command.conference.remove.target"]);
     expect(rules(validateTaskCommand({ type: "recording", source: "provider", requestId: "q", observationId: "o", recordingId: "r", action: "rewind" }))).toEqual(["recording.command.action"]);
     expect(rules(validateTaskCommand({ type: "lead-assist", action: "join" }))).toEqual(["command.leadAssist.action"]);
-    expect(rules(validateTaskCommand({ type: "complete", disposition: "" }))).toEqual(["command.complete.disposition"]);
+    expect(rules(validateTaskCommand({ type: "complete", outcome: "" }))).toEqual(["command.complete.outcome"]);
   });
 
   it("holds a command only to a task the wire published, and names a mapped one", () => {
@@ -1836,21 +1836,21 @@ describe("validateTaskCommand", () => {
     expect(cmd({ type: "hold" }, task({ capabilities: {} }))).toEqual(["command.capability.hold"]);
   });
 
-  it("holds complete to the dispositions the task published, both ways", () => {
-    const wrapping = (dispositions: unknown) => task({ phase: "completing", capabilities: dispositions === undefined ? {} : { dispositions } });
+  it("holds complete to the outcomes the task published, both ways", () => {
+    const wrapping = (outcomes: unknown) => task({ phase: "completing", capabilities: outcomes === undefined ? {} : { outcomes } });
     const codes = { codes: [{ id: "resolved", label: "Resolved" }, { id: "callback", label: "Callback" }] };
-    expect(cmd({ type: "complete", disposition: "resolved" }, wrapping(codes))).toEqual([]);
-    expect(cmd({ type: "complete", disposition: "escalated" }, wrapping(codes))).toEqual(["command.complete.disposition.unknown"]);
-    expect(cmd({ type: "complete" }, wrapping({ ...codes, required: true }))).toEqual(["command.complete.disposition.required"]);
-    expect(cmd({ type: "complete", disposition: "resolved" }, wrapping({ ...codes, required: true }))).toEqual([]);
-    expect(cmd({ type: "complete", disposition: "resolved", notes: "Called back" }, wrapping({ ...codes, notes: "optional" }))).toEqual([]);
-    expect(cmd({ type: "complete", disposition: "resolved", notes: "Called back" }, wrapping({ ...codes, notes: "none" }))).toEqual(["command.complete.notes.unexpected"]);
-    expect(cmd({ type: "complete", disposition: "resolved" }, wrapping({ ...codes, notes: "required" }))).toEqual(["command.complete.notes.required"]);
+    expect(cmd({ type: "complete", outcome: "resolved" }, wrapping(codes))).toEqual([]);
+    expect(cmd({ type: "complete", outcome: "escalated" }, wrapping(codes))).toEqual(["command.complete.outcome.unknown"]);
+    expect(cmd({ type: "complete" }, wrapping({ ...codes, required: true }))).toEqual(["command.complete.outcome.required"]);
+    expect(cmd({ type: "complete", outcome: "resolved" }, wrapping({ ...codes, required: true }))).toEqual([]);
+    expect(cmd({ type: "complete", outcome: "resolved", notes: "Called back" }, wrapping({ ...codes, notes: "optional" }))).toEqual([]);
+    expect(cmd({ type: "complete", outcome: "resolved", notes: "Called back" }, wrapping({ ...codes, notes: "none" }))).toEqual(["command.complete.notes.unexpected"]);
+    expect(cmd({ type: "complete", outcome: "resolved" }, wrapping({ ...codes, notes: "required" }))).toEqual(["command.complete.notes.required"]);
     // A bare control publishes no code to choose, so complete carries none.
     expect(cmd({ type: "complete" }, wrapping(undefined))).toEqual([]);
-    expect(cmd({ type: "complete", disposition: "resolved" }, wrapping(undefined))).toEqual(["command.complete.disposition.unexpected"]);
+    expect(cmd({ type: "complete", outcome: "resolved" }, wrapping(undefined))).toEqual(["command.complete.outcome.unexpected"]);
     expect(cmd({ type: "complete" }, wrapping(true))).toEqual([]);
-    expect(cmd({ type: "complete", disposition: "whatever the agent typed" }, wrapping(true))).toEqual(["command.complete.disposition.unexpected"]);
+    expect(cmd({ type: "complete", outcome: "whatever the agent typed" }, wrapping(true))).toEqual(["command.complete.outcome.unexpected"]);
   });
 
   it("holds a custom command to a control the task published, with what the control asked for", () => {
@@ -1941,7 +1941,7 @@ describe("validateTaskCommand", () => {
     // The phases with their own commands are untouched by it.
     expect(cmd({ type: "answer" }, task({ phase: "pending" }))).toEqual([]);
     expect(cmd({ type: "connect-back", dialId: "dial-1" }, task({ phase: "completing", capabilities: { connectBack: true } }))).toEqual([]);
-    expect(cmd({ type: "complete", disposition: "resolved" }, task({ phase: "completing", capabilities: { dispositions: { codes: [{ id: "resolved", label: "Resolved" }] } } }))).toEqual([]);
+    expect(cmd({ type: "complete", outcome: "resolved" }, task({ phase: "completing", capabilities: { outcomes: { codes: [{ id: "resolved", label: "Resolved" }] } } }))).toEqual([]);
   });
 
   it("holds a command to the task's channel, capabilities, phase and state", () => {
@@ -2245,5 +2245,24 @@ describe("interaction API migration", () => {
       .toContain("manifest.completionSettleMs");
     expect(rules(validateManifest(manifest({ disposalSettleMs: 5000 }))))
       .toContain("manifest.completionSettleMs.renamed");
+  });
+});
+
+
+describe("outcome API migration", () => {
+  it("rejects former capability and command fields across channels, including mixed names", () => {
+    const outcomes = { required: true, codes: [{ id: "resolved", label: "Resolved" }] };
+    for (const channel of ["voice", "chat", "email"] as const) {
+      const current = task({ channel, phase: "completing", capabilities: { outcomes } });
+      expect(validateTask(current, { channel })).toEqual([]);
+      expect(validateTaskCommand({ type: "complete", outcome: "resolved" }, current)).toEqual([]);
+      for (const capabilities of [{ dispositions: outcomes }, { dispositions: outcomes, outcomes }]) {
+        expect(rules(validateTask(task({ channel, phase: "completing", capabilities }), { channel })))
+          .toContain("task.capability.unknown");
+      }
+      for (const command of [{ type: "complete", disposition: "resolved" }, { type: "complete", disposition: "resolved", outcome: "resolved" }]) {
+        expect(rules(validateTaskCommand(command, current))).toContain("command.field");
+      }
+    }
   });
 });

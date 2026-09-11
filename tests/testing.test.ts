@@ -864,7 +864,7 @@ const conformingSnapshot = {
     capabilities: {
       browsers: true,
       hold: true,
-      dispositions: { required: true, notes: "optional", codes: [{ id: "resolved", label: "Resolved" }, { id: "callback", label: "Callback needed" }] },
+      outcomes: { required: true, notes: "optional", codes: [{ id: "resolved", label: "Resolved" }, { id: "callback", label: "Callback needed" }] },
       coldTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] },
       custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary", render: "inline" } }],
     },
@@ -1097,7 +1097,7 @@ describe("exerciseAdapter", () => {
       "event.task-media-started", "event.task-media-ended", "event.task-ended", "event.dial-outcome", "event.announcement", "event.queue-summary",
       "event.diagnostic", "event.team-updated", "event.contacts-updated", "event.calendar-updated",
     ];
-    // The rich task carries browsers, history, a disposition policy, transfer destinations and a
+    // The rich task carries browsers, history, an outcome policy, transfer destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
     expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.monitoring", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests", "team.policies"]);
@@ -1105,7 +1105,7 @@ describe("exerciseAdapter", () => {
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.interactionHistory", "task.onCall", "task.leadAssist", "task.assisting", "task.monitoring",
-      "task.media", "task.acceptance", "task.dispositions", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
+      "task.media", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.imposed", "team.members", "team.requests",
       "contacts", "scheduledActivities", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot or on an event.
@@ -1305,7 +1305,7 @@ describe("exerciseAdapter drives one call", () => {
     // Envelope ids are unique within the login, across every client of it: a reloaded adapter carries on, never restarts.
     const id = () => `drv-${drvSeq += 1}`;
     const base: Record<string, unknown> = {
-      ...conformingSnapshot.tasks[0]!, id: "call-77", allocationId: myAllocation, capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), dispositions: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
+      ...conformingSnapshot.tasks[0]!, id: "call-77", allocationId: myAllocation, capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), outcomes: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
       browsers: [], interactionHistory: undefined, media: undefined, party: { name: "Maya Rao", number: "+919876543210" },
     };
     let phase = "pending";
@@ -1499,7 +1499,7 @@ describe("exerciseAdapter drives one call", () => {
     const result = await drive(driveable());
     expect(result.violations).toEqual([]);
     // The subjects a run without a drive lists as never reached are now reached.
-    for (const subject of ["tasks", "task.onCall", "task.media", "task.acceptance", "task.dispositions", "event.task-offered", "event.task-updated", "event.task-media-started", "event.task-media-ended", "event.task-ended"] as const) {
+    for (const subject of ["tasks", "task.onCall", "task.media", "task.acceptance", "task.outcomes", "event.task-offered", "event.task-updated", "event.task-media-started", "event.task-media-ended", "event.task-ended"] as const) {
       expect(result.notExercised).not.toContain(subject);
     }
     // The control: without the drive the same adapter reaches none of the call.

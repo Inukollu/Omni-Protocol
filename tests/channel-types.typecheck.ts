@@ -14,7 +14,7 @@ import {
   type Manifest,
   type ProviderEvent,
   type Host,
-  type DispositionRules,
+  type OutcomeRules,
   type HostAudioInput,
   type AcceptanceMode,
   type CapacityResult,
@@ -83,7 +83,7 @@ export const emailTask = {
   title: "Reply to customer",
   channel: "email",
   taskType: "Customer Support",
-  capabilities: { browsers: true, dispositions: true },
+  capabilities: { browsers: true, outcomes: true },
   capabilitySource: "queue",
   allocationId: "alloc-1",
   phase: "in-progress",
@@ -146,7 +146,7 @@ export const timedProviderAutomaticTask = { ...emailTask, id: "email-4", complet
 export const untimedProviderAutomaticTask: Task<"email"> = { ...emailTask, id: "email-5", completionMode: "provider-automatic", wrapAllowance: undefined };
 
 // Connecting back belongs to voice: the capability and the command exist on no other channel.
-export const connectBackCapableVoiceTask = { ...emailTask, id: "call-9", channel: "voice", capabilities: { connectBack: true, dispositions: true } } satisfies Task<"voice">;
+export const connectBackCapableVoiceTask = { ...emailTask, id: "call-9", channel: "voice", capabilities: { connectBack: true, outcomes: true } } satisfies Task<"voice">;
 export const voiceConnectBack: TaskCommand<"voice"> = { type: "connect-back", dialId: "dial-1" };
 // @ts-expect-error Connecting back dials, and every dial carries the host's dialId.
 export const unplacedConnectBack: TaskCommand<"voice"> = { type: "connect-back" };
@@ -275,7 +275,7 @@ export const stalePolicy = { setting: "on", setBy: "team" } satisfies TeamPolicy
 // @ts-expect-error What the team leaves to the individual is person, the level's own word.
 export const staleAgentPolicy = { setting: "agent", setBy: "team" } satisfies TeamPolicy;
 // @ts-expect-error No notes field is none; hidden is what a URL can be.
-export const staleNotes = { required: true, notes: "hidden", codes: [] } satisfies DispositionRules;
+export const staleNotes = { required: true, notes: "hidden", codes: [] } satisfies OutcomeRules;
 // @ts-expect-error A microphone is available or unavailable.
 export const staleMicrophone: HostAudioInput = { status: "ready", localAudio: {} as MediaStream, flowing: true };
 // @ts-expect-error Acceptance is by consent or automatic.
@@ -397,3 +397,10 @@ import type { HandlingReport } from "../src/index.js";
 export type FormerHistoryField = Task["handlingHistory"];
 // @ts-expect-error renamed away: provider manifests require the completion bound
 export type FormerCompletionBound = Manifest["disposalSettleMs"];
+
+// @ts-expect-error renamed away: outcome types replace the former export, without aliases
+import type { DispositionRules } from "../src/index.js";
+// @ts-expect-error renamed away: complete commands carry outcome, not the former field
+export const formerOutcomeCommand: TaskCommand = { type: "complete", disposition: "resolved" };
+// @ts-expect-error renamed away: task capabilities expose outcomes
+export type FormerOutcomeCapability = Task["capabilities"]["dispositions"];
