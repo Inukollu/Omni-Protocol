@@ -26,6 +26,7 @@ import {
   type Snapshot,
   type Task,
   type TeamMembers,
+  type ForcedBreak,
   type TaskBrowser,
   type TaskCommand,
   type OnCall,
@@ -153,25 +154,28 @@ export const chatConnectBackCapability: Task<"chat">["capabilities"] = { connect
 // @ts-expect-error Email has nobody to connect back to.
 export const emailConnectBack: TaskCommand<"email"> = { type: "connect-back", dialId: "dial-1" };
 
-// A transfer is cold or warm with a destination, or one of the two steps that finish a warm one.
+// The agent hands a call to nobody: lead assist is how help arrives, and a transfer is not a command.
+// @ts-expect-error renamed away: transfer, cold or warm, is gone; a lead is asked onto the call instead.
 export const coldTransfer: TaskCommand<"voice"> = { type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" };
-// @ts-expect-error renamed away: a transfer says whether it is cold or warm; an arm with no action is gone.
-export const actionlessTransfer: TaskCommand<"voice"> = { type: "transfer", dialId: "dial-2", destinationId: "tier2" };
-export const consult: TaskCommand<"voice"> = { type: "transfer", action: "warm", dialId: "dial-3", destinationId: "tier2" };
-// @ts-expect-error A transfer dials its destination, so it carries the host's dialId.
-export const unplacedTransfer: TaskCommand<"voice"> = { type: "transfer", destinationId: "tier2" };
+// @ts-expect-error renamed away: the consult steps went with the warm transfer.
 export const completeConsultation: TaskCommand<"voice"> = { type: "transfer", action: "complete" };
-export const cancelConsultation: TaskCommand<"voice"> = { type: "transfer", action: "cancel" };
-// @ts-expect-error A transfer says where the customer goes, or which consult step it is.
-export const aimlessTransfer: TaskCommand<"voice"> = { type: "transfer" };
-// @ts-expect-error Completing a consultation names no destination: there is exactly one already.
-export const overdeterminedCompletion: TaskCommand<"voice"> = { type: "transfer", action: "complete", destinationId: "tier2" };
+// @ts-expect-error renamed away: no directory is offered for a transfer.
+export const transferDirectory: Task<"voice">["capabilities"] = { coldTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } };
+// A follow-up promised on the call goes on the calendar: a time, and a note where the agent wrote one.
+export const scheduleFollowUp: TaskCommand<"voice"> = { type: "schedule", at: "2026-08-22T10:00:00Z", note: "Call back about the refund" };
+export const scheduleCapability: Task<"voice">["capabilities"] = { schedule: true };
+// @ts-expect-error A schedule names the time; without one there is nothing to put on the calendar.
+export const untimedSchedule: TaskCommand<"voice"> = { type: "schedule", note: "Call back" };
+// @ts-expect-error A chat has no call to schedule from.
+export const chatSchedule: TaskCommand<"chat"> = { type: "schedule", at: "2026-08-22T10:00:00Z" };
 // Who is on the call is voice-only, like the commands that bring people onto it.
-export const consultingVoiceTask = { ...emailTask, assignmentId: "call-10", channel: "voice", capabilities: { warmTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } }, phase: "paused", onCall: [{ role: "consulted", destinationId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
+export const conferencingVoiceTask = { ...emailTask, assignmentId: "call-10", channel: "voice", capabilities: { conference: { destinations: [{ id: "tier2", label: "Tier 2" }] } }, phase: "paused", onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
 // @ts-expect-error A dialled entry says where it stands: ringing or joined.
-export const unstagedConsulted: OnCall = { role: "consulted", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
+export const unstagedConferenced: OnCall = { role: "conferenced", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
+// @ts-expect-error renamed away: nobody is consulted on a call; a colleague dialled in is conferenced.
+export const consultedEntry: OnCall = { role: "consulted", destinationId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error Email has nobody on a call.
-export const consultingEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-6", onCall: [{ role: "consulted", destinationId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
+export const conferencingEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-6", onCall: [{ role: "conferenced", destinationId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
 // @ts-expect-error A party was dialled from nowhere and names no destination.
 export const misplacedParty: OnCall = { role: "party", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
 // The party being connected back carries the host's dial and its stage, together and only together.
@@ -205,7 +209,9 @@ export const voiceDialOutcomes: Manifest<"voice">["dialOutcomes"] = ["answered",
 export const chatDialOutcomes: Manifest<"chat">["dialOutcomes"] = ["answered", "no-answer"];
 
 // Preview: the record is on the agent's screen; they press Call, which dials. Voice only.
-export const previewTask = { ...emailTask, assignmentId: "call-13", channel: "voice", capabilities: {}, phase: "preview", previewEndsAt: "2026-08-21T09:02:00Z", atDeadline: "provider-dials" } satisfies Task<"voice">;
+export const previewTask = { ...emailTask, assignmentId: "call-13", channel: "voice", capabilities: {}, phase: "preview", previewEndsInSeconds: 120, atDeadline: "provider-dials" } satisfies Task<"voice">;
+// @ts-expect-error renamed away: a deadline is stated as the seconds left, never as an instant to compare clocks against.
+export const previewByTheClock: Task<"voice"> = { ...previewTask, previewEndsAt: "2026-08-21T09:02:00Z" };
 export const pressCall: TaskCommand<"voice"> = { type: "dial", dialId: "dial-6" };
 // @ts-expect-error Pressing Call dials, and every dial carries the host's dialId.
 export const unplacedCall: TaskCommand<"voice"> = { type: "dial" };
@@ -364,7 +370,16 @@ export const completedSilently: CompleteAuthenticationResult = { status: "authen
 export const bareSnapshot: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
 // @ts-expect-error Capabilities live on the login, not the snapshot.
 export const staleSnapshot: Snapshot<"voice"> = { ...bareSnapshot, sessionCapabilities: {} };
-export const teamMembers: TeamMembers = { members: [], requests: [] };
+export const teamMembers: TeamMembers = { members: [] };
+// A member's ask rides on the member; the list carries no request of its own.
+export const askingMember: TeamMembers = { members: [{ id: "A-2", availability: "on-task", request: { assignmentId: "alloc-7", note: "Refund dispute", since: "2026-08-21T09:04:00Z" } }] };
+// @ts-expect-error renamed away: the requests list is gone; each member carries their own request.
+export const requestList: TeamMembers = { members: [], requests: [] };
+// A break the platform forced itself names no person: `provider` says so.
+export const providerForcedBreak: ForcedBreak = { by: "provider" };
+export const leadForcedBreak: ForcedBreak = { by: "L-9", expectedDurationMs: 600000 };
+// @ts-expect-error Somebody forced it: a lead by user id, or the provider.
+export const anonymousForcedBreak: ForcedBreak = {};
 // @ts-expect-error What the lead may do is on the login, not the team member list.
 export const teamMembersWithControl: TeamMembers = { members: [], breakControl: true };
 
@@ -517,3 +532,6 @@ export type UserDetailsMethod = import("../src/index.js").Connection["getUserDet
 export type RetiredDescribeUsers = import("../src/index.js").Connection["describeUsers"];
 // @ts-expect-error Use validateUserDetails.
 import { validateDescribedUsers } from "../src/validation.js";
+
+// @ts-expect-error renamed away: LeadRequest went with the requests list; a member carries MemberRequest
+import type { LeadRequest } from "../src/index.js";

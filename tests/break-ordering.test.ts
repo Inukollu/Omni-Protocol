@@ -245,7 +245,7 @@ describe("break prerequisites", () => {
 
 describe("lead commands", () => {
   const lead = { ...context, authentication: { ...context.authentication, capabilities: { lead: true as const } },
-    team: { members: [{ id: "member", availability: "ready", break: "awaiting-approval" }], requests: [] },
+    team: { members: [{ id: "member", availability: "ready", break: "awaiting-approval" }] },
     memberBreak: { ...state("not-requested"), reasons: [{ id: "bio", label: "Bio" }] },
   };
   it("requires current decision eligibility, target membership and explicit lead permission", () => {
@@ -253,8 +253,8 @@ describe("lead commands", () => {
     expect(validateTeamCommand(request, lead)).toEqual([]);
     expect(validateTeamCommand({ command: { ...request.command, decision: "denied" } }, lead)).toEqual([]);
     expect(validateTeamCommand({ command: { ...request.command, type: "decide" } }, lead).map(v => v.rule)).toContain("team.command.type");
-    for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [], requests: [] } },
-      { ...lead, team: { members: [{ id: "member", break: "granted" }], requests: [] } }]) {
+    for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [] } },
+      { ...lead, team: { members: [{ id: "member", break: "granted" }] } }]) {
       expect(validateTeamCommand(request, bad)).not.toEqual([]);
     }
     expect(validateTeamCommand({ command: { ...request.command, decision: "maybe" } }, lead)).not.toEqual([]);
@@ -264,7 +264,7 @@ describe("lead commands", () => {
     for (const type of ["place", "force"]) {
       expect(validateTeamCommand({ command: { ...command, type } }, lead).map(v => v.rule)).toContain("team.command.type");
     }
-    for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [], requests: [] } }, { ...lead, memberBreak: undefined }]) {
+    for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [] } }, { ...lead, memberBreak: undefined }]) {
       expect(validateTeamCommand({ command }, bad)).not.toEqual([]);
     }
   });
@@ -275,7 +275,7 @@ describe("lead commands", () => {
       expect(validateTeamCommand({ command: { ...command, type } }, current).map(v => v.rule)).toContain("team.command.type");
     }
     expect(validateTeamCommand({ command }, lead).map(v => v.rule)).toContain("team.command.endForcedBreak");
-    for (const bad of [context, { ...current, transport: "connecting" }, { ...current, team: { members: [], requests: [] } }, { ...current, memberBreak: undefined }]) {
+    for (const bad of [context, { ...current, transport: "connecting" }, { ...current, team: { members: [] } }, { ...current, memberBreak: undefined }]) {
       expect(validateTeamCommand({ command }, bad)).not.toEqual([]);
     }
     expect(validateTeamCommand({ command }, { ...current, memberBreak: { ...current.memberBreak, status: "starting-after-task" } })).toEqual([]);
@@ -317,8 +317,8 @@ describe("lead commands", () => {
   });
   it("names the member on every act on a member's call, and holds each to what the team member list shows", () => {
     const at = "2026-08-21T09:04:00Z";
-    const onCall = { ...lead, team: { members: [{ id: "member", availability: "on-task", tasks: [{ assignmentId: "alloc-7", title: "Call", channel: "voice", taskType: "Queue", phase: "in-progress" }], requests: [] },
-      { id: "listened", availability: "on-task", listening: { assignmentId: "alloc-9", mode: "listen", since: at } }], requests: [{ memberId: "member", assignmentId: "alloc-7", since: at }] } };
+    const onCall = { ...lead, team: { members: [{ id: "member", availability: "on-task", tasks: [{ assignmentId: "alloc-7", title: "Call", channel: "voice", taskType: "Queue", phase: "in-progress" }], request: { assignmentId: "alloc-7", since: at } },
+      { id: "listened", availability: "on-task", listening: { assignmentId: "alloc-9", mode: "listen", since: at } }] } };
     for (const type of ["listen", "take-over-call", "join", "decline"]) {
       expect(validateTeamCommand({ command: { type, memberId: "member" } }, onCall)).toEqual([]);
       expect(validateTeamCommand({ command: { type, memberId: "member", assignmentId: "alloc-7" } }, onCall)).toEqual([]);
@@ -326,8 +326,14 @@ describe("lead commands", () => {
       expect(validateTeamCommand({ command: { type, memberId: "nobody" } }, onCall).map(v => v.rule)).toContain("team.command.member");
       expect(validateTeamCommand({ command: { type } }, onCall).map(v => v.rule)).toContain("team.command.member");
     }
-    // Join and decline answer a request; the listened member has none.
-    for (const type of ["join", "decline"]) expect(validateTeamCommand({ command: { type, memberId: "listened" } }, onCall).map(v => v.rule)).toContain("team.command.request");
+    // Join and decline answer the request the member carries; the listened member has none, and
+    // the asking member's request names one assignment, not another they hold.
+    for (const type of ["join", "decline"]) {
+      expect(validateTeamCommand({ command: { type, memberId: "listened" } }, onCall).map(v => v.rule)).toContain("team.command.request");
+      const twoCalls = { ...onCall, team: { members: [{ ...onCall.team.members[0]!, tasks: [...onCall.team.members[0]!.tasks!, { assignmentId: "alloc-8", title: "Call", channel: "voice", taskType: "Queue", phase: "in-progress" }] }] } };
+      expect(validateTeamCommand({ command: { type, memberId: "member", assignmentId: "alloc-8" } }, twoCalls).map(v => v.rule)).toContain("team.command.request");
+      expect(validateTeamCommand({ command: { type, memberId: "member", assignmentId: "alloc-7" } }, twoCalls)).toEqual([]);
+    }
     // Coach, join-call and leave need the lead on that member's call already.
     for (const type of ["coach", "join-call", "leave"]) {
       expect(validateTeamCommand({ command: { type, memberId: "listened" } }, onCall)).toEqual([]);

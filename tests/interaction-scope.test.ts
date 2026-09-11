@@ -23,7 +23,7 @@ describe("provider interaction controls", () => {
     }
     for (const command of [
       { type: "hold", dialId: "extra" },
-      { type: "transfer", action: "cancel", notes: "extra" },
+      { type: "conference", action: "remove", party: true, notes: "extra" },
       { type: "lead-assist", action: "leave", note: "extra" },
       { type: "conference", action: "remove", party: true, dialId: "extra" },
     ]) expect(validateTaskCommand(command).some(v => v.rule === "command.field")).toBe(true);
@@ -36,10 +36,10 @@ describe("provider interaction controls", () => {
     expect(validateTaskCommand(request.command, { ...task, onCall: [{ role: "party", since: "2026-09-11T00:00:00Z" }] })).toEqual([]);
   });
   it("routes only to the provider's directory, including an IVR, with no destination inference", () => {
-    const policy = { ...task, capabilities: { coldTransfer: { destinations: [{ id: "ivr-return", label: "Main IVR" }, { id: "agent-target", label: "Agent" }] } } };
+    const policy = { ...task, capabilities: { conference: { destinations: [{ id: "ivr-return", label: "Main IVR" }, { id: "agent-target", label: "Agent" }] } } };
     for (const destinationId of ["ivr-return", "agent-target"])
-      expect(validateTaskCommand({ type: "transfer", action: "cold", dialId: "dial", destinationId }, policy)).toEqual([]);
-    expect(validateTaskCommand({ type: "transfer", action: "cold", dialId: "dial", destinationId: "invented" }, policy)).not.toEqual([]);
+      expect(validateTaskCommand({ type: "conference", action: "add", dialId: "dial", destinationId }, policy)).toEqual([]);
+    expect(validateTaskCommand({ type: "conference", action: "add", dialId: "dial", destinationId: "invented" }, policy)).not.toEqual([]);
   });
   it("rejects provider mute while preserving ordinary interaction completion", () => {
     expect(validateTaskCommand({ type: "mute" }, task)).not.toEqual([]);

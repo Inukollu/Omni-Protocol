@@ -215,7 +215,7 @@ export interface Manifest<C extends Channel = Channel> {
   /**
    * The outcomes this platform distinguishes when a dial ends, `answered` and at least one way of
    * not reaching the destination. Required of a provider that dials at all -- an idle dialpad, or
-   * a task that may transfer, conference, or call back -- and forbidden off voice, where nothing dials.
+   * a task that may conference or call back -- and forbidden off voice, where nothing dials.
    */
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   /**
@@ -231,10 +231,9 @@ export interface Manifest<C extends Channel = Channel> {
   runningStepReports?: true;
   /**
    * How long after an applied completion -- `complete`, or a lead's `take-over-call` -- the provider's
-   * `task-ended` is owed, in milliseconds. A warm transfer's `complete` is not one: the agent's
-   * wrap runs after it as after any call. `applied` says the provider
-   * has completed the task; the ending follows within this, or the host resyncs and shows the
-   * task as unsettled. Stated per provider, since platforms settle at different speeds.
+   * `task-ended` is owed, in milliseconds. `applied` says the provider has completed the task;
+   * the ending follows within this, or the host resyncs and shows the task as unsettled. Stated
+   * per provider, since platforms settle at different speeds.
    */
   completionSettleMs: number;
 }
@@ -313,9 +312,10 @@ export interface UserCapabilities {
   /**
    * This login leads a team. The flag alone turns on the team feature in the agent application:
    * the lead sees their members with their tasks and stats, and acts on them through `executeTeam`
-   * with the authority the flag carries. No per-action permission rides beside it. While the lead
-   * has the feature on, a `TeamMembers` object is published to them on every snapshot, `members: []`
-   * included; to nobody else, ever.
+   * with the authority the flag carries. No per-action permission rides beside it. The provider
+   * assumes nothing of the switch: the application sends `lead-features` on every connect, and
+   * only while it is on does the team reach the lead -- `team-updated` whole after the switch and
+   * on any snapshot, then one member at a time as members change; to nobody else, ever.
    */
   lead?: true;
 }
@@ -458,7 +458,6 @@ export type RecordingState =
 export type RecordingCommand = {
   type: "recording";
   source: RecordingSource;
-  requestId: string;
   /** Compare-and-set against current evidence; never act on a replacement recording. */
   observationId: string;
 } & (
@@ -628,7 +627,7 @@ export interface Destination {
   label: string;
 }
 
-/** The items a transfer or conference control offers. Nothing is typed; the agent picks one. */
+/** The items a conference control offers. Nothing is typed; the agent picks one. */
 export interface DestinationDirectory {
   destinations: Destination[];
 }
@@ -662,14 +661,13 @@ export type TaskCapabilities<C extends Channel = Channel> =
     ? SharedTaskCapabilities & {
         decline?: Lockable<true>;
         hold?: Lockable<true>;
-        /** The provider ends the caller connection and agent-added channels owned by this interaction, including inherited channels after transfer/takeover. Interaction completion remains separate. */
+        /** The provider ends the caller connection and agent-added channels owned by this interaction, including inherited channels after a take-over. Interaction completion remains separate. */
         endCall?: Lockable<true>;
         terminateCall?: Lockable<true>;
         /** Connect back to the party while `completing`, whoever placed the call; the task returns to `in-progress`. */
         connectBack?: Lockable<true>;
-        coldTransfer?: Lockable<DestinationDirectory>;
-        /** Park the customer and call a destination first; then `complete` or `cancel`. */
-        warmTransfer?: Lockable<DestinationDirectory>;
+        /** Put a time on the calendar for this party, from the call: a follow-up the agent promised. */
+        schedule?: Lockable<true>;
         /** Ask a lead to join this call, with a note. The lead's decision arrives on `Task.leadAssist`. */
         leadAssist?: Lockable<true>;
         conference?: Lockable<DestinationDirectory>;
@@ -748,7 +746,7 @@ export type TaskPhase =
   | "confirmed"
   /**
    * Voice only: the customer's record is available for preparation, then dialing before answer. The agent
-   * presses Call, or `previewEndsAt` arrives and `atDeadline` says what the system does instead.
+   * presses Call, or `previewEndsInSeconds` runs out and `atDeadline` says what the system does instead.
    */
   | "preview"
   | "in-progress"
@@ -844,22 +842,21 @@ export type TaskCompletion =
   | { completionMode: "agent-command"; wrapAllowance?: DurationSeconds }
   | { completionMode: "provider-automatic"; wrapAllowance: DurationSeconds };
 
-export type OnCallRole = "party" | "agent" | "consulted" | "conferenced";
+export type OnCallRole = "party" | "agent" | "conferenced";
 
 /** Where a dialled entry stands: `ringing` until its dial is answered, `joined` after. */
 export type OnCallStage = "ringing" | "joined";
 
-export const ON_CALL_ROLES = ["party", "agent", "consulted", "conferenced"] as const satisfies readonly OnCallRole[];
+export const ON_CALL_ROLES = ["party", "agent", "conferenced"] as const satisfies readonly OnCallRole[];
 
 /**
  * Somebody on the call, or being brought onto it, as the provider states it: who, since when, and
- * whether they are held aside. `party` is the customer; `agent` a person, by user id; `consulted`
- * and `conferenced` someone a dial is bringing in -- listed from the moment the dial is placed, so
- * the agent can call it off while it rings -- carrying the dial when a host placed it, the address
- * either way, and the `stage` it has reached: `ringing` until the dial is answered, `joined` after,
- * stated so a snapshot says who is present without anyone having seen the outcome. Nobody ringing is
- * held. `label` names a destination -- a person, a queue -- not a phrase. At most one `party` and
- * one `consulted`: the consult commands name neither because there is exactly one. The `party`
+ * whether they are held aside. `party` is the customer; `agent` a person, by user id; `conferenced`
+ * someone a dial is bringing in -- listed from the moment the dial is placed, so the agent can call
+ * it off while it rings -- carrying the dial when a host placed it, the address either way, and the
+ * `stage` it has reached: `ringing` until the dial is answered, `joined` after, stated so a snapshot
+ * says who is present without anyone having seen the outcome. Nobody ringing is held. `label` names
+ * a destination -- a person, a queue -- not a phrase. At most one `party`. The `party`
  * carries a `stage` while being dialled -- by any host dial, a dialpad call, a preview Call or a
  * connect-back, carrying its `dialId`, or by a callback the platform places itself, carrying none --
  * `ringing` from the moment the dial is placed, `joined` on the publication that follows its
@@ -871,7 +868,7 @@ export type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party"; dialId?: never; stage?: never }
   | { role: "party"; stage: OnCallStage; dialId?: DialId }
   | { role: "agent"; userId: UserId }
-  | { role: "consulted" | "conferenced"; destinationId: string; stage: OnCallStage; dialId?: DialId; label?: string }
+  | { role: "conferenced"; destinationId: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );
 
 /**
@@ -977,12 +974,14 @@ export type Task<C extends Channel = Channel> = {
    */
   acceptance?: AcceptanceMode;
   /**
-   * In `preview` only, and together: the preparation target and behavior when it elapses,
-   * and who acts then -- `provider-dials` makes the provider initiate dialing, `host-dials` makes the
-   * host issue Call, and `waits` keeps waiting for the agent without dialing or ending the task.
-   * Absent, the agent has as long as they need, without a preparation countdown.
+   * In `preview` only, and together: how long the preparation has left, in whole seconds from
+   * this publication -- restated on every publication that carries it, so a resync starts the
+   * countdown afresh and no clock is compared -- and behavior when it runs out, and who acts then:
+   * `provider-dials` makes the provider initiate dialing, `host-dials` makes the host issue Call,
+   * and `waits` keeps waiting for the agent without dialing or ending the task. Absent, the agent
+   * has as long as they need, without a preparation countdown.
    */
-  previewEndsAt?: IsoTimestamp;
+  previewEndsInSeconds?: DurationSeconds;
   atDeadline?: PreviewDeadline;
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
@@ -1008,13 +1007,11 @@ export type AcceptanceMode =
 
 export type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
-  /** A cold transfer to a destination the agent chose: a directory item's id. */
-  | { type: "transferred"; destinationId?: string }
   /** A lead took the call over and the agent has wrapped it: the outcome at the agent's own completion. Named by the lead, since a lead is not a directory item. */
   | { type: "taken-over"; leadId: UserId }
   /** Who called the work off: the agent declining, the provider withdrawing or re-routing, the party abandoning. */
   | { type: "cancelled"; by: "agent" | "provider" | "party"; reason?: string }
-  /** Only the phases in which somebody is still being waited on can expire; an offer that lapses at `assignmentExpiresAt` names `pending`. */
+  /** Only the phases in which somebody is still being waited on can expire; an offer whose `expiresInSeconds` runs out names `pending`. */
   | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
   | { type: "failed"; failure: ProtocolFailure };
 
@@ -1024,7 +1021,7 @@ export type TaskOutcome =
 
 export const TASK_COMMAND_NAMES = {
   voice: ["answer", "decline", "dial", "hold", "resume", "end-call", "terminate-call",
-          "connect-back", "transfer", "lead-assist", "conference", "recording", "complete"],
+          "connect-back", "lead-assist", "conference", "recording", "schedule", "complete"],
   chat: ["accept", "decline", "pause", "resume", "complete"],
   email: ["accept", "decline", "complete"],
 } as const;
@@ -1050,14 +1047,12 @@ export type VoiceTaskCommand =
   | { type: "terminate-call" }
   /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
   | { type: "connect-back"; dialId: DialId }
-  /** Cold: hand the customer to the directory item `destinationId` with nobody spoken to first. Gated by `coldTransfer`. */
-  | { type: "transfer"; action: "cold"; dialId: DialId; destinationId: string }
-  /** Warm: park the customer and call the directory item `destinationId` first. Gated by `warmTransfer`. */
-  | { type: "transfer"; action: "warm"; dialId: DialId; destinationId: string }
-  /** Hand the customer to the consulted destination and leave. Needs a `consulted` entry on `Task.onCall`. */
-  | { type: "transfer"; action: "complete" }
-  /** Drop the consulted destination and return to the customer. Needs a `consulted` entry on `Task.onCall`. */
-  | { type: "transfer"; action: "cancel" }
+  /**
+   * Put a time on the calendar for this party: a follow-up promised on the call. Gated by
+   * `schedule`, issuable in `in-progress`, `paused` or `completing`; the activity arrives on
+   * `calendar-updated`, which is the provider's word that it stands.
+   */
+  | { type: "schedule"; at: IsoTimestamp; note?: string }
   /** Ask a lead to join, with a note. Gated by `leadAssist`. */
   | { type: "lead-assist"; action: "request"; note?: string }
   /** Withdraw a standing request. Needs `Task.leadAssist` with status `requested`. */
@@ -1121,7 +1116,6 @@ export type TaskCommandResult =
 /** The dial a command places, by the host's identity for it; `undefined` for a command that dials nothing. */
 export function commandDialId(command: TaskCommand): DialId | undefined {
   if (command.type === "connect-back" || command.type === "dial") return command.dialId;
-  if (command.type === "transfer" && (command.action === "cold" || command.action === "warm")) return command.dialId;
   if (command.type === "conference" && command.action === "add") return command.dialId;
   return undefined;
 }
@@ -1181,9 +1175,13 @@ export interface BreakRequest {
   reasonId?: string;
 }
 
-/** A break forced on the agent; the agent must explicitly resume when ready. */
+/**
+ * A break forced on the agent; the agent must explicitly resume when ready. `by` is the lead who
+ * forced it, or `provider` where the platform itself did, on its own rule or a schedule: the agent
+ * sees who, and a person is named only when there is one.
+ */
 export type ForcedBreak = {
-  by: UserId;
+  by: UserId | "provider";
   /** Optional expected time on break, in milliseconds from actual start. Advisory only. */
   expectedDurationMs?: number;
 };
@@ -1244,11 +1242,12 @@ export interface TeamMember {
   listening?: MemberListening;
   /** The member's own history for the day: sign-in, sign-out, breaks and productivity. Omitted where the provider cannot say. */
   shift?: MemberShift;
+  /** The member's standing ask for a lead on one of their calls; absent when they are not asking. */
+  request?: MemberRequest;
 }
 
-/** A member asking this lead to join their call, named by the member and the assignment. */
-export interface LeadRequest {
-  memberId: UserId;
+/** This member asking their lead to join a call: which assignment, the note they wrote, since when. */
+export interface MemberRequest {
   assignmentId: AssignmentId;
   note?: string;
   since: IsoTimestamp;
@@ -1316,13 +1315,13 @@ export interface MemberShift {
 
 /**
  * The lead's view of their team: published to a login that declares `capabilities.lead` while the
- * lead has the team feature on, on every snapshot, and to nobody else. The provider keeps it
- * current: when a member holds, mutes or is transferred, the list is republished whole.
+ * lead has the team feature on, and to nobody else. Whole on `team-updated` -- after the switch,
+ * and on any snapshot -- and from then on one member at a time: `team-member-updated` carries the
+ * member whole, so applying it twice changes nothing, and `team-member-removed` takes one off.
+ * A team of two hundred is never resent because one of them held.
  */
 export interface TeamMembers {
   members: TeamMember[];
-  /** Members asking a lead to join their call; `[]` when nobody is asking. */
-  requests: LeadRequest[];
   /** The team's policy per capability, as it stands. Present where the provider offers policy control; absent where it does not. */
   policies?: TeamPolicies;
 }
@@ -1536,7 +1535,8 @@ export type ProviderEvent<C extends Channel = Channel> =
   | {
       type: "task-offered";
       task: Task<C>;
-      assignmentExpiresAt?: IsoTimestamp;
+      /** How long the agent has to answer, in whole seconds from this event; the offer expires when it runs out. Absent, it stands until the provider says otherwise. */
+      expiresInSeconds?: DurationSeconds;
     }
   | { type: "task-updated"; task: Task<C> }
   | { type: "task-audio-started"; assignmentId: AssignmentId }
@@ -1553,7 +1553,12 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
   | { type: "diagnostic"; expected: string; observed: string; assignmentId?: AssignmentId }
+  /** The whole team, once: after `lead-features` comes on, and on every snapshot while it is. */
   | { type: "team-updated"; team: TeamMembers }
+  /** One member, whole, as they now stand: replaces the member of that id, or adds them. */
+  | { type: "team-member-updated"; member: TeamMember }
+  | { type: "team-member-removed"; memberId: UserId }
+  | { type: "team-policies-updated"; policies: TeamPolicies }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; calendar: ScheduledActivity[] };
 
@@ -1579,6 +1584,8 @@ export const OMNI_FAILURE_CODES = [
   "omni.rate-limited",
   "omni.unavailable",
   "omni.break-already-committed",
+  /** A recording command the provider could not settle either way: no start, stop, pause or resume it can vouch for. */
+  "omni.recording-unsettled",
 ] as const;
 
 export type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
