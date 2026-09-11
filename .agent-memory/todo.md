@@ -1,3 +1,7 @@
+## pnpm store ignore rule
+
+PR121 commit cfbc47a80e5d443f4c1ec661b664ee7e3f81586a adds `.pnpm-store/` to `.gitignore`; verified with git check-ignore and diff --check. Branch refactor/user-details-api, worktree /private/tmp/omni-user-details-api, PR https://github.com/Inukollu/Omni-Protocol/pull/121. Also applied to default checkout so its local store is immediately ignored; that checkout retains this intentional uncommitted .gitignore change pending integration. No runtime changes/tests needed. Existing monitor continues; next action CI/review.
+
 ## Guide terminology update — PR121
 
 Published guide commit: 0436c61c01e33cc8bc3b4977622c40a17ce528e3. Branch `refactor/user-details-api`, worktree `/private/tmp/omni-user-details-api`, PR https://github.com/Inukollu/Omni-Protocol/pull/121.
@@ -482,6 +486,6 @@ PID 77759; command python3 /private/tmp/omni-break-status-field/.agent-memory/ru
 <!-- break-status-field-monitor:end -->
 
 <!-- user-details-api-monitor:begin -->
-Monitor omni-protocol-pr121-user-details-api: OPEN at 2026-09-11T10:42:08.296140+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr121-user-details-api: OPEN at 2026-09-11T10:49:13.949452+00:00. Await CI/review; monitor never merges.
 PID 59675; command python3 /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api-monitor.py; state /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.state.json; log /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.log; PID file /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.pid; process log /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-user-details-api, branch refactor/user-details-api, PR https://github.com/Inukollu/Omni-Protocol/pull/121.
 <!-- user-details-api-monitor:end -->
