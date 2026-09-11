@@ -54,7 +54,7 @@ import {
   type PreviewDeadline,
   type Phone,
   type MonitorMode,
-  type DispositionRules,
+  type OutcomeRules,
   type InteractionStep,
   type IdleCapabilities,
   type IdleCapability,
@@ -130,7 +130,7 @@ const INTERACTION_STEPS = membersOf<InteractionStep>({
 });
 const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
 const CUSTOM_UI_PLACEMENTS = membersOf<CustomCapability["ui"]["placement"]>({ primary: true, secondary: true, overflow: true });
-const NOTES_RULES = membersOf<NonNullable<DispositionRules["notes"]>>({ required: true, optional: true, none: true });
+const NOTES_RULES = membersOf<NonNullable<OutcomeRules["notes"]>>({ required: true, optional: true, none: true });
 const ACCESS_MODES = membersOf<BrowserAccess["mode"]>({ "allow-all": true, "block-all": true });
 const ACCESS_APPLIES_TO = membersOf<NonNullable<PersonalBrowserCapability["accessAppliesTo"]>>({
   "initial-url": true, "all-navigation": true,
@@ -168,11 +168,11 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 /** The capabilities each channel arm of `TaskCapabilities` declares, keyed off the type itself. */
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
-    browsers: true, dispositions: true, custom: true, decline: true, hold: true,
+    browsers: true, outcomes: true, custom: true, decline: true, hold: true,
     endCall: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
   }),
-  chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, dispositions: true, custom: true, decline: true, hold: true }),
-  email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, dispositions: true, custom: true, decline: true }),
+  chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, outcomes: true, custom: true, decline: true, hold: true }),
+  email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, outcomes: true, custom: true, decline: true }),
 };
 
 // The published list and the type's keys are the same set, or one of them is wrong.
@@ -706,38 +706,38 @@ function validateDestinationDirectory(value: unknown, path: string, into: Collec
   });
 }
 
-function validateDispositions(value: unknown, path: string, into: Collector): void {
+function validateOutcomes(value: unknown, path: string, into: Collector): void {
   if (value === true) return;
   if (!isPlainObject(value)) {
-    into.add("task.dispositions.shape", path, "must be true or a disposition policy");
+    into.add("task.outcomes.shape", path, "must be true or an outcome policy");
     return;
   }
   if (value.required !== undefined) {
-    into.require(typeof value.required === "boolean", "task.dispositions.required", `${path}.required`,
+    into.require(typeof value.required === "boolean", "task.outcomes.required", `${path}.required`,
       "required must be a boolean when present");
   }
   // A code must be collected before completion, so there must be one to collect.
   if (value.required === true && !(Array.isArray(value.codes) && value.codes.length > 0)) {
-    into.add("task.dispositions.required.codes", `${path}.codes`, "a required disposition policy must publish at least one code");
+    into.add("task.outcomes.required.codes", `${path}.codes`, "a required outcome policy must publish at least one code");
   }
-  if (value.notes !== undefined) into.oneOf(value.notes, NOTES_RULES, "task.dispositions.notes", `${path}.notes`);
+  if (value.notes !== undefined) into.oneOf(value.notes, NOTES_RULES, "task.outcomes.notes", `${path}.notes`);
   if (value.codes === undefined) return;
   if (!Array.isArray(value.codes)) {
-    into.add("task.dispositions.codes", `${path}.codes`, "codes must be an array when present");
+    into.add("task.outcomes.codes", `${path}.codes`, "codes must be an array when present");
     return;
   }
   const seen = new Set<string>();
   value.codes.forEach((code: unknown, index: number) => {
     const at = `${path}.codes[${index}]`;
     if (!isPlainObject(code)) {
-      into.add("task.disposition.shape", at, "each disposition code must be an object");
+      into.add("task.outcome.shape", at, "each outcome code must be an object");
       return;
     }
-    if (into.filled(code.id, "task.disposition.id", `${at}.id`, "a disposition code needs an id")) {
-      if (seen.has(code.id as string)) into.add("task.disposition.unique", `${at}.id`, `duplicate disposition code: ${code.id}`);
+    if (into.filled(code.id, "task.outcome.id", `${at}.id`, "an outcome code needs an id")) {
+      if (seen.has(code.id as string)) into.add("task.outcome.unique", `${at}.id`, `duplicate outcome code: ${code.id}`);
       seen.add(code.id as string);
     }
-    into.filled(code.label, "task.disposition.label", `${at}.label`, "a disposition code needs a label");
+    into.filled(code.label, "task.outcome.label", `${at}.label`, "an outcome code needs a label");
   });
 }
 
@@ -791,7 +791,7 @@ const DEFAULT_LEVEL_IDS: readonly string[] = DEFAULT_LEVELS.map(level => level.i
 const POLICY_SETTINGS = membersOf<TeamPolicySetting>({ on: true, off: true, person: true });
 const POLICY_KEYS = new Set<string>([
   ...TASK_CAPABILITIES.voice, ...TASK_CAPABILITIES.chat, ...TASK_CAPABILITIES.email, "dial",
-].filter(name => name !== "browsers" && name !== "dispositions" && name !== "custom"));
+].filter(name => name !== "browsers" && name !== "outcomes" && name !== "custom"));
 const PERSON_SETTABLE = /^(hold|skill:.+)$/;
 const isLocked = (value: unknown): value is Record<string, unknown> => isPlainObject(value) && value.lockedBy !== undefined;
 
@@ -1381,9 +1381,9 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
         `${name} dials, and the manifest declares no dialOutcomes to say how a dial ends`);
     }
     // A control the queue could allow may stand locked in its place, saying whose. What the
-    // queue provides -- browsers, dispositions, custom controls -- is content, not a control.
+    // queue provides -- browsers, outcomes, custom controls -- is content, not a control.
     if (isLocked(declared)) {
-      if (into.require(name !== "browsers" && name !== "dispositions" && name !== "custom", "task.capability.locked.unexpected",
+      if (into.require(name !== "browsers" && name !== "outcomes" && name !== "custom", "task.capability.locked.unexpected",
         `${path}.capabilities.${name}`, `${name} is what the queue provides, not a control anyone locks`)) {
         validateLockedInto(declared, "task.capability.locked", `${path}.capabilities.${name}`, context.levels, into);
       }
@@ -1391,7 +1391,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     }
     switch (name) {
       case "recording": into.violations.push(...validateRecordingPolicy(declared, `${path}.capabilities.recording`)); break;
-      case "dispositions": validateDispositions(declared, `${path}.capabilities.dispositions`, into); break;
+      case "outcomes": validateOutcomes(declared, `${path}.capabilities.outcomes`, into); break;
       case "custom": validateCustomCapabilities(declared, `${path}.capabilities.custom`, into); break;
       case "coldTransfer":
       case "warmTransfer":
@@ -2499,7 +2499,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     let fields = ["type"];
     switch (type) {
       case "call": case "connect-back": fields.push("dialId"); break;
-      case "complete": fields.push("disposition", "notes"); break;
+      case "complete": fields.push("outcome", "notes"); break;
       case "transfer":
         fields.push("action");
         if (command.action === "cold" || command.action === "warm") fields.push("dialId", "destinationId");
@@ -2556,7 +2556,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       into.violations.push(...validateRecordingCommandShape(command, "provider", path));
       break;
     case "complete":
-      if (command.disposition !== undefined) into.filled(command.disposition, "command.complete.disposition", `${path}.disposition`, "a disposition must not be empty when present");
+      if (command.outcome !== undefined) into.filled(command.outcome, "command.complete.outcome", `${path}.outcome`, "an outcome must not be empty when present");
       if (command.notes !== undefined) into.require(typeof command.notes === "string", "command.complete.notes", `${path}.notes`, "notes must be a string when present");
       break;
     default:
@@ -2693,29 +2693,29 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     case "complete": {
       into.require(task.completionMode === "agent-command", "command.complete.mode", path,
         "complete belongs to agent-command; a provider-automatic task completes itself");
-      // What travels with complete is what the dispositions capability published: a code from its
+      // What travels with complete is what the outcomes capability published: a code from its
       // list where it has one, a code at all where it requires one, notes as it said, nothing where it published nothing.
-      const dispositions = capabilities.dispositions;
-      if (dispositions === undefined) {
-        into.require(command.disposition === undefined, "command.complete.disposition.unexpected", `${path}.disposition`,
-          "the task declares no dispositions; complete travels with no code");
+      const outcomes = capabilities.outcomes;
+      if (outcomes === undefined) {
+        into.require(command.outcome === undefined, "command.complete.outcome.unexpected", `${path}.outcome`,
+          "the task declares no outcomes; complete travels with no code");
         into.require(command.notes === undefined, "command.complete.notes.unexpected", `${path}.notes`,
-          "the task declares no dispositions; complete travels with no notes");
-      } else if (dispositions === true) {
-        into.require(command.disposition === undefined, "command.complete.disposition.unexpected", `${path}.disposition`,
-          "a bare dispositions control publishes no code, so complete carries none");
-      } else if (isPlainObject(dispositions)) {
-        if (Array.isArray(dispositions.codes) && command.disposition !== undefined) {
-          into.require(dispositions.codes.some(code => isPlainObject(code) && code.id === command.disposition), "command.complete.disposition.unknown", `${path}.disposition`,
-            `${describeValue(command.disposition)} is not a code the task published`);
+          "the task declares no outcomes; complete travels with no notes");
+      } else if (outcomes === true) {
+        into.require(command.outcome === undefined, "command.complete.outcome.unexpected", `${path}.outcome`,
+          "a bare outcomes control publishes no code, so complete carries none");
+      } else if (isPlainObject(outcomes)) {
+        if (Array.isArray(outcomes.codes) && command.outcome !== undefined) {
+          into.require(outcomes.codes.some(code => isPlainObject(code) && code.id === command.outcome), "command.complete.outcome.unknown", `${path}.outcome`,
+            `${describeValue(command.outcome)} is not a code the task published`);
         }
-        if (dispositions.required === true) {
-          into.require(command.disposition !== undefined, "command.complete.disposition.required", `${path}.disposition`,
-            "the task requires a disposition and complete carries none");
+        if (outcomes.required === true) {
+          into.require(command.outcome !== undefined, "command.complete.outcome.required", `${path}.outcome`,
+            "the task requires an outcome and complete carries none");
         }
-        if (dispositions.notes === "none") {
+        if (outcomes.notes === "none") {
           into.require(command.notes === undefined, "command.complete.notes.unexpected", `${path}.notes`, "the task takes no notes");
-        } else if (dispositions.notes === "required") {
+        } else if (outcomes.notes === "required") {
           into.require(typeof command.notes === "string" && command.notes.length > 0, "command.complete.notes.required", `${path}.notes`, "the task requires notes and complete carries none");
         }
       }

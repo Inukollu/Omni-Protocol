@@ -527,12 +527,12 @@ type DialResult =
 ### Task capabilities
 
 ```ts
-type DispositionCode = { id: string; label: string; group?: string };
+type OutcomeCode = { id: string; label: string; group?: string };
 
-type DispositionRules = {
+type OutcomeRules = {
   required?: boolean;
   notes?: "required" | "optional" | "none";
-  codes?: DispositionCode[];
+  codes?: OutcomeCode[];
 };
 
 type Destination = {
@@ -557,7 +557,7 @@ type CustomCapability = {
 
 type SharedTaskCapabilities = {
   browsers?: true;
-  dispositions?: true | DispositionRules;
+  outcomes?: true | OutcomeRules;
   custom?: CustomCapability[];
 };
 
@@ -793,7 +793,7 @@ const TASK_COMMAND_NAMES = {
 type TaskCommandName<C extends keyof typeof TASK_COMMAND_NAMES> =
   (typeof TASK_COMMAND_NAMES)[C][number];
 
-type DispositionPayload = { disposition?: string; notes?: string };
+type OutcomePayload = { outcome?: string; notes?: string };
 
 type VoiceTaskCommand =
   | { type: "answer" }
@@ -815,19 +815,19 @@ type VoiceTaskCommand =
   | { type: "conference"; action: "remove"; destinationId: string; party?: never }
   | { type: "conference"; action: "remove"; party: true; destinationId?: never }
   | (RecordingCommand & { source: "provider" })
-  | ({ type: "complete" } & DispositionPayload);
+  | ({ type: "complete" } & OutcomePayload);
 
 type ChatTaskCommand =
   | { type: "accept" }
   | { type: "decline" }
   | { type: "pause" }
   | { type: "resume" }
-  | ({ type: "complete" } & DispositionPayload);
+  | ({ type: "complete" } & OutcomePayload);
 
 type EmailTaskCommand =
   | { type: "accept" }
   | { type: "decline" }
-  | ({ type: "complete" } & DispositionPayload);
+  | ({ type: "complete" } & OutcomePayload);
 
 type CustomTaskCommand = { type: "custom"; name: string; [key: string]: unknown };
 
@@ -898,7 +898,7 @@ The adapter is the one that knows the value, so it is the one held to it: given 
 queue locked, the validator refuses any other field carrying one, digits compared as digits so no
 formatting hides them (`task.locked.leak`), and a conformance run whose tasks lock a party's number
 or email states those values in `lockedValues`, since a run that cannot ask the question is not a
-pass. A host never has the value and never asks. A name is not locked. What the queue provides rather than permits — browsers, dispositions, custom
+pass. A host never has the value and never asks. A name is not locked. What the queue provides rather than permits — browsers, outcomes, custom
 controls — is content, and is never locked.
 
 **A lead sets the team's policy from their roster.** A login that declares
@@ -1499,7 +1499,7 @@ normative definition; matching names alone do not establish shared meaning.
 
 ### 10. Order on the wire is display order
 
-A list the provider publishes — a destination directory, disposition codes, a task's custom
+A list the provider publishes — a destination directory, outcome codes, a task's custom
 controls, its browsers — is in the order the provider wants it shown, and a host keeps that order.
 A reader will find meaning in position unless something says there is none, so the provider
 decides: where it has an intention, an administrator's sequence, it lists in that order; where it
@@ -2368,7 +2368,7 @@ into a new session.
 `task-offered` introduces a new task and does not imply acceptance.
 
 `Task<C>` is channel-discriminated. For example, `Task<"email">` accepts
-`browsers` and `dispositions`, but rejects voice-only controls such as `hold` and `endCall` at compile
+`browsers` and `outcomes`, but rejects voice-only controls such as `hold` and `endCall` at compile
 time. Runtime conformance checks also require the task channel to match its provider manifest.
 
 | Field | Contract |
@@ -2493,7 +2493,7 @@ ring-back is audio the agent hears -- so `task-media-started` arrives on the `pr
 its party ringing. On `answered` the task is `in-progress`; on any other outcome the media ends,
 `task-media-ended` starts the wrap clock as on every voice task, and the task goes to
 `completing`, so the agent records the
-no-answer as the disposition it is -- in a campaign that is the commonest outcome there is, and it
+no-answer as the outcome it is -- in a campaign that is the commonest outcome there is, and it
 is work, not a cancellation. A `preview` task therefore needs a manifest that says how a dial ends
 (`task.preview.dialOutcomes.required`).
 
@@ -2631,7 +2631,7 @@ const emailCompletion = {
 ```
 
 In this example, the agent has two minutes after sending the email to add notes, select a
-disposition, and complete the task.
+outcome, and complete the task.
 
 `0` means completion may happen immediately. With `provider-automatic`, the provider may complete
 without waiting for a command; with `agent-command`, it still waits for `complete`.
@@ -2694,7 +2694,7 @@ window it cannot, and declaring it there changes nothing.
 ```ts
 const connectBackCapable = {
   channel: "voice",
-  capabilities: { hold: true, connectBack: true, dispositions: true },
+  capabilities: { hold: true, connectBack: true, outcomes: true },
   phase: "completing",
   completionMode: "provider-automatic",
   wrapAllowance: 30,
@@ -2737,8 +2737,7 @@ Migration from the earlier spelling:
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
 History/report rule names now use `interactionHistory`/`interactionReport`; phase and conformance
 rules use `interaction` and final-task rules use `completion`. Legacy fields are rejected even
-when the new field is also supplied. `DispositionCode`, `DispositionRules`, `DispositionPayload`,
-`dispositions`, and `disposition` still describe outcome codes and are unchanged.
+when the new field is also supplied.
 
 
 `Task.interactionHistory` is the call record: the steps that brought the task to the agent, oldest
@@ -3079,7 +3078,7 @@ source is one more published fact about them, and the one that lets a host tell 
 
 **Completing the task is not a capability, and no capability set withholds it.** `complete` is
 governed by `completionMode` alone: under `agent-command` it is always available, whatever the set
-says, and the `dispositions` capability decides only whether a code travels with it. Likewise
+says, and the `outcomes` capability decides only whether a code travels with it. Likewise
 Answer on a pending task and Call on a preview are the phase's controls, not the set's. The
 capability set governs what the agent may do *with* the task; completing it is never on the
 list.
@@ -3173,7 +3172,7 @@ const taskCapabilities = {
   channel: "voice",
   capabilities: {
     hold: true,
-    dispositions: true,
+    outcomes: true,
   },
   browsers: [],
 } satisfies Pick<Task<"voice">, "channel" | "capabilities" | "browsers">;
@@ -3181,7 +3180,7 @@ const taskCapabilities = {
 
 A capability says the control may be offered; the task's phase says whether there is anything to use
 it on. Every control below that acts on the call or the conversation -- everything but `decline`,
-`connectBack` and `dispositions` -- is offered only while the task is `in-progress` or `paused`.
+`connectBack` and `outcomes` -- is offered only while the task is `in-progress` or `paused`.
 See **Which commands need a capability**.
 
 ### Voice capabilities
@@ -3197,20 +3196,40 @@ See **Which commands need a capability**.
 | `leadAssist` | Secondary menu item: Lead assist | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.leadAssist`. See **Lead assist**. |
 | `conference` | Secondary button: Conference | Omni may dial a destination into the active call, and remove one person from it -- a conferenced entry, one still ringing included, which calls the dial off, or the party, leaving the agent with the colleague. See **Ending a call, and removing one person from it**. |
 | `recording` | Overflow menu item: Recording | Per-task provider and host policies expose only their permitted recording actions; each has independent state and routing. |
-| `dispositions` | Primary button: Complete | Omni may request task completion with a provider disposition and notes. |
+| `outcomes` | Primary button: Complete | Omni may request task completion with a provider outcome and notes. |
 
 ### Publishing codes and destinations
 
 Four capabilities accept an object when the provider wants Omni to render real choices. For
-`dispositions` alone, `true` remains valid and means "offer the control with nothing published";
+`outcomes` alone, `true` remains valid and means "offer the control with nothing published";
 the three directory controls -- `coldTransfer`, `warmTransfer`, `conference` -- carry their
 directory or are refused, since once nothing is typed the directory is the control.
 
-#### `dispositions`
+#### `outcomes`
+
+An outcome describes what happened; completion finishes the task. Outcome codes are selected
+from the task's own published list. They are distinct from `DialOutcome`, which reports the
+result of a dial attempt.
+
+Migration requires providers and hosts to adopt the renamed types and fields together:
+
+| Former API | Current API |
+| --- | --- |
+| DispositionCode | `OutcomeCode` |
+| DispositionRules | `OutcomeRules` |
+| DispositionPayload | `OutcomePayload` |
+| Task.capabilities.dispositions | `Task.capabilities.outcomes` |
+| complete.disposition | `complete.outcome` |
+
+Validation and conformance diagnostics use `task.outcomes`, `task.outcome`, and
+`command.complete.outcome` in place of the former names. Update retained task snapshots and
+command producers as well as imports. Old capability and command fields are rejected, including
+payloads containing both names; there are no compatibility aliases. Code IDs, notes, required
+selection rules, and completion behavior are unchanged.
 
 ```ts
 capabilities: {
-  dispositions: {
+  outcomes: {
     required: true,
     notes: "optional",
     codes: [
@@ -3225,9 +3244,9 @@ capabilities: {
 | --- | --- |
 | `required` | When `true`, Omni must collect a code before issuing `complete`. A required policy must publish at least one code. |
 | `notes` | `required`, `optional`, or `none`; controls the free-text field beside the code. |
-| `codes` | Codes Omni offers. `id` values are non-empty and unique; Omni sends the chosen `id` as `TaskCommand.complete.disposition`. |
+| `codes` | Codes Omni offers. `id` values are non-empty and unique; Omni sends the chosen `id` as `TaskCommand.complete.outcome`. |
 
-With `dispositions: true` Omni shows a Complete control and sends `complete` with no code, because
+With `outcomes: true` Omni shows a Complete control and sends `complete` with no code, because
 the provider published none.
 
 #### `coldTransfer`, `warmTransfer` and `conference`
@@ -3360,14 +3379,14 @@ customer.
 | --- | --- | --- |
 | `decline` | Pending-task button: Decline | The provider can decline a pending chat offer. Omni shows it only when provisioning also permits declining. |
 | `hold` | Primary toggle: Hold | Omni may pause and resume the agent’s interaction in the chat. |
-| `dispositions` | Primary button: Complete | Omni may request task completion with a provider disposition and notes. |
+| `outcomes` | Primary button: Complete | Omni may request task completion with a provider outcome and notes. |
 
 ### Email capabilities
 
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
 | `decline` | Pending-task button: Decline | The provider can decline a pending email offer. Omni shows it only when provisioning also permits declining. |
-| `dispositions` | Primary button: Complete | Omni may request task completion with a provider disposition and notes. |
+| `outcomes` | Primary button: Complete | Omni may request task completion with a provider outcome and notes. |
 
 ### Custom capabilities
 
@@ -4138,7 +4157,7 @@ choice that is no command at all:
 | --- | --- | --- |
 | `{ type: "lead-assist", action: "take-over" }` | `task-media-ended`, then `task-ended` with `{ type: "taken-over", leadId }`: **no `completing` window**, the agent is idle at once. The audio ends first, as before every voice ending (`stream.taskEnded.mediaOpen`), and the lead is named by user id, since a lead is not a directory item | Continues alone, and ends as any call does |
 | `{ type: "lead-assist", action: "leave" }` | Continues; `leadAssist` is cleared | `task-media-ended`, then `task-ended` with `{ type: "left" }` -- the call goes on without them |
-| Stays until the customer hangs up | `task-media-ended`, `completing`, its own disposition | The same, independently: **both have the completion window** |
+| Stays until the customer hangs up | `task-media-ended`, `completing`, its own outcome | The same, independently: **both have the completion window** |
 
 `left` is the one outcome that ends a task without ending the call: this agent left a call that
 continues without them. It reads as neither a completion nor a cancellation, because it is
@@ -4147,7 +4166,7 @@ neither.
 ```ts
 const leadAssistCapable = {
   channel: "voice",
-  capabilities: { hold: true, leadAssist: true, dispositions: true },
+  capabilities: { hold: true, leadAssist: true, outcomes: true },
   phase: "in-progress",
   leadAssist: { stage: "joined", leadId: "L-9", note: "Refund dispute, needs approval", since: "2026-08-21T09:04:00Z" },
 } satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "leadAssist">;
@@ -4468,8 +4487,8 @@ with a stale view: a flip against a state the provider has already changed turns
 then off again. A custom `toggle` control therefore carries its own boolean. `hold` and `resume`,
 `pause` and `resume` need no flag, being pairs rather than toggles.
 
-**`complete` sends a disposition only where one was published.** `disposition` is a
-`DispositionCode.id` from the task's own `dispositions` capability, and `notes` obeys that
+**`complete` sends an outcome only where one was published.** `outcome` is a
+`OutcomeCode.id` from the task's own `outcomes` capability, and `notes` obeys that
 capability's `notes` setting. A task publishing no codes still receives `complete`, with neither.
 
 ### Where a command executes
@@ -4574,7 +4593,7 @@ declared:
 | `conference` with `action: "remove"` | The `conference` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
 | `decline` | The `decline` capability on any channel, **and** Omni provisioning permitting it. One word for refusing an offer, whatever the channel. |
 | `call` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
-| `complete` | `completionMode: "agent-command"`. The `dispositions` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. What travels is what the capability published: a code from its list where it has one (`command.complete.disposition.unknown`), a code at all where it requires one (`.disposition.required`), notes as it said (`.notes.required`, `.notes.unexpected`), and neither where the task declares no dispositions (`.disposition.unexpected`). |
+| `complete` | `completionMode: "agent-command"`. The `outcomes` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. What travels is what the capability published: a code from its list where it has one (`command.complete.outcome.unknown`), a code at all where it requires one (`.outcome.required`), notes as it said (`.notes.required`, `.notes.unexpected`), and neither where the task declares no outcomes (`.outcome.unexpected`). |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | `transfer` with `action: "warm"` | The `warmTransfer` capability. `action: "cold"` is gated by `coldTransfer`; the two are declared and offered separately. |
 | `transfer` with `action: "complete"` or `"cancel"` | A consultation in progress -- a `consulted` entry on `Task.onCall`. Without one there is nothing to complete or cancel, and a provider that receives either answers `failed`. |
@@ -5198,7 +5217,7 @@ outcome -- stays in `notExercised` for every adapter, and a rule about a live ca
 in each adopter's own tests. `{ drive: true }` closes that: the exercise takes the first task the
 provider offers through one ordinary lifecycle -- accept it, wait for its media and open it on a
 softphone, hold and resume where the task offers `hold`, end the call where it offers `endCall`,
-complete it with a disposition where the agent completes -- and holds every step to the rules a
+complete it with an outcome where the agent completes -- and holds every step to the rules a
 host holds a provider to. Each command is validated against the task as published
 (`drive.command.*`), each answer for its method, a refusal of a control the task offered is a
 violation (`drive.command.failed`), and an event the provider owes and never sends is one too
@@ -5405,7 +5424,7 @@ same operation; reuse with different contents is refused. It never silently retr
 operation. Implementations without reliable request correlation must refuse controls.
 
 Keep command progress in host UI separately from authoritative state. Applied means the requested
-transition and disposition actually completed; publish the confirming task or host report before
+recording transition and any retain/discard effect actually completed; publish the confirming task or host report before
 resolving applied. Failed means confirmed no effect. Rejected promise means outcome unknown:
 show the failure, reconcile that path and do not automatically retry or pretend inactive. Authoritative
 updates remain full current task/host views, not replayed provider events. These current-state fields
