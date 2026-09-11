@@ -744,7 +744,7 @@ export type TaskPhase =
   /** Accepted, and not yet started. */
   | "confirmed"
   /**
-   * Voice only: the customer's record is on the agent's screen and no call has gone out. The agent
+   * Voice only: the customer's record is available for preparation, then dialing before answer. The agent
    * presses Call, or `previewEndsAt` arrives and `atDeadline` says what the system does instead.
    */
   | "preview"
@@ -754,7 +754,13 @@ export type TaskPhase =
   | "completing";
 
 /** What the system does when a preview's deadline passes with no Call pressed. */
-export type PreviewDeadline = "calls" | "expires";
+export type PreviewDeadline =
+  /** Provider initiates dialing when preparation ends; never a host timer command. */
+  | "calls"
+  /** Host initiates the ordinary call command when preparation ends. */
+  | "host-calls"
+  /** Provider withdraws the record rather than dialing. */
+  | "expires";
 
 /** Who ends the task: the agent issuing `complete`, or the provider deciding it is over. */
 export type CompletionMode = "agent-command" | "provider-automatic";
@@ -984,7 +990,8 @@ export type Task<C extends Channel = Channel> = {
   acceptance?: AcceptanceMode;
   /**
    * In `preview` only, and together: when the system stops waiting for the agent to press Call,
-   * and what it does then -- `calls` places the call itself, `expires` takes the record back and
+   * and who acts then -- `calls` makes the provider initiate dialing, `host-calls` makes the
+   * host issue Call, and `expires` takes the record back and
    * the task ends `expired`. Absent, the agent has as long as they need.
    */
   previewEndsAt?: IsoTimestamp;

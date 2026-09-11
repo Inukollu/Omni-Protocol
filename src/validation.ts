@@ -153,7 +153,7 @@ const MEMBER_BREAKS = membersOf<Extract<BreakApproval, "awaiting-decision" | "gr
 const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
   pending: true,
 });
-const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, expires: true });
+const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, "host-calls": true, expires: true });
 const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
 const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, monitorControl: true });
 const MONITOR_MODES = membersOf<MonitorMode>({ monitor: true, whisper: true, barge: true });
@@ -1003,10 +1003,10 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector, 
 const TASK_MEDIA_STATES = membersOf<TaskMediaState>({ started: true, ended: true });
 
 /** Real-time media is a voice affair, and its state is one of two words. */
-/** Whether a host dial is ringing the party: the party entry carries `stage: "ringing"` and the host's `dialId`. */
-function partyRingingByHost(task: Record<string, unknown>): boolean {
+/** A host dial, or explicitly provider-triggered preview dial, is ringing the party. */
+function partyRingingBeforeWork(task: Record<string, unknown>): boolean {
   return Array.isArray(task.onCall) && task.onCall.some(entry =>
-    isPlainObject(entry) && entry.role === "party" && entry.stage === "ringing" && typeof entry.dialId === "string");
+    isPlainObject(entry) && entry.role === "party" && entry.stage === "ringing" && (isFilled(entry.dialId) || (task.phase === "preview" && task.atDeadline === "calls" && entry.dialId === undefined)));
 }
 
 function validateTaskMedia(task: Record<string, unknown>, value: unknown, channel: string, phase: unknown, path: string, into: Collector): void {
@@ -1016,10 +1016,10 @@ function validateTaskMedia(task: Record<string, unknown>, value: unknown, channe
   if (into.oneOf(value, TASK_MEDIA_STATES, "task.media", path)) {
     // Nothing is acquired while pending, and a preview has placed no call: media names a task whose
     // work has begun, on a snapshot as on the event, or a host would open the microphone on an offer.
-    // The one task not yet at work that has audio is one whose party the host is dialling: ring-back
-    // is audio, and every host-placed dial's media starts on dialling.
-    into.require(!(WORK_NOT_BEGUN as readonly unknown[]).includes(phase) || partyRingingByHost(task), "task.media.beforeWork", path,
-      `a ${describeValue(phase)} task has no media: audio arrives once its work has begun, or once the host is dialling its party`);
+    // Ring-back may precede answer for a host dial or an explicitly provider-triggered preview.
+    // A deadline alone is never evidence that media started.
+    into.require(!(WORK_NOT_BEGUN as readonly unknown[]).includes(phase) || partyRingingBeforeWork(task), "task.media.beforeWork", path,
+      `a ${describeValue(phase)} task has no media: audio arrives once its work has begun, or once an evidenced host/provider preview dial is ringing its party`);
   }
 }
 const WORK_NOT_BEGUN = ["pending", "confirmed", "preview"] as const;

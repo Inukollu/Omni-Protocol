@@ -1114,7 +1114,7 @@ export class TaskStream {
     return [...was].filter(key => !now.has(key));
   }
 
-  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string; channel: string; completionMode: string; wrapAllowance: number | undefined; partyRingingByHost: boolean } {
+  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string; channel: string; completionMode: string; wrapAllowance: number | undefined; partyRingingBeforeWork: boolean } {
     const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
     // The stage of every dialled entry the room names by its dial, so an update can be held to the
     // outcome that moves it.
@@ -1124,9 +1124,9 @@ export class TaskStream {
         if (isRecord(entry) && typeof entry.dialId === "string" && typeof entry.stage === "string") stages.set(entry.dialId, entry.stage);
       }
     }
-    const partyRingingByHost = isRecord(task) && Array.isArray(task.onCall)
-      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && entry.stage === "ringing" && typeof entry.dialId === "string");
-    return { partyRingingByHost, channel: String(isRecord(task) ? task.channel : undefined), completionMode: String(isRecord(task) ? task.completionMode : undefined),
+    const partyRingingBeforeWork = isRecord(task) && Array.isArray(task.onCall)
+      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && entry.stage === "ringing" && (typeof entry.dialId === "string" || (task.phase === "preview" && task.atDeadline === "calls" && entry.dialId === undefined)));
+    return { partyRingingBeforeWork, channel: String(isRecord(task) ? task.channel : undefined), completionMode: String(isRecord(task) ? task.completionMode : undefined),
       wrapAllowance: isRecord(task) && typeof task.wrapAllowance === "number" ? task.wrapAllowance : undefined,
       phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task), allocation: String(isRecord(task) ? task.allocationId : undefined) };
   }
@@ -1327,7 +1327,7 @@ export class TaskStream {
           refuse("stream.taskMedia.channel", `${at}.type`, "only a voice task has media transitions");
           break;
         }
-        if (!AT_WORK.has(known.phase) && !known.partyRingingByHost) {
+        if (!AT_WORK.has(known.phase) && !known.partyRingingBeforeWork) {
           refuse("stream.taskMediaStarted.beforeWork", `${at}.taskId`,
             `media cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
@@ -1348,7 +1348,7 @@ export class TaskStream {
           refuse("stream.taskMedia.channel", `${at}.type`, "only a voice task has media transitions");
           break;
         }
-        if (!WORK_BEGUN.has(known.phase)) {
+        if (!WORK_BEGUN.has(known.phase) && !known.partyRingingBeforeWork) {
           refuse("stream.taskMediaEnded.beforeWork", `${at}.taskId`,
             `media cannot end on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }

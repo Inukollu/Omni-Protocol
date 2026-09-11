@@ -739,7 +739,7 @@ type Task<C extends Channel = Channel> = {
     : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never }
 );
 
-type PreviewDeadline = "calls" | "expires";
+type PreviewDeadline = "calls" | "host-calls" | "expires";
 
 type AcceptanceMode =
   | "no-preference"
@@ -2353,10 +2353,10 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
 | `party` | The person or entity on the other end of this task, as a `Contact`: often a name and one address; a withheld caller ID may leave nothing to send at all. Optional. The party is who the task is *with*; `contacts` is the directory. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preview`, `in-progress`, `paused`, or `completing`. `preview` is voice only. |
-| `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. Media names a task whose work has begun, or whose party the host is dialling: on a `pending`, `confirmed` or `preview` task with nobody ringing it is refused (`task.media.beforeWork`), on a snapshot as on the event, since a host opens the microphone on it; with the party ringing by a host dial, ring-back is audio and media starts on `dialling`. |
+| `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. Media names a task whose work has begun, or whose party the host is dialling: on a `pending`, `confirmed` or `preview` task with nobody ringing it is refused (`task.media.beforeWork`), on a snapshot as on the event, since a host opens the microphone on it; with the party ringing by a host dial or provider-triggered preview dial, actual ring-back media may precede answer. |
 | `acceptance` | How this offer is accepted — `no-preference`, `consent`, or `automatic` — stated on the pending task so a reconnect snapshot says it too. Required while `pending` when `autoAcceptTasks` was `true`, forbidden when it was `false`, and absent past `pending`. See **Acceptance modes**. |
 | `previewEndsAt` | Voice only, in `preview`: when the system stops waiting for the agent to press Call. Absent, the agent has as long as they need. Always with `atDeadline`. See **Preview: the agent presses Call**. |
-| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` places the call itself, `expires` takes the record back and the task ends `expired`. |
+| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` makes the provider initiate dialing, `host-calls` makes the host issue Call, `expires` takes the record back and the task ends `expired`. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
@@ -2437,8 +2437,9 @@ command.
 #### Preview: the agent presses Call
 
 An outbound campaign that lets the agent see who they are about to call is a **preview**: the
-record arrives as a task, the task sits in `preview` with the party on it, and no call has gone
-out. The agent reads and presses Call. That is the whole phase, and it exists on voice alone --
+record arrives as a task and sits in `preview` with the party on it before a call goes
+out. The agent prepares; manual or declared automatic initiation may then begin dialing. It
+remains preview while ringing until an evidenced answer or non-answer outcome. The agent may press Call. That is the whole phase, and it exists on voice alone --
 chat and email have no call to place, and their reading is ordinary work in `in-progress`.
 
 ```ts
@@ -2466,14 +2467,45 @@ no-answer as the disposition it is -- in a campaign that is the commonest outcom
 is work, not a cancellation. A `preview` task therefore needs a manifest that says how a dial ends
 (`task.preview.dialOutcomes.required`).
 
-**The deadline says what the system will do.** A provider that will not wait forever states
-`previewEndsAt`, and with it `atDeadline`: `calls` means the system places the call itself when the
-time runs out, which is progressive dialling; `expires` means the record is taken back and the task
-ends with an `expired` outcome naming `preview`. The two travel together
-(`task.preview.atDeadline.required`, `task.preview.previewEndsAt.required`), only while the task is in
-`preview` (`task.preview.deadline.unexpected`), and Omni's countdown reads "calling in 12s" or
-"expires in 12s" from the provider's word. With neither, the agent has as long as they need.
-Reaching the instant is not itself a transition: the provider reports what it did, as an event.
+**Preparation and trigger ownership are per task.** Unlimited preparation omits both
+`previewEndsAt` and `atDeadline`: only an agent pressing Call starts dialing. Fixed preparation
+carries the provider's authoritative preparation-end instant and exactly one trigger owner:
+
+| Declaration | At preparation end |
+| --- | --- |
+| `atDeadline: "calls"` | The provider initiates dialing. The host never sends a timer-triggered Call. |
+| `atDeadline: "host-calls"` | The host sends the ordinary `call` command with a fresh host `dialId`. The provider does not independently auto-dial this task. |
+| `atDeadline: "expires"` | Existing withdrawal behavior: the provider ends the record as expired rather than dialing. |
+
+The agent may press Call early in either fixed-preparation dialing mode. The deadline ends
+preparation and triggers initiation; it does not promise ringing, playable audio or customer
+answer at that exact instant. Scheduling/dispatch delay must remain visible, and a failed or
+prevented initiation must be reported rather than leaving a silently expired countdown.
+A source eligibility threshold that may never trigger an attempt is not this promise.
+
+The two deadline fields travel together and only in preview. The host uses a trusted provider
+clock estimate and monotonic aging, not an assumed local clock match. Without a usable estimate
+it cannot safely auto-trigger and must expose the uncertainty and reconcile. No zero-duration,
+receipt-time or local-default deadline is inferred. Neither elapsed time nor submission changes
+the task phase: subsequent authoritative events state ringing, answer, media and completion.
+
+A host must serialize manual clicks and its timer under the exact provider/login/task/allocation
+scope, allowing at most one unresolved submission. Recheck the current phase, deadline owner,
+allocation and whether an attempt already exists before dispatch. A new snapshot or policy update
+cancels an obsolete timer; login loss, disconnect, task end and allocation replacement fence its
+callback. Reconnect past a deadline first reconciles current task and attempt state; it must not
+blindly submit again. An uncertain prior submission remains unresolved, without automatic retry.
+The provider atomically arbitrates any residual manual/timer race and does not accept a second
+command as ownership of an already-running independent attempt.
+
+Host-triggered automatic dialing is an ordinary host dial: its result is `dialling` with the same
+host `dialId`, followed by exactly one correlated terminal `dial-outcome`. A provider-triggered
+dial has no invented host ID or host dial outcome. It reports source-evidenced party ringing,
+actual media and customer answer separately. In preview with `atDeadline: "calls"`, a ringing
+party without a host ID may carry actual pre-answer media; the deadline alone permits no media.
+Media is still introduced/ended by the corresponding events and must not imply customer answer.
+Submission acceptance is never an answered outcome or permission to publish `in-progress` early.
+Unsupported source correlation/outcome/media evidence remains an integration blocker.
 
 **Drop both fields when the phase moves.** A provider that builds the `in-progress` task by
 spreading the `preview` one carries `previewEndsAt` and `atDeadline` with it, and the host refuses
