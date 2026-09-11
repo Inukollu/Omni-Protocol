@@ -1,3 +1,12 @@
+# Provider time/record authority and room scope — 2026-09-11
+
+PR https://github.com/Inukollu/Omni-Protocol/pull/108; branch fix/break-ordering-checks; worktree /private/tmp/omni-break-ordering. Time/authority implementation 3396be4bd83d3d0ce64ed2c6952a84701e47e1c6; final room diagnostic correction c56a67aeddd140abd8d0cc682d1af607dad95198.
+- Optional Manifest.timeCheck + Connection.checkTime; host-local explicit interval, timeout, max RTT and sample age; optional Host.estimateProviderTime scoped by provider/login. Estimates are advisory, never HostGuarantees. Protocol defines/validates the surface; host scheduling and provider reads are integration work.
+- Manifest.timestampAuthority:provider can declare provider-owned final record time. Providers may accept host instants or use own receipt/observation time. Host never retimes provider history. Required recorded result now carries canonical at; repeated host report key remains correlation only. Providers retain the key-to-history binding across retained-task reload. This is a candidate API change: adopters must update recordStep results; no fallback assumes host at.
+- Provider-confirmed mute end is decisive for the matching local mute. Late host reports cannot reopen or overwrite final record. Caller departure may leave agent/added channels connected; empty onCall refers to this ended handling, not the whole bridge or caller journey.
+- Full pnpm check passed 420 tests/build/types/package including provider-retimestamping regression. Final prose/diagnostic adjustment additionally passed build and 190 targeted validation/guide/hygiene tests. No live test, merge, package/wire version change or release.
+- Risks: actual provider timestamp provenance, stable source correlation, physical host unmute and clock quality must be implemented/tested by integrations. Current helpers check shape/correlation, not real source time or device behavior. Await CI/review. Keep the worktree/branch while open; observer monitor below remains responsible.
+
 # Review corrections — 2026-09-11
 
 PR https://github.com/Inukollu/Omni-Protocol/pull/108; branch fix/break-ordering-checks; worktree /private/tmp/omni-break-ordering; implementation 575c0f8486014300b88862816b4b6c8654ec81a9 pushed to origin.
@@ -120,6 +129,6 @@ Validation: full build/typecheck plus 392 tests passed; guide-format check faile
 <!-- pr107-monitor:end -->
 
 <!-- break-monitor:begin -->
-Monitor omni-protocol-pr108-break-ordering: OPEN at 2026-09-11T04:21:55.893017+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr108-break-ordering: OPEN at 2026-09-11T05:25:45.047215+00:00. Await CI/review; monitor never merges.
 PID 66088; command python3 /private/tmp/omni-break-ordering/.agent-memory/runtime/break-monitor.py; state /private/tmp/omni-break-ordering/.agent-memory/runtime/break.state.json; log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.log; PID file /private/tmp/omni-break-ordering/.agent-memory/runtime/break.pid; process log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-ordering, branch fix/break-ordering-checks, PR https://github.com/Inukollu/Omni-Protocol/pull/108.
 <!-- break-monitor:end -->
