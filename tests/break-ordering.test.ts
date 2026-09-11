@@ -196,10 +196,12 @@ describe("lead break prerequisites", () => {
     }
   });
   it("rejects the old team end command and preserves its permission and state gates", () => {
-    const command = { type: "end", memberId: "member" };
+    const command = { type: "end-forced-break", memberId: "member" };
     const current = { ...lead, memberBreak: { ...state("in-effect"), forced: { by: "another-lead", endsAutomatically: false } } };
-    expect(validateTeamBreakCommand({ command: { ...command, type: "release" } }, current).map(v => v.rule)).toContain("team.break.command.type");
-    expect(validateTeamBreakCommand({ command }, lead).map(v => v.rule)).toContain("team.break.command.end");
+    for (const type of ["release", "end", "end-break"]) {
+      expect(validateTeamBreakCommand({ command: { ...command, type } }, current).map(v => v.rule)).toContain("team.break.command.type");
+    }
+    expect(validateTeamBreakCommand({ command }, lead).map(v => v.rule)).toContain("team.break.command.endForcedBreak");
     for (const bad of [context, { ...current, transport: "connecting" }, { ...current, team: { members: [] } }, { ...current, memberBreak: undefined }]) {
       expect(validateTeamBreakCommand({ command }, bad)).not.toEqual([]);
     }
@@ -208,7 +210,7 @@ describe("lead break prerequisites", () => {
   it("checks the forced-break reason and end without assuming the same lead does both", () => {
     expect(validateTeamBreakCommand({ command: { type: "force", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
     expect(validateTeamBreakCommand({ command: { type: "force", memberId: "member" } }, lead)).not.toEqual([]);
-    const end = { command: { type: "end", memberId: "member" } };
+    const end = { command: { type: "end-forced-break", memberId: "member" } };
     expect(validateTeamBreakCommand(end, lead)).not.toEqual([]);
     expect(validateTeamBreakCommand(end, { ...lead, memberBreak: { ...state("in-effect"), forced: { by: "another-lead", endsAutomatically: false } } })).toEqual([]);
   });

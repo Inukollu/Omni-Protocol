@@ -442,6 +442,9 @@ export const forceMemberBreak: import("../src/index.js").TeamBreakCommand = { ty
 // @ts-expect-error The retired place command has no compatibility alias.
 export const retiredPlaceBreak: import("../src/index.js").TeamBreakCommand = { type: "place", memberId: "member-1" };
 
-export const endMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "end", memberId: "member-1" };
+export const endMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "end-forced-break", memberId: "member-1" };
 // @ts-expect-error The former release command has no compatibility alias.
 export const retiredReleaseBreak: import("../src/index.js").TeamBreakCommand = { type: "release", memberId: "member-1" };
+
+// @ts-expect-error Use the specific end-forced-break command, not the interim end name.
+export const ambiguousTeamBreakEnd: import("../src/index.js").TeamBreakCommand = { type: "end", memberId: "member-1" };

@@ -1473,7 +1473,7 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
 
 /**
  * Checks lead break dispatch using current authentication, transport, team member list (`team`) and,
- * for force/end, the target's full `memberBreak`. The provider must authorize the target
+ * for force/end-forced-break, the target's full `memberBreak`. The provider must authorize the target
  * and recheck the decision atomically; a team member list is not authority to act after it has changed.
  */
 export function validateTeamBreakCommand(request: unknown, context: unknown, path = "teamBreakCommand"): ProtocolViolation[] {
@@ -1492,7 +1492,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   const command = request.command;
   const allowed: Record<string, readonly string[]> = {
     decide: ["type", "memberId", "decision", "reason"], policy: ["type", "policy"],
-    force: ["type", "memberId", "reasonId", "reason"], end: ["type", "memberId"],
+    force: ["type", "memberId", "reasonId", "reason"], "end-forced-break": ["type", "memberId"],
   };
   const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
   if (!fields) { into.add("team.break.command.type", path, "unknown lead break command"); return into.violations; }
@@ -1517,8 +1517,8 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   } else {
     validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
-    if (command.type === "end") into.require(state.forced !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
-      "team.break.command.end", path, "end a currently forced break");
+    if (command.type === "end-forced-break") into.require(state.forced !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
+      "team.break.command.endForcedBreak", path, "end a currently forced break");
     if (command.type === "force") {
       if (command.reasonId !== undefined) into.filled(command.reasonId, "team.break.command.reasonId", path, "reasonId must not be empty");
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
