@@ -1,3 +1,12 @@
+# Current delivery: User details API
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-user-details-api; branch refactor/user-details-api.
+Implementation dc84751203a52234317c3ba00c82fdec2d6a572c.
+PR https://github.com/Inukollu/Omni-Protocol/pull/121.
+Connection.describeUsers renamed to getUserDetails; validateDescribedUsers renamed to validateUserDetails. Diagnostics/harness/guide aligned; old exports have no aliases. Arguments, results and directory obligations preserved. Hosts/providers update together; no version changes.
+All 443 tests, build/type checks, guide examples, package verification (10 files/3 entrypoints), diff check passed. Log /private/tmp/user-details-check.log.
+Next: monitor CI/reviews and respond to failures; retain worktree/branch while open. No merge/release/cleanup performed. PR120 independently verified merged.
+
 # Current PR120 revision: Awaiting approval
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-status-field; branch refactor/break-status-field.
@@ -466,3 +475,8 @@ PID 61280; command python3 /private/tmp/omni-set-break-policy/.agent-memory/runt
 Monitor omni-protocol-pr120-break-status-field: OPEN at 2026-09-11T10:31:38.910377+00:00. Await CI/review; monitor never merges.
 PID 77759; command python3 /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field-monitor.py; state /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.state.json; log /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.log; PID file /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.pid; process log /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-status-field, branch refactor/break-status-field, PR https://github.com/Inukollu/Omni-Protocol/pull/120.
 <!-- break-status-field-monitor:end -->
+
+<!-- user-details-api-monitor:begin -->
+Monitor omni-protocol-pr121-user-details-api: OPEN at 2026-09-11T10:39:06.153606+00:00. Await CI/review; monitor never merges.
+PID 59675; command python3 /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api-monitor.py; state /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.state.json; log /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.log; PID file /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.pid; process log /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-user-details-api, branch refactor/user-details-api, PR https://github.com/Inukollu/Omni-Protocol/pull/121.
+<!-- user-details-api-monitor:end -->
