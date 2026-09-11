@@ -19,18 +19,18 @@ are used precisely throughout and mean nothing looser here.
 | Word | What it means |
 | --- | --- |
 | **Omni** | The desktop application an agent works in. It composes several providers into one agent-facing experience and owns everything outside a provider's own system. |
-| **Host** | Omni, named that way where the contrast with a provider is the point — *the host carries the audio*, *host-side input*. |
+| **Agent application** | The software the agent uses, such as Omni, whether web or desktop. It presents provider tasks and controls and manages local audio where supported. Existing API names use `Host` and `host` for this role. |
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
 | **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; transfer destinations may include an agent when the provider publishes that directory item. |
 | **Lead** | An agent whose login declares `capabilities.team`. The provider publishes a `TeamMembers` object to them and to nobody else: **the login is the permission**. |
-| **Provisioning** | Omni-side policy about this agent, configured outside the protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and provisioning disagree, the stricter wins. |
+| **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and local policy disagree, the stricter wins. |
 | **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. |
 | **Interaction** | One agent’s part in the call or conversation. The same call may return to that agent for a new interaction. |
 | **Task** | The agent’s assigned work and its workspace, controls and completion work. A voice task represents one interaction, not the caller’s whole call. |
 | **Channel** | The kind of work a provider carries: `voice`, `chat`, or `email`. Fixed per provider by its manifest. |
 | **Task type** | The provider's own name for a category of work — a queue, a mailbox folder, a chat source. Free-form, and finer-grained than a channel. |
-| **Capability** | A provider's declaration that a control exists for a task or a session. It says *offer this*; the provider performs it, and the host only offers it — see **Where a command executes**. |
+| **Capability** | A provider's declaration that a control exists for a task or a session. It says *offer this*; the provider performs it, and the agent application only offers it — see **Where a command executes**. |
 | **Login** | One authenticated sign-in to one provider, identified by `loginId`. A transport reconnect keeps it; signing in again replaces it, and nothing tied to the old `loginId` survives. |
 | **Transport** | The adapter's connection to its platform: a WebSocket or SignalR connection, required to be persistent and ordered. Which one and how it reconnects are the adapter's business; losing it does not end a login. |
 | **Connection** | The `Connection` object Omni holds for one login: the methods it can call and the events it receives. |
@@ -39,7 +39,7 @@ are used precisely throughout and mean nothing looser here.
 | **Event** | One completed transaction reported after a snapshot established the baseline. |
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, team member list. |
-| **Dial** | One outbound call the host asks a provider to place — from the idle dialpad, a cold or warm transfer, a conference add, or a connect-back. Identified by the host's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
+| **Dial** | One outbound call the agent application asks a provider to place — from the idle dialpad, a cold or warm transfer, a conference add, or a connect-back. Identified by the agent application's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
 | **Listen** | A lead listening to a member's call unasked, from the team member list: `listen` in silence, `coach` heard by the agent alone, `join-call` heard by everyone. Nothing of it reaches the member's task, and there is no take-over in it. See **Listening to a call**. |
 | **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in from the moment their dial is placed. |
 
@@ -72,12 +72,12 @@ An adapter declares **every** version it can speak, not just the one it was comp
 
 ```ts
 supportedProtocolVersions: [1]        // v1 only
-supportedProtocolVersions: [1, 2]     // can serve either host
+supportedProtocolVersions: [1, 2]     // can serve either agent application
 ```
 
 A single pinned version would make migration impossible: recompiling against a newer package
 would silently move an adapter to the new version with no window in which both sides
-interoperate. Declaring a set lets an adapter support the old and new host at once, so the two
+interoperate. Declaring a set lets an adapter support the old and new agent application at once, so the two
 can be deployed independently.
 
 ### `negotiateProtocolVersion(adapterVersions, hostVersions?)`
@@ -493,7 +493,7 @@ type Snapshot = {
 };
 
 type AgentCapacity = {
-  count: number; // absolute ceiling, zero or more; zero is host-stopped
+  count: number; // absolute ceiling, zero or more; zero is agent application-stopped
 };
 
 type CapacityResult = { status: "applied" };
@@ -875,7 +875,7 @@ leaves out does not exist — a structure with no site level declares `org`, `te
 at: a label with no policy behind it decides nothing. A manifest that declares none has exactly
 the four. `lockedBy` is any level in force except `person`, who never locks their own value;
 `setBy` is any level in force, or `provider`, the protocol's word for "no level has said
-anything and the provider's own configuration supplied the value". A host renders "who decided" from the
+anything and the provider's own configuration supplied the value". An agent application renders "who decided" from the
 declared labels and needs no others, and validates every republished `authenticated` state
 against them, not only the sign-in. What the wire carries is the resolution:
 
@@ -902,7 +902,7 @@ The adapter is the one that knows the value, so it is the one held to it: given 
 queue locked, the validator refuses any other field carrying one, digits compared as digits so no
 formatting hides them (`task.locked.leak`), and a conformance run whose tasks lock a party's number
 or email states those values in `lockedValues`, since a run that cannot ask the question is not a
-pass. A host never has the value and never asks. A name is not locked. What the queue provides rather than permits — browsers, outcomes, custom
+pass. An agent application never has the value and never asks. A name is not locked. What the queue provides rather than permits — browsers, outcomes, custom
 controls — is content, and is never locked.
 
 **A lead sets the team's policy from their team member list.** A login that declares
@@ -926,9 +926,9 @@ person's preference from their own screen, which arrives the same way. A prefere
 the capability's own name because it is the same capability at another level: effective in
 `Task.capabilities`, set for the team in `policies`, left to the person in `preferences`. The
 command `hold` acts on one call; the preference `hold` says whether the person wants the control
-at all, and a host renders it in its settings, never as the button on a call. Mute is in none of
-these ladders: the microphone is the host's, and nobody on the provider's side allows, locks or
-keeps a choice about it. See **The station is the host's**.
+at all, and an agent application renders it in its settings, never as the button on a call. Mute is in none of
+these ladders: the microphone is the agent application's, and nobody on the provider's side allows, locks or
+keeps a choice about it. See **The station is the agent application's**.
 
 ## Breaks
 
@@ -1406,7 +1406,7 @@ fact.
 
 Omitting a field says *I cannot see this*. An empty value says *I looked, and there is nothing*.
 
-Send whichever is true. A host renders them differently and cannot recover the distinction once
+Send whichever is true. An agent application renders them differently and cannot recover the distinction once
 it is lost.
 
 The same distinction applies to nested fields. Omit a nested field only when its value is unknown;
@@ -1505,7 +1505,7 @@ normative definition; matching names alone do not establish shared meaning.
 ### 10. Order on the wire is display order
 
 A list the provider publishes — a destination directory, outcome codes, a task's custom
-controls, its browsers — is in the order the provider wants it shown, and a host keeps that order.
+controls, its browsers — is in the order the provider wants it shown, and an agent application keeps that order.
 A reader will find meaning in position unless something says there is none, so the provider
 decides: where it has an intention, an administrator's sequence, it lists in that order; where it
 has none, it orders by the label, so the order is visibly arbitrary and does not move under the
@@ -1542,9 +1542,9 @@ the login's store where the platform cannot hold it. Per offer, the `allocationI
 the offer itself states; per call, the media follows `task-media-started` and `task-media-ended`,
 never a flag set when the audio was opened; per session, the phone the agent holds is what the
 platform restates on activation, not a mapping read once over HTTP. What the platform cannot hold
--- a host's muted leg -- goes in `ConnectContext.store`, keyed by the task and gone with it.
+-- an agent application's muted leg -- goes in `ConnectContext.store`, keyed by the task and gone with it.
 
-A fact read once over a connection and kept in the adapter object dies with the client. A host
+A fact read once over a connection and kept in the adapter object dies with the client. An agent application
 reload is the first client dying and a second coming up for the same login, and the second
 publishes the same truth about the same task as the first did, or the first was publishing
 something it made up: an allocation minted for the connection, media remembered as a boolean, a
@@ -1613,11 +1613,11 @@ compile time.
 | `phaseLabels` | Optional static adapter-defined display names for canonical `TaskPhase` values. They cannot vary at runtime. |
 | `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
-| `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the host) and/or `deskPhone` (a handset the platform rings; the host shows the call and opens nothing). The host picks one per login. See **How the agent hears the call**. |
+| `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `deskPhone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call**. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that transfer, conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome**. |
-| `timeCheck` | Optional `true`: implements `checkTime` for fresh provider-clock samples; host polling is independently opt-in. |
-| `timestampAuthority` | Optional `"provider"`: provider timestamps are final; host instants are advisory. Omission makes no trust promise. |
-| `runningStepReports` | The provider takes running reports of a host-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the host sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The host records what it performs**. |
+| `timeCheck` | Optional `true`: implements `checkTime` for fresh provider-clock samples; agent application polling is independently opt-in. |
+| `timestampAuthority` | Optional `"provider"`: provider timestamps are final; agent application instants are advisory. Omission makes no trust promise. |
+| `runningStepReports` | The provider takes running reports of an agent application-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the agent application sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The agent application records what it performs**. |
 | `completionSettleMs` | Required. How long after an applied completion -- `complete`, or a lead's `take-over-call` -- the provider's `task-ended` is owed, a positive whole number of milliseconds (`manifest.completionSettleMs`). A warm transfer's `complete` is not final task completion: the agent's wrap runs after it. Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
 
 ### Authentication methods
@@ -1872,8 +1872,8 @@ Creates the provider-scoped authentication session.
 | --- | --- |
 | `protocolVersion` | The negotiated version, fixed for this login. |
 | `loginId` | Omni-generated identity for this login. The same value Omni later passes as `ConnectContext.loginId`, and how an adapter ties a connection back to the session that authenticated it. |
-| `timeZone` | The zone the agent's day is reckoned in, as an IANA name from the host's clock, stated before any identity exists so the first `authenticated` state already carries it. The same value Omni later passes as `ConnectContext.timeZone`. See **The agent's day**. |
-| `phone` | How this login hears its calls, chosen by the host from the manifest's `phones`: required for a voice provider, absent for any other. The same value Omni later passes as `ConnectContext.phone`. See **How the agent hears the call**. |
+| `timeZone` | The zone the agent's day is reckoned in, as an IANA name from the agent application's clock, stated before any identity exists so the first `authenticated` state already carries it. The same value Omni later passes as `ConnectContext.timeZone`. See **The agent's day**. |
+| `phone` | How this login hears its calls, chosen by the agent application from the manifest's `phones`: required for a voice provider, absent for any other. The same value Omni later passes as `ConnectContext.phone`. See **How the agent hears the call**. |
 | `secrets` | Omni-provided `SecretStore`, scoped to this provider's manifest id. |
 | `signal` | Optional cancellation signal. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -1935,7 +1935,7 @@ them from what arrives later.
 | `team.policyControl` | This lead sets the team's policy per capability — on, off, or the person's — within what the queue allows. Requires `executeTeamPolicy`; the team member list carries `policies`. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
-A session action is available only when both the capability and Omni provisioning permit it.
+A session action is available only when both the capability and Omni local policy permit it.
 
 **Capabilities are current, not fixed.** They describe the login as of its latest `authenticated`
 state. A provider that reads roles live — a lead demoted mid-shift — republishes `authenticated`
@@ -2077,11 +2077,11 @@ Creates one live provider connection for the signed-in agent.
 | --- | --- |
 | `protocolVersion` | Version negotiated before authentication. Fixed for this login. |
 | `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
-| `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login, stated by the host on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
+| `autoAcceptTasks` | Agent local policy policy relayed to the provider at login, stated by the agent application on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
-| `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's host states what its Mute does, and a desk-phone or conversation login's host cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the host's**. |
-| `store` | The login's operational store, kept by the host for the life of the login, across a reload of the host, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs a host reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store a host may clear aggressively. **A task's keys carry the task id and go with the task**: a key written about a task names the task's id in the key, and is deleted before the task's end is published, because a platform retires a task id minutes after closing it and a requeue takes seconds, so a key that outlives its task is inherited by the next offer of the same id -- a record with legs the host never reported against it. A login-scoped key carries no task id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`drive.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`drive.store.late`). The ordinary late write is the host's, not the adapter's: a host reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.task-not-found` and writes nothing -- the host ends its own open legs at the task's end, so such a report is the host's error to see, and a host reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
-| `host` | The host's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The host reports, the adapter decides**. |
+| `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's agent application states what its Mute does, and a desk-phone or conversation login's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's**. |
+| `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry the task id and go with the task**: a key written about a task names the task's id in the key, and is deleted before the task's end is published, because a platform retires a task id minutes after closing it and a requeue takes seconds, so a key that outlives its task is inherited by the next offer of the same id -- a record with legs the agent application never reported against it. A login-scoped key carries no task id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`drive.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`drive.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.task-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
+| `host` | The agent application's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The agent application reports, the adapter decides**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
 
@@ -2093,7 +2093,7 @@ target, an answer streak, a per-queue count for today -- anything bucketed by da
 by somebody's day, and a platform that was never told whose uses its own. An agent in Chennai
 then finds their day rolling at 05:30, and a night shift in Chicago lands in two buckets.
 
-So the host says whose day it is, and it says so first. `AuthenticationContext.timeZone` is the
+So the agent application says whose day it is, and it says so first. `AuthenticationContext.timeZone` is the
 agent's zone as an IANA name -- `Asia/Kolkata`, `America/Chicago` -- never an offset, since an
 offset cannot survive a daylight-saving boundary and a day boundary is exactly where that bites
 (`context.timeZone`). It is stated before any identity exists, and `ConnectContext.timeZone` is the
@@ -2107,7 +2107,7 @@ field to fill in later: an identity without one is refused (`authentication.iden
 so is a zone that is not an IANA name, wherever it appears. Nothing is ever assumed in its place --
 not the viewer's browser, which gives a different answer per reader for the same record, and not the
 provider's clock. The harness holds a provider to the round trip: the identity carries the zone the
-host stated (`authentication.identity.timeZone.republished`), judged by what the name denotes:
+agent application stated (`authentication.identity.timeZone.republished`), judged by what the name denotes:
 `Asia/Kolkata` and `Asia/Calcutta` are one zone, and a provider that keeps the canonical name has
 kept the zone. **The round trip is not the store.**
 An adapter that echoes the stated zone back onto the identity passes that check with nothing kept,
@@ -2155,7 +2155,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `checkTime(request)` | The manifest declares `timeCheck: true`. Read-only clock check; no task command or accuracy guarantee. |
 | `subscribe(listener)` | Always. |
 | `disconnect()` | Always. |
-| `refused(report)` | Always. The host tells the adapter what it would not take -- a snapshot it did not replace its state with, an event it dropped -- with every rule broken, so a refusal is visible on both sides. See **What the host does with what it refuses**. |
+| `refused(report)` | Always. The agent application tells the adapter what it would not take -- a snapshot it did not replace its state with, an event it dropped -- with every rule broken, so a refusal is visible on both sides. See **What the agent application does with what it refuses**. |
 | `setCapacity(capacity)` | Always. Nothing may be allocated until a capacity is stated, so there is no connection that does not receive it. |
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability**. |
 | `getUserDetails(ids)` | The adapter publishes any `UserId`: on `ForcedBreak.by`, a team member list, or `interactionHistory[].by`. Each `User` carries its `timeZone`; a person whose zone the provider cannot name is omitted from the answer, as any unresolvable id is. |
@@ -2168,7 +2168,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `executeTeamLeadAssist(command)` | The login declares `capabilities.team.leadAssistControl`. |
 | `executeTeamListen(command)` | The login declares `capabilities.team.listeningControl`. |
 | `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
-| `recordStep(report)` | The manifest lists `softphone` among its `phones`. On a softphone the host mutes its own microphone on any call, and the provider's record has to have somewhere to take that leg; a desk phone's microphone is the phone's. See **The host records what it performs**. |
+| `recordStep(report)` | The manifest lists `softphone` among its `phones`. On a softphone the agent application mutes its own microphone on any call, and the provider's record has to have somewhere to take that leg; a desk phone's microphone is the phone's. See **The agent application records what it performs**. |
 | `executeTeamPolicy(command)` | The login declares `capabilities.team.policyControl`. |
 | `openMedia(request)` | The manifest lists `softphone` among its `phones`. On a softphone the call's audio lands in Omni, so the adapter has to open it; a platform of desk phones alone never does. |
 
@@ -2248,14 +2248,14 @@ Stops the connection and releases adapter-owned resources.
 The task-allocation lifecycle has five ordered stages:
 
 **1. The agent signs in.** Nothing on the wire says ready or not-ready: the agent is not ready
-until the host has stated a capacity, and ready once it has. A provider allocates nothing before a
+until the agent application has stated a capacity, and ready once it has. A provider allocates nothing before a
 capacity is stated, and needs no other word for it.
 
-**2. The agent becomes ready.** The host states the capacity when its provisioning says: at once,
+**2. The agent becomes ready.** The agent application states the capacity when its local policy says: at once,
 or when the agent presses Ready. A successful connection, a healthy provider, or the absence of a
 break does not imply readiness. After that, the only way an agent stops taking work is a break,
 under `capabilities.breaks`; a login that declares no breaks cannot go not-ready once its capacity
-is stated, and `count: 0` is the host's division of capacity, not the agent's choice.
+is stated, and `count: 0` is the agent application's division of capacity, not the agent's choice.
 
 **3. Omni states their concurrent capacity.** Only now does Omni ask providers for work, saying how
 much the agent can take at once. It is a standing declaration rather than a poll: Omni restates the
@@ -2276,13 +2276,13 @@ intent.
 
 During login, Omni sends the agent's `autoAcceptTasks` value to the provider. When it is `true`, the
 provider states `acceptance` on each pending task — on the task rather than the offer, so a
-reconnect snapshot says it too and an offer the host never received is not accepted on the
+reconnect snapshot says it too and an offer the agent application never received is not accepted on the
 person's behalf for want of a word:
 
 | Directive | Contract |
 | --- | --- |
 | `no-preference` | The provider leaves acceptance to Omni; with `autoAcceptTasks: true`, Omni accepts automatically. |
-| `consent` | The provider requires the person's explicit consent: Omni presents **Accept** and waits, whatever its own policy would have done. A host that declares `guarantees.personConsent` promises exactly this; a provider checks it before offering work only a person may take. |
+| `consent` | The provider requires the person's explicit consent: Omni presents **Accept** and waits, whatever its own policy would have done. An agent application that declares `guarantees.personConsent` promises exactly this; a provider checks it before offering work only a person may take. |
 | `automatic` | Omni accepts immediately without agent interaction. |
 
 When Omni sent `autoAcceptTasks: false`, the provider omits `acceptance` and every task the
@@ -2292,20 +2292,20 @@ no-auto-accept policy puts no word on the wire at all — the field is absent, a
 press is Omni's doing, not the provider's.
 
 **The value is stated, never assumed.** `autoAcceptTasks` is required of every connection: a
-host says which policy the deployment provisioned, and a validator that is not told checks
+agent application says which policy the deployment provisioned, and a validator that is not told checks
 neither rule rather than guess the permissive one (`task.acceptance.required` and
 `.unexpected` fire only against a stated value). `acceptance` is the provider's own control and
 outranks the policy: `consent` puts the decision back in the agent's hands for any task where it
-belongs, whatever the host was configured with.
+belongs, whatever the agent application was configured with.
 
 An automatically accepted task still arrives through `task-offered`.
 
 **Work the agent originated is accepted by the command that created it.** A task born of the
-agent's own act — a dialpad call or a connect-back, recognisable by the host's `dialId` on
+agent's own act — a dialpad call or a connect-back, recognisable by the agent application's `dialId` on
 `onCall`; a lead's join, carrying `assisting`; a lead's listen, carrying `listening` — arrives
 through `task-offered` with `acceptance: "automatic"` whatever `autoAcceptTasks` says, and the
-validator holds it there under either provisioning and under none (`task.acceptance.originated`):
-the desk shows no **Accept** for a call the agent placed. The provisioning governs work the queue
+validator holds it there under either local policy and under none (`task.acceptance.originated`):
+the desk shows no **Accept** for a call the agent placed. The local policy governs work the queue
 routes to the agent, and nothing else.
 
 ### Pending
@@ -2326,7 +2326,7 @@ const allocation = {
 ```
 
 The rule the phase exists to express: **nothing is acquired on the agent's behalf while a task
-is pending.** A host that carries media must not open the microphone until the task is
+is pending.** An agent application that carries media must not open the microphone until the task is
 accepted. Omni does not open the task's browsers either — a task that rings out costs nothing.
 
 When consent is required, Omni offers the agent an **Accept** control. The call is the
@@ -2379,25 +2379,25 @@ time. Runtime conformance checks also require the task channel to match its prov
 | Field | Contract |
 | --- | --- |
 | `id` | Required `TaskId`, the platform's own identity for the task. Unique among the tasks open at once; a platform retires an id minutes after closing it, so the same id comes back for another customer. Omni scopes it with the provider ID. |
-| `allocationId` | Required `AllocationId`: this life of the task, minted once per offer and never reused for the life of the login, whatever the id does. Every event, command and report that names a task names its allocation too, so a late dial outcome or a late interaction report for the first customer never lands on the next under the same id. The stream refuses an offer reusing one (`stream.taskOffered.allocation`), an update restating another life of the id (`stream.taskUpdated.allocation`), and a media or ending event naming a life that has ended or that nobody has seen (`stream.allocation.ended`, `.unknown`); a `dial-outcome` may name an ended life, since a dial placed late routinely outlives its call, and the host routes it there. See **A task's life on the wire**. |
+| `allocationId` | Required `AllocationId`: this life of the task, minted once per offer and never reused for the life of the login, whatever the id does. Every event, command and report that names a task names its allocation too, so a late dial outcome or a late interaction report for the first customer never lands on the next under the same id. The stream refuses an offer reusing one (`stream.taskOffered.allocation`), an update restating another life of the id (`stream.taskUpdated.allocation`), and a media or ending event naming a life that has ended or that nobody has seen (`stream.allocation.ended`, `.unknown`); a `dial-outcome` may name an ended life, since a dial placed late routinely outlives its call, and the agent application routes it there. See **A task's life on the wire**. |
 | `title` | Agent-facing task title. |
 | `channel` | Channel used for this task. It must equal the source provider's manifest channel. |
 | `taskType` | Required provider-defined source or category of work, such as a voice `Queue Name`, `Mailbox Folder`, `Chat Source`, `Support`, `Billing`, or `Returns`. |
 | `capabilities` | Controls and workspace features available for this specific task. |
-| `capabilitySource` | Required. Who chose the capabilities: `queue` when somebody configured these terms, `ungoverned` when nothing handed the work over -- an agent's own outbound -- and `undetermined` when a queue was named and its terms could not be read, in which case `capabilities` is what the provider will honour, not what the platform permits. A host shows `undetermined` where the agent works. See **Task capabilities**. |
+| `capabilitySource` | Required. Who chose the capabilities: `queue` when somebody configured these terms, `ungoverned` when nothing handed the work over -- an agent's own outbound -- and `undetermined` when a queue was named and its terms could not be read, in which case `capabilities` is what the provider will honour, not what the platform permits. An agent application shows `undetermined` where the agent works. See **Task capabilities**. |
 | `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
 | `party` | The person or entity on the other end of this task, as a `Contact`: often a name and one address; a withheld caller ID may leave nothing to send at all. Optional. The party is who the task is *with*; `contacts` is the directory. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preview`, `in-progress`, `paused`, or `completing`. `preview` is voice only. |
-| `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. Media names a task whose work has begun, or whose party the host is dialling: on a `pending`, `confirmed` or `preview` task with nobody ringing it is refused (`task.media.beforeWork`), on a snapshot as on the event, since a host opens the microphone on it; with the party ringing by a host dial or provider-triggered preview dial, actual ring-back media may precede answer. |
+| `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. Media names a task whose work has begun, or whose party the agent application is dialling: on a `pending`, `confirmed` or `preview` task with nobody ringing it is refused (`task.media.beforeWork`), on a snapshot as on the event, since an agent application opens the microphone on it; with the party ringing by an agent application dial or provider-triggered preview dial, actual ring-back media may precede answer. |
 | `acceptance` | How this offer is accepted — `no-preference`, `consent`, or `automatic` — stated on the pending task so a reconnect snapshot says it too. Required while `pending` when `autoAcceptTasks` was `true`, forbidden when it was `false`, and absent past `pending`. See **Acceptance modes**. |
 | `previewEndsAt` | Voice only, in `preview`: the preparation target instant. Absent, the agent has as long as they need without a preparation countdown. Always with `atDeadline`. See **Preview: the agent presses Call**. |
-| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` makes the provider initiate dialing, `host-calls` makes the host issue Call, `waits` keeps the task in preview awaiting the agent. |
+| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` makes the provider initiate dialing, `host-calls` makes the agent application issue Call, `waits` keeps the task in preview awaiting the agent. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
 | `wrapAllowance` | Fixed time allowed to complete the task after primary interaction ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `interactionHistory` | The call record: `steps` — the ordered interaction history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `interactionSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **Interaction history**. |
-| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the host's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where a host placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
+| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the agent application's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where an agent application placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the agent application supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `leadAssist` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Lead assist**. |
 | `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead-assist` `take-over-call` and `leave` issuable. See **Lead assist**. |
 | `listening` | Voice only, on the lead's own task while they listen to a member's call: whose call, which call, and the `mode` they are heard in, restated on every change. Never on the member's task, and never together with `assisting`. See **Listening to a call**. |
@@ -2453,11 +2453,11 @@ requeue takes seconds, and on one platform a call was offered twice, thirteen se
 one id, through a close and a re-offer. Everything that names a task after the fact -- a dial
 outcome, a media event, an ending, an interaction report, a command -- would land on whichever life of
 the id is open when it arrives. So every offer mints an `allocationId`, unique for the life of the
-login, and every one of those names it beside the `taskId`. The host keys its state on the pair, a
+login, and every one of those names it beside the `taskId`. The agent application keys its state on the pair, a
 late event finds the life it belongs to or is refused, and a task-scoped browser session
 (`PROVIDER_NAME__TASK_ID__TAB_NAME`) lives one allocation, never the next customer's cookies under
-a reused id. A dial the host placed was already safe, since its outcome is placed by the host's own
-`dialId`; where the allocation earns its place is everything the host does not mint --
+a reused id. A dial the agent application placed was already safe, since its outcome is placed by the agent application's own
+`dialId`; where the allocation earns its place is everything the agent application does not mint --
 `task-media-started`, `task-media-ended`, `task-ended`, a `recordStep` naming a task -- any of which
 would otherwise find the new task under the old id and act on it. The allocation is part of the task
 the adapter keeps, not a field held in memory beside it: a rebuilt adapter comes back with the same
@@ -2491,9 +2491,9 @@ const previewed = {
 const pressed: TaskCommand<"voice"> = { type: "call", dialId: "dial-7f2" };
 ```
 
-**Call is a dial.** It carries the host's `dialId`, is answered `dialling`, and ends in exactly one
+**Call is a dial.** It carries the agent application's `dialId`, is answered `dialling`, and ends in exactly one
 `dial-outcome`; the phase is its gate and there is no capability, since a record put in front of an
-agent is there to be called. Its media starts on `dialling`, as every host-placed dial's does --
+agent is there to be called. Its media starts on `dialling`, as every agent application-placed dial's does --
 ring-back is audio the agent hears -- so `task-media-started` arrives on the `preview` task with
 its party ringing. On `answered` the task is `in-progress`; on any other outcome the media ends,
 `task-media-ended` starts the wrap clock as on every voice task, and the task goes to
@@ -2508,8 +2508,8 @@ carries the provider's authoritative preparation-end instant and exactly one tri
 
 | Declaration | At preparation end |
 | --- | --- |
-| `atDeadline: "calls"` | The provider initiates dialing. The host never sends a timer-triggered Call. |
-| `atDeadline: "host-calls"` | The host sends the ordinary `call` command with a fresh host `dialId`. The provider does not independently auto-dial this task. |
+| `atDeadline: "calls"` | The provider initiates dialing. The agent application never sends a timer-triggered Call. |
+| `atDeadline: "host-calls"` | The agent application sends the ordinary `call` command with a fresh agent application `dialId`. The provider does not independently auto-dial this task. |
 | `atDeadline: "waits"` | Neither side auto-dials. The task remains in preview until the agent presses Call. |
 
 The agent may press Call early in either fixed-preparation dialing mode, or at any time in
@@ -2523,14 +2523,14 @@ answer at that exact instant. Scheduling/dispatch delay must remain visible, and
 prevented initiation must be reported rather than leaving a silently expired countdown.
 A source eligibility threshold that may never trigger an attempt is not this promise.
 
-The two deadline fields travel together and only in preview. The host uses trusted provider-domain
-time; clock estimation is allowed only under the explicit host-triggered preview exception below.
+The two deadline fields travel together and only in preview. The agent application uses trusted provider-domain
+time; clock estimation is allowed only under the explicit agent application-triggered preview exception below.
 Without usable provider-domain time
 it cannot safely auto-trigger and must expose the uncertainty and reconcile. No zero-duration,
 receipt-time or local-default deadline is inferred. Neither elapsed time nor submission changes
 the task phase: subsequent authoritative events state ringing, answer, media and completion.
 
-A host must serialize manual clicks and its timer under the exact provider/login/task/allocation
+An agent application must serialize manual clicks and its timer under the exact provider/login/task/allocation
 scope, allowing at most one unresolved submission. Recheck the current phase, deadline owner,
 allocation and whether an attempt already exists before dispatch. A new snapshot or policy update
 cancels an obsolete timer; login loss, disconnect, task end and allocation replacement fence its
@@ -2539,28 +2539,28 @@ blindly submit again. An uncertain prior submission remains unresolved, without 
 The provider atomically arbitrates any residual manual/timer race and does not accept a second
 command as ownership of an already-running independent attempt.
 
-Host-triggered automatic dialing is an ordinary host dial: its result is `dialling` with the same
-host `dialId`, followed by exactly one correlated terminal `dial-outcome`. A provider-triggered
-dial has no invented host ID or host dial outcome. It reports source-evidenced party ringing,
+Agent application-triggered automatic dialing is an ordinary agent application dial: its result is `dialling` with the same
+agent application `dialId`, followed by exactly one correlated terminal `dial-outcome`. A provider-triggered
+dial has no invented agent application ID or agent application dial outcome. It reports source-evidenced party ringing,
 actual media and customer answer separately. In preview with `atDeadline: "calls"`, a ringing
-party without a host ID may carry actual pre-answer media; the deadline alone permits no media.
+party without an agent application ID may carry actual pre-answer media; the deadline alone permits no media.
 Media is still introduced/ended by the corresponding events and must not imply customer answer.
 Submission acceptance is never an answered outcome or permission to publish `in-progress` early.
 Unsupported source correlation/outcome/media evidence remains an integration blocker.
 
 **Drop both fields when the phase moves.** A provider that builds the `in-progress` task by
-spreading the `preview` one carries `previewEndsAt` and `atDeadline` with it, and the host refuses
+spreading the `preview` one carries `previewEndsAt` and `atDeadline` with it, and the agent application refuses
 the update (`task.preview.deadline.unexpected`): the desk keeps the task as it last stood, and the
 provider is told through `refused` exactly which rule, so the state that looked right on its side
 is named on its side. The task past preview has no deadline to wait for, so it carries neither
 field.
 
-**Provider execution and host controls are distinct.** Answer, hold/resume, transfer (including
+**Provider execution and agent application controls are distinct.** Answer, hold/resume, transfer (including
 IVR routing), conference and interaction completion are executed by the provider
 through the adapter. The task's applicable capability, phase, completion mode and command-specific
-prerequisites decide which controls are offered. Caller disconnect also executes at the provider. Microphone mute is host-owned, never a provider
-TaskCommand or task capability. The separately declared host recording facility keeps its existing
-recording contract; this distinction does not remove it or move provider call operations to the host.
+prerequisites decide which controls are offered. Caller disconnect also executes at the provider. Microphone mute is agent application-owned, never a provider
+TaskCommand or task capability. The separately declared agent application recording facility keeps its existing
+recording contract; this distinction does not remove it or move provider call operations to the agent application.
 
 A caller journey may revisit the same agent while an earlier interaction still wraps. Public task
 IDs must remain distinct for concurrently open interactions. For source-owned interaction IDs allocated
@@ -2620,7 +2620,7 @@ whether the channel carries real-time media:
 | Other non-media channels | The `task-updated` that moves the task to `completing` |
 
 **Off voice, `completing` is the provider's word that interaction ended.** There is no media event to
-carry it, so the phase does; a host starts the wrap clock at that publication and nowhere else. It
+carry it, so the phase does; an agent application starts the wrap clock at that publication and nowhere else. It
 is optional: a conversation with nothing to wrap moves from `in-progress` to `task-ended` and
 `completing` is never published. Under `provider-automatic` with a non-zero `wrapAllowance` it is
 required, because the clock has to start somewhere: a chat or email task the provider completes
@@ -2666,7 +2666,7 @@ A task that declares `connectBack` lets the agent connect back to the party whil
 whoever placed the call in the first place. Most such calls came in, so this is not a redial: the
 agent rings a party who rang them. Omni issues `{ type: "connect-back", dialId }`; it is issuable
 only in `completing`, and only where the capability is declared. The provider knows who the party
-is; the command carries no destination, and it is a dial like any other, so it carries the host's
+is; the command carries no destination, and it is a dial like any other, so it carries the agent application's
 `dialId`, is answered `dialling`, and ends in one `dial-outcome`.
 
 On `dialling` the provider is placing the call and the task returns to `in-progress`: the agent is
@@ -2677,15 +2677,15 @@ whose outcome says so and a call whose media ended: the task returns to `complet
 same event and the clock starts again from there. At no point is an agent dialling against a
 deadline.
 
-**The room shows the party being dialled.** From the moment any host dial places the party -- a
+**The room shows the party being dialled.** From the moment any agent application dial places the party -- a
 dialpad call, a preview Call, a connect-back -- the `party` entry carries `stage: "ringing"` and
-the host's `dialId`, exactly as a consulted or conferenced entry does from its dial; `joined` on
+the agent application's `dialId`, exactly as a consulted or conferenced entry does from its dial; `joined` on
 the publication that follows the answered `dial-outcome` and never before it
 (`stream.taskUpdated.stage`); and no stage from the next publication on, so `joined` is transient
-and a later copy still carrying it is stale (`stream.taskUpdated.stage.lingering`). A host shows a
+and a later copy still carrying it is stale (`stream.taskUpdated.stage.lingering`). An agent application shows a
 call being placed, not a party it asserts is on a call that is still ringing. A callback the platform places itself on the same task -- the first
 call over, the platform dialling the party again without a command -- shows the same thing with no
-host `dialId`, as any platform-placed dial does. A party with no stage is on the call, and a dial
+agent application `dialId`, as any platform-placed dial does. A party with no stage is on the call, and a dial
 with no stage is half a claim (`task.onCall.party.dial`). The stage is also what lets the stream
 tell a task coming back from one going backwards (`stream.taskUpdated.phase`).
 
@@ -2781,19 +2781,19 @@ task says whether a leg can still be running: a hold runs only while the task is
 only while its media is up, so a `held` entry without `seconds` on a task that is not paused, or a
 `muted` one on a call that is over, is a leg nobody closed and reads exactly like a leg running now
 (`task.interactionHistory.held.open`, `.muted.open`). Whoever performs the leg closes it — the
-provider whose platform parks the caller, the host whose microphone it is — by restating the entry
+provider whose platform parks the caller, the agent application whose microphone it is — by restating the entry
 with its duration, and **an entry that cannot be closed is not written**: open for ever is a
 plausible nought one level down from a total. **A leg still open when the media ends is closed by
 the provider**, at that instant, in the same publication that says the media ended: the provider
-is the one that knows the instant, and the host can only learn of it afterwards. Agents end calls
-muted, so the host's leg is routinely open at media end; the provider closes it with the duration
-from the leg's `at` to the media's end, and the host's own closing report for that leg, which
+is the one that knows the instant, and the agent application can only learn of it afterwards. Agents end calls
+muted, so the agent application's leg is routinely open at media end; the provider closes it with the duration
+from the leg's `at` to the media's end, and the agent application's own closing report for that leg, which
 follows what it hears, is answered `recorded` and changes nothing, the entry standing as the
 provider closed it. One publisher of the closed leg, and no order between them to get right. There is no resumed step; a resume is the end of a
 hold, at the entry's `at` plus its `seconds`, and nothing is lost by not naming it twice. The same goes for every step: two mutes are two
 `muted` entries, and a call that joined two queues -- a menu's, then this one -- has two `queued`
 entries, one per join. Order is enforced: an entry earlier than the one before it is refused
-(`task.interactionHistory.order`). **Intervals between steps are the host's to subtract**, never a
+(`task.interactionHistory.order`). **Intervals between steps are the agent application's to subtract**, never a
 total the provider adds: *time to offer*, from the call's arrival to the agent's screen lighting
 up, is the `offered` entry's `at` minus the last `queued` entry's, and the ring is outside it.
 `queueSeconds` keeps the industry's meaning -- the whole wait until somebody answered -- and is not
@@ -2803,32 +2803,32 @@ grain: rounded to the nearest second, and a leg that rounds to nought is stated 
 being under the contract's resolution, where dropping the entry would say the leg never happened.
 
 **A record once read is not unread.** Every restatement of a task's record -- on `task-updated`,
-on a resync snapshot -- carries every entry the host has already read, by step and instant, and
+on a resync snapshot -- carries every entry the agent application has already read, by step and instant, and
 may add to them; it never has fewer, and never drops the record while the task is open. A fact
-stated to the host and then withdrawn without an event is a record contradicting itself, exactly
+stated to the agent application and then withdrawn without an event is a record contradicting itself, exactly
 as a task that lost the terms it had read would be, and the stream refuses it the same way
 (`stream.taskUpdated.interactionHistory`, `stream.snapshot.interactionHistory`). A provider whose
-platform cannot hold a leg the host reported keeps it in the login's `store` for the life of the
-task, so a reload of the host restates the same record; the entry is keyed by `step` and `at`, so
+platform cannot hold a leg the agent application reported keeps it in the login's `store` for the life of the
+task, so a reload of the agent application restates the same record; the entry is keyed by `step` and `at`, so
 a running hold restated with its final `seconds` is the same entry.
 
-**The provider owns the timestamps in its record.** Host timestamps are advisory. The provider
-may retain a host instant it accepts or assign its own observation/receipt instant; it need not
-copy the host clock. A provider declaring `timestampAuthority: "provider"` uses its own timestamps
+**The provider owns the timestamps in its record.** Agent application timestamps are advisory. The provider
+may retain an agent application instant it accepts or assign its own observation/receipt instant; it need not
+copy the agent application clock. A provider declaring `timestampAuthority: "provider"` uses its own timestamps
 for final records. Receipt time is an observation boundary, not a claim about when the physical
-host action happened. Records are ordered by their published provider-selected instants, with no
-rewriting of an already-published entry when a later host report arrives.
+agent application action happened. Records are ordered by their published provider-selected instants, with no
+rewriting of an already-published entry when a later agent application report arrives.
 
-The incoming host `step` and `at`, scoped to the task and its current life, identify one reported
+The incoming agent application `step` and `at`, scoped to the task and its current life, identify one reported
 leg for correlation only. The provider retains a binding from that key to its chosen history
 `at`. Every successful `recordStep` returns `{ status: "recorded", at }` with that same canonical
-history instant, even for subsequent duration/end reports. The host keeps sending the original
-report key, never the returned history timestamp. A changed host timestamp is not a correction
+history instant, even for subsequent duration/end reports. The agent application keeps sending the original
+report key, never the returned history timestamp. A changed agent application timestamp is not a correction
 to the same report: it names a different leg. Bindings survive reconnect/reload for the retained
-task lifetime. The host renders provider-published history unchanged. It never compares the
+task lifetime. The agent application renders provider-published history unchanged. It never compares the
 provider instant back to its own clock, substitutes its own timestamp, or adjusts later messages
-to match an earlier host estimate. The acknowledgment identifies the provider record for
-correlation/conformance only; it is not a host-side timestamp reconciliation instruction. Conflicting reuse is refused visibly, not paired by arrival time or nearest instant.
+to match an earlier agent application estimate. The acknowledgment identifies the provider record for
+correlation/conformance only; it is not an application-side timestamp reconciliation instruction. Conflicting reuse is refused visibly, not paired by arrival time or nearest instant.
 If two distinct entries would collide under the history's `(step, at)` key, do not invent a time
 or combine them: report the representation conflict. No ambiguous event is silently accepted.
 
@@ -2838,17 +2838,17 @@ history — until the task's media ends, and a hold neither pauses nor resets it
 duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is
 counting the wrong thing.
 
-`muted` is there because the mute is the host's and never the provider's — see **The station is
-the host's** — so without a step the provider, which alone keeps the task's record, would have no
-account of a period the agent could not be heard. Each `muted` entry carries `mutedBy`, as the host
-reported it: `host` for the agent's own Mute, `station` for a headset or system mute the host
+`muted` is there because the mute is the agent application's and never the provider's — see **The station is
+the agent application's** — so without a step the provider, which alone keeps the task's record, would have no
+account of a period the agent could not be heard. Each `muted` entry carries `mutedBy`, as the agent application
+reported it: `host` for the agent's own Mute, `station` for a headset or system mute the agent application
 observed. No other step has it (`task.interactionHistory.mutedBy`, `.mutedBy.unexpected`).
 
 **A step that dialled says which dial and where.** `transferred`, `conferenced` and `unanswered`
-each end a dial, so the entry carries the `destinationId` it went to and, where a host placed it, the
-`dialId` the host minted; no other step dialled, and either field on one is refused
+each end a dial, so the entry carries the `destinationId` it went to and, where an agent application placed it, the
+`dialId` the agent application minted; no other step dialled, and either field on one is refused
 (`task.interactionHistory.dialId.unexpected`). This is how a dial made before a transfer is placeable
-by whoever holds the task now: a `dial-outcome` naming a `dialId` the host never minted is looked
+by whoever holds the task now: a `dial-outcome` naming a `dialId` the agent application never minted is looked
 up in the record, not discarded.
 
 Four rules a provider has to keep:
@@ -2872,7 +2872,7 @@ Four rules a provider has to keep:
 `queued` nobody takes part, so there is nothing to name. On every other step somebody did — see
 `INTERACTION_STEPS_WITH_A_PERSON` and `interactionStepExpectsAPerson()` — so an absent `by` there says
 *this was handled and the provider cannot say by whom*. The one step that is never unattributed is
-`muted`: the host has exactly one agent and the provider knows who, so `by` is required there
+`muted`: the agent application has exactly one agent and the provider knows who, so `by` is required there
 (`task.interactionHistory.muted.by`).
 
 That case is ordinary rather than theoretical: a leg answered on a shared phone, a manager's
@@ -2881,7 +2881,7 @@ rather than dropping it.** A list missing a real handler looks complete and is w
 worse than one saying plainly it could not attribute a leg — and far better than publishing
 nothing because a single leg could not be named.
 
-A host must render the two differently. Showing an unattributed `answered` the same way as
+An agent application must render the two differently. Showing an unattributed `answered` the same way as
 `queued` tells the agent nobody was involved, which is not what was said. Omni renders it as
 *"not recorded"* in the place the name would go.
 
@@ -2898,10 +2898,10 @@ zeros. The record is restated with the task on every `task-updated` and snapshot
 that arrives late corrects the sums. These four are what every platform reports; more will be
 added here as a need is shown, not invented ahead of one.
 
-#### The host records what it performs
+#### The agent application records what it performs
 
-`muted` is the one leg the host performs rather than the provider, and a record kept by the
-provider would have a hole exactly there. So the host reports it, through `recordStep`, and the provider
+`muted` is the one leg the agent application performs rather than the provider, and a record kept by the
+provider would have a hole exactly there. So the agent application reports it, through `recordStep`, and the provider
 writes it into its record as it writes every other leg:
 
 ```ts
@@ -2911,12 +2911,12 @@ declare const allocationId: AllocationId;
 declare const at: IsoTimestamp;
 
 void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy: "host" });                          // the moment the agent mutes
-void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy: "host", seconds: 15 });             // still running, if the host chooses to say
+void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy: "host", seconds: 15 });             // still running, if the agent application chooses to say
 void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy: "host", seconds: 42, ended: true }); // the moment they unmute
 ```
 
-Every report about one leg repeats its original `step` and host `at` as a correlation key;
-the published history uses the provider-selected `at` returned by `recordStep`. The host reports
+Every report about one leg repeats its original `step` and agent application `at` as a correlation key;
+the published history uses the provider-selected `at` returned by `recordStep`. The agent application reports
 the action it performed and its measured duration, not an authoritative provider timestamp. It may say how long so far — `seconds` is
 elapsed while the leg runs and final once it has ended — and **the end is stated, never
 inferred**: `ended: true` marks the last report, and it carries the final duration. **What a
@@ -2927,16 +2927,16 @@ a running one it was never asked for (`interactionReport.running.unexpected`). W
 did ask for them forwards upstream, and how often, is its own business. The step appears in
 `interactionHistory` when the *provider* publishes it: Omni never writes the record itself.
 `recordStep` is required of every softphone login's connection, since every call on a softphone
-can be muted by the host, and answers `recorded` with the canonical history `at`. A `muted` report says whose the silence was,
+can be muted by the agent application, and answers `recorded` with the canonical history `at`. A `muted` report says whose the silence was,
 `mutedBy: "host"` or `"station"`, and no other report has the word (`interactionReport.mutedBy`,
 `.mutedBy.unexpected`). On a desk phone the microphone is the phone's:
-the host mutes nothing and records nothing.
+the agent application mutes nothing and records nothing.
 
-**The provider's confirmed end is decisive.** The host keeps local state for interaction and
+**The provider's confirmed end is decisive.** The agent application keeps local state for interaction and
 reporting, but follows the provider's authoritative state. When the provider publishes the end
-of the current mute leg, the host ends that local mute and releases its host-controlled mute
+of the current mute leg, the agent application ends that local mute and releases its agent application-controlled mute
 on the matching task's media. It does not wait for its own timer, reopen the leg, replace the
-provider timestamp, or overwrite the provider's final duration with a later host report.
+provider timestamp, or overwrite the provider's final duration with a later agent application report.
 A later agent mute is a new leg, never a reopening of the ended one.
 
 Correlate the provider-published `muted` entry using the provider-selected `at` acknowledged
@@ -2944,15 +2944,15 @@ for the current report key; a final `seconds` closes that leg under the history 
 This is identity matching, not reconciliation between clocks. An old closed entry, an unrelated
 task, or a stale connection cannot end a newer local mute. If publication precedes the acknowledgment,
 retain the current provider view and apply the matching closure once correlation is available;
-never guess a match from arrival order or nearest timestamp. Failure to release a host-controlled
+never guess a match from arrival order or nearest timestamp. Failure to release an agent application-controlled
 mute is reported visibly; local device reports still describe the actual device state.
 
-At a provider-confirmed task/media end, the host also stops the associated local mute and reports
-its observed ending where the report is still accepted. A host closing report repeats its original
+At a provider-confirmed task/media end, the agent application also stops the associated local mute and reports
+its observed ending where the report is still accepted. An agent application closing report repeats its original
 key and may include its measured duration, but cannot reverse an already confirmed provider end.
 The provider acknowledges a known closed leg without rewriting its final record; after the task
-has been completed, it may refuse the report as task-not-found. The host reads that response rather
-than retrying or recreating the task. An observed host end before a provider closure is still
+has been completed, it may refuse the report as task-not-found. The agent application reads that response rather
+than retrying or recreating the task. An observed agent application end before a provider closure is still
 reported normally; the provider decides the final timestamp and publishes the record.
 
 ### Browser capability
@@ -2986,7 +2986,7 @@ Each `TaskBrowser` defines one named browser in the task workspace.
 | `url` | Initial URL. Must use `http:` or `https:`; see below. Later navigation comes from Chromium. |
 | `sharedSession` | Required. `false` creates a task-specific browser session. |
 | `isolationScheme` | **Required when `sharedSession` is `true`**, and rejected when it is `false`. There is no default: see below. |
-| `urlVisibility` | What the agent sees of this tab's URL in Omni's chrome: `hidden`, `domain`, or `full`. Omitted, the URL shows as any browser's does; a provider says `hidden` where the URL carries what the agent may not read — a caller's number, a CRM token. Per browser, on the provider's word; a host that declares `guarantees.browserUrlVisibility` honours it tab by tab, and a provider checks that guarantee before it sends such a URL at all. |
+| `urlVisibility` | What the agent sees of this tab's URL in Omni's chrome: `hidden`, `domain`, or `full`. Omitted, the URL shows as any browser's does; a provider says `hidden` where the URL carries what the agent may not read — a caller's number, a CRM token. Per browser, on the provider's word; an agent application that declares `guarantees.browserUrlVisibility` honours it tab by tab, and a provider checks that guarantee before it sends such a URL at all. |
 
 ##### Choosing an isolation scheme
 
@@ -3077,8 +3077,8 @@ that produces two consumers disagreeing about one fact. The task is the one sour
 provider puts on the task what the platform permits for it -- and says, in `capabilitySource`, who
 chose those terms. `queue` says somebody configured them. `ungoverned` says nothing handed the work
 over: an agent's own outbound call has no queue behind it, and the provider states what it permits
-for such a call. Neither changes where a host reads the capabilities from, which is the task; the
-source is one more published fact about them, and the one that lets a host tell a fact from a fault
+for such a call. Neither changes where an agent application reads the capabilities from, which is the task; the
+source is one more published fact about them, and the one that lets an agent application tell a fact from a fault
 (see below).
 
 **Completing the task is not a capability, and no capability set withholds it.** `complete` is
@@ -3097,14 +3097,14 @@ task said so both times, at the moment it became true. A call moves queues the s
 identified as a priority customer is transferred to the priority queue, and the task arrives under
 that queue's terms -- a longer wrap allowance, a discount control the general queue never offered --
 restated on the task at the hand-over, not inferred from the queue it left. A capability stated
-once at offer or answer and never corrected is a fact with a shelf life and no expiry, and a host
+once at offer or answer and never corrected is a fact with a shelf life and no expiry, and an agent application
 draws a control the provider will now refuse -- or withholds one the agent now has. So the provider republishes
-the task, with its capabilities as they now stand, and a host treats the last statement as current
+the task, with its capabilities as they now stand, and an agent application treats the last statement as current
 rather than re-deriving anything. This is the same shape as a room left full after the call ends
 -- a field describing the present, carried past the moment it stopped being true -- carried past
 this time not by a spread but by nobody sending the correction. A provider whose platform can
 change a permission mid-task and does not republish is in breach, however conformant its offer was.
-A capability set can shrink as well as grow, and a host that has only ever seen it grow meets a
+A capability set can shrink as well as grow, and an agent application that has only ever seen it grow meets a
 control that was there a moment ago and is gone; a command that arrives after its capability was
 withdrawn is refused with a reason, never acted on. The asymmetry decides which direction a
 provider gets right first: a control gained late is a nicety, a control withdrawn and not
@@ -3113,12 +3113,12 @@ direction: the task as offered and as republished, and one command that was issu
 first and is refused under the last for want of the capability withdrawn -- and nothing else.
 
 **An empty capability set is a statement, not a shrug.** `capabilities: {}` under `queue` or
-`ungoverned` says the platform permits nothing capability-gated on this task, and a host draws
+`ungoverned` says the platform permits nothing capability-gated on this task, and an agent application draws
 nothing beyond what the phase and `completionMode` require. A provider that has not yet learned
 what the platform permits -- a queue's configuration that has not reached it -- knows nothing of
 the kind, and must not publish the task as if it did, neither as `{}` nor as every control it has.
 It publishes the task under `capabilitySource: "undetermined"`, with the capabilities it will
-honour until it knows, and a host shows that where the agent works, beside the controls it draws
+honour until it knows, and an agent application shows that where the agent works, beside the controls it draws
 from them: "no queue governs this call" is a fact, "the configuration has not arrived" is a fault,
 and the set alone cannot tell them apart, so the provider says which. What a provider honours
 under undetermined terms is its own call -- a floor that would rather an agent briefly hold a
@@ -3163,9 +3163,9 @@ a message that shows and clears has said nothing about the buttons still on the 
 words are close in English and far apart on the desk: `ungoverned` is silence, `undetermined` is a
 standing notice.
 
-One consequence for whoever builds the host: because a conformance run fails on `undetermined`, a
-conformant adapter never shows a host `undetermined` under test, and a clean `exerciseAdapter`
-result says nothing about how the host renders it. That rendering is tested against a fixture --
+One consequence for whoever builds the agent application: because a conformance run fails on `undetermined`, a
+conformant adapter never shows an agent application `undetermined` under test, and a clean `exerciseAdapter`
+result says nothing about how the agent application renders it. That rendering is tested against a fixture --
 a task published under `undetermined` shows the notice, the same task under `queue` shows none --
 and never against an adapter, even in principle. `exerciseAdapter` treats a
 task published under `undetermined` as a violation (`capabilitySource.undetermined`), as it treats
@@ -3192,7 +3192,7 @@ See **Which commands need a capability**.
 
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
-| `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when provisioning also permits declining. |
+| `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when local policy also permits declining. |
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
 | `endCall` | Primary button: End call | The provider ends the caller connection and all owned/inherited agent-added channels; wrap/completion remain separate. See **Ending a call, and removing one person from it**. |
 | `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance completes the task at provider end. See **Connecting back during completion**. |
@@ -3200,7 +3200,7 @@ See **Which commands need a capability**.
 | `warmTransfer` | Secondary menu item: Warm transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Warm transfer**. |
 | `leadAssist` | Secondary menu item: Lead assist | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.leadAssist`. See **Lead assist**. |
 | `conference` | Secondary button: Conference | Omni may dial a destination into the active call, and remove one person from it -- a conferenced entry, one still ringing included, which calls the dial off, or the party, leaving the agent with the colleague. See **Ending a call, and removing one person from it**. |
-| `recording` | Overflow menu item: Recording | Per-task provider and host policies expose only their permitted recording actions; each has independent state and routing. |
+| `recording` | Overflow menu item: Recording | Per-task provider and agent application policies expose only their permitted recording actions; each has independent state and routing. |
 | `outcomes` | Primary button: Complete | Omni may request task completion with a provider outcome and notes. |
 
 ### Publishing codes and destinations
@@ -3282,7 +3282,7 @@ reason (`task.destinations.shape`): once nothing is typed, the directory is the 
 
 **The provider chooses the supported destinations.** A published item may route to an IVR,
 queue, named agent or another configured destination. No destination kind is inferred from its
-label. The host offers only the directory attached to this task's specific transfer capability,
+label. The agent application offers only the directory attached to this task's specific transfer capability,
 and sends the exact destination ID; it does not invent an agent picker or arbitrary dial target.
 The provider rechecks eligibility and executes the routing. Returning to an IVR or queue does not
 end the caller journey; a later assignment to the same agent is a new interaction.
@@ -3298,13 +3298,13 @@ provider.
 { type: "conference", action: "remove", destinationId: "tier2" } // the conferenced person leaves; ringing, this calls the dial off
 ```
 
-The host sends the ordinary task-scoped `execute` request with `command: { type: "end-call" }`.
+The agent application sends the ordinary task-scoped `execute` request with `command: { type: "end-call" }`.
 The provider knows the caller and agent-added channel bindings; no channel list or owner details
-are sent by the host. The task's `endCall` capability is permission, not an executor selection.
+are sent by the agent application. The task's `endCall` capability is permission, not an executor selection.
 `validateTaskCommandRequest` checks the exact interaction/allocation and delegates the command's
 policy/phase checks. The provider rechecks current ownership atomically; no client validator can
-prove that its view is fresh. The host does not implement agent end-call; low-level removal of individual channels is not
-this agent action. There is no host end-call execution API or fallback route.
+prove that its view is fresh. The agent application does not implement agent end-call; low-level removal of individual channels is not
+this agent action. There is no agent application end-call execution API or fallback route.
 
 `end-call` is gated by `endCall` on the current interaction. It ends the caller connection and
 all agent-added channels owned by that interaction, including channels originally added by previous
@@ -3356,7 +3356,7 @@ offer any of the three without the others, and each is declared on its own.
 ```
 
 `warm` is gated by the `warmTransfer` capability and names a directory item exactly as a cold
-transfer does, from the same kind of directory. It is a dial, so it carries the host's `dialId`
+transfer does, from the same kind of directory. It is a dial, so it carries the agent application's `dialId`
 and is answered `dialling`, and its `dial-outcome` says whether the destination was reached. While
 the destination is on the line the task carries a `consulted` entry on `onCall`, and that presence
 is what makes `complete` and `cancel` issuable -- they name no destination because there is exactly
@@ -3382,7 +3382,7 @@ customer.
 
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
-| `decline` | Pending-task button: Decline | The provider can decline a pending chat offer. Omni shows it only when provisioning also permits declining. |
+| `decline` | Pending-task button: Decline | The provider can decline a pending chat offer. Omni shows it only when local policy also permits declining. |
 | `hold` | Primary toggle: Hold | Omni may pause and resume the agent’s interaction in the chat. |
 | `outcomes` | Primary button: Complete | Omni may request task completion with a provider outcome and notes. |
 
@@ -3390,7 +3390,7 @@ customer.
 
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
-| `decline` | Pending-task button: Decline | The provider can decline a pending email offer. Omni shows it only when provisioning also permits declining. |
+| `decline` | Pending-task button: Decline | The provider can decline a pending email offer. Omni shows it only when local policy also permits declining. |
 | `outcomes` | Primary button: Complete | Omni may request task completion with a provider outcome and notes. |
 
 ### Custom capabilities
@@ -3439,7 +3439,7 @@ Custom capabilities must not redefine the meaning of a standard channel capabili
 Starts one outbound call from the idle dialpad. It is present only when the voice provider
 declares `dial`.
 
-- `dialId` is the host's identity for this dial, minted before the request leaves.
+- `dialId` is the agent application's identity for this dial, minted before the request leaves.
 - `destination` is the original number selected or entered by the agent.
 - The provider holds `destination` to its declared `destinations`: under `contacts-only`, a
   number that is not one of its contacts answers `failed` with `omni.destination-not-permitted`.
@@ -3459,7 +3459,7 @@ and apart from its answer -- the destination picks up, is busy, or never does --
 late in a call routinely outlives the call. Nothing in between is reported: the wire says
 `dialling`, then says how it ended, once.
 
-**The host mints the identity.** Every command that dials carries a `dialId` the host made, unique
+**The agent application mints the identity.** Every command that dials carries a `dialId` the agent application made, unique
 across the installation, and it travels four ways so no leg is a lookup:
 
 ```ts
@@ -3467,10 +3467,10 @@ declare const connection: Connection<"voice">;
 declare const taskId: TaskId;
 declare const allocationId: AllocationId;
 
-// 1. Out, minted by the host.
+// 1. Out, minted by the agent application.
 const result = await connection.execute({ taskId, allocationId, command: { type: "conference", action: "add", dialId: "dial-7f2", destinationId: "tier2" } });
 
-// 2. Back on the result, restated, so the host compares and confirms.
+// 2. Back on the result, restated, so the agent application compares and confirms.
 expect(result).toEqual({ status: "dialling", dialId: "dial-7f2" });
 
 // 3. On the outcome, however late, against the task it belonged to.
@@ -3480,22 +3480,22 @@ const outcome: ProviderEvent<"voice"> = { type: "dial-outcome", dialId: "dial-7f
 const step: TaskInteractionStep = { step: "unanswered", at: "2026-08-21T09:15:30Z", by: "A-12", dialId: "dial-7f2", destinationId: "tier2" };
 ```
 
-The identity is a correlation handle between host and provider and **is never shown to the
-agent**. A host holding several tasks places an outcome by the `dialId` it minted; one it did not
+The identity is a correlation handle between agent application and provider and **is never shown to the
+agent**. An agent application holding several tasks places an outcome by the `dialId` it minted; one it did not
 mint -- a dial made by the previous agent before a transfer -- it finds on the task's `onCall` or in
 its `interactionHistory`, which is why the steps that dial carry it. The `dialId` is not a retry key:
 Omni never repeats a dial, and a command still carries no key for that purpose.
 
 **`dialling` is the answer to a dial, and `applied` is not.** A command that dials answers
-`{ status: "dialling", dialId }`, restating the host's identity (`result.dialId`,
+`{ status: "dialling", dialId }`, restating the agent application's identity (`result.dialId`,
 `result.dialId.mismatch`); `applied` from such a command, or `dialling` from one that dialled
 nothing, is refused (`result.status`). `validateResult(result, method, path, dialId)` takes the
-`dialId` the host sent for that reason.
+`dialId` the agent application sent for that reason.
 
 **The outcome is stated, once, either way.** A `dial-outcome` names the `dialId`, the task where
 there was one, the directory item it went to where there was one, and how the dial ended -- from a closed
 set: `answered`, `busy`, `no-answer`, `unreachable`, `rejected`, `cancelled`, `unexplained`.
-`answered` is stated rather than read off somebody appearing on the call, because a host that infers
+`answered` is stated rather than read off somebody appearing on the call, because an agent application that infers
 success cannot tell "reached" from "still ringing". `cancelled` is the dialler calling the dial off
 before anyone answered -- the agent hanging up while a consult still rings -- which is not a
 `no-answer` the destination never gave. `unexplained` is the switch dropping the call with no cause among
@@ -3512,7 +3512,7 @@ and the harness places the outcome all the same (`TaskStream`, `stream.dialOutco
 `stream.dialOutcome.duplicate`); an agent who moved on still learns nobody was reached, against the
 call it belonged to and never against the next one.
 
-The stream knows a dial from three places: `TaskStream.dialled(dialId)`, which a host calls when it
+The stream knows a dial from three places: `TaskStream.dialled(dialId)`, which an agent application calls when it
 places one; an entry on a task's `onCall`; and a step in its `interactionHistory`. Since a dialled entry
 is listed from placement, `dialled()` is load-bearing only for a dial that never has an entry -- a
 cold transfer, a connect-back, an idle dialpad call -- or whose entry has already left the room; an
@@ -3553,8 +3553,8 @@ const onCall: OnCall[] = [
 
 `party` is the customer and `agent` a person by user id; neither was dialled from anywhere, so
 neither carries a destination. `consulted` and `conferenced` were, so both carry the
-`destinationId` of the directory item and, where a host's dial brought them, its `dialId`; a person
-the platform added itself carries none. `held: true` is presence as claim. A snapshot establishes state, so a host that attaches
+`destinationId` of the directory item and, where an agent application's dial brought them, its `dialId`; a person
+the platform added itself carries none. `held: true` is presence as claim. A snapshot establishes state, so an agent application that attaches
 after a transfer reads the room from here rather than inferring it from a sequence of outcomes it
 never saw.
 
@@ -3569,7 +3569,7 @@ task may remain open for wrap. Completion is a separate task action, not the cal
 `previewEndsAt` and `atDeadline` are three instances of one shape, and there will be more: each
 describes a state that is true now, and each is carried past the moment it stops being true by the
 most natural implementation there is, building the next task by spreading the last one. The
-provider's own state looks right, the claim on the wire is stale, and only the host sees it. An
+provider's own state looks right, the claim on the wire is stale, and only the agent application sees it. An
 adapter that builds each transition from what is true after it, rather than from what was true
 before, needs none of these rules named. Two agents were
 once shown on calls for the better part of an hour while callers queued, because the last message
@@ -3716,7 +3716,7 @@ Omni resolves the name to show with `getUserDetails()`, so a provider sends the 
 a display name.
 
 **A forced break travels with `on-break` or `starting-after-task`, and nothing else.** It is a
-break in progress or about to be; beside `granted` or `awaiting-approval` the host would read a
+break in progress or about to be; beside `granted` or `awaiting-approval` the agent application would read a
 request the agent never made and commit it (`break.forced.status`). Where the provider publishes
 `reasons`, the lead's `force-break` named one, and the member's state carries it as `activeReasonId`.
 
@@ -3729,18 +3729,18 @@ forced: {
 }
 ```
 
-The host keeps **Resume** available for an agent on a forced break. The agent explicitly chooses
-Resume; the host sends `endBreak()` and follows the provider-confirmed state before resuming
+The agent application keeps **Resume** available for an agent on a forced break. The agent explicitly chooses
+Resume; the agent application sends `endBreak()` and follows the provider-confirmed state before resuming
 work. An expected duration is a positive finite number of milliseconds, measured from actual
 entry into `on-break`, excluding any `starting-after-task` wait. Omission means no expected
-duration was supplied. Neither duration expiry nor an overdue indication authorizes the host
+duration was supplied. Neither duration expiry nor an overdue indication authorizes the agent application
 or provider to end the break, restore availability, or route work to the agent.
 
 **A lead lifting the restriction does not resume the agent.** On an applied
 `end-forced-break`, the provider clears `BreakState.forced` while preserving the current
 `on-break` or `starting-after-task` status and `activeReasonId`. This command cannot publish
 `not-requested`, restore readiness, or start routing work. Ordinary progress from
-`starting-after-task` to `on-break` still happens when work finishes. The host follows the
+`starting-after-task` to `on-break` still happens when work finishes. The agent application follows the
 published state and waits for the agent's explicit Resume, even after reconnect. Historical
 attribution is not rewritten by clearing the current forced marker.
 
@@ -3750,7 +3750,7 @@ must correlate resumption to the authenticated agent's action; a state-only orde
 cannot establish the cause of a transition. The usual multi-provider end/reconciliation flow
 still applies, and work resumes only on confirmed provider state.
 
-A host may display the expected duration. A countdown requires an evidenced actual start;
+An agent application may display the expected duration. A countdown requires an evidenced actual start;
 a received snapshot, replay or reconnect is not a new start and cannot restart the duration.
 Without that evidence, show the duration without inventing a start or return time.
 
@@ -3794,7 +3794,7 @@ States how many tasks this provider may have allocated to the agent **at once**.
 `count` is an absolute ceiling, not an increment, a whole number of zero or more
 (`capacity.count`). An agent's capacity is a property of the agent, not of the moment: it is
 stated when the agent is set up and restated only when it genuinely changes, which is a
-provisioning change rather than a task starting or ending -- with one exception below.
+local policy change rather than a task starting or ending -- with one exception below.
 
 **The provider counts its own outstanding tasks against it.** Allocate while you hold fewer than
 `count` tasks for this agent, and stop when you hold that many; when one of yours ends you have
@@ -3803,22 +3803,22 @@ go, and a provider that waits for it will stall.
 
 Your own tasks are the only ones you count. What the agent holds at other providers is not your
 concern — Omni set `count` knowing it, and this is how: the agent is one person on several
-providers, and the host divides their capacity among them rather than telling each the whole. A
-provider that has none of it for now is told **`count: 0`, host-stopped**: allocate nothing, show
-the member as `reserved` on the team member list -- signed in here, capacity held by the host for elsewhere,
+providers, and the agent application divides their capacity among them rather than telling each the whole. A
+provider that has none of it for now is told **`count: 0`, agent application-stopped**: allocate nothing, show
+the member as `reserved` on the team member list -- signed in here, capacity held by the agent application for elsewhere,
 a fact this provider holds, where `on-task` would assert work it cannot see -- and take the next
-count as any other when the host has capacity for this provider again. Zero is the one restatement
-that follows work rather than provisioning.
+count as any other when the agent application has capacity for this provider again. Zero is the one restatement
+that follows work rather than local policy.
 
 **A capacity is taken, never refused.** `setCapacity` answers `applied` and nothing else: a
-statement has no failure to report, and a `failed` arm gave four host-provider pairings four
+statement has no failure to report, and a `failed` arm gave four agent application-provider pairings four
 readings of which ceiling stood after it. A provider that cannot carry the count allocates within
 what it can and says so on a `diagnostic`, so the gap is visible and nothing is inferred from a
 refusal.
 
 Capacity supersedes rather than accumulates: the latest value is the ceiling, and a decrease is as
 ordinary as an increase. A provider whose ceiling can only rise -- one that keeps the highest count
-it was ever told, or returns early on a small one -- cannot be told to take less work, and a host
+it was ever told, or returns early on a small one -- cannot be told to take less work, and an agent application
 taking capacity away is answered `applied` while the work keeps coming. The harness moves the axis
 both ways after the drive, two then one then nought, and an offer after a lower count is caught
 against it (`stream.taskOffered.overCapacity`).
@@ -3857,7 +3857,7 @@ These validators report violations without dispatching, rewriting state or provi
 Recheck prerequisites atomically at the provider; client validation cannot prevent a race.
 Continue to use `validateResult` for each method's response vocabulary. A request acknowledgment
 is not a grant, and no method response overwrites a newer state emission. Rejected promises
-remain unknown and recover by snapshot, not automatic retry. The host's frozen provider set,
+remain unknown and recover by snapshot, not automatic retry. The agent application's frozen provider set,
 durable mutually exclusive commit/cancel decision and reconciliation obligations above remain
 required; per-provider validation does not implement the multi-provider coordinator.
 
@@ -3984,7 +3984,7 @@ request and is ready to stop the agent when Omni asks. It does not reveal that o
 or why Omni has not committed yet. While reporting `granted`, the provider remains available,
 continues to honour Omni's current capacity, and continues offering work normally.
 
-Omni separately tracks the aggregate host states `working`, `requesting-break`, `committing-break`,
+Omni separately tracks the aggregate agent application states `working`, `requesting-break`, `committing-break`,
 `cancelling-break`, and `on-break`. While `requesting-break`, Omni shows which providers remain
 outstanding and offers **Cancel break request**, but does not tell the agent that their break has
 begun.
@@ -4001,7 +4001,7 @@ Omni coordinates one break attempt as follows:
    from and is not asked: nothing is asked of it, the break proceeds without it, and when the
    login is restored it is reconciled from its snapshot as a set-aside provider is, with no
    capacity until then. `refreshing` keeps a provider in — its identity and capabilities remain
-   available and work continues. `assertBreakAttemptProviders` holds a host to this set.
+   available and work continues. `assertBreakAttemptProviders` holds an agent application to this set.
 2. Enter `requesting-break`. Keep the agent's normal capacity in place throughout this phase.
 3. Send one `requestBreak` to every asked provider. A provider reports `awaiting-approval` or
    `granted`; neither state stops work. A denial transitions directly to `not-requested` and
@@ -4145,7 +4145,7 @@ Each availability value means one thing:
 | `ready` | Signed in, able to take work, none assigned. |
 | `on-task` | Working on at least one task. It says nothing about how many, and nothing about whether more will fit. |
 | `on-break` | Stopped and not taking work, whether they asked or somebody stopped them. The reason lives on their own `BreakState`, not here. |
-| `reserved` | Signed in here, and the host holds this agent's capacity for another provider (`count: 0`, host-stopped): not receiving this provider's work, and not on a break. See **Capacity**. |
+| `reserved` | Signed in here, and the agent application holds this agent's capacity for another provider (`count: 0`, agent application-stopped): not receiving this provider's work, and not on a break. See **Capacity**. |
 | `signed-out` | Known to this team but not signed in to this provider. |
 
 **Always publish the complete team member list, never a change to it.** Team presence typically reaches an
@@ -4418,12 +4418,12 @@ decision or it is not.
 ## Real-time media
 
 Every voice provider has media: `channel: "voice"` says audio exists. Where the agent hears it
-depends on the `phone` the host selected at authentication and connect from the manifest's
+depends on the `phone` the agent application selected at authentication and connect from the manifest's
 `phones`. On a softphone, audio lands in Omni; on a desk phone, it lands on the handset and Omni
 opens no audio. See **How the agent hears the call**. Media transitions are voice-only;
 chat and email publish none (`event.media.channel`, `stream.taskMedia.channel`).
 
-The provider owns signalling and the platform's endpoint configuration. The host selects the
+The provider owns signalling and the platform's endpoint configuration. The agent application selects the
 declared phone mode; it does not enumerate or reconfigure the platform's devices. The selected
 mode stays with the login rather than being inferred from a snapshot or a device failure.
 
@@ -4432,11 +4432,11 @@ phase follow the provider's reports about the work, and the media — attaching,
 hold, a consult, a conference or a transfer, and ending — is transient beside it. See **A task is
 never its audio** under **Task allocation lifecycle**.
 
-### The host reports, the adapter decides
+### The agent application reports, the adapter decides
 
 The adapter runs inside Omni and sees nothing of the station for itself: the devices, the
-permissions, the audio element and the network are the host's, and only the host can tell. So
-the host reports, and the adapter asks. **An adapter consults `ConnectContext.host` before it
+permissions, the audio element and the network are the agent application's, and only the agent application can tell. So
+the agent application reports, and the adapter asks. **An adapter consults `ConnectContext.host` before it
 declares the agent ready to its platform, and again whenever the report changes**, and it decides
 what any of it means and what to relay upstream — go not-ready, refuse calls, carry on because the
 platform's audio lands elsewhere. Omni facilitates and does not take responsibility: it captures
@@ -4444,29 +4444,29 @@ the microphone once as the voice connection opens, so the permission prompt land
 is signing in rather than over a contact, prompts, retries on the agent's request, tells the agent
 what failed, and reports. It never decides for the adapter what a missing microphone means.
 
-**The host also guarantees, and a promise the provider cannot see is not one it can rely on.**
-Two of this contract's obligations fall on the host rather than the provider — honouring a task
+**The agent application also guarantees, and a promise the provider cannot see is not one it can rely on.**
+Two of this contract's obligations fall on the agent application rather than the provider — honouring a task
 browser's `urlVisibility`, and taking a `consent` offer only on the person's own press — and more
 than one desk speaks this contract: a browser and a native application differ in what they can
 reach, and a provider never branches on which it is talking to, only on what it has declared —
-here, and in `host.mute` (see **The station is the host's**). So `ConnectContext.host.guarantees` says which promises the
-connected host makes, declared once per connection, presence being the guarantee exactly as it is
+here, and in `host.mute` (see **The station is the agent application's**). So `ConnectContext.host.guarantees` says which promises the
+connected agent application makes, declared once per connection, presence being the guarantee exactly as it is
 the permission everywhere else:
 
 | Guarantee | Contract |
 | --- | --- |
-| `browserUrlVisibility` | Every task browser's `urlVisibility` is honoured in this host's chrome, tab by tab. A provider that would send a caller's number in a URL checks this first and tokenises where the promise is absent. |
+| `browserUrlVisibility` | Every task browser's `urlVisibility` is honoured in this agent application's chrome, tab by tab. A provider that would send a caller's number in a URL checks this first and tokenises where the promise is absent. |
 | `personConsent` | A `consent` offer is accepted only by the person's own explicit act, never on their behalf. A provider whose work may only be taken by a human checks this first and does not offer it where the promise is absent. |
 
-A guarantee the host does not make is an absent key, never `false` — `validateHostGuarantees`
+A guarantee the agent application does not make is an absent key, never `false` — `validateHostGuarantees`
 refuses a false one, as it refuses a name this contract does not list.
 
 | Field | Contract |
 | --- | --- |
-| `online` | Whether the host has a network interface up. Not a claim that anything is reachable — the adapter knows whether it can reach its own platform far better than the host does — so `false` is a reason not to go ready and `true` is not a reason to. |
+| `online` | Whether the agent application has a network interface up. Not a claim that anything is reachable — the adapter knows whether it can reach its own platform far better than the agent application does — so `false` is a reason not to go ready and `true` is not a reason to. |
 | `audio` | Present on a voice connection, absent where there is no audio. |
-| `audio.input` | `available` with `localAudio` — the microphone as captured, the same stream `openMedia` receives — and `flowing`, false while no audio moves through it, when `mutedBy` says who stopped it: `host`, the host's own Mute on a host that mutes the station, or `station`, a slider on the headset or the operating system, which the host observed and did not do. An adapter treats `host` as the agent's act on a call and `station` as a condition of the station. `unavailable` with `reason`, since each wants a different fix from the agent: `no-device`; `denied`; `not-asked`, which a host that asks at connect never publishes; `in-use`, a device present and permitted that another application holds — on an agent desktop the commonest of all; `lost`, a capture that ended. A host decides the reason from the devices before the error name: a browser can report a permission error on a machine with no microphone at all, and "grant permission" is the wrong instruction for an agent who needs to plug one in. `failure` carries the words Omni showed them. |
-| `audio.output` | `available`, with `flowing` where the host can know whether audio reaches the speaker — a browser mostly cannot, and omits it; a native host reads the endpoint — false while it is silenced, when `mutedBy` says who did it, as on input. Or `unavailable` with `reason` — `no-device`, or `lost` for one removed — and `failure`: an agent who cannot hear is as unable to take a call as one who cannot speak. |
+| `audio.input` | `available` with `localAudio` — the microphone as captured, the same stream `openMedia` receives — and `flowing`, false while no audio moves through it, when `mutedBy` says who stopped it: `host`, the agent application's own Mute on an agent application that mutes the station, or `station`, a slider on the headset or the operating system, which the agent application observed and did not do. An adapter treats `host` as the agent's act on a call and `station` as a condition of the station. `unavailable` with `reason`, since each wants a different fix from the agent: `no-device`; `denied`; `not-asked`, which an agent application that asks at connect never publishes; `in-use`, a device present and permitted that another application holds — on an agent desktop the commonest of all; `lost`, a capture that ended. An agent application decides the reason from the devices before the error name: a browser can report a permission error on a machine with no microphone at all, and "grant permission" is the wrong instruction for an agent who needs to plug one in. `failure` carries the words Omni showed them. |
+| `audio.output` | `available`, with `flowing` where the agent application can know whether audio reaches the speaker — a browser mostly cannot, and omits it; a native agent application reads the endpoint — false while it is silenced, when `mutedBy` says who did it, as on input. Or `unavailable` with `reason` — `no-device`, or `lost` for one removed — and `failure`: an agent who cannot hear is as unable to take a call as one who cannot speak. |
 
 Omni republishes the report whenever it changes — a permission granted late, a headset unplugged,
 a network gone — and it publishes a state, not a flicker: a change that resolves within moments is
@@ -4474,13 +4474,13 @@ not reported, so an adapter may act on what it reads without debouncing it again
 report is a task fact or a capacity fact; it is what the station can do, and the adapter's platform
 is the one that knows whether an agent without a microphone, or without a speaker, can work.
 
-The host's own obligations here — asking at connect, never publishing `not-asked` when it does,
+The agent application's own obligations here — asking at connect, never publishing `not-asked` when it does,
 publishing a state and not a flicker — are Omni's tests' to hold. `exerciseAdapter` holds the
-other side: it validates the shape of whatever host a test hands the adapter, requires `audio` on
+other side: it validates the shape of whatever agent application a test hands the adapter, requires `audio` on
 a softphone login and none elsewhere -- not on a desk phone, not off voice
 (`context.host.audio.required` / `.unexpected`), holds `host.mute` to the same line (`host.mute.required`
 / `.unexpected`, `host.mute` for a third word) -- and refuses a voice adapter that never asked the
-host anything (`connection.host.consulted`), and one that subscribed to nothing will never hear of a
+agent application anything (`connection.host.consulted`), and one that subscribed to nothing will never hear of a
 change (`connection.host.subscribed`): the obligation has two halves, and each is held.
 
 ### Capacity around setup
@@ -4491,8 +4491,8 @@ set up — the adapter's own registration incomplete, its credentials not yet re
 
 Nothing closes that window, because nothing opens it: **Omni states no capacity until the
 connection is established**, and **Work is pulled, never pushed** makes an allocation with none
-stated a violation. Capacity does not wait on the microphone: whether an agent without host audio
-can take calls is the platform's question, answered by the adapter from the host's report, not by
+stated a violation. Capacity does not wait on the microphone: whether an agent without agent application audio
+can take calls is the platform's question, answered by the adapter from the agent application's report, not by
 Omni withholding capacity for every platform alike.
 
 Capacity follows **automatically** once the connection is established; the agent does not press
@@ -4501,7 +4501,7 @@ anything to become available.
 | Situation | What Omni sends |
 | --- | --- |
 | Connecting | Nothing. No capacity has been stated, so nothing may be allocated. |
-| Connected and idle | `setCapacity({ count: n })`, with the host's report already available to consult. |
+| Connected and idle | `setCapacity({ count: n })`, with the agent application's report already available to consult. |
 | A task starts or ends | Nothing. The provider counts its own against the ceiling. |
 | The agent's provisioned capacity changes | `setCapacity({ count: n })` |
 | Agent asks for a break | `requestBreak`. Capacity is unchanged and work continues. |
@@ -4517,57 +4517,57 @@ a return.
 
 ### How the agent hears the call
 
-A voice platform can put an agent on a **softphone**, where the call's audio lands in the host
+A voice platform can put an agent on a **softphone**, where the call's audio lands in the agent application
 and Omni owns the microphone and the playback, or on a **desk phone**, a handset on the platform's
-switch that the platform rings, where the host owns no audio and only shows the call. Which of
+switch that the platform rings, where the agent application owns no audio and only shows the call. Which of
 these a platform can do is a fact about the platform, and which one a login is on is a choice the
-host makes for that agent -- so the manifest declares and the host chooses.
+agent application makes for that agent -- so the manifest declares and the agent application chooses.
 
 ```ts
 // Manifest: what the platform can do
 phones: ["softphone", "deskPhone"]
-// The host, at authentication and again at connect: which one this login is on
+// The agent application, at authentication and again at connect: which one this login is on
 { phone: "softphone" }
 ```
 
 A voice manifest lists its `phones` and any other channel lists none (`manifest.phones.required`,
-`manifest.phones.channel`). The host's `phone` is required on a voice login, absent on any other,
+`manifest.phones.channel`). The agent application's `phone` is required on a voice login, absent on any other,
 and one the manifest listed (`context.phone.required`, `.unexpected`, `.unsupported`). Everything
-about audio then follows the phone rather than the channel: on a softphone the host reports its
+about audio then follows the phone rather than the channel: on a softphone the agent application reports its
 audio, the adapter implements `openMedia`, and `task-media-started` is the word to open it; on a
-desk phone the host reports no audio, opens nothing, and `task-media-started` still marks the
+desk phone the agent application reports no audio, opens nothing, and `task-media-started` still marks the
 moment the call is live so the desk shows it, with the sound on the handset. A platform that lists
 `deskPhone` alone never implements `openMedia`; one that lists `softphone` always does.
 
-**The mode comes from the host; the status comes from the provider.** The host knows which kind
+**The mode comes from the agent application; the status comes from the provider.** The agent application knows which kind
 of station the agent signed in at, because the person chose it, and nothing else can know that.
 The provider knows whether that station can carry a call right now -- whether a handset is
-registered -- which a host in a browser cannot see. So the host's `phone` selects the branch, and
+registered -- which an agent application in a browser cannot see. So the agent application's `phone` selects the branch, and
 the provider's own knowledge of the device decides readiness within it. A provider never overrides
-the host's declaration from its device record: treating a desk-phone login as a softphone because
+the agent application's declaration from its device record: treating a desk-phone login as a softphone because
 the handset is momentarily unregistered, and demanding a microphone of it, is the reading this
 sentence exists to refuse. What the provider does when the handset is not registered is what it
 does for any station that cannot take a call -- hold the agent not-ready and say why.
 
-**On a desk-phone login the host never calls `openMedia`.** There is no stream to hand over and
-no audio to attach; a host that calls it anyway is in error, and an adapter that receives the call
+**On a desk-phone login the agent application never calls `openMedia`.** There is no stream to hand over and
+no audio to attach; an agent application that calls it anyway is in error, and an adapter that receives the call
 answers `unavailable` with a non-retryable failure, since waiting changes nothing about a station
 that is a telephone. The harness requires no `openMedia` of such an adapter and never calls it.
 
 **Which handset a desk-phone login rings is the platform's configuration for that agent**, and
-this wire never asks the agent for it: a host declares `phone` and nothing more. What a platform
+this wire never asks the agent for it: an agent application declares `phone` and nothing more. What a platform
 asks on surfaces of its own is its own decision.
 
 **A declared phone the platform does not permit for this agent is a login that cannot be
 established.** The manifest says what the platform can do; the agent's record, kept by an
-administrator, says what this agent is configured for, and the two can disagree with the host's
+administrator, says what this agent is configured for, and the two can disagree with the agent application's
 declaration -- a softphone declared for an agent whose record says desk phone. Honouring that
 declaration on a switch that allows one registration per endpoint would evict the handset: the
 agent's phone stops ringing and their calls land in a tab, and nobody is told. So the provider
-refuses the login at authentication, with `omni.phone-not-permitted` and a message the host shows
+refuses the login at authentication, with `omni.phone-not-permitted` and a message the agent application shows
 -- "this agent is configured for a desk phone" -- and refusing is correct, not an override of the
-host. It is a refusal, never a negotiation afterwards and never a quiet substitution, and it is
-never retryable: trying again does not reconfigure the agent, and a host validating the answer
+agent application. It is a refusal, never a negotiation afterwards and never a quiet substitution, and it is
+never retryable: trying again does not reconfigure the agent, and an agent application validating the answer
 (`validateAuthenticationResult`) refuses a phone refusal marked otherwise
 (`authentication.failure.phone.retryable`). And **a
 provider never makes a declared phone true by changing the platform's configuration**: the record
@@ -4586,9 +4586,9 @@ openMedia({ taskId, localAudio }): Promise<OpenMediaResult>
 The adapter speaks whatever its platform speaks — SIP over WebSocket, a vendor SDK, plain
 WebRTC — and **none of that appears in this contract**. Registration, signalling, credential
 renewal and reconnect are the adapter's, exactly as its authentication and transport already
-are. Omni owns what belongs to the host: the microphone, the output element, mute, and when a
+are. Omni owns what belongs to the agent application: the microphone, the output element, mute, and when a
 session ends — owning the microphone meaning capturing it, prompting, retrying and reporting how
-it stands, never deciding for the adapter what a missing one means (see **The host reports, the
+it stands, never deciding for the adapter what a missing one means (see **The agent application reports, the
 adapter decides**).
 
 | Member | Contract |
@@ -4597,9 +4597,9 @@ adapter decides**).
 | `setMuted(muted)` | Mutes the agent's microphone on this session. |
 | `close()` | Releases the session. Omni calls it when the task ends. |
 
-`localAudio` is the agent's microphone as Omni captured it, the same stream the host's report
+`localAudio` is the agent's microphone as Omni captured it, the same stream the agent application's report
 carries as `audio.input.localAudio`, and absent while that input is `unavailable`. A provider that
-bridges audio without a host-side input may ignore it; one that needs it and finds it absent
+bridges audio without an application-side input may ignore it; one that needs it and finds it absent
 answers `unavailable` with a failure Omni shows the agent.
 
 **When to ask is the provider's word, not Omni's guess.** On a softphone login, Omni opens media on `task-media-started`,
@@ -4637,87 +4637,87 @@ command asks the provider to **perform** something: `hold`, `transfer`, `confere
 Provider-targeted `recording` commands and the rest act on the platform's own call leg, its bridge, or its record of the
 task. Nothing has happened until the provider applies them, and `failed` means nothing happened.
 
-**The provider performs every action; the host only offers it.** A control drawn on the host is
-an affordance, never the enforcement: the host asks, and the provider does or declines. A provider
+**The provider performs every action; the agent application only offers it.** A control drawn on the agent application is
+an affordance, never the enforcement: the agent application asks, and the provider does or declines. A provider
 answers `failed` for a command whose capability it did not publish, and that is the provider
-honouring its own declaration, not the host deciding policy -- a host that refuses a command on
+honouring its own declaration, not the agent application deciding policy -- an agent application that refuses a command on
 its own reading of a queue's flag has decided something that was never its to decide. What a
 command means on the platform is the provider's to work out: `end-call` disconnects the caller channel, and
-which legs on which bridge that touches is a fact about the switch, never a choice the host makes.
-The one thing the host performs physically is the microphone, and that is not a command at all.
+which legs on which bridge that touches is a fact about the switch, never a choice the agent application makes.
+The one thing the agent application performs physically is the microphone, and that is not a command at all.
 
-### The station is the host's
+### The station is the agent application's
 
 The microphone, the speaker, the headset and its buttons are the station's, and the station is the
-host's. So mute is not a capability a provider declares, not a control a queue allows or a team
+agent application's. So mute is not a capability a provider declares, not a control a queue allows or a team
 locks, not a preference the person keeps with the provider, and not a command: nothing about the
-station crosses to the provider except two things -- the station's condition, in the host report,
-and the record of when the agent could not be heard, through `recordStep`. A host offers Mute on
-every voice task with media open, under its own provisioning, in `in-progress` and `paused`
+station crosses to the provider except two things -- the station's condition, in the agent application report,
+and the record of when the agent could not be heard, through `recordStep`. An agent application offers Mute on
+every voice task with media open, under its own local policy, in `in-progress` and `paused`
 alone, and performs it through `VoiceMediaSession.setMuted()`. A task carrying
 `capabilities.mute` is refused (`task.capability.unknown`), and so is a `mute` command
 (`command.type`), a `mute` preference (`preference.id`) and a `mute` policy (`team.policy.key`).
 
-**Two mutes, and the host states which its Mute performs.** A *stream* mute stops the audio the
-host sends: the microphone keeps capturing, the party hears silence, nothing else on the machine
-changes, and every softphone host can do it. A *station* mute silences the microphone itself at
+**Two mutes, and the agent application states which its Mute performs.** A *stream* mute stops the audio the
+agent application sends: the microphone keeps capturing, the party hears silence, nothing else on the machine
+changes, and every softphone agent application can do it. A *station* mute silences the microphone itself at
 the operating system: every application on the machine goes quiet, the system shows it, and a
-headset that follows the system follows it. Only a native host can do it. `Host.mute` says which
-this host does -- `stream` or `station` -- stated on a softphone login, where the host holds the
+headset that follows the system follows it. Only a native agent application can do it. `Host.mute` says which
+this agent application does -- `stream` or `station` -- stated on a softphone login, where the agent application holds the
 microphone, and absent on a desk phone and off voice (`host.mute.required` / `.unexpected`). A
-browser says `stream`. A native host says whichever it does. Nothing on the wire says what kind of
-application the host is; a provider reads only what the host declared.
+browser says `stream`. A native agent application says whichever it does. Nothing on the wire says what kind of
+application the agent application is; a provider reads only what the agent application declared.
 
 **A silenced device says who silenced it.** `audio.input.flowing: false` and
-`audio.output.flowing: false` carry `mutedBy`: `host` when the host's own Mute did it -- which is
-only ever true of a host whose mute is `station`, since a stream mute leaves the microphone
-flowing -- and `station` when a slider on the headset or the operating system did, which the host
-observed and did not do. Without the word, a station-muting host's own Mute would read as a fault
+`audio.output.flowing: false` carry `mutedBy`: `host` when the agent application's own Mute did it -- which is
+only ever true of an agent application whose mute is `station`, since a stream mute leaves the microphone
+flowing -- and `station` when a slider on the headset or the operating system did, which the agent application
+observed and did not do. Without the word, a station-muting agent application's own Mute would read as a fault
 and an adapter would take the agent out of ready in the middle of a call. A browser reads a station
-mute through the capture track's muted state, read-only, and cannot lift it; a native host reads
+mute through the capture track's muted state, read-only, and cannot lift it; a native agent application reads
 the endpoint and can clear an operating-system mute. A hardware slider is nobody's to clear.
 
 **The record carries the same word.** A `muted` interaction leg is a period the agent could not be
-heard, and the record exists so that period is not a hole. The host reports every such period
+heard, and the record exists so that period is not a hole. The agent application reports every such period
 through `recordStep` -- its own Mute, and a station mute it observed during a call -- with
 `mutedBy` saying whose the silence was, and the provider writes the word into the entry
-(`task.interactionHistory.mutedBy`). The report names no agent because the host has exactly one, and
+(`task.interactionHistory.mutedBy`). The report names no agent because the agent application has exactly one, and
 the provider knows who that is: it attributes the leg to the login's agent in `by`, a fact it
-holds and not an inference, for a station mute as much as for the host's own. An unattributed
+holds and not an inference, for a station mute as much as for the agent application's own. An unattributed
 `muted` entry is refused (`task.interactionHistory.muted.by`); a shared handset's unattributed hold
 is a different claim, and stands. A supervisor reading the record then sees "the agent muted for
 forty seconds" and "the agent's headset was muted for forty seconds" as the different things they
-are. See **The host records what it performs**.
+are. See **The agent application records what it performs**.
 
 **Mute has a lifecycle, and none of it is inferred.** A call that starts while the station is
 already muted begins a `muted` leg the moment its media starts, `mutedBy: "station"`. Media that
-ends while any leg is open ends the leg at that instant, as every host-performed leg ends. And the
-host's own Mute starts off on every call, which is every `task-media-started` -- a connect-back
+ends while any leg is open ends the leg at that instant, as every agent application-performed leg ends. And the
+agent application's own Mute starts off on every call, which is every `task-media-started` -- a connect-back
 opens a second call on the same task with no offer -- so an agent is never muted by the call before.
 
-**Every press on a headset is the agent's own press**, performed the host's way, and the lights
-follow the host's state. The `personConsent` guarantee is honoured by a hook-switch press exactly
+**Every press on a headset is the agent's own press**, performed the agent application's way, and the lights
+follow the agent application's state. The `personConsent` guarantee is honoured by a hook-switch press exactly
 as by a click. What a call-control headset sends, and what becomes of it:
 
-| Input | Where it comes from | What the host does | What crosses to the provider |
+| Input | Where it comes from | What the agent application does | What crosses to the provider |
 | --- | --- | --- | --- |
-| Mute button | The headset, on the HID Telephony usage page: a Phone Mute report on the press, a Mute LED the host writes back | A press of the host's Mute, performed the host's way; the LED follows the host's state, so button, light and control are one state with one owner | The `muted` leg, `mutedBy: "host"` |
-| Hook switch | The headset, HID Telephony | A press of the host's Answer or End call, only where the task is in a phase that has one; the off-hook and ring lights follow the task | The existing `answer` and `end-call` commands |
+| Mute button | The headset, on the HID Telephony usage page: a Phone Mute report on the press, a Mute LED the agent application writes back | A press of the agent application's Mute, performed the agent application's way; the LED follows the agent application's state, so button, light and control are one state with one owner | The `muted` leg, `mutedBy: "host"` |
+| Hook switch | The headset, HID Telephony | A press of the agent application's Answer or End call, only where the task is in a phase that has one; the off-hook and ring lights follow the task | The existing `answer` and `end-call` commands |
 | Flash, redial, speed dial | Older headsets and desk-phone style devices | Flash is Hold and Resume where the task offers `hold`; redial and speed dial map to nothing on a desk with no dial pad on a transfer, and are ignored | Nothing new |
-| Volume up and down | The headset's own amplifier, or the operating system through the consumer-control keys | Nothing: the device and the system handle it | Nothing, except that a speaker at nought is `audio.output.flowing: false` where the host can know it |
+| Volume up and down | The headset's own amplifier, or the operating system through the consumer-control keys | Nothing: the device and the system handle it | Nothing, except that a speaker at nought is `audio.output.flowing: false` where the agent application can know it |
 | Microphone gain and level | The operating system, the headset's own boost | A level meter, so the agent can see they are heard | Nothing: a level is a flicker, not a state |
-| Hardware or operating-system mute | A slider on the headset, the system's input mute | Observes it, publishes `flowing: false, mutedBy: "station"`, records the leg during a call, and tells the agent which it is where it knows -- headset or system -- and what to do; a host whose mute is `station` clears a system mute itself, a browser can only say so | The report and the leg |
+| Hardware or operating-system mute | A slider on the headset, the system's input mute | Observes it, publishes `flowing: false, mutedBy: "station"`, records the leg during a call, and tells the agent which it is where it knows -- headset or system -- and what to do; an agent application whose mute is `station` clears a system mute itself, a browser can only say so | The report and the leg |
 | Device changed, unplugged, permission revoked | The operating system | Re-capture, prompt, report | Already `audio.input` and `audio.output` with `lost`, `denied`, `no-device` |
 
-**What the host shows.** Beside Mute, a standing line while the station is muted, saying which and
-what to do, with a button that clears a system mute only on a host whose mute is `station`. The
+**What the agent application shows.** Beside Mute, a standing line while the station is muted, saying which and
+what to do, with a button that clears a system mute only on an agent application whose mute is `station`. The
 Mute control does not pretend: while the station is muted it shows the agent cannot be heard and
-that pressing it will not change that, and a press still toggles the host's own mute, so the two
+that pressing it will not change that, and a press still toggles the agent application's own mute, so the two
 states stay separate and the agent is not unmuted by surprise when the slider moves back. Before a
 call, the same line in the ready state, so an agent does not learn of it from a silent customer;
 whether work is held back is the adapter's decision from the report, as it is for every station
 fact. Where a provider's own platform holds a mute of its own -- a bridge that silences a leg --
-that is a fact about the switch, reported as the provider sees fit, and never the host's Mute.
+that is a fact about the switch, reported as the provider sees fit, and never the agent application's Mute.
 
 ### Which commands need a capability
 
@@ -4730,7 +4730,7 @@ declared:
 | `answer`, `accept` | Nothing. A task that was offered can be accepted, or offering it meant nothing. |
 | `end-call` | The `endCall` capability. |
 | `conference` with `action: "remove"` | The `conference` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
-| `decline` | The `decline` capability on any channel, **and** Omni provisioning permitting it. One word for refusing an offer, whatever the channel. |
+| `decline` | The `decline` capability on any channel, **and** Omni local policy permitting it. One word for refusing an offer, whatever the channel. |
 | `call` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
 | `complete` | `completionMode: "agent-command"`. The `outcomes` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. What travels is what the capability published: a code from its list where it has one (`command.complete.outcome.unknown`), a code at all where it requires one (`.outcome.required`), notes as it said (`.notes.required`, `.notes.unexpected`), and neither where the task declares no outcomes (`.outcome.unexpected`). |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
@@ -4756,10 +4756,10 @@ The commands with a phase of their own -- `answer`, `accept` and `decline` in `p
 
 `validateTaskCommand(command, task)` holds a command to this table at runtime, both ways: the
 capability it needs, the phase it belongs to, and the state that has to stand. The task it wants
-is the one the provider published, not a host's own mapping of it: a host that keeps only its
+is the one the provider published, not an agent application's own mapping of it: an agent application that keeps only its
 mapped shape has nothing honest to pass, and then checks shape alone, which is still worth doing
 -- it names a command the wire never had -- but is not the table. Keeping the published task
-beside the mapped one is what the full check costs a host; an adapter has it for free. The
+beside the mapped one is what the full check costs an agent application; an adapter has it for free. The
 validator holds a command only to a task that stands: a task handed in that is not one the wire
 published is named (`command.task`) rather than checked against.
 
@@ -4811,7 +4811,7 @@ react rather than only display the message:
 | `omni.not-authenticated` | The provider session is no longer usable. The adapter has published `expired` at or before this answer — the state is what Omni surfaces reauthentication from; the code says why this action failed, and is never the only signal. |
 | `omni.capability-not-enabled` | The action targets a capability this task, manifest, or login did not declare — including a lead command from a login whose `capabilities` no longer carry it. |
 | `omni.task-not-found` | The provider-local task id is unknown, typically after the task already ended. |
-| `omni.phone-not-permitted` | The host declared a `phone` the platform does not permit for this agent -- a softphone for an agent configured for a desk phone, or the reverse. The login is refused at authentication, and the provider never reconfigures the agent to make the declaration true. See **How the agent hears the call**. |
+| `omni.phone-not-permitted` | The agent application declared a `phone` the platform does not permit for this agent -- a softphone for an agent configured for a desk phone, or the reverse. The login is refused at authentication, and the provider never reconfigures the agent to make the declaration true. See **How the agent hears the call**. |
 | `omni.destination-not-permitted` | The dialled number, or the `destinationId` named, is not one the provider offers this agent. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
 | `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `transport-status` is not `active`. |
@@ -4825,7 +4825,7 @@ They are published as `OMNI_FAILURE_CODES`.
 
 | Field | Contract |
 | --- | --- |
-| `id` | Required identifier for this event, unique within the login. Omni does not act on it; it exists so a host log line and an adapter log line can be matched when something has to be traced. |
+| `id` | Required identifier for this event, unique within the login. Omni does not act on it; it exists so an agent application log line and an adapter log line can be matched when something has to be traced. |
 | `loginId` | Login session that produced the event. Omni rejects any other value, which only reaches it if an adapter kept an old connection emitting after a re-login. |
 | `occurredAt` | Valid RFC-3339 timestamp with an explicit timezone, representing provider observation time. |
 | `event` | Typed `ProviderEvent` payload. |
@@ -4840,7 +4840,7 @@ instant that the source cannot establish makes that evidence unavailable, not pe
 invent a timestamp or silently omit a required field.
 
 Clock estimation is an exception, not the standard interpretation of events. An ISO timestamp
-identifies an instant; it does not prove that the host and provider clocks are synchronized.
+identifies an instant; it does not prove that the agent application and provider clocks are synchronized.
 Use an explicitly trusted clock in the relevant domain. Do not infer a general clock offset
 from event arrivals, shift source timestamps, or use an estimate to order events or create history.
 
@@ -4848,29 +4848,29 @@ The current exceptions and their reasons are:
 
 | Case | Exception and reason |
 | --- | --- |
-| Host display of provider deadlines (`allocationExpiresAt`, `previewEndsAt`, wrap deadline) | A countdown may use an explicitly bounded provider-clock estimate when a trusted direct clock is unavailable, because the deadline belongs to another clock domain. This estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
-| Host-triggered preview deadline | A bounded clock estimate with monotonic aging may schedule the host's Call command because the provider owns the deadline but the host owns the trigger. Do not trigger before the deadline is known to have passed; invalidate on clock discontinuity and reconcile when uncertain. |
+| Agent application display of provider deadlines (`allocationExpiresAt`, `previewEndsAt`, wrap deadline) | A countdown may use an explicitly bounded provider-clock estimate when a trusted direct clock is unavailable, because the deadline belongs to another clock domain. This estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
+| Agent application-triggered preview deadline | A bounded clock estimate with monotonic aging may schedule the agent application's Call command because the provider owns the deadline but the agent application owns the trigger. Do not trigger before the deadline is known to have passed; invalidate on clock discontinuity and reconcile when uncertain. |
 | Recording evidence expiry | A bounded observer-domain clock estimate with monotonic aging may assess freshness because observation and expiry belong to the recorder's clock. If time cannot be trusted, recording state is unknown; never renew evidence from receipt or replay. |
 | Unknown recording state | `observedAt` and `validUntil` are absent because there is no confirmed observation. The containing provider event still has its own `occurredAt`; that publication is not a recorder observation. |
 | Direct snapshot reads and method requests/results | These are reads/operations, not event envelopes, and their current types have no general event timestamp. A snapshot event still carries `occurredAt`; embedded source instants remain unchanged. Do not treat a method result or read completion time as an occurrence boundary. |
-| Host-provided provider-clock estimate | Best-effort ISO time may be supplied by the host for optional comparisons; it is not a source observation or accuracy guarantee. The reason is that the host does not own the provider clock. |
-| Provider receipt timestamps | The provider may use its own receipt instant for final records of receipt/processing because host timestamps are untrusted advisory input. Receipt must not be presented as an earlier action or capture boundary. |
-| Optional source instants and deadlines | Omit only where the declared type permits absence and the source has no evidence or the policy has no deadline (for example unlimited preview). Do not replace absence with host time. |
+| Agent application-provided provider-clock estimate | Best-effort ISO time may be supplied by the agent application for optional comparisons; it is not a source observation or accuracy guarantee. The reason is that the agent application does not own the provider clock. |
+| Provider receipt timestamps | The provider may use its own receipt instant for final records of receipt/processing because agent application timestamps are untrusted advisory input. Receipt must not be presented as an earlier action or capture boundary. |
+| Optional source instants and deadlines | Omit only where the declared type permits absence and the source has no evidence or the policy has no deadline (for example unlimited preview). Do not replace absence with agent application time. |
 
 Every additional exception must be listed with its scope and reason before adoption. Estimates
 must specify their uncertainty and validity; elapsed time should use monotonic aging, and a clock
 jump invalidates the estimate. The optional check below samples provider time without changing event timestamps. Report
 source-measured durations where required; timestamp subtraction is not a substitute.
 
-#### Optional periodic provider time checks and host estimates
+#### Optional periodic provider time checks and agent application estimates
 
 A provider may declare `Manifest.timeCheck: true` and implement `Connection.checkTime(request)`.
-Omission means unsupported. The host separately opts in with `ProviderTimeCheckPolicy`; these
-host-local settings are not task policy or a guarantee. All four durations are explicit positive
+Omission means unsupported. The agent application separately opts in with `ProviderTimeCheckPolicy`; these
+agent application-local settings are not task policy or a guarantee. All four durations are explicit positive
 safe integer milliseconds, with `maxRoundTripMs <= timeoutMs <= intervalMs`. No default interval
 is assumed. Validate settings with `validateProviderTimeCheckPolicy`.
 
-While the connection is active, the host checks immediately on opt-in and then at `intervalMs`
+While the connection is active, the agent application checks immediately on opt-in and then at `intervalMs`
 using a monotonic scheduler. Only one check may be outstanding. Missed ticks are skipped, never
 replayed in a burst. Each request has a fresh ID. The provider samples its own event/deadline
 clock after receiving the request and before returning `providerTime` as an ISO/RFC3339 instant,
@@ -4879,25 +4879,25 @@ may masquerade as provider time. A provider unable to sample that domain must no
 Clock authority replacement or a discontinuity changes `clockId`.
 
 Validate requests and responses with `validateProviderTimeCheckRequest` and
-`validateProviderTimeCheckResult`. The host also checks the outstanding request, provider/connection
+`validateProviderTimeCheckResult`. The agent application also checks the outstanding request, provider/connection
 and login, monotonic elapsed time and cancellation after the await: a late successful response is
 still rejected. Reject samples at or beyond `timeoutMs`, or above `maxRoundTripMs`. Cancel local
 tracking and invalidate estimates on disconnect, logout, policy disable, clock change or clock
 jump; late results cannot restore them. Resume with a fresh check after reconnection. Expire a
-sample at `maxSampleAgeMs` using monotonic elapsed time. Failure is visible through the host's
+sample at `maxSampleAgeMs` using monotonic elapsed time. Failure is visible through the agent application's
 existing diagnostic path, with the estimate unavailable; the next scheduled check can recover.
 Checking failure alone does not assert call/recording state or require a healthy connection to close.
 This read-only check is not a task command. Protocol supplies declarations and validators; the
-host implements the scheduler and the provider implements the clock read.
+agent application implements the scheduler and the provider implements the clock read.
 
-The host may also expose `Host.estimateProviderTime({ providerId, loginId })`. It returns an ISO
+The agent application may also expose `Host.estimateProviderTime({ providerId, loginId })`. It returns an ISO
 `at` in that provider's clock domain, the same explicit scope and `clockId`, or `undefined` when
 unavailable. Optional `uncertaintyMs` is an estimate, not a guaranteed bound. The method is optional
-at the host level and is deliberately absent from `HostGuarantees`. A provider declaring time
-checks does not require the host to expose estimates, and an estimate need not originate from
-this check if the host has another explicitly configured source for that provider clock.
+at the agent application level and is deliberately absent from `HostGuarantees`. A provider declaring time
+checks does not require the agent application to expose estimates, and an estimate need not originate from
+this check if the agent application has another explicitly configured source for that provider clock.
 
-To estimate the difference, the host brackets the request with local send/receive instants and
+To estimate the difference, the agent application brackets the request with local send/receive instants and
 measures elapsed time monotonically. For provider sample P and local bracketing instants H0/H1,
 the offset under stable clocks lies between P-H1 and P-H0, before clock error and timestamp
 precision are considered. A midpoint is only an estimate; one-way delays need not be symmetric.
@@ -4906,22 +4906,22 @@ sample with monotonic elapsed time, and return unavailable after its configured 
 `validateProviderTimeEstimate` checks shape and scope, not actual accuracy or freshness.
 
 A provider may declare `Manifest.timestampAuthority: "provider"`: its own timestamps are
-used for final records, and host-supplied timestamps are advisory. This declaration is independent
-of time-check support and the optional host estimate; neither changes who owns the final record.
-Omission makes no promise that host timestamps will be trusted. No host-authoritative default
+used for final records, and agent application-supplied timestamps are advisory. This declaration is independent
+of time-check support and the optional agent application estimate; neither changes who owns the final record.
+Omission makes no promise that agent application timestamps will be trusted. No agent application-authoritative default
 is inferred. Successful `recordStep` responses identify the provider-selected history instant;
-see **The host records what it performs** for correlation and retained bindings.
+see **The agent application records what it performs** for correlation and retained bindings.
 
-A provider need not trust or adopt any host-supplied timestamp. It may timestamp an incoming
+A provider need not trust or adopt any agent application-supplied timestamp. It may timestamp an incoming
 message using its own clock at receipt and use that for its own processing/accounting. The reason
-for this exception is that host clocks and host estimates are not authoritative at the provider.
-Receipt time must be described as receipt/observation time, not relabeled as the original host
+for this exception is that agent application clocks and agent application estimates are not authoritative at the provider.
+Receipt time must be described as receipt/observation time, not relabeled as the original agent application
 action, recorder capture boundary, or proof an operation applied. An existing field with a
 specific occurrence meaning still requires that evidence; this option does not silently redefine
-it. Host-only instants remain advisory input; the provider owns its authoritative publication.
+it. Agent application-only instants remain advisory input; the provider owns its authoritative publication.
 
-This host estimate is another explicit timestamp exception: it helps optional displays and
-provider-clock comparisons when the host lacks that clock directly. It is not a source occurrence,
+This agent application estimate is another explicit timestamp exception: it helps optional displays and
+provider-clock comparisons when the agent application lacks that clock directly. It is not a source occurrence,
 may not replace event/history timestamps, and alone cannot authorize deadline actions or prove
 recording freshness. Uses requiring a trustworthy bound still need independently established
 clock accuracy/drift assumptions. It neither synchronizes the operating-system clock nor changes
@@ -4984,8 +4984,8 @@ safe for the agent to see.
 | `active` | The transport is up and the provider is serving this session. It is the only value under which work arrives. |
 | `error` | The adapter cannot serve the session and is not simply mid-reconnect. Say why in `message`, and say what revives it in `recovery` — required here, forbidden on any other status. It is not terminal: an adapter that recovers on its own still reports `connecting` and then `active`, and one that cannot is revived as `recovery` says. |
 
-**An error names its recovery, and the host acts on that word.** The adapter knows why its session
-died; the host knows how to run a login. `recovery` joins the two:
+**An error names its recovery, and the agent application acts on that word.** The adapter knows why its session
+died; the agent application knows how to run a login. `recovery` joins the two:
 
 - **`reconnect`** — the login is good and this connection is not: a backend restart, a session the
   platform no longer recognises. Omni calls `disconnect()` on the dead connection and then
@@ -5000,7 +5000,7 @@ died; the host knows how to run a login. `recovery` joins the two:
   `reconnect`, and the fresh snapshot re-establishes state. The adapter tears nothing down itself
   and expects nothing to carry on: the connection that reported `error` is finished.
 
-**Patience is the host's.** An adapter in `connecting` retries for as long as it takes and never
+**Patience is the agent application's.** An adapter in `connecting` retries for as long as it takes and never
 has to decide when to stop. Omni owns giving up: after however long it chooses to wait, it may
 call `disconnect()` and either `connect()` afresh or surface the failure — so neither side waits
 for the other to blink.
@@ -5016,7 +5016,7 @@ authentication state, not here.
 adapter that leaves a stale `active` in place is telling Omni to keep waiting for work that cannot
 come — see **Liveness**.
 
-**The status is seen, not merely known.** A host renders the transport's status where the agent
+**The status is seen, not merely known.** An agent application renders the transport's status where the agent
 works — `connecting` from the moment it is reported, `error` with what revives it — and never a
 healthy workspace over a transport that cannot serve it: an agent talking on a desk whose transport
 died was an incident, and it happened because the desk knew and did not say. The same obligation
@@ -5051,9 +5051,9 @@ snapshot. `seed(snapshot)` returns violations, which callers must check. This is
 tracker, not a complete production reducer: snapshot freshness, login/connection fencing and
 full task consistency remain separately required.
 
-**Both sides must enforce the order.** The host validates immediately before dispatch; the
+**Both sides must enforce the order.** The agent application validates immediately before dispatch; the
 provider rechecks current permission and state atomically before acting. The provider validates
-the resulting break/task state before publication and serializes those publications. The host
+the resulting break/task state before publication and serializes those publications. The agent application
 validates the envelope, transition and full task consistency before replacing local state. A
 request result does not optimistically advance break state, and a delayed command cannot apply
 to a later attempt merely because its status happens to look compatible. Keep at most one
@@ -5066,7 +5066,7 @@ Normal order is `not-requested` → `awaiting-approval` → `granted` →
 returns a precommit request to `not-requested`; an explicit agent end returns a committed
 break there. Same-state restatements are allowed. An evidenced forced break is the explicit
 exception to requesting/granting, and must carry its forced actor/state. Neither skipped
-publication nor a host-local guess creates another exception. A later normal attempt starts
+publication nor an agent application-local guess creates another exception. A later normal attempt starts
 from `not-requested`, never by regressing an active break into a request.
 
 A fresh authoritative snapshot establishes a new baseline; do not run this event-transition
@@ -5107,8 +5107,8 @@ The provider's word that the task's audio should now attach. Omni calls `openMed
 a task carried with `media: "started"`, which is how a reconnect snapshot reattaches audio an
 earlier event brought — and renders the call as live from that word, never from its own senses. It
 precedes `openMedia` and is never a reply to it: a provider whose media state comes from the
-platform, a station going in use the moment a call is answered, sends it then, before any host has
-opened anything, and `openMedia` has its own answer for what the host did. It
+platform, a station going in use the moment a call is answered, sends it then, before any agent application has
+opened anything, and `openMedia` has its own answer for what the agent application did. It
 names a task whose work has begun, and it alternates with `task-media-ended`: media that never
 started cannot end, so a live call whose provider says nothing about its audio is a provider in
 breach, not a state a desk fills in from its own devices.
@@ -5143,7 +5143,7 @@ A successful `complete` or `transfer` command does not clear the task. Omni wait
 and not for ever: `applied` to a completion -- `complete`, or a lead's `take-over-call` -- says the
 provider has completed the task, and its `task-ended` follows within the
 manifest's `completionSettleMs`. A provider never answers `applied` for a completion it has not yet
-performed. Past the bound the host calls `snapshot()`: a snapshot still carrying the task is a task
+performed. Past the bound the agent application calls `snapshot()`: a snapshot still carrying the task is a task
 held open by a provider that said it was done, and the desk shows it as unsettled -- "Completing...
 the provider has not confirmed" -- naming the command; a snapshot no longer carrying it clears the
 task, since the ending was owed and lost. The drive holds a provider to the same bound
@@ -5155,7 +5155,7 @@ recognised as the late event it is, never applied to the life now open under the
 
 ### `dial-outcome`
 
-How a dial the host placed ended, once, either way, named by the `dialId` the host sent: `answered`,
+How a dial the agent application placed ended, once, either way, named by the `dialId` the agent application sent: `answered`,
 or one of the declared ways of not reaching the destination, with the switch's `reason` where it
 gave one. `taskId` names the task the dial was on, where there was one, and that task may already
 have ended. Omni shows it to the agent against the call it belonged to and does nothing else: no
@@ -5175,9 +5175,9 @@ state read that contradicted itself, a `task-ended` naming a task nobody held, a
 without a name. `expected` is the rule as a sentence, `observed` is what came instead, and
 `taskId` names the task where there is one. **Informational, never behavioural**: the provider has
 already done the safe thing before it speaks, and nothing in the task or break machinery reacts to
-a diagnostic. It exists so that the loudness reaches a person — a host renders each one where the
+a diagnostic. It exists so that the loudness reaches a person — an agent application renders each one where the
 agent works and keeps a count an operator can read, because a healthy workspace over a shouting
-console is the silence problem one layer up. One event per occurrence; the host counts, the
+console is the silence problem one layer up. One event per occurrence; the agent application counts, the
 provider does not batch. `exerciseAdapter` treats a diagnostic delivered during a run as a
 violation (`diagnostic.raised`): a conformance run against a platform that is breaking its rules
 fails loudly rather than passing with a note. A task published under `capabilitySource:
@@ -5257,18 +5257,18 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
-| `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
+| `validateHostGuarantees(guarantees)` | What an agent application promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever agent application a test hands the adapter. |
 | `validateProviderTimeCheckPolicy(policy)` | Explicit optional polling settings, positive safe-integer durations and round-trip/timeout/interval ordering. |
-| `validateProviderTimeCheckRequest(request)` | Fresh-request shape; the host enforces actual uniqueness and outstanding-request lifetime. |
+| `validateProviderTimeCheckRequest(request)` | Fresh-request shape; the agent application enforces actual uniqueness and outstanding-request lifetime. |
 | `validateProviderTimeCheckResult(result, request, loginId)` | ISO timestamp, clock identity, exact request/login correlation; timing and source accuracy remain runtime checks. |
-| `validateProviderTimeEstimate(estimate, scope)` | Optional host estimate shape and provider/login scope; no accuracy guarantee. |
-| `validateInteractionReport(report, path?, manifest?)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
-| `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
-| `validateHostMute(mute, softphone)` | What the host's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the host holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
-| `validateLoginStore(store)` | The login's store the host hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
-| `validateCapacity(capacity)` | What the host states as capacity: a whole number of zero or more (`capacity.count`), zero being host-stopped. The harness states one on connect and two, one and zero after the drive, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
+| `validateProviderTimeEstimate(estimate, scope)` | Optional agent application estimate shape and provider/login scope; no accuracy guarantee. |
+| `validateInteractionReport(report, path?, manifest?)` | What the agent application reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
+| `validateHostReport(report)` | The agent application's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever agent application a test hands the adapter; `stillHost(report)` builds one that never changes. |
+| `validateHostMute(mute, softphone)` | What the agent application's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the agent application holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
+| `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
+| `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the drive, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
 | `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
-| `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a transfer's item, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a consulted entry, a lead requested, somebody else still on the call (`command.conference.remove.alone`). A host validates before sending and an adapter before acting. |
+| `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a transfer's item, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a consulted entry, a lead requested, somebody else still on the call (`command.conference.remove.alone`). An agent application validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
 
@@ -5294,25 +5294,25 @@ and may be compiled against a different protocol version, so its output is untru
 Validating a snapshot before it replaces provider state is what stops a malformed task from
 reaching the workspace.
 
-### What the host does with what it refuses
+### What the agent application does with what it refuses
 
 A refusal has an aftermath on the desk and a report to the provider, and both are stated.
 
-- **A refused snapshot replaces nothing.** The host keeps the last state it took from this
+- **A refused snapshot replaces nothing.** The agent application keeps the last state it took from this
   provider whole, and shows the provider as faulted -- the transport as it stands, and the words
   "last update refused" with the rule -- so the agent knows the view is standing still rather than
   believing it current. It does not adopt the good half of a snapshot: a task the agent is on would
   vanish from the desk while the call is up.
-- **A refused event is dropped and counted.** The state the host holds does not move for it. The
-  provider is told, and may republish a corrected state or raise a `diagnostic`; the host retries
+- **A refused event is dropped and counted.** The state the agent application holds does not move for it. The
+  provider is told, and may republish a corrected state or raise a `diagnostic`; the agent application retries
   nothing. The desk shows nothing for it: the view kept moving for every other event, so "last
   update refused" would be false of it, and a chip that said nothing would be right about the
-  transport. Counted, and the provider told, is all a host can truthfully do for one event.
+  transport. Counted, and the provider told, is all an agent application can truthfully do for one event.
 - **The provider is told, every time.** `refused(report)` carries the artefact, the envelope id for
   an event, and every violation with its rule and path. An adapter logs it at error and treats it as
-  its own defect until shown otherwise: what the host refused never reached the agent, and a
+  its own defect until shown otherwise: what the agent application refused never reached the agent, and a
   provider that hears nothing runs a whole shift beside a frozen desk with nothing wrong on its
-  side. The harness tells an adapter under test exactly as a host does
+  side. The harness tells an adapter under test exactly as an agent application does
   (`connection.refused.required`, `connection.refused.rejected`).
 
 ## Conformance helpers
@@ -5357,18 +5357,18 @@ in each adopter's own tests. `{ drive: true }` closes that: the exercise takes t
 provider offers through one ordinary lifecycle -- accept it, wait for its media and open it on a
 softphone, hold and resume where the task offers `hold`, end the call where it offers `endCall`,
 complete it with an outcome where the agent completes -- and holds every step to the rules a
-host holds a provider to. Each command is validated against the task as published
+agent application holds a provider to. Each command is validated against the task as published
 (`drive.command.*`), each answer for its method, a refusal of a control the task offered is a
 violation (`drive.command.failed`), and an event the provider owes and never sends is one too
 (`drive.timeout`, after `driveTimeoutMs`, 5000 by default). Around the drive the exercise holds
-the run to what a host holds a provider to between commands: an offer before the host stated
+the run to what an agent application holds a provider to between commands: an offer before the agent application stated
 capacity, or beyond the count with nothing dialled on it, is named
 (`stream.taskOffered.beforeCapacity`, `.overCapacity`); every user the snapshot names is looked up
 through `getUserDetails` and the answer held to the shape, nobody unasked, nobody described as
 nothing (`getUserDetails.user.*`, `getUserDetails.unasked`, `connection.getUserDetails.empty`); and
 the second adapter a `rebuild` gives comes up signed in as the same login from the secrets alone
 before it reads anything (`drive.reload.login`), and is then held to everything the first was on
-connect: the methods its declarations call for, the host's report, a capacity stated to it, its
+connect: the methods its declarations call for, the agent application's report, a capacity stated to it, its
 snapshot read as the connect snapshot was, and its media opened afresh on a task carried with
 `media: "started"`, since the first client's session died with it. The result also says which rules the
 run evaluated, pass or fail, in `rulesEvaluated`: the validators' as each was applied, the stream's
@@ -5382,8 +5382,8 @@ in the completing publication or the open entry is refused (`task.interactionHis
 and the drive's closing report after the media ended is expected `recorded` and to change nothing:
 a record restated afterwards with that leg's duration altered is named (`drive.recordStep.overwritten`).
 Where the provider restates the task's record afterwards, each leg is in it or the hole is named
-(`drive.recordStep.history`). Given `rebuild`, a way to build the adapter again as a host reload
-does, the drive reloads the host as a reload happens: the first client is unsubscribed,
+(`drive.recordStep.history`). Given `rebuild`, a way to build the adapter again as an agent application reload
+does, the drive reloads the agent application as a reload happens: the first client is unsubscribed,
 disconnected and its session closed (`drive.reload.handover`), and only then is a second adapter
 built and connected for the same login with the same context and the same `store`; its snapshot
 must carry the task with that leg at its acknowledged provider timestamp and the reported actor, and the run goes on with the second as its
@@ -5402,8 +5402,8 @@ first client is gone before the second connects, there is no client for the plat
 open task back to, and nothing about the reload is exempt from any rule. The second adapter opens its session from the same
 `secrets`, so the reload is a restore before it is anything else: an adapter that holds a session
 has already put what would rebuild it into the secrets store, from the moment it was handed one,
-not only when a flow completes -- the session is the adapter's, the store is the host's, and a
-host reload is exactly when no flow will run. And once the task has ended, the store the drive
+not only when a flow completes -- the session is the adapter's, the store is the agent application's, and a
+agent application reload is exactly when no flow will run. And once the task has ended, the store the drive
 handed the adapter holds no key naming the task's id, delimited, never as a run of characters inside
 another id (`drive.store.retained`); an adapter whose keys never named the task leaves the rule
 unevaluated, and the result says so rather than passing it: a task's keys go
@@ -5461,8 +5461,8 @@ cannot be established from TypeScript structure alone.
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
-| `stillHost(report?, guarantees?, mute?)` | A host that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a softphone voice adapter, and never for a desk phone. |
-| `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for a host that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |
+| `stillHost(report?, guarantees?, mute?)` | An agent application that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a softphone voice adapter, and never for a desk phone. |
+| `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for an agent application that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |
 | `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a forced break arriving in effect with `forced`. The harness applies the same rules after the connect snapshot. |
 | `assertMediaFollowsTheTask(envelopes, snapshot?)` | The media follows the task and never decides it: every task is introduced once, `task-media-started` and `task-media-ended` alternate on work that has begun, media ends only where it arrived, and what follows the media ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no media satisfies it by never testing it — pair it with the assertion that the media end is present. |
 | `assertBreakAttemptProviders(candidates, asked)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
@@ -5480,7 +5480,7 @@ Adapters should run the relevant scenarios against deterministic test state befo
 
 ## A provider does not style the workspace
 
-How a deployment themes Omni is the host's concern and is specified with the host, not here. What
+How a deployment themes Omni is the agent application's concern and is specified with the agent application, not here. What
 belongs in this contract is the boundary. A provider says what a control **is** through its
 capabilities and what its work is **called** through `phaseLabels` and `taskTypePresentation`; how
 any of it is drawn is Omni's. A task cannot select a design language, inject a component, or
@@ -5490,21 +5490,21 @@ override the agent's theme and font preferences.
 
 Recording is voice-only. A task can arrive already recording, including while pending, and offer
 no recording controls. The provider publishes only its own current state on
-the provider field of the task’s `recording` state. The host publishes its own full scoped view in `HostReport.recordings`.
-A provider task update cannot replace host state. Neither a capability nor an accepted command
+the provider field of the task’s `recording` state. The agent application publishes its own full scoped view in `HostReport.recordings`.
+A provider task update cannot replace agent application state. Neither a capability nor an accepted command
 establishes recording. Missing state, lost recorder observation, transport loss and expired
 observation mean unknown; they never mean stopped. Paused means a recording remains open without
 capturing. Task hold, task pause and recording pause are independent.
 
-The per-task policy is `Task.capabilities.recording`, with independently optional provider and host
+The per-task policy is `Task.capabilities.recording`, with independently optional provider and agent application
 action sets. The outer capability may be locked. Absence grants no permission, and a state may
 exist without any permission. A provider may offer only stop for a recording started automatically,
 or withdraw a control on a later task update. There is no global recording mode and no automatic
-start from a capability declaration. Host support is declared on `ConnectContext.host.recording`,
-not the provider-owned manifest. The task chooses an explicitly provisioned host destination;
+start from a capability declaration. Agent application support is declared on `ConnectContext.host.recording`,
+not the provider-owned manifest. The task chooses an explicitly provisioned agent application destination;
 unknown destinations or unsupported actions are refused visibly, never redirected to provider
-recording or a default upload location. Initial host support requires voice softphone media and
-capture of both local and remote audio; a host unable to capture either must refuse start/resume.
+recording or a default upload location. Initial agent application support requires voice softphone media and
+capture of both local and remote audio; an agent application unable to capture either must refuse start/resume.
 This package declares that contract; it supplies no recorder, media mixing, storage or upload.
 
 | Action | Required current recording state | Confirmed outcome |
@@ -5525,7 +5525,7 @@ Partial success (capture stopped but storage outcome unknown) cannot return fail
 of no effect. It rejects with unknown outcome, reports the failure visibly and publishes whatever
 current capture state is actually known. Retention is not a promise of sample-perfect audio.
 
-Provider commands go exclusively to `Connection.execute`; host commands go exclusively to
+Provider commands go exclusively to `Connection.execute`; agent application commands go exclusively to
 `HostRecording.execute`. Both include task, allocation, request and observation identities; all
 non-start commands identify the particular recording. IDs are opaque and scoped by provider login,
 task and recorder owner. They are never inferred from filenames or current agent identity. A
@@ -5533,8 +5533,8 @@ recording ID survives pause/resume and reallocation only where the same recorder
 commands always name the current allocation. A later start gets a different ID. Reconnect does not
 create a new recording or fresh evidence. After lost continuity, use unknown until reconciled.
 There is no automatic restart, transfer to another recorder, or stop on task hold/disconnect.
-Task removal does not prove recording stopped: outstanding host recorders remain tracked by the
-host until its executor reconciles/finishes them, with visible unresolved cleanup failures.
+Task removal does not prove recording stopped: outstanding agent application recorders remain tracked by the
+agent application until its executor reconciles/finishes them, with visible unresolved cleanup failures.
 
 Only start/resume require an in-progress or paused task with started media. Pause/stop/cancel may
 also finish an independently observed recorder while the task is completing. A pending task may
@@ -5555,34 +5555,34 @@ identity or observation time publish unknown and offer no issuable controls.
 
 Use `validateTask` and `validateTaskCommand` for published shape and static permissions.
 Immediately before dispatch, additionally use `validateRecordingRequest` against the full current
-task and explicit observer-domain time. For host commands also supply the current host declaration,
-full host report and softphone context. The same checks must run at the executing boundary;
+task and explicit observer-domain time. For agent application commands also supply the current agent application declaration,
+full agent application report and softphone context. The same checks must run at the executing boundary;
 client validation alone is not authorization. The executor serializes operations on each recorder
 and durably correlates request identity with scope, action and outcome: an exact retry refers to the
 same operation; reuse with different contents is refused. It never silently retries an ambiguous
 operation. Implementations without reliable request correlation must refuse controls.
 
-Keep command progress in host UI separately from authoritative state. Applied means the requested
-recording transition and any retain/discard effect actually completed; publish the confirming task or host report before
+Keep command progress in agent application UI separately from authoritative state. Applied means the requested
+recording transition and any retain/discard effect actually completed; publish the confirming task or agent application report before
 resolving applied. Failed means confirmed no effect. Rejected promise means outcome unknown:
 show the failure, reconcile that path and do not automatically retry or pretend inactive. Authoritative
-updates remain full current task/host views, not replayed provider events. These current-state fields
+updates remain full current task/agent application views, not replayed provider events. These current-state fields
 create no interaction-history entries and infer no actors, durations or historical capture boundaries.
 
 Migration is explicit: replace the old true recording capability with per-path action policies,
 replace untargeted commands with scoped commands, and retain protocol version 1. During pre-release
 development, hosts and adapters must align their recording contracts; negotiation does not detect
 differences between package revisions that share that protocol number. No legacy-shape fallback is provided.
-This change does not publish a package or enable recording in any existing host/provider by itself.
+This change does not publish a package or enable recording in any existing agent application/provider by itself.
 
 `validateRecordingOutcome` checks confirming observations against recording-specific applied/failed
 semantics, including pause/resume identity and rejection of a dialling result. It cannot prove audio
 retention/completion or source truth from a status flag; those remain executor obligations.
 
-Host destination selection binds storage when start actually creates a recording. Existing recordings
+Agent application destination selection binds storage when start actually creates a recording. Existing recordings
 keep that binding through pause/resume/stop/cancel; a later policy cannot redirect their stored audio.
 The executor rejects a mismatched destination rather than moving or discarding another binding.
-Action permission does not authorize unattended invocation: host controls require the agent's explicit
+Action permission does not authorize unattended invocation: agent application controls require the agent's explicit
 act, and provider authorization remains enforced at its authenticated command boundary.
 
 
@@ -5594,31 +5594,31 @@ capability restrictions from disappearing at dispatch. The standalone `validateR
 requires an affirmative permission; false, malformed permission declarations and unknown actions grant nothing.
 
 
-### Host recording announcements to the caller
+### Agent application recording announcements to the caller
 
-`HostRecording.announcesToCaller`, when true, is a guarantee that the host delivers audible recording
+`HostRecording.announcesToCaller`, when true, is a guarantee that the agent application delivers audible recording
 status messages to the remote party over the call's outgoing audio. It belongs inside the optional
-host recording capability: without that capability there is no such guarantee. Omission makes no
+agent application recording capability: without that capability there is no such guarantee. Omission makes no
 promise; false is invalid. It does not belong in the provider manifest, the task's recording policy
-or the general `HostGuarantees` object. A provider can inspect this host guarantee when deciding
-whether to permit host recording on a task.
+or the general `HostGuarantees` object. A provider can inspect this agent application guarantee when deciding
+whether to permit agent application recording on a task.
 
-The guarantee applies only to host-owned recordings. Providers implement announcements for their
-own recordings at their end; provider state updates must not cause the host to announce those
+The guarantee applies only to agent application-owned recordings. Providers implement announcements for their
+own recordings at their end; provider state updates must not cause the agent application to announce those
 recordings. Both recorders can operate independently on the same call.
 
-On a confirmed host start, the remote party hears that recording started. On a confirmed stop or
+On a confirmed agent application start, the remote party hears that recording started. On a confirmed stop or
 cancel, they hear that recording stopped. If pause/resume is supported, say paused/resumed so a
 pause is not presented as a finished recording. Announcements follow actual capture transitions,
 not button clicks, accepted requests or task-policy changes. When attaching to an already-active
-host recording, announce that recording is active, without inventing its original start time.
+agent application recording, announce that recording is active, without inventing its original start time.
 Repeated observations of the same state do not repeat announcements. Unknown or expired evidence
 must never produce a stopped announcement.
 
 A local sound, UI indicator, screen-reader message to the agent, or sound leaking through the
-microphone does not fulfil this guarantee. The host must deliver the message directly in the audio
+microphone does not fulfil this guarantee. The agent application must deliver the message directly in the audio
 sent to the remote party, even when the agent microphone is muted. It may also notify the agent.
-Only declare the guarantee when the host can provide that outgoing audio path. An announcement
+Only declare the guarantee when the agent application can provide that outgoing audio path. An announcement
 that cannot be delivered, including after the remote party has disconnected, is a visible failure;
 never claim delivery or replay the notice into a different call.
 
@@ -5628,4 +5628,4 @@ report the announcement failure visibly and reject with unknown command outcome.
 effect, automatically repeat the recording action or silently switch to an agent-only notice.
 
 `validateHostRecording` checks the declaration, including its true-or-absent guarantee. Actual audio
-delivery remains the host implementation's responsibility and must be exercised in its own tests.
+delivery remains the agent application implementation's responsibility and must be exercised in its own tests.
