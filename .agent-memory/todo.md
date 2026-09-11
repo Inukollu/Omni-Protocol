@@ -1,3 +1,12 @@
+# Current PR120 revision: BreakStatus type
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-status-field; branch refactor/break-status-field.
+Implementation 34a2c662283f53667c4870f0533bd0738ed0b92a.
+PR https://github.com/Inukollu/Omni-Protocol/pull/120.
+BreakApproval renamed to BreakStatus, matching BreakState.status. Former export has no alias. Values, reasons, activeReasonId and lifecycle rules unchanged. BreakOnTaskStep.approval field remains, now typed BreakStatus. Hosts/providers must update together; no version changes.
+Build/type checks, all 438 tests, guide examples, package verification and diff check passed. Log /private/tmp/break-status-type-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. Existing named monitor remains responsible. No merge or release performed.
+
 # Current delivery: BreakState status field
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-status-field; branch refactor/break-status-field.
@@ -421,6 +430,6 @@ PID 61280; command python3 /private/tmp/omni-set-break-policy/.agent-memory/runt
 <!-- set-break-policy-monitor:end -->
 
 <!-- break-status-field-monitor:begin -->
-Monitor omni-protocol-pr120-break-status-field: OPEN at 2026-09-11T09:58:13.776846+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr120-break-status-field: OPEN at 2026-09-11T10:01:16.043606+00:00. Await CI/review; monitor never merges.
 PID 77759; command python3 /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field-monitor.py; state /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.state.json; log /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.log; PID file /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.pid; process log /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-status-field, branch refactor/break-status-field, PR https://github.com/Inukollu/Omni-Protocol/pull/120.
 <!-- break-status-field-monitor:end -->
