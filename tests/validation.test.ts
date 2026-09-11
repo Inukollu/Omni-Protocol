@@ -2139,14 +2139,14 @@ describe("monitoring a call", () => {
 
   it("lists the modes a lead may listen in, and always monitor among them", () => {
     expect(login({ monitorControl: ["monitor"] })).toEqual([]);
-    expect(login({ monitorControl: ["monitor", "whisper", "barge"] })).toEqual([]);
+    expect(login({ monitorControl: ["monitor", "whisper", "join-call"] })).toEqual([]);
     expect(login({ monitorControl: ["monitor", "whisper"] })).toEqual([]);
     expect(login({ monitorControl: true })).toEqual(["authentication.capability.team.monitorControl.shape"]);
     expect(login({ monitorControl: [] })).toEqual(["authentication.capability.team.monitorControl.shape"]);
     expect(login({ monitorControl: ["monitor", "listen"] })).toEqual(["authentication.capability.team.monitorControl.mode"]);
     expect(login({ monitorControl: ["monitor", "whisper", "whisper"] })).toEqual(["authentication.capability.team.monitorControl.unique"]);
-    // Whisper and barge begin from a monitor.
-    expect(login({ monitorControl: ["whisper", "barge"] })).toEqual(["authentication.capability.team.monitorControl.monitor"]);
+    // Whisper and join-call begin from a monitor.
+    expect(login({ monitorControl: ["whisper", "join-call"] })).toEqual(["authentication.capability.team.monitorControl.monitor"]);
     // The control: the other team controls are still declared by presence.
     expect(login({ leadAssistControl: true })).toEqual([]);
     expect(login({ leadAssistControl: ["monitor"] })).toEqual(["authentication.capability.value"]);
@@ -2155,7 +2155,7 @@ describe("monitoring a call", () => {
   it("carries the monitored call on the lead's own voice task, one at a time, and never beside a joined one", () => {
     const monitoring = { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "monitor", since };
     const check = (over: Record<string, unknown>, context: { channel: string } = voice) => rules(validateTask(task({ capabilities: {}, ...over }), context));
-    for (const mode of ["monitor", "whisper", "barge"]) expect(check({ monitoring: { ...monitoring, mode } })).toEqual([]);
+    for (const mode of ["monitor", "whisper", "join-call"]) expect(check({ monitoring: { ...monitoring, mode } })).toEqual([]);
     expect(check({ monitoring: { ...monitoring, mode: "listen" } })).toEqual(["task.monitoring.mode"]);
     expect(check({ monitoring: { ...monitoring, memberId: "" } })).toEqual(["task.monitoring.memberId"]);
     expect(check({ monitoring: { ...monitoring, taskId: "" } })).toEqual(["task.monitoring.taskId"]);
@@ -2190,8 +2190,17 @@ describe("monitoring a call", () => {
     expect(onBreak("coaching", [])).toEqual([]);
   });
 
+  it("rejects the retired mode in permissions and state, including mixed permission lists", () => {
+    for (const monitorControl of [["monitor", "barge"], ["monitor", "join-call", "barge"]]) {
+      expect(login({ monitorControl })).toContain("authentication.capability.team.monitorControl.mode");
+    }
+    expect(rules(validateTask(task({ capabilities: {}, monitoring: {
+      memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "barge", since,
+    } }), voice))).toContain("task.monitoring.mode");
+  });
+
   it("answers the monitor method as every team method answers", () => {
-    const failure = { code: "omni.capability-not-enabled", message: "Barge is not this lead's", retryable: false };
+    const failure = { code: "omni.capability-not-enabled", message: "Join call is not this lead's", retryable: false };
     expect(rules(validateResult({ status: "applied" }, "executeTeamMonitor"))).toEqual([]);
     expect(rules(validateResult({ status: "failed", failure }, "executeTeamMonitor"))).toEqual([]);
     expect(rules(validateResult({ status: "listening" }, "executeTeamMonitor"))).toEqual(["result.status"]);
