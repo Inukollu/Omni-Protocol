@@ -218,14 +218,14 @@ export const waitingDeadline: Task<"voice">["atDeadline"] = "waits";
 export const expiredPreviewDeadline: Task<"voice">["atDeadline"] = "expires";
 
 // Monitoring: the lead's own task while they listen, voice only, in one of three modes.
-export const monitoringLeadTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "whisper", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
+export const monitoringLeadTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "coach", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
 // @ts-expect-error Email has no call to listen to.
 export const monitoringEmailTask: Task<"email"> = { ...emailTask, id: "email-7", monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "monitor", since: "2026-08-21T09:04:00Z" } };
 export const startMonitor: TeamMonitorCommand = { type: "monitor", memberId: "A-1" };
-export const whisper: TeamMonitorCommand = { type: "whisper" };
+export const coach: TeamMonitorCommand = { type: "coach" };
 // @ts-expect-error There is no take-over in monitoring; a lead who wants the call uses lead assist.
 export const monitorTakeOver: TeamMonitorCommand = { type: "take-over" };
-export const listeningLead: TeamCapabilities = { monitorControl: ["monitor", "whisper"] };
+export const listeningLead: TeamCapabilities = { monitorControl: ["monitor", "coach"] };
 // @ts-expect-error The modes are the three call-centre words.
 export const eavesdropper: TeamCapabilities = { monitorControl: ["listen"] };
 
@@ -415,3 +415,8 @@ export const joinCallMonitorCommand = { type: "join-call" } satisfies import("..
 export const formerMonitorCommand = { type: "barge" } satisfies import("../src/index.js").TeamMonitorCommand;
 // @ts-expect-error renamed away: monitoring state uses join-call too
 export const formerMonitorMode: import("../src/index.js").MonitorMode = "barge";
+
+// @ts-expect-error renamed away: use the coach action
+export const formerCoachCommand: TeamMonitorCommand = { type: "whisper" };
+// @ts-expect-error renamed away: monitoring state uses coach too
+export const formerCoachMode: import("../src/index.js").MonitorMode = "whisper";
