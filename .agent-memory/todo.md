@@ -1,3 +1,11 @@
+# Preview trigger ownership — 2026-09-11
+
+- PR108 https://github.com/Inukollu/Omni-Protocol/pull/108 amended; implementation 1d75f2937f9ba20838e53a2e76835193cecb3487; branch fix/break-ordering-checks; worktree /private/tmp/omni-break-ordering.
+- Per-task unlimited preparation omits deadline fields. Fixed provider dialing retains atDeadline:calls; new host-calls requires host ordinary Call with host dialId. Existing expires withdrawal remains. Exactly one owner, early manual action, race arbitration, clock uncertainty, timer invalidation and reconnect/unknown reconciliation documented.
+- Fixed deadline means preparation end/initiation, not ringing/answer at that instant. Source eligibility that may never trigger is insufficient. Actual host timers/source intent correlation/outcome completeness are integration work, not implemented by Protocol.
+- Provider-triggered preview ringing permits evidenced pre-answer media without a fabricated host ID; task and stream checks updated, including preview media end before non-answer completion. Deadline alone never permits media. Existing break checks retained.
+- Full pnpm check passed:407 tests, build/types, guide examples and package validation; diff check passed. No protocol/package version change, release, live test or merge. Await CI/review. PR monitor remains the named observation-only process below; keep worktree/local branch until verified terminal state/clean/retained remote refs. Old review guidance about automatic-preview media limitations is superseded only by this unreleased candidate.
+
 # Expanded break lifecycle checks — 2026-09-10
 
 - PR108 https://github.com/Inukollu/Omni-Protocol/pull/108; implementation 5a983341839926e9fe45795dad6cea4dc203047e; branch fix/break-ordering-checks; worktree /private/tmp/omni-break-ordering.
@@ -85,6 +93,6 @@ Validation: full build/typecheck plus 392 tests passed; guide-format check faile
 <!-- pr107-monitor:end -->
 
 <!-- break-monitor:begin -->
-Monitor omni-protocol-pr108-break-ordering: OPEN at 2026-09-10T07:34:48.352692+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr108-break-ordering: OPEN at 2026-09-11T03:08:00.900316+00:00. Await CI/review; monitor never merges.
 PID 66088; command python3 /private/tmp/omni-break-ordering/.agent-memory/runtime/break-monitor.py; state /private/tmp/omni-break-ordering/.agent-memory/runtime/break.state.json; log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.log; PID file /private/tmp/omni-break-ordering/.agent-memory/runtime/break.pid; process log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-ordering, branch fix/break-ordering-checks, PR https://github.com/Inukollu/Omni-Protocol/pull/108.
 <!-- break-monitor:end -->
