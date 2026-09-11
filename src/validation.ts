@@ -1630,15 +1630,17 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     "mayAsk was renamed to canRequestBreak; use only canRequestBreak");
   into.require(typeof value.canRequestBreak === "boolean", "break.canRequestBreak", `${path}.canRequestBreak`, "canRequestBreak says whether the agent may ask for a break: a boolean");
 
-  for (const field of ["refusedReason", "decisionReason"] as const) {
+  into.require(!Object.hasOwn(value, "refusedReason"), "break.requestUnavailableReason.renamed", `${path}.refusedReason`,
+    "refusedReason was renamed to requestUnavailableReason; use only requestUnavailableReason");
+  for (const field of ["requestUnavailableReason", "decisionReason"] as const) {
     if (value[field] !== undefined) {
       into.filled(value[field], `break.${field}`, `${path}.${field}`, `${field} must not be empty when present`);
     }
   }
   // The refusal is the reason the control is withdrawn; beside `canRequestBreak: true` it explains nothing.
-  if (value.refusedReason !== undefined) {
-    into.require(value.canRequestBreak !== true, "break.refusedReason.canRequestBreak", `${path}.refusedReason`,
-      "refusedReason is shown when canRequestBreak is false; omit it while the agent may ask");
+  if (value.requestUnavailableReason !== undefined) {
+    into.require(value.canRequestBreak !== true, "break.requestUnavailableReason.canRequestBreak", `${path}.requestUnavailableReason`,
+      "requestUnavailableReason is shown when canRequestBreak is false; omit it while the agent may ask");
   }
   if (value.retryAfterMs !== undefined) {
     into.require(typeof value.retryAfterMs === "number" && Number.isFinite(value.retryAfterMs) && value.retryAfterMs >= 0,

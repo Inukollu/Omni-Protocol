@@ -1180,8 +1180,8 @@ describe("the other direction, everywhere", () => {
   it("holds the break state's parts to its approval", () => {
     const check = (over: Record<string, unknown>) =>
       rules(validateSnapshot(snapshot({ break: { approval: "not-requested", canRequestBreak: true, ...over } }), manifest()));
-    expect(check({ canRequestBreak: false, refusedReason: "Busy hours" })).toEqual([]);
-    expect(check({ canRequestBreak: true, refusedReason: "Busy hours" })).toEqual(["break.refusedReason.canRequestBreak"]);
+    expect(check({ canRequestBreak: false, requestUnavailableReason: "Busy hours" })).toEqual([]);
+    expect(check({ canRequestBreak: true, requestUnavailableReason: "Busy hours" })).toEqual(["break.requestUnavailableReason.canRequestBreak"]);
     const placed = { by: "M-1", endsAutomatically: false };
     expect(check({ approval: "in-effect", forced: placed })).toEqual([]);
     expect(check({ approval: "not-requested", forced: placed })).toEqual(["break.forced.approval"]);

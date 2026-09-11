@@ -956,7 +956,7 @@ type ForcedBreak =
 type BreakState = {
   approval: BreakApproval;
   canRequestBreak: boolean;
-  refusedReason?: string;
+  requestUnavailableReason?: string;
   decisionReason?: string;
   retryAfterMs?: number;
   reasons?: BreakReason[];
@@ -3609,7 +3609,7 @@ nothing while none are being accepted — so they are not published separately.
 | --- | --- |
 | `approval` | Where the agent's current request stands. See the states below. |
 | `canRequestBreak` | Whether the agent may ask at all. Distinct from `approval`. |
-| `refusedReason` | Display-ready reason shown when `canRequestBreak` is false — a standing gate that applies to everyone. |
+| `requestUnavailableReason` | Display-ready reason shown when `canRequestBreak` is false — a standing gate that applies to everyone. |
 | `decisionReason` | The words whoever decided attached, from `decide.reason`. About one request and one decision, not a standing gate. |
 | `retryAfterMs` | How long until the agent may retry, when the provider can say. |
 | `reasons` | Not-ready codes this provider offers. Omitted when it defines none; an empty list is refused, being a second spelling of the same fact. |
@@ -3641,6 +3641,11 @@ refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest 
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
 ### Forced breaks
+
+Migration: the former refusedReason field is now `BreakState.requestUnavailableReason`.
+It explains why requests are unavailable when `canRequestBreak` is false; `decisionReason`
+continues to explain a particular approval or denial. The old field is rejected even alongside
+the new one, and related diagnostics use requestUnavailableReason.
 
 Migration: the former mayAsk field is now `BreakState.canRequestBreak`. The old field is
 rejected even beside the new field. Validation diagnostics use canRequestBreak in place of

@@ -1241,7 +1241,7 @@ export interface BreakState {
   /** Whether the agent may ask at all. Distinct from the fate of a request already made. */
   canRequestBreak: boolean;
   /** Shown when `canRequestBreak` is false, such as "Busy hours". */
-  refusedReason?: string;
+  requestUnavailableReason?: string;
   decisionReason?: string;
   retryAfterMs?: number;
   /** Not-ready codes this provider offers. Omitted when it defines none. */

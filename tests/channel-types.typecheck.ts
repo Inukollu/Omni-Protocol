@@ -473,3 +473,7 @@ export const retiredAutoApprovePolicy: import("../src/index.js").TeamBreakComman
 
 // @ts-expect-error Use canRequestBreak, not the retired mayAsk field.
 export const retiredBreakEligibility: import("../src/index.js").BreakState = { approval: "not-requested", canRequestBreak: true, mayAsk: true };
+
+export const unavailableBreakRequest: import("../src/index.js").BreakState = { approval: "not-requested", canRequestBreak: false, requestUnavailableReason: "Busy hours" };
+// @ts-expect-error Use requestUnavailableReason, not the retired refusedReason field.
+export const retiredBreakRefusal: import("../src/index.js").BreakState = { ...unavailableBreakRequest, refusedReason: "Busy hours" };

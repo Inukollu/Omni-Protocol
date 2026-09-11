@@ -7,6 +7,15 @@ const state = (approval: BreakApproval): BreakState => ({ approval, canRequestBr
 const event = (approval: BreakApproval) => ({ event: { type: "break-state", break: state(approval) } });
 
 describe("runtime break ordering", () => {
+  it("rejects the retired request-unavailable reason even alongside the new field", () => {
+    for (const fields of [{ refusedReason: "Busy hours" }, { refusedReason: "Busy hours", requestUnavailableReason: "Busy hours" }]) {
+      expect(validateBreakStatus({ ...state("not-requested"), canRequestBreak: false, ...fields }, []).map(v => v.rule))
+        .toContain("break.requestUnavailableReason.renamed");
+    }
+    expect(validateBreakStatus({ ...state("not-requested"), canRequestBreak: false, requestUnavailableReason: "" }, []).map(v => v.rule))
+      .toContain("break.requestUnavailableReason");
+  });
+
   it("rejects the old eligibility field, including alongside the new field", () => {
     for (const value of [
       { approval: "not-requested", mayAsk: true },
