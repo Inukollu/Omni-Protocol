@@ -70,8 +70,7 @@ const STATE_SUBJECTS = [
   "task.history",
   "task.onCall",
   "task.leadAssist",
-  "task.assisting",
-  "task.listening",
+  "task.takenOver",
   "task.media",
   "task.acceptance",
   "task.outcomes",
@@ -82,6 +81,8 @@ const STATE_SUBJECTS = [
   "break.forced",
   "team.members",
   "team.requests",
+  "team.tasks",
+  "team.listening",
   "contacts",
   "scheduledActivities",
   "team.policies",
@@ -91,7 +92,7 @@ const STATE_SUBJECTS = [
 const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
   "task-media-started": true, "task-media-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
-  "team-updated": true, "contacts-updated": true, "calendar-updated": true,
+  "team-updated": true, "team-media-started": true, "team-media-ended": true, "contacts-updated": true, "calendar-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
 const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
@@ -112,8 +113,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (isRecord(value.history) && some(value.history.steps)) seen.add("task.history");
   if (some(value.onCall)) seen.add("task.onCall");
   if (value.leadAssist !== undefined) seen.add("task.leadAssist");
-  if (value.assisting !== undefined) seen.add("task.assisting");
-  if (value.listening !== undefined) seen.add("task.listening");
+  if (value.takenOver !== undefined) seen.add("task.takenOver");
   if (value.media !== undefined) seen.add("task.media");
   if (value.acceptance !== undefined) seen.add("task.acceptance");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
@@ -136,6 +136,11 @@ function observeTeam(value: unknown, seen: Set<ContractSubject>): void {
   if (!isRecord(value)) return;
   if (some(value.members)) seen.add("team.members");
   if (some(value.requests)) seen.add("team.requests");
+  if (Array.isArray(value.members)) for (const member of value.members) {
+    if (!isRecord(member)) continue;
+    if (some(member.tasks)) seen.add("team.tasks");
+    if (member.listening !== undefined) seen.add("team.listening");
+  }
   if (isRecord(value.policies) && Object.keys(value.policies).length > 0) seen.add("team.policies");
 }
 
@@ -319,10 +324,7 @@ export async function exerciseAdapter<C extends Channel>(
           requireMethod(on, method, "the login declares capabilities.breaks");
         }
       }
-      if (capabilities.team?.breakControl === true) requireMethod(on, "executeTeamBreak", "the login declares capabilities.team.breakControl");
-      if (capabilities.team?.leadAssistControl === true) requireMethod(on, "executeTeamLeadAssist", "the login declares capabilities.team.leadAssistControl");
-      if (capabilities.team?.listeningControl !== undefined) requireMethod(on, "executeTeamListen", "the login declares capabilities.team.listeningControl");
-      if (capabilities.team?.policyControl === true) requireMethod(on, "executeTeamPolicy", "the login declares capabilities.team.policyControl");
+      if (capabilities.lead === true) requireMethod(on, "executeTeam", "the login declares capabilities.lead");
       if (some(capabilities.preferences)) requireMethod(on, "setPreference", "the login declares capabilities.preferences");
     };
 
@@ -689,8 +691,19 @@ function userIdsIn(snapshot: Snapshot | undefined): string[] {
     if (isRecord(t.history) && Array.isArray(t.history.steps)) for (const step of t.history.steps) if (isRecord(step)) add(step.by);
     if (Array.isArray(t.onCall)) for (const entry of t.onCall) if (isRecord(entry)) add(entry.userId);
     if (isRecord(t.leadAssist)) add(t.leadAssist.leadId);
-    if (isRecord(t.assisting)) add(t.assisting.memberId);
-    if (isRecord(t.listening)) { add(t.listening.memberId); add(t.listening.agentId); }
+    if (isRecord(t.takenOver)) add(t.takenOver.memberId);
+  }
+  if (isRecord(team)) {
+    for (const member of Array.isArray(team.members) ? team.members : []) {
+      if (!isRecord(member) || !Array.isArray(member.tasks)) continue;
+      for (const task of member.tasks) {
+        const t = task as Record<string, unknown>;
+        if (isRecord(t.history) && Array.isArray(t.history.steps)) for (const step of t.history.steps) if (isRecord(step)) add(step.by);
+        if (Array.isArray(t.onCall)) for (const entry of t.onCall) if (isRecord(entry)) add(entry.userId);
+        if (isRecord(t.leadAssist)) add(t.leadAssist.leadId);
+        if (isRecord(t.takenOver)) add(t.takenOver.memberId);
+      }
+    }
   }
   return [...ids];
 }
@@ -702,8 +715,7 @@ const taskNamesUsers = (task: unknown): boolean =>
   isRecord(task) && (
     (isRecord(task.history) && Array.isArray(task.history.steps) && task.history.steps.some(step => isRecord(step) && step.by !== undefined)) ||
     (isRecord(task.leadAssist) && task.leadAssist.leadId !== undefined) ||
-    isRecord(task.assisting) ||
-    isRecord(task.listening));
+    isRecord(task.takenOver));
 
 
 /** Whether an event publishes a `UserId`, on a team member list, a task, or the snapshot a reconnect carries. */
@@ -847,11 +859,7 @@ export function assertCapabilityWithdrawal(
   const after = last.capabilities;
   const withdrawn =
     (before.breaks === true && after.breaks !== true) ||
-    (before.team !== undefined && after.team === undefined) ||
-    (before.team?.breakControl === true && after.team?.breakControl !== true) ||
-    (before.team?.leadAssistControl === true && after.team?.leadAssistControl !== true) ||
-    (before.team?.listeningControl !== undefined && after.team?.listeningControl === undefined) ||
-    (before.team?.policyControl === true && after.team?.policyControl !== true) ||
+    (before.lead === true && after.lead !== true) ||
     (before.preferences ?? []).some(was => !(after.preferences ?? []).some(now => now.id === was.id));
   if (!withdrawn) {
     throw new Error("Capability withdrawal must end with at least one capability the first login declared withdrawn");

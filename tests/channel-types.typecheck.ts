@@ -29,8 +29,7 @@ import {
   type TaskBrowser,
   type TaskCommand,
   type OnCall,
-  type TeamListenCommand,
-  type TeamCapabilities,
+  type TeamCommand,
 } from "../src/index.js";
 
 export const voiceManifest = {
@@ -216,27 +215,35 @@ export const waitingDeadline: Task<"voice">["atDeadline"] = "waits";
 // @ts-expect-error Preparation expiry must not withdraw the task.
 export const expiredPreviewDeadline: Task<"voice">["atDeadline"] = "expires";
 
-// Listening: the lead's own task while they listen, voice only, in one of three modes.
-export const listeningLeadTask = { ...emailTask, assignmentId: "call-12", channel: "voice", capabilities: {}, listening: { memberId: "A-1", assignmentId: "alloc-42", mode: "coach", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
-// @ts-expect-error Email has no call to listen to.
-export const listeningEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-7", listening: { memberId: "A-1", assignmentId: "alloc-42", mode: "listen", since: "2026-08-21T09:04:00Z" } };
-export const startListen: TeamListenCommand = { type: "listen", memberId: "A-1" };
-export const coach: TeamListenCommand = { type: "coach" };
-// @ts-expect-error There is no take-over in listening; a lead who wants the call uses lead assist.
-export const listenTakeOver: TeamListenCommand = { type: "take-over-call" };
-export const listeningLead: TeamCapabilities = { listeningControl: ["listen", "coach"] };
+// Listening and lead assist are lead acts on the team surface, naming the member; no task of the lead's carries them.
+export const startListen: TeamCommand = { type: "listen", memberId: "A-1" };
+export const coach: TeamCommand = { type: "coach", memberId: "A-1", assignmentId: "alloc-42" };
+export const listenTakeOver: TeamCommand = { type: "take-over-call", memberId: "A-1" };
+export const answerRequest: TeamCommand = { type: "join", memberId: "A-1", assignmentId: "alloc-42" };
+export const leadFeaturesOff: TeamCommand = { type: "lead-features", enabled: false };
+// @ts-expect-error Every act on a member's call names the member.
+export const unnamedCoach: TeamCommand = { type: "coach" };
 // @ts-expect-error The modes are the three call-centre words.
-export const eavesdropper: TeamCapabilities = { listeningControl: ["monitor"] };
+export const eavesdropper: TeamCommand = { type: "monitor", memberId: "A-1" };
+// @ts-expect-error A task carries no lead state: the lead's view is the team member list.
+export const listeningLeadTask: Task<"voice"> = { ...emailTask, assignmentId: "call-12", channel: "voice", capabilities: {}, listening: { memberId: "A-1", assignmentId: "alloc-42", mode: "coach", since: "2026-08-21T09:04:00Z" } };
 
-// Lead assist: the agent asks and withdraws; the lead takes over or leaves. Voice only.
+// Lead assist: the agent asks and withdraws on the task; the lead's acts are team commands. Voice only.
 export const askLead: TaskCommand<"voice"> = { type: "lead-assist", action: "request", note: "Refund dispute" };
 export const withdrawLead: TaskCommand<"voice"> = { type: "lead-assist", action: "cancel" };
+// @ts-expect-error The take-over is the lead's act, on the team surface.
 export const leadTakesOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over-call" };
-export const leadLeaves: TaskCommand<"voice"> = { type: "lead-assist", action: "leave" };
 // @ts-expect-error A chat has no call for a lead to join.
 export const chatAskLead: TaskCommand<"chat"> = { type: "lead-assist", action: "request" };
 export const leadRequestedTask = { ...emailTask, assignmentId: "call-11", channel: "voice", capabilities: { leadAssist: true }, leadAssist: { stage: "requested", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
-export const leadsOwnTask = { ...emailTask, assignmentId: "call-11", channel: "voice", capabilities: {}, assisting: { memberId: "A-1", assignmentId: "alloc-42", since: "2026-08-21T09:05:00Z" } } satisfies Task<"voice">;
+// A call a lead took over is an ordinary assignment on the lead's desk, marked with where it came from.
+export const takenOverTask = { ...emailTask, assignmentId: "call-11", channel: "voice", capabilities: {}, takenOver: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } } satisfies Task<"voice">;
+// Ending my part and terminating the caller are two commands under two capabilities.
+export const endMyPart: TaskCommand<"voice"> = { type: "end-call" };
+export const terminateCaller: TaskCommand<"voice"> = { type: "terminate-call" };
+export const terminable = { ...emailTask, assignmentId: "call-14", channel: "voice", capabilities: { endCall: true, terminateCall: true } } satisfies Task<"voice">;
+// @ts-expect-error A chat has no caller channel to terminate.
+export const chatTerminate: TaskCommand<"chat"> = { type: "terminate-call" };
 export const liveAudioTask = { ...emailTask, assignmentId: "call-12", channel: "voice", capabilities: {}, media: "started" } satisfies Task<"voice">;
 export const audiolessEmailTask = { ...emailTask, assignmentId: "email-9",
   // @ts-expect-error Real-time media is a voice affair; an email task carries no state for it.
@@ -338,12 +345,14 @@ export const silentError = { type: "transport-status", status: "error" } satisfi
 export const plainActive = { type: "transport-status", status: "active",
   // @ts-expect-error Recovery goes with an error; an active status has nothing to revive.
   recovery: "reconnect" } satisfies ProviderEvent<"voice">;
-// @ts-expect-error An email task cannot be a joined call.
-export const emailAssisting: Task<"email"> = { ...emailTask, assignmentId: "email-7", assisting: { memberId: "A-1", assignmentId: "alloc-42", since: "2026-08-21T09:05:00Z" } };
+// @ts-expect-error An email task cannot be a call a lead took over.
+export const emailTakenOver: Task<"email"> = { ...emailTask, assignmentId: "email-7", takenOver: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } };
 
 // What the login may do travels with the identity, and nowhere else.
 const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
-export const leadLogin: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, team: { breakControl: true, leadAssistControl: true } } };
+export const leadLogin: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, lead: true } };
+// @ts-expect-error The lead flag is one flag: no per-action permission rides beside it.
+export const controlledLead: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { team: { breakControl: true } } };
 export const plainLogin: AuthenticationState = { status: "refreshing", identity: asha, capabilities: {} };
 // @ts-expect-error A usable login says what it may do, {} included.
 export const silentLogin: AuthenticationState = { status: "authenticated", identity: asha };
@@ -409,22 +418,26 @@ import type { TeamRoster } from "../src/index.js";
 // @ts-expect-error renamed away: use validateTeamMembers
 import { validateTeamRoster } from "../src/validation.js";
 
-export const joinCallListenCommand = { type: "join-call" } satisfies import("../src/index.js").TeamListenCommand;
+export const joinCallListenCommand = { type: "join-call", memberId: "A-1" } satisfies TeamCommand;
 // @ts-expect-error renamed away: the listen action is join-call
-export const formerListenCommand = { type: "barge" } satisfies import("../src/index.js").TeamListenCommand;
+export const formerListenCommand = { type: "barge", memberId: "A-1" } satisfies TeamCommand;
 // @ts-expect-error renamed away: listening state uses join-call too
 export const formerListeningMode: import("../src/index.js").ListeningMode = "barge";
 
 // @ts-expect-error renamed away: use the coach action
-export const formerCoachCommand: TeamListenCommand = { type: "whisper" };
+export const formerCoachCommand: TeamCommand = { type: "whisper", memberId: "A-1" };
 // @ts-expect-error renamed away: listening state uses coach too
 export const formerCoachMode: import("../src/index.js").ListeningMode = "whisper";
 
-// @ts-expect-error renamed away: use TeamListenCommand
+// @ts-expect-error renamed away: use TeamCommand
 import type { TeamMonitorCommand } from "../src/index.js";
+// @ts-expect-error retired: every lead act is a TeamCommand on executeTeam
+import type { TeamListenCommand } from "../src/index.js";
+// @ts-expect-error retired: use executeTeam
+export type FormerBreakMethod = import("../src/index.js").Connection["executeTeamBreak"];
 // @ts-expect-error renamed away: use listening
 export type FormerListeningField = Task["monitoring"];
-// @ts-expect-error renamed away: use executeTeamListen
+// @ts-expect-error renamed away: use executeTeam
 export type FormerListenMethod = import("../src/index.js").Connection["executeTeamMonitor"];
 
 // @ts-expect-error The former lead-assist action has no compatibility alias.
