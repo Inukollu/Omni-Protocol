@@ -409,3 +409,9 @@ export type FormerOutcomeCapability = Task["capabilities"]["dispositions"];
 import type { TeamRoster } from "../src/index.js";
 // @ts-expect-error renamed away: use validateTeamMembers
 import { validateTeamRoster } from "../src/validation.js";
+
+export const joinCallMonitorCommand = { type: "join-call" } satisfies import("../src/index.js").TeamMonitorCommand;
+// @ts-expect-error renamed away: the monitor action is join-call
+export const formerMonitorCommand = { type: "barge" } satisfies import("../src/index.js").TeamMonitorCommand;
+// @ts-expect-error renamed away: monitoring state uses join-call too
+export const formerMonitorMode: import("../src/index.js").MonitorMode = "barge";
