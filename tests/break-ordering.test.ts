@@ -195,12 +195,22 @@ describe("lead break prerequisites", () => {
       expect(validateTeamBreakCommand({ command }, bad)).not.toEqual([]);
     }
   });
-  it("checks the forced-break reason and release without assuming the same lead does both", () => {
+  it("rejects the old team end command and preserves its permission and state gates", () => {
+    const command = { type: "end", memberId: "member" };
+    const current = { ...lead, memberBreak: { ...state("in-effect"), forced: { by: "another-lead", endsAutomatically: false } } };
+    expect(validateTeamBreakCommand({ command: { ...command, type: "release" } }, current).map(v => v.rule)).toContain("team.break.command.type");
+    expect(validateTeamBreakCommand({ command }, lead).map(v => v.rule)).toContain("team.break.command.end");
+    for (const bad of [context, { ...current, transport: "connecting" }, { ...current, team: { members: [] } }, { ...current, memberBreak: undefined }]) {
+      expect(validateTeamBreakCommand({ command }, bad)).not.toEqual([]);
+    }
+    expect(validateTeamBreakCommand({ command }, { ...current, memberBreak: { ...current.memberBreak, approval: "starting-after-task" } })).toEqual([]);
+  });
+  it("checks the forced-break reason and end without assuming the same lead does both", () => {
     expect(validateTeamBreakCommand({ command: { type: "force", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
     expect(validateTeamBreakCommand({ command: { type: "force", memberId: "member" } }, lead)).not.toEqual([]);
-    const release = { command: { type: "release", memberId: "member" } };
-    expect(validateTeamBreakCommand(release, lead)).not.toEqual([]);
-    expect(validateTeamBreakCommand(release, { ...lead, memberBreak: { ...state("in-effect"), forced: { by: "another-lead", endsAutomatically: false } } })).toEqual([]);
+    const end = { command: { type: "end", memberId: "member" } };
+    expect(validateTeamBreakCommand(end, lead)).not.toEqual([]);
+    expect(validateTeamBreakCommand(end, { ...lead, memberBreak: { ...state("in-effect"), forced: { by: "another-lead", endsAutomatically: false } } })).toEqual([]);
   });
   it("rejects unsupported policy, malformed commands and extra fields", () => {
     expect(validateTeamBreakCommand({ command: { type: "policy", policy: "suspended" } }, lead)).toEqual([]);

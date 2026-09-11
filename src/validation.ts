@@ -1473,7 +1473,7 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
 
 /**
  * Checks lead break dispatch using current authentication, transport, team member list (`team`) and,
- * for force/release, the target's full `memberBreak`. The provider must authorize the target
+ * for force/end, the target's full `memberBreak`. The provider must authorize the target
  * and recheck the decision atomically; a team member list is not authority to act after it has changed.
  */
 export function validateTeamBreakCommand(request: unknown, context: unknown, path = "teamBreakCommand"): ProtocolViolation[] {
@@ -1492,7 +1492,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   const command = request.command;
   const allowed: Record<string, readonly string[]> = {
     decide: ["type", "memberId", "decision", "reason"], policy: ["type", "policy"],
-    force: ["type", "memberId", "reasonId", "reason"], release: ["type", "memberId"],
+    force: ["type", "memberId", "reasonId", "reason"], end: ["type", "memberId"],
   };
   const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
   if (!fields) { into.add("team.break.command.type", path, "unknown lead break command"); return into.violations; }
@@ -1517,8 +1517,8 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   } else {
     validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
-    if (command.type === "release") into.require(state.forced !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
-      "team.break.command.release", path, "release a currently forced break");
+    if (command.type === "end") into.require(state.forced !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
+      "team.break.command.end", path, "end a currently forced break");
     if (command.type === "force") {
       if (command.reasonId !== undefined) into.filled(command.reasonId, "team.break.command.reasonId", path, "reasonId must not be empty");
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
@@ -1584,7 +1584,7 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
     if (method === "endBreak") {
       into.require(approval === "starting-after-task" || approval === "in-effect", "break.command.end.started", path,
         "end a committed break, including a returning provider still finishing work");
-      into.require(state.forced === undefined, "break.command.end.forced", path, "an agent cannot end a forced break; an authorized lead releases it");
+      into.require(state.forced === undefined, "break.command.end.forced", path, "an agent cannot end a forced break; an authorized lead ends it");
     }
   }
   return into.violations;

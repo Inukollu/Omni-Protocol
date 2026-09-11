@@ -441,3 +441,7 @@ export const retiredBreakField: import("../src/index.js").BreakState = { ...forc
 export const forceMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "force", memberId: "member-1", reasonId: "bio" };
 // @ts-expect-error The retired place command has no compatibility alias.
 export const retiredPlaceBreak: import("../src/index.js").TeamBreakCommand = { type: "place", memberId: "member-1" };
+
+export const endMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "end", memberId: "member-1" };
+// @ts-expect-error The former release command has no compatibility alias.
+export const retiredReleaseBreak: import("../src/index.js").TeamBreakCommand = { type: "release", memberId: "member-1" };
