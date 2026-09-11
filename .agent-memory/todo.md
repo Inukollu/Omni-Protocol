@@ -1,3 +1,13 @@
+# Coach API rename — PR113 — 2026-09-11
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-coach-api; branch refactor/coach-api; implementation 329ee41578d7ac276454775bf8ead28c4a5e53ed; PR https://github.com/Inukollu/Omni-Protocol/pull/113.
+
+Renamed whisper to coach in MonitorMode, MONITOR_MODES, TeamMonitorCommand, monitorControl permissions and monitoring.mode. Guide, examples and tests updated. Agent-only lead audio and monitor prerequisites preserved; caller cannot hear the lead. Existing break kind coaching remains unchanged. Old/mixed mode permissions and old published state rejected; retired command/mode refused by type checks. No compatibility alias, package/wire bump, release or client adoption.
+
+Validation: build/test typecheck, all 428 tests, compiled guide examples, packed package verification (10 files; all three runtime/type entry points) and diff check passed. Risk: commands, permissions and retained monitoring snapshots must migrate together. No new monitor-command runtime validator introduced. Next: CI/review; user merges. Retain dedicated worktree/branch while open.
+
+PR112 independently verified MERGED at ac65710b08375dcbaafc71336aec9c71281465fd. New branch starts at merged main 3e836dd. Previous worktrees retained; no cleanup requested. Following sections are historical handovers.
+
 # Join call API rename — PR112 — 2026-09-11
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-join-call-api; branch refactor/join-call-api; implementation 5d0a7d34be0368b205f210c0aae80e61177fb969; PR https://github.com/Inukollu/Omni-Protocol/pull/112.
@@ -208,3 +218,8 @@ PID 18952; command python3 /private/tmp/omni-team-members-api/.agent-memory/runt
 Monitor omni-protocol-pr112-join-call-api: OPEN at 2026-09-11T07:39:29.213000+00:00. Await CI/review; monitor never merges.
 PID 58048; command python3 /private/tmp/omni-join-call-api/.agent-memory/runtime/join-call-monitor.py; state /private/tmp/omni-join-call-api/.agent-memory/runtime/join-call.state.json; log /private/tmp/omni-join-call-api/.agent-memory/runtime/join-call.log; PID file /private/tmp/omni-join-call-api/.agent-memory/runtime/join-call.pid; process log /private/tmp/omni-join-call-api/.agent-memory/runtime/join-call.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-join-call-api, branch refactor/join-call-api, PR https://github.com/Inukollu/Omni-Protocol/pull/112.
 <!-- join-call-monitor:end -->
+
+<!-- coach-monitor:begin -->
+Monitor omni-protocol-pr113-coach-api: OPEN at 2026-09-11T07:43:42.517682+00:00. Await CI/review; monitor never merges.
+PID 78236; command python3 /private/tmp/omni-coach-api/.agent-memory/runtime/coach-monitor.py; state /private/tmp/omni-coach-api/.agent-memory/runtime/coach.state.json; log /private/tmp/omni-coach-api/.agent-memory/runtime/coach.log; PID file /private/tmp/omni-coach-api/.agent-memory/runtime/coach.pid; process log /private/tmp/omni-coach-api/.agent-memory/runtime/coach.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-coach-api, branch refactor/coach-api, PR https://github.com/Inukollu/Omni-Protocol/pull/113.
+<!-- coach-monitor:end -->
