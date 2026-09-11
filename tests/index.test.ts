@@ -119,6 +119,9 @@ describe("Omni protocol", () => {
   it("reserves the omni failure-code namespace", () => {
     for (const code of OMNI_FAILURE_CODES) expect(code.startsWith("omni.")).toBe(true);
     expect(new Set(OMNI_FAILURE_CODES).size).toBe(OMNI_FAILURE_CODES.length);
+    // A recording the provider could not settle either way has a code of its own; a request identity it never had.
+    expect(OMNI_FAILURE_CODES).toContain("omni.recording-unsettled");
+    expect(OMNI_FAILURE_CODES).not.toContain("omni.recording-unknown-request");
   });
 
   it("models rich announcements with accessible fallback and optional expiry", () => {
@@ -276,12 +279,9 @@ describe("every dial has an outcome", () => {
   it("names the dial a command places, and none for a command that dials nothing", () => {
     expect(commandDialId({ type: "connect-back", dialId: "dial-1" })).toBe("dial-1");
     expect(commandDialId({ type: "dial", dialId: "dial-5" })).toBe("dial-5");
-    expect(commandDialId({ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" })).toBe("dial-2");
-    expect(commandDialId({ type: "transfer", action: "warm", dialId: "dial-3", destinationId: "tier2" })).toBe("dial-3");
     expect(commandDialId({ type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" })).toBe("dial-4");
-    // The control: the consult steps, a remove, and a hold dial nowhere.
-    expect(commandDialId({ type: "transfer", action: "complete" })).toBeUndefined();
-    expect(commandDialId({ type: "transfer", action: "cancel" })).toBeUndefined();
+    // The control: a remove, a schedule, a hold dial nowhere.
+    expect(commandDialId({ type: "schedule", at: "2026-08-22T10:00:00Z" })).toBeUndefined();
     expect(commandDialId({ type: "conference", action: "remove", destinationId: "tier2" })).toBeUndefined();
     expect(commandDialId({ type: "conference", action: "remove", party: true })).toBeUndefined();
     expect(commandDialId({ type: "end-call" })).toBeUndefined();

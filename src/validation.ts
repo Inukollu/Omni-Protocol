@@ -138,10 +138,10 @@ const DIAL_DESTINATION_POLICIES = membersOf<DialDestinations>({ "contacts-only":
 const DIAL_OUTCOMES = membersOf<DialOutcome>({ answered: true, busy: true, "no-answer": true, unreachable: true, rejected: true, cancelled: true, unexplained: true });
 /** The outcomes that name a cause. `unexplained` is declarable only beside one of these. */
 const EXPLAINED_FAILURES: readonly DialOutcome[] = ["busy", "no-answer", "unreachable", "rejected", "cancelled"];
-const ON_CALL_ROLES = membersOf<OnCallRole>({ party: true, agent: true, consulted: true, conferenced: true });
+const ON_CALL_ROLES = membersOf<OnCallRole>({ party: true, agent: true, conferenced: true });
 const ON_CALL_STAGES = membersOf<OnCallStage>({ ringing: true, joined: true });
 /** The task capabilities under which a command dials, and so need the manifest to say how a dial ends. */
-const DIALLING_CAPABILITIES = ["connectBack", "coldTransfer", "warmTransfer", "conference"] as const;
+const DIALLING_CAPABILITIES = ["connectBack", "conference"] as const;
 const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
   reconnected: true, "provider-requested": true,
 });
@@ -167,7 +167,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
     browsers: true, outcomes: true, custom: true, decline: true, hold: true,
-    endCall: true, terminateCall: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
+    endCall: true, terminateCall: true, connectBack: true, schedule: true, leadAssist: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, outcomes: true, custom: true, decline: true, hold: true }),
   email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, outcomes: true, custom: true, decline: true }),
@@ -677,7 +677,7 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
 
 function validateDestinationDirectory(value: unknown, path: string, into: Collector): void {
   if (!isPlainObject(value)) {
-    into.add("task.destinations.shape", path, "a transfer or conference control carries the directory it offers: { destinations: [...] }");
+    into.add("task.destinations.shape", path, "a conference control carries the directory it offers: { destinations: [...] }");
     return;
   }
   if (!Array.isArray(value.destinations)) {
@@ -1084,7 +1084,7 @@ const WORK_NOT_BEGUN = ["pending", "confirmed", "preview"] as const;
 /**
  * Who is on the call, as the provider states it. Voice only. Each entry is a role with what that
  * role needs and nothing another role would: a party or an agent dialled nowhere, so neither
- * carries a destination; somebody consulted or conferenced came from one, so both do.
+ * carries a destination; somebody conferenced came from one, so they do.
  */
 function validateOnCall(value: unknown, channel: string, path: string, into: Collector): void {
   if (value === undefined) return;
@@ -1093,7 +1093,7 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
     into.add("task.onCall.shape", path, "onCall is an array of who is on the call, when the provider knows");
     return;
   }
-  const counted = { party: 0, consulted: 0 };
+  let parties = 0;
   value.forEach((entry: unknown, index: number) => {
     const at = `${path}[${index}]`;
     if (!isPlainObject(entry)) {
@@ -1106,13 +1106,13 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
     if (entry.held !== undefined) {
       into.require(entry.held === true, "task.onCall.held", `${at}.held`, "held is stated by presence: send true or omit it");
     }
-    if (role === "party" || role === "consulted") counted[role] += 1;
+    if (role === "party") parties += 1;
     if (role === "agent") {
       into.require(isUserId(entry.userId), "task.onCall.userId", `${at}.userId`, "an agent on the call is named by their user id");
     } else {
       into.require(entry.userId === undefined, "task.onCall.userId.unexpected", `${at}.userId`, `a ${role} is not named by a user id`);
     }
-    if (role === "consulted" || role === "conferenced") {
+    if (role === "conferenced") {
       into.filled(entry.destinationId, "task.onCall.destinationId", `${at}.destinationId`, `a ${role} entry names the directory item that was dialled`);
       // Stated, so a snapshot says who is present without anyone having seen the dial's outcome.
       if (into.oneOf(entry.stage, ON_CALL_STAGES, "task.onCall.stage", `${at}.stage`)) {
@@ -1134,18 +1134,16 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
       }
       for (const field of ["destinationId", "label"] as const) {
         into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
-          `a party is not a directory item; ${field} belongs on consulted or conferenced`);
+          `a party is not a directory item; ${field} belongs on conferenced`);
       }
     } else {
       for (const field of ["destinationId", "dialId", "label", "stage"] as const) {
         into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
-          role === "party" ? `a party carries ${field} on a connect-back alone, with its dial and stage together` : `a ${role} was dialled from nowhere; ${field} belongs on consulted or conferenced`);
+          role === "party" ? `a party carries ${field} on a connect-back alone, with its dial and stage together` : `a ${role} was dialled from nowhere; ${field} belongs on conferenced`);
       }
     }
   });
-  into.require(counted.party <= 1, "task.onCall.party.single", path, "a call has one party; a second is somebody else's role");
-  into.require(counted.consulted <= 1, "task.onCall.consulted.single", path,
-    "one consultation at a time: transfer complete and cancel name no destination because there is exactly one");
+  into.require(parties <= 1, "task.onCall.party.single", path, "a call has one party; a second is somebody else's role");
 }
 
 const LEAD_STAGES = membersOf<TaskLeadAssist["stage"]>({ requested: true, joined: true });
@@ -1248,13 +1246,14 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
       "a preview ends in the agent pressing Call, which dials, and the manifest declares no dialOutcomes to say how a dial ends");
   }
   // The deadline and what happens at it travel together, and only while the record is being previewed.
-  if (task.previewEndsAt !== undefined || task.atDeadline !== undefined) {
-    into.require(task.phase === "preview", "task.preview.deadline.unexpected", `${path}.previewEndsAt`,
-      "previewEndsAt and atDeadline belong to a task in preview; past it there is nothing to wait for");
-    if (task.previewEndsAt === undefined) {
-      into.add("task.preview.previewEndsAt.required", `${path}.previewEndsAt`, "atDeadline says what happens at a deadline, so there has to be one");
+  if (task.previewEndsInSeconds !== undefined || task.atDeadline !== undefined) {
+    into.require(task.phase === "preview", "task.preview.deadline.unexpected", `${path}.previewEndsInSeconds`,
+      "previewEndsInSeconds and atDeadline belong to a task in preview; past it there is nothing to wait for");
+    if (task.previewEndsInSeconds === undefined) {
+      into.add("task.preview.previewEndsInSeconds.required", `${path}.previewEndsInSeconds`, "atDeadline says what happens at a deadline, so there has to be one");
     } else {
-      into.timestamp(task.previewEndsAt, "task.preview.previewEndsAt", `${path}.previewEndsAt`);
+      into.require(isDurationSeconds(task.previewEndsInSeconds), "task.preview.previewEndsInSeconds", `${path}.previewEndsInSeconds`,
+        "previewEndsInSeconds is how long the preview has left: a whole number of seconds, zero or more, counted from this publication");
     }
     if (task.atDeadline === undefined) {
       into.add("task.preview.atDeadline.required", `${path}.atDeadline`,
@@ -1359,6 +1358,16 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   if (capabilities.browsers === true && Array.isArray(task.browsers) && task.browsers.length === 0) {
     into.add("task.browsers.required", `${path}.browsers`, "a task that declares capabilities.browsers supplies at least one; with none, omit the capability");
   }
+  // An outcome is given in wrap, by the agent: a provider that completes the task itself cannot
+  // wait for one, and a task with no wrap has nowhere to take one.
+  if (isPlainObject(capabilities.outcomes) && capabilities.outcomes.required === true) {
+    into.require(task.completionMode !== "provider-automatic", "task.outcomes.required.mode", `${path}.capabilities.outcomes.required`,
+      "a required outcome is the agent's to give, so the task completes on the agent's command; provider-automatic completion cannot wait for it");
+  }
+  if (capabilities.outcomes !== undefined) {
+    into.require(task.wrapAllowance !== 0, "task.outcomes.wrapAllowance", `${path}.capabilities.outcomes`,
+      "outcomes are collected in wrap, and wrapAllowance 0 gives none: publish a wrap or no outcomes");
+  }
   for (const [name, declared] of Object.entries(capabilities)) {
     if (declared === undefined) continue;
     if (!allowed.includes(name)) {
@@ -1387,8 +1396,6 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
       case "recording": into.violations.push(...validateRecordingPolicy(declared, `${path}.capabilities.recording`)); break;
       case "outcomes": validateOutcomes(declared, `${path}.capabilities.outcomes`, into); break;
       case "custom": validateCustomCapabilities(declared, `${path}.capabilities.custom`, into); break;
-      case "coldTransfer":
-      case "warmTransfer":
       case "conference": validateDestinationDirectory(declared, `${path}.capabilities.${name}`, into); break;
       default:
         // Presence is the permission: the flag capabilities carry no payload, so anything but
@@ -1408,7 +1415,7 @@ function validateForcedBreak(value: unknown, path: string, into: Collector): voi
     into.add("break.forced.shape", path, "a forced break must be an object");
     return;
   }
-  into.require(isUserId(value.by), "break.forced.by", `${path}.by`, "a forced break must say who forced it");
+  into.require(isUserId(value.by) || value.by === "provider", "break.forced.by", `${path}.by`, "a forced break says who forced it: the lead by user id, or provider where the platform did");
   for (const field of ["endsAutomatically", "endsAt"] as const) {
     into.require(!Object.hasOwn(value, field), "break.forced.manualResume", `${path}.${field}`,
       "automatic ending fields are unsupported; the agent must resume manually");
@@ -1532,10 +1539,9 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
         "team.command.reasonId", path, "force-break uses the target's currently published reason codes");
     }
   } else if (command.type === "join" || command.type === "decline") {
-    const requests = Array.isArray(team.requests) ? team.requests : [];
-    into.require(requests.some((r: unknown) => isPlainObject(r) && r.memberId === command.memberId
-      && (command.assignmentId === undefined || r.assignmentId === command.assignmentId)),
-      "team.command.request", path, `${command.type} answers a request the team member list carries, and this member has none`);
+    const asked = isPlainObject(target) && isPlainObject(target.request) ? target.request : undefined;
+    into.require(asked !== undefined && (command.assignmentId === undefined || asked.assignmentId === command.assignmentId),
+      "team.command.request", path, `${command.type} answers a request the team member list carries on the member, and this member has none`);
   } else if (command.type === "coach" || command.type === "join-call" || command.type === "leave") {
     into.require(isPlainObject(target) && target.listening !== undefined, "team.command.listening", path,
       `${command.type} needs the lead on this member's call: the team member list shows listening on them`);
@@ -1743,8 +1749,9 @@ export interface ReaderContext {
   /** The login's `loginId`. A snapshot or event naming another belongs to a login that is gone. */
   loginId?: string;
   /**
-   * Whether the lead has the team feature on, as the application last told the provider. On by
-   * default for a lead; off, no team member list is owed or expected. Unknown to a caller without it.
+   * Whether the lead has the team feature on, as the application last told the provider. The
+   * provider assumes nothing until told: on, a snapshot carries the team; off, nothing of the
+   * team is owed or expected. Unknown to a caller without it, and then unchecked either way.
    */
   leadFeatures?: boolean;
   /** The provider's channel, for a member's task that states none. Filled from the manifest by `validateSnapshot` and `validateEventEnvelope`. */
@@ -1778,30 +1785,6 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Re
   }
   // Policies are present where the provider offers policy control, absent where it does not.
   if (teamMembers.policies !== undefined) validateTeamPoliciesInto(teamMembers.policies, `${path}.policies`, into, context.levels);
-  // Requests are what a lead acts on: always carried, `[]` when nobody is asking.
-  if (!Array.isArray(teamMembers.requests)) {
-    into.add("team.requests.shape", `${path}.requests`, "a team member list carries its requests: [] when nobody is asking");
-  } else {
-    const seenRequests = new Set<string>();
-    teamMembers.requests.forEach((request: unknown, index: number) => {
-        const at = `${path}.requests[${index}]`;
-        if (!isPlainObject(request)) {
-          into.add("team.request.shape", at, "each request must be an object");
-          return;
-        }
-        if (into.require(isUserId(request.memberId), "team.request.memberId", `${at}.memberId`, "a request names the member asking")) {
-          into.require(request.memberId !== context.self, "team.request.self", `${at}.memberId`,
-            "the team member list carries the reader's own ask: an agent's request for a lead goes to whoever leads them");
-        }
-        if (into.require(isAssignmentId(request.assignmentId), "team.request.assignmentId", `${at}.assignmentId`, "a request names the member's assignment the lead would join")) {
-          const key = `${String(request.memberId)}@${String(request.assignmentId)}`;
-          if (seenRequests.has(key)) into.add("team.request.unique", at, `duplicate request: ${key}`);
-          seenRequests.add(key);
-        }
-        if (request.note !== undefined) into.filled(request.note, "team.request.note", `${at}.note`, "a note must not be empty when present");
-        into.timestamp(request.since, "team.request.since", `${at}.since`);
-    });
-  }
   if (!Array.isArray(teamMembers.members)) {
     into.add("team.members.shape", `${path}.members`, "a team member list must carry a members array");
     return;
@@ -1809,65 +1792,93 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Re
   const seen = new Set<string>();
   teamMembers.members.forEach((member: unknown, index: number) => {
     const at = `${path}.members[${index}]`;
-    if (!isPlainObject(member)) {
-      into.add("team.member.shape", at, "each team member must be an object");
-      return;
-    }
-    if (into.require(isUserId(member.id), "team.member.id", `${at}.id`, "a team member needs a user id")) {
+    if (isPlainObject(member) && isUserId(member.id)) {
       if (seen.has(member.id as string)) into.add("team.member.unique", `${at}.id`, `duplicate team member: ${member.id}`);
       seen.add(member.id as string);
-      into.require(member.id !== context.self, "team.member.self", `${at}.id`,
-        "the team member list carries the agent it is published to: a lead does not report to themself");
     }
-    into.oneOf(member.availability, TEAM_AVAILABILITIES, "team.member.availability", `${at}.availability`);
-    if (member.since !== undefined) into.timestamp(member.since, "team.member.since", `${at}.since`);
-    if (member.break !== undefined) {
-      // Only an outstanding request appears here: `not-requested` is absence, `on-break` is
-      // `availability: "on-break"`, and a denial never survives to be reported.
-      if (into.oneOf(member.break, MEMBER_BREAKS, "team.member.break", `${at}.break`)) {
-        into.require(member.availability !== "signed-out" && member.availability !== "on-break", "team.member.break.availability",
-          `${at}.break`, "a member on a break or signed out has no request outstanding");
-      }
-    }
-    // The member's open tasks, as the lead sees them: trimmed by the provider, held to the task rules otherwise.
-    if (member.tasks !== undefined) {
-      if (!Array.isArray(member.tasks)) {
-        into.add("team.member.tasks.shape", `${at}.tasks`, "a member's tasks are an array: [] when they hold none, omitted only where the provider cannot see them");
-      } else {
-        const held = new Set<string>();
-        member.tasks.forEach((task: unknown, index: number) => {
-          const channel = isPlainObject(task) && typeof task.channel === "string" && isChannel(task.channel) ? task.channel : context.channel ?? "voice";
-          validateTaskInto(task, { channel, levels: context.levels, member: true }, `${at}.tasks[${index}]`, into);
-          if (isPlainObject(task) && isAssignmentId(task.assignmentId)) {
-            if (held.has(task.assignmentId as string)) into.add("team.member.tasks.unique", `${at}.tasks[${index}].assignmentId`, `duplicate assignment on one member: ${task.assignmentId}`);
-            held.add(task.assignmentId as string);
-          }
-        });
-        into.require(member.availability !== "signed-out" || member.tasks.length === 0, "team.member.tasks.availability", `${at}.tasks`,
-          "a member signed out holds no task");
-      }
-    }
-    // The lead on this member's call, in the mode they are heard.
-    if (member.listening !== undefined) {
-      if (!isPlainObject(member.listening)) {
-        into.add("team.member.listening.shape", `${at}.listening`, "listening must be an object when present");
-      } else {
-        const listened = member.listening;
-        if (into.require(isAssignmentId(member.listening.assignmentId), "team.member.listening.assignmentId", `${at}.listening.assignmentId`,
-          "listening names which of the member's calls the lead is on: the application opens the lead's audio on it") && Array.isArray(member.tasks)) {
-          into.require(member.tasks.some((task: unknown) => isPlainObject(task) && task.assignmentId === listened.assignmentId),
-            "team.member.listening.assignment", `${at}.listening.assignmentId`, "the call the lead is on is one the member's tasks carry");
-        }
-        into.oneOf(member.listening.mode, LISTENING_MODES, "team.member.listening.mode", `${at}.listening.mode`);
-        into.timestamp(member.listening.since, "team.member.listening.since", `${at}.listening.since`);
-      }
-    }
-    // The member's own history for the day: about the person, not any one call.
-    if (member.shift !== undefined) validateShiftInto(member.shift, `${at}.shift`, into);
+    validateTeamMemberInto(member, at, context, into);
   });
   // One member's call at a time.
   const listened = teamMembers.members.filter((member: unknown) => isPlainObject(member) && member.listening !== undefined);
   if (listened.length > 1) into.add("team.listening.single", `${path}.members`, "a lead is on one member's call at a time");
+}
+
+/** One member as the lead sees them, whole: on the list, and on `team-member-updated` alone. */
+export function validateTeamMember(member: unknown, path = "member", context: ReaderContext = {}): ProtocolViolation[] {
+  const into = new Collector();
+  validateTeamMemberInto(member, path, context, into);
+  return into.violations;
+}
+
+function validateTeamMemberInto(member: unknown, at: string, context: ReaderContext, into: Collector): void {
+  if (!isPlainObject(member)) {
+    into.add("team.member.shape", at, "each team member must be an object");
+    return;
+  }
+  if (into.require(isUserId(member.id), "team.member.id", `${at}.id`, "a team member needs a user id")) {
+    into.require(member.id !== context.self, "team.member.self", `${at}.id`,
+      "the team member list carries the agent it is published to: a lead does not report to themself");
+  }
+  into.oneOf(member.availability, TEAM_AVAILABILITIES, "team.member.availability", `${at}.availability`);
+  if (member.since !== undefined) into.timestamp(member.since, "team.member.since", `${at}.since`);
+  if (member.break !== undefined) {
+    // Only an outstanding request appears here: `not-requested` is absence, `on-break` is
+    // `availability: "on-break"`, and a denial never survives to be reported.
+    if (into.oneOf(member.break, MEMBER_BREAKS, "team.member.break", `${at}.break`)) {
+      into.require(member.availability !== "signed-out" && member.availability !== "on-break", "team.member.break.availability",
+        `${at}.break`, "a member on a break or signed out has no request outstanding");
+    }
+  }
+  // The member's open tasks, as the lead sees them: trimmed by the provider, held to the task rules otherwise.
+  if (member.tasks !== undefined) {
+    if (!Array.isArray(member.tasks)) {
+      into.add("team.member.tasks.shape", `${at}.tasks`, "a member's tasks are an array: [] when they hold none, omitted only where the provider cannot see them");
+    } else {
+      const held = new Set<string>();
+      member.tasks.forEach((task: unknown, index: number) => {
+        const channel = isPlainObject(task) && typeof task.channel === "string" && isChannel(task.channel) ? task.channel : context.channel ?? "voice";
+        validateTaskInto(task, { channel, levels: context.levels, member: true }, `${at}.tasks[${index}]`, into);
+        if (isPlainObject(task) && isAssignmentId(task.assignmentId)) {
+          if (held.has(task.assignmentId as string)) into.add("team.member.tasks.unique", `${at}.tasks[${index}].assignmentId`, `duplicate assignment on one member: ${task.assignmentId}`);
+          held.add(task.assignmentId as string);
+        }
+      });
+      into.require(member.availability !== "signed-out" || member.tasks.length === 0, "team.member.tasks.availability", `${at}.tasks`,
+        "a member signed out holds no task");
+    }
+  }
+  // The lead on this member's call, in the mode they are heard.
+  if (member.listening !== undefined) {
+    if (!isPlainObject(member.listening)) {
+      into.add("team.member.listening.shape", `${at}.listening`, "listening must be an object when present");
+    } else {
+      const listened = member.listening;
+      if (into.require(isAssignmentId(member.listening.assignmentId), "team.member.listening.assignmentId", `${at}.listening.assignmentId`,
+        "listening names which of the member's calls the lead is on: the application opens the lead's audio on it") && Array.isArray(member.tasks)) {
+        into.require(member.tasks.some((task: unknown) => isPlainObject(task) && task.assignmentId === listened.assignmentId),
+          "team.member.listening.assignment", `${at}.listening.assignmentId`, "the call the lead is on is one the member's tasks carry");
+      }
+      into.oneOf(member.listening.mode, LISTENING_MODES, "team.member.listening.mode", `${at}.listening.mode`);
+      into.timestamp(member.listening.since, "team.member.listening.since", `${at}.listening.since`);
+    }
+  }
+  // The member's own history for the day: about the person, not any one call.
+  if (member.shift !== undefined) validateShiftInto(member.shift, `${at}.shift`, into);
+  // The member's standing ask for a lead, on one of the calls they hold.
+  if (member.request !== undefined) {
+    if (!isPlainObject(member.request)) {
+      into.add("team.member.request.shape", `${at}.request`, "request must be an object when present");
+    } else {
+      const asked = member.request;
+      if (into.require(isAssignmentId(asked.assignmentId), "team.member.request.assignmentId", `${at}.request.assignmentId`,
+        "a request names the member's assignment the lead would join") && Array.isArray(member.tasks)) {
+        into.require(member.tasks.some((task: unknown) => isPlainObject(task) && task.assignmentId === asked.assignmentId),
+          "team.member.request.assignment", `${at}.request.assignmentId`, "the call the member asks a lead onto is one their tasks carry");
+      }
+      if (asked.note !== undefined) into.filled(asked.note, "team.member.request.note", `${at}.request.note`, "a note must not be empty when present");
+      into.timestamp(asked.since, "team.member.request.since", `${at}.request.since`);
+    }
+  }
 }
 
 export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "snapshot", context: ReaderContext = {}): ProtocolViolation[] {
@@ -1952,15 +1963,16 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       into.add("snapshot.calendar.shape", `${path}.calendar`, "calendar must be an array when present");
     }
   }
-  // The login is the permission: a lead's snapshot carries a team member list, `members: []` included,
-  // while the team feature is on. The other direction -- a team member list to a login that does
-  // not lead, or to a lead who turned the feature off -- is the team member list's own rule.
-  if (context.capabilities?.lead === true && context.leadFeatures !== false && snapshot.team === undefined) {
+  // The switch is the permission: once the application has said the team feature is on, a
+  // snapshot carries the team, `members: []` included. Before it has said, the provider assumes
+  // nothing and owes nothing. The other direction -- a team member list to a login that does not
+  // lead, or to a lead who turned the feature off -- is the team member list's own rule.
+  if (context.leadFeatures === true && snapshot.team === undefined) {
     into.add("team.required", `${path}.team`,
-      "the login declares lead and the team feature is on, so every snapshot carries a team member list: members: [] when nobody is in it");
+      "the team feature is on, so every snapshot carries a team member list: members: [] when nobody is in it");
   }
   if (context.leadFeatures === false && snapshot.team !== undefined) {
-    into.add("team.unexpected", `${path}.team`, "the lead turned the team feature off, so nothing of the team reaches them");
+    into.add("team.unexpected", `${path}.team`, "the team feature is not on for this lead: nothing of the team reaches them until the application switches it on, and nothing after it switches it off");
   }
   if (snapshot.team !== undefined) validateTeamMembersInto(snapshot.team, `${path}.team`, { ...context, levels, channel: isChannel(channel) ? channel : undefined }, into);
 
@@ -1979,12 +1991,6 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
   switch (value.type) {
     case "completed":
       into.oneOf(value.by, COMPLETED_BY, "event.taskEnded.outcome.completed", `${path}.by`);
-      break;
-    case "transferred":
-      if (value.destinationId !== undefined) {
-        into.filled(value.destinationId, "event.taskEnded.outcome.transferred", `${path}.destinationId`,
-          "a destinationId must not be empty when present");
-      }
       break;
     case "taken-over":
       // A lead is not a directory item: the ending names the lead, and the host resolves the name.
@@ -2108,7 +2114,8 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
         into.require((OFFERABLE_PHASES as readonly string[]).includes(event.task.phase), "event.taskOffered.phase", `${at}.task.phase`,
           `task-offered introduces a task as ${OFFERABLE_PHASES.join(", ")}, never as ${event.task.phase}`);
       }
-      if (event.assignmentExpiresAt !== undefined) into.timestamp(event.assignmentExpiresAt, "event.taskOffered.assignmentExpiresAt", `${at}.assignmentExpiresAt`);
+      if (event.expiresInSeconds !== undefined) into.require(isDurationSeconds(event.expiresInSeconds), "event.taskOffered.expiresInSeconds", `${at}.expiresInSeconds`,
+        "expiresInSeconds is how long the offer stands: a whole number of seconds, zero or more, counted from this event");
       break;
     case "task-updated":
       validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${at}.task`, into);
@@ -2154,12 +2161,21 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
     case "queue-summary":
       validateQueueSummary(event.summary, `${at}.summary`, into);
       break;
-    case "team-updated":
-      into.require(context.capabilities === undefined || context.capabilities.lead === true, "event.team.capability", `${at}.team`,
-        "team-updated reaches a login that declares lead, and nobody else");
-      into.require(context.leadFeatures !== false, "event.team.features", `${at}.team`, "the lead turned the team feature off, so nothing of the team reaches them");
-      validateTeamMembersInto(event.team, `${at}.team`, { ...context, levels, channel: isChannel(channel) ? channel : undefined }, into);
+    case "team-updated": case "team-member-updated": case "team-member-removed": case "team-policies-updated": {
+      const field = event.type === "team-updated" ? "team" : event.type === "team-member-updated" ? "member" : event.type === "team-member-removed" ? "memberId" : "policies";
+      into.require(context.capabilities === undefined || context.capabilities.lead === true, "event.team.capability", `${at}.${field}`,
+        `${event.type} reaches a login that declares lead, and nobody else`);
+      into.require(context.leadFeatures !== false, "event.team.features", `${at}.${field}`, "the team feature is not on for this lead: nothing of the team reaches them until the application switches it on, and nothing after it switches it off");
+      const teamContext = { ...context, levels, channel: isChannel(channel) ? channel : undefined };
+      if (event.type === "team-updated") validateTeamMembersInto(event.team, `${at}.team`, teamContext, into);
+      else if (event.type === "team-member-updated") validateTeamMemberInto(event.member, `${at}.member`, teamContext, into);
+      else if (event.type === "team-member-removed") {
+        if (into.require(isUserId(event.memberId), "event.teamMemberRemoved.memberId", `${at}.memberId`, "team-member-removed names the member taken off, by user id")) {
+          into.require(event.memberId !== context.self, "team.member.self", `${at}.memberId`, "a lead does not report to themself, so is never removed from their own team");
+        }
+      } else validateTeamPoliciesInto(event.policies, `${at}.policies`, into, levels);
       break;
+    }
     case "contacts-updated":
       into.require(idle.contacts === true, "event.contacts.capability", `${at}.contacts`,
         "contacts-updated requires the contacts idle capability");
@@ -2501,7 +2517,6 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
 // Commands.
 // ---------------------------------------------------------------------------
 
-const TRANSFER_ACTIONS = ["cold", "warm", "complete", "cancel"] as const;
 const LEAD_ASSIST_ACTIONS = ["request", "cancel"] as const;
 const CONFERENCE_ACTIONS = ["add", "remove"] as const;
 
@@ -2526,7 +2541,7 @@ export function validateTaskCommandRequest(request: unknown, task: unknown, path
 /**
  * What a command needs to be issuable, checked against the task it names: the capability the
  * guide's table gates it on, the phase it belongs to, and the state that has to stand -- a
- * consulted entry, a lead requested, somebody else on the call. Without a task only the command's
+ * lead requested, somebody else on the call. Without a task only the command's
  * own shape is checked. A host validates before sending, and an adapter before acting: a command
  * for a control the task never offered is the host's error, and this names it.
  */
@@ -2555,10 +2570,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     switch (type) {
       case "dial": case "connect-back": fields.push("dialId"); break;
       case "complete": fields.push("outcome", "notes"); break;
-      case "transfer":
-        fields.push("action");
-        if (command.action === "cold" || command.action === "warm") fields.push("dialId", "destinationId");
-        break;
+      case "schedule": fields.push("at", "note"); break;
       case "lead-assist":
         fields.push("action");
         if (command.action === "request") fields.push("note");
@@ -2579,16 +2591,9 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     case "connect-back":
       dial("command.connectBack.dialId");
       break;
-    case "transfer":
-      if (into.oneOf(command.action, TRANSFER_ACTIONS, "command.transfer.action", `${path}.action`)) {
-        if (command.action === "cold" || command.action === "warm") {
-          dial("command.transfer.dialId");
-          into.filled(command.destinationId, "command.transfer.destinationId", `${path}.destinationId`, "a transfer names the directory item it goes to");
-        } else {
-          into.require(command.dialId === undefined && command.destinationId === undefined, "command.transfer.unexpected", path,
-            `${describeValue(command.action)} names no destination: there is exactly one it could mean`);
-        }
-      }
+    case "schedule":
+      into.timestamp(command.at, "command.schedule.at", `${path}.at`);
+      if (command.note !== undefined) into.filled(command.note, "command.schedule.note", `${path}.note`, "a note must not be empty when present");
       break;
     case "lead-assist":
       into.oneOf(command.action, LEAD_ASSIST_ACTIONS, "command.leadAssist.action", `${path}.action`);
@@ -2706,14 +2711,10 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       offered("connectBack");
       inPhase("command.phase.completing", "completing");
       break;
-    case "transfer":
-      interaction();
-      if (command.action === "cold") { if (offered("coldTransfer")) listed("coldTransfer"); }
-      else if (command.action === "warm") { if (offered("warmTransfer")) listed("warmTransfer"); }
-      else if (command.action === "complete" || command.action === "cancel") {
-        into.require(onCall.some(entry => entry.role === "consulted"), "command.transfer.consulted", path,
-          `${describeValue(command.action)} needs a consulted entry on onCall: without one there is nothing to complete or cancel`);
-      }
+    case "schedule":
+      // A follow-up is promised on the call and written up in wrap alike.
+      offered("schedule");
+      inPhase("command.phase.interaction", "in-progress", "paused", "completing");
       break;
     case "lead-assist":
       interaction();
@@ -2742,8 +2743,10 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       break;
     }
     case "complete": {
-      into.require(task.completionMode === "agent-command", "command.complete.mode", path,
-        "complete belongs to agent-command; a provider-automatic task completes itself");
+      // The agent may finish early under either mode; the provider is free to end at once. With
+      // no wrap at all there is no window to cut short, and nothing for the command to do.
+      into.require(task.wrapAllowance !== 0, "command.complete.wrapAllowance", path,
+        "the task has no wrap: with wrapAllowance 0 the provider ends it itself, and there is nothing to complete");
       // What travels with complete is what the outcomes capability published: a code from its
       // list where it has one, a code at all where it requires one, notes as it said, nothing where it published nothing.
       const outcomes = capabilities.outcomes;
@@ -3192,10 +3195,10 @@ export function validateHostRecordings(value: unknown, path = "host.recordings")
 export function validateRecordingCommandShape(value: unknown, source: "provider" | "host", path = "command"): ProtocolViolation[] {
   const { violations, check, keys } = collector();
   if (!object(value)) { check(false, "command.shape", path, "expected recording command"); return violations; }
-  keys(value, ["type", "source", "requestId", "observationId", "action", ...(value.action === "start" ? [] : ["recordingId"])], path);
+  keys(value, ["type", "source", "observationId", "action", ...(value.action === "start" ? [] : ["recordingId"])], path);
   check(value.type === "recording" && value.source === source, "command.source", path, `this executor accepts only ${source} recording commands`);
   check((RECORDING_ACTIONS as readonly unknown[]).includes(value.action), "command.action", `${path}.action`, "unsupported recording action");
-  for (const key of ["requestId", "observationId", ...(value.action === "start" ? [] : ["recordingId"])]) check(filled(value[key]), "command.identity", `${path}.${key}`, "expected nonempty scoped identity");
+  for (const key of ["observationId", ...(value.action === "start" ? [] : ["recordingId"])]) check(filled(value[key]), "command.identity", `${path}.${key}`, "expected nonempty scoped identity");
   return violations;
 }
 /** One transition table shared by dispatch checks and outcome checks. */

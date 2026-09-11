@@ -17,7 +17,7 @@ const task = (status: "inactive" | "active" | "paused" = "active"): Task<"voice"
   recording: { provider: state(status) },
 });
 const command = (action: RecordingAction, source: "provider" | "host" = "provider"): RecordingCommand => ({
-  type: "recording", source, requestId: "request-1", observationId: "obs", action,
+  type: "recording", source, observationId: "obs", action,
   ...(action === "start" ? {} : { recordingId: "capture-1" }),
 }) as RecordingCommand;
 const host: HostRecording = {
@@ -128,7 +128,7 @@ describe("recording evidence and declarations", () => {
 // @ts-expect-error Host commands cannot be sent to provider execute.
 const wrongExecutor: VoiceTaskCommand = { ...command("stop", "host"), source: "host" };
 // @ts-expect-error Stop targets an existing recording.
-const missingIdentity: RecordingCommand = { type: "recording", source: "provider", requestId: "q", observationId: "o", action: "stop" };
+const missingIdentity: RecordingCommand = { type: "recording", source: "provider", observationId: "o", action: "stop" };
 // @ts-expect-error Inactive is not an existing recording.
 const inactiveIdentity: RecordingState = { status: "inactive", observationId: "o", observedAt, validUntil, recordingId: "r" };
 void [wrongExecutor, missingIdentity, inactiveIdentity];
@@ -177,7 +177,7 @@ describe("recording validation context and direct permission checks", () => {
 
   it("carries known task restrictions through to recording dispatch", () => {
     const current = task();
-    current.capabilities.coldTransfer = { destinations: [{ id: "desk", label: "Desk" }] };
+    current.capabilities.conference = { destinations: [{ id: "desk", label: "Desk" }] };
     expect(check("pause", "active", "provider", {}, { taskContext: { dialOutcomesDeclared: false } }, current)).not.toEqual([]);
     expect(check("pause", "active", "provider", {}, { taskContext: { dialOutcomesDeclared: true } }, current)).toEqual([]);
   });
@@ -187,7 +187,7 @@ describe("recording validation context and direct permission checks", () => {
 // @ts-expect-error Cancel is a permission flag, not a configurable retain/discard policy.
 const legacyCancelPolicy: import("../src/index.js").RecordingActions = { cancel: { effect: "retain" } };
 // @ts-expect-error Cancel has a fixed discard meaning and carries no effect override.
-const legacyCancelCommand: RecordingCommand = { type: "recording", source: "provider", action: "cancel", requestId: "q", observationId: "o", recordingId: "r", cancelEffect: "retain" };
+const legacyCancelCommand: RecordingCommand = { type: "recording", source: "provider", action: "cancel", observationId: "o", recordingId: "r", cancelEffect: "retain" };
 void [legacyCancelPolicy, legacyCancelCommand];
 
 

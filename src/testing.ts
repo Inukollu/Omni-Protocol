@@ -80,7 +80,7 @@ const STATE_SUBJECTS = [
   "break.reasons",
   "break.forced",
   "team.members",
-  "team.requests",
+  "team.request",
   "team.tasks",
   "team.listening",
   "team.shift",
@@ -93,7 +93,8 @@ const STATE_SUBJECTS = [
 const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
   "task-audio-started": true, "task-audio-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
-  "team-updated": true, "contacts-updated": true, "calendar-updated": true,
+  "team-updated": true, "team-member-updated": true, "team-member-removed": true, "team-policies-updated": true,
+  "contacts-updated": true, "calendar-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
 const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
@@ -133,17 +134,23 @@ function observeBreak(value: unknown, seen: Set<ContractSubject>): void {
   if (value.forced !== undefined) seen.add("break.forced");
 }
 
+function observeMember(member: unknown, seen: Set<ContractSubject>): void {
+  if (!isRecord(member)) return;
+  if (some(member.tasks)) seen.add("team.tasks");
+  if (member.listening !== undefined) seen.add("team.listening");
+  if (member.shift !== undefined) seen.add("team.shift");
+  if (member.request !== undefined) seen.add("team.request");
+}
+
+function observePolicies(value: unknown, seen: Set<ContractSubject>): void {
+  if (isRecord(value) && Object.keys(value).length > 0) seen.add("team.policies");
+}
+
 function observeTeam(value: unknown, seen: Set<ContractSubject>): void {
   if (!isRecord(value)) return;
   if (some(value.members)) seen.add("team.members");
-  if (some(value.requests)) seen.add("team.requests");
-  if (Array.isArray(value.members)) for (const member of value.members) {
-    if (!isRecord(member)) continue;
-    if (some(member.tasks)) seen.add("team.tasks");
-    if (member.listening !== undefined) seen.add("team.listening");
-    if (member.shift !== undefined) seen.add("team.shift");
-  }
-  if (isRecord(value.policies) && Object.keys(value.policies).length > 0) seen.add("team.policies");
+  if (Array.isArray(value.members)) for (const member of value.members) observeMember(member, seen);
+  observePolicies(value.policies, seen);
 }
 
 function observeSnapshot(value: unknown, seen: Set<ContractSubject>): void {
@@ -165,6 +172,8 @@ function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
     case "task-offered":
     case "task-updated": observeTask(event.task, seen); break;
     case "team-updated": observeTeam(event.team, seen); break;
+    case "team-member-updated": seen.add("team.members"); observeMember(event.member, seen); break;
+    case "team-policies-updated": observePolicies(event.policies, seen); break;
     case "contacts-updated": if (some(event.contacts)) seen.add("contacts"); break;
     case "calendar-updated": if (some(event.calendar)) seen.add("calendar"); break;
     default: break;
@@ -253,6 +262,7 @@ export async function exerciseAdapter<C extends Channel>(
   const seen = new Set<ContractSubject>();
   const stream = new TaskStream();
   const breaks = new BreakStream();
+  const team = new TeamStream();
   let seeded = false;
   const duringRead: ProviderEventEnvelope<C>[] = [];
   let lockedPartySeen = false;
@@ -297,9 +307,12 @@ export async function exerciseAdapter<C extends Channel>(
       if (login === undefined) throw new Error("unreachable: the exercise has an authenticated login");
       return login;
     };
+    // Off until the application has said otherwise: the provider assumes nothing of the team feature.
+    let leadFeaturesOn = false;
     const reader = (): ReaderContext => ({
       self: current().identity.id,
       capabilities: current().capabilities,
+      leadFeatures: leadFeaturesOn,
       loginId: context.loginId,
       autoAcceptTasks: context.autoAcceptTasks,
       locked: options.lockedValues,
@@ -467,7 +480,7 @@ export async function exerciseAdapter<C extends Channel>(
       }
       // Cross-event rules apply once the stream has a beginning: the connect snapshot. An event
       // delivered while that snapshot is read is held until it lands, and read then against it.
-      if (seeded) violations.push(...stream.apply(envelope), ...breaks.apply(envelope));
+      if (seeded) violations.push(...stream.apply(envelope), ...breaks.apply(envelope), ...team.apply(envelope));
       else duringRead.push(envelope);
       events.push(envelope);
       for (const waiter of waiters) waiter(envelope);
@@ -541,6 +554,7 @@ export async function exerciseAdapter<C extends Channel>(
     await snapshotRead(live, snapshot, "snapshot");
     stream.seed(snapshot);
     violations.push(...breaks.seed(snapshot));
+    team.seed(snapshot);
     seeded = true;
     // A snapshot supersedes what it restates and nothing else. Of the events held during the read,
     // a state-replacing kind is dropped, since the snapshot carries that state and must account for
@@ -553,7 +567,7 @@ export async function exerciseAdapter<C extends Channel>(
     for (const held of duringRead) {
       const event = held.event as Record<string, unknown>;
       if (!SUPERSEDED_BY_A_SNAPSHOT.has(String(event.type))) {
-        violations.push(...stream.apply(held), ...breaks.apply(held));
+        violations.push(...stream.apply(held), ...breaks.apply(held), ...team.apply(held));
         continue;
       }
       // Evaluated where a superseded event was held: with none, the question was never asked.
@@ -602,6 +616,40 @@ export async function exerciseAdapter<C extends Channel>(
       });
     }
 
+    // The provider assumes nothing of the team feature: the application says on every connect,
+    // and once it has said on, the whole team is owed, once. Before that nothing of the team
+    // reaches the lead, which the reader held the connect snapshot to.
+    if (current().capabilities.lead === true && typeof live.executeTeam === "function") {
+      const from = events.length;
+      let switched: unknown;
+      // On from the moment the application says so: the provider may answer with the team at once.
+      leadFeaturesOn = true;
+      try {
+        switched = await live.executeTeam({ command: { type: "lead-features", enabled: true } });
+      } catch (error) {
+        leadFeaturesOn = false;
+        violations.push({ rule: "team.switch.rejected", path: "connection.executeTeam", message: `lead-features on was rejected: ${String(error)}` });
+      }
+      if (switched !== undefined) {
+        violations.push(...validateResult(switched, "executeTeam", "connection.executeTeam"));
+        ruleEvaluated("team.required");
+        const ms = options.driveTimeoutMs ?? 5000;
+        const isBaseline = (envelope: ProviderEventEnvelope<C>): boolean => isRecord(envelope?.event) && envelope.event.type === "team-updated";
+        const baseline = events.slice(from).some(isBaseline) || await new Promise<boolean>(resolve => {
+          const timer = setTimeout(() => { waiters.delete(waiter); resolve(false); }, ms);
+          const waiter = (envelope: ProviderEventEnvelope<C>) => {
+            if (!isBaseline(envelope)) return;
+            clearTimeout(timer);
+            waiters.delete(waiter);
+            resolve(true);
+          };
+          waiters.add(waiter);
+        });
+        if (!baseline) violations.push({ rule: "team.required", path: "event.team",
+          message: `the application switched the team feature on and no team-updated followed within ${ms}ms: the whole team is owed once it is on, members: [] when nobody is in it` });
+      }
+    }
+
     if (options.drive) {
       const localAudio = isRecord(first) && isRecord(first.audio) && isRecord(first.audio.input) && first.audio.input.status === "available"
         ? first.audio.input.localAudio as MediaStream : undefined;
@@ -610,8 +658,15 @@ export async function exerciseAdapter<C extends Channel>(
         everHeldForTask: (taskId: string) => [...watched.everHeld].some(key => namesTask(key, taskId)), snapshotRead,
         timeoutMs: options.driveTimeoutMs ?? 5000,
         context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held, handOver,
-        streams: { stream, breaks },
+        streams: { stream, breaks, team },
       }));
+      // Every offer is owed an ending. The drive ends the call it drove; anything else the
+      // provider offered and left open is an assignment whose ending never came.
+      ruleEvaluated("stream.taskOffered.unended");
+      for (const id of stream.unended()) {
+        violations.push({ rule: "stream.taskOffered.unended", path: "event.task-ended",
+          message: `${id} was offered and never ended: every offer is owed a task-ended, whatever became of the call` });
+      }
     }
     // Capacity supersedes rather than accumulates, so a decrease is as ordinary as an increase: the
     // host raises it, lowers it, and takes it away, and the provider takes each as the ceiling it is.
@@ -672,7 +727,7 @@ export async function exerciseAdapter<C extends Channel>(
  * its shape.
  */
 function publishesUserIds(snapshot: Snapshot | undefined): boolean {
-  if (snapshot?.break?.forced?.by !== undefined) return true;
+  if (snapshot?.break?.forced?.by !== undefined && snapshot.break.forced.by !== "provider") return true;
   if (teamNamesUsers(snapshot?.team)) return true;
   if (!Array.isArray(snapshot?.tasks)) return false;
   return snapshot.tasks.some(taskNamesUsers);
@@ -682,11 +737,10 @@ function publishesUserIds(snapshot: Snapshot | undefined): boolean {
 function userIdsIn(snapshot: Snapshot | undefined): string[] {
   const ids = new Set<string>();
   const add = (value: unknown) => { if (typeof value === "string" && value.length > 0) ids.add(value); };
-  add(snapshot?.break?.forced?.by);
+  if (snapshot?.break?.forced?.by !== "provider") add(snapshot?.break?.forced?.by);
   const team = snapshot?.team as Record<string, unknown> | undefined;
   if (isRecord(team)) {
     for (const member of Array.isArray(team.members) ? team.members : []) if (isRecord(member)) add(member.id);
-    for (const request of Array.isArray(team.requests) ? team.requests : []) if (isRecord(request)) add(request.memberId);
   }
   for (const task of Array.isArray(snapshot?.tasks) ? snapshot.tasks : []) {
     const t = task as unknown as Record<string, unknown>;
@@ -711,7 +765,7 @@ function userIdsIn(snapshot: Snapshot | undefined): string[] {
 }
 
 const teamNamesUsers = (team: unknown): boolean =>
-  isRecord(team) && (some(team.members) || some(team.requests));
+  isRecord(team) && some(team.members);
 
 const taskNamesUsers = (task: unknown): boolean =>
   isRecord(task) && (
@@ -726,10 +780,12 @@ function eventNamesUsers(envelope: unknown): boolean {
   if (!isRecord(event)) return false;
   switch (event.type) {
     case "snapshot": return publishesUserIds(event.snapshot as Snapshot);
-    case "break-state": return isRecord(event.break) && isRecord(event.break.forced) && event.break.forced.by !== undefined;
+    case "break-state": return isRecord(event.break) && isRecord(event.break.forced) && event.break.forced.by !== undefined && event.break.forced.by !== "provider";
     case "task-offered":
     case "task-updated": return taskNamesUsers(event.task);
     case "team-updated": return teamNamesUsers(event.team);
+    case "team-member-updated": return isRecord(event.member) && event.member.id !== undefined;
+    case "team-member-removed": return true;
     default: return false;
   }
 }
@@ -1044,7 +1100,8 @@ const REACHABLE_PHASES: Record<string, Set<string>> = {
  */
 export const SUPERSEDED_BY_A_SNAPSHOT: ReadonlySet<string> = new Set([
   "snapshot", "transport-status", "break-state", "task-offered", "task-updated", "task-ended",
-  "task-audio-started", "task-audio-ended", "team-updated", "contacts-updated", "calendar-updated",
+  "task-audio-started", "task-audio-ended", "team-updated", "team-member-updated", "team-member-removed", "team-policies-updated",
+  "contacts-updated", "calendar-updated",
 ]);
 
 export class TaskStream {
@@ -1054,8 +1111,10 @@ export class TaskStream {
   // a task that is open.
   private readonly assignments = new Set<string>();
   private readonly endedAssignments = new Set<string>();
+  /** Every assignment a `task-offered` introduced, as against one a snapshot carried: each is owed its ending. */
+  private readonly offered = new Set<string>();
   // Every dial the stream can place an outcome against: one the host said it placed, or one a
-  // task carried on `onCall` or in its record -- which is how a dial made before a transfer is known
+  // task carried on `onCall` or in its record -- which is how a dial made before a take-over is known
   // to whoever holds the task now. `answered` or `ended` once its outcome arrived, since it comes once.
   private readonly dials = new Map<string, "placed" | "answered" | "ended">();
 
@@ -1090,6 +1149,9 @@ export class TaskStream {
 
   /** How many tasks the stream currently holds open. */
   openCount(): number { return this.tasks.size; }
+
+  /** The assignments an offer introduced that are still open: each was owed a `task-ended` that has not come. */
+  unended(): string[] { return [...this.offered].filter(id => this.tasks.has(id)); }
 
   /** Whether an offered task is a dial arriving -- the host's own call, a connect-back -- which counts against no capacity: an entry on its call carrying a dial. */
   static carriesDial(task: unknown): boolean {
@@ -1220,6 +1282,7 @@ export class TaskStream {
             known !== undefined ? `${id} is already on the stream; an offer introduces an assignment once` : `${id} was already an assignment on this stream: an assignment is named once per offer and never reused, whatever the platform does with its own handle`);
         }
         this.assignments.add(id);
+        this.offered.add(id);
         this.tasks.set(id, TaskStream.stated(event.task));
         this.noteDials(event.task);
         break;
@@ -1268,7 +1331,7 @@ export class TaskStream {
         }
         // A task completes after its audio ends, never around it: an update that moves a task to
         // completing while the stream holds its audio as started is a call whose audio never ended,
-        // whoever caused the ending -- the drive's end-call, a transfer, the provider's own hand.
+        // whoever caused the ending -- the drive's end-call, a take-over, the provider's own hand.
         {
           const to = isRecord(event.task) ? String(event.task.phase) : "";
           if (to === "completing" && known.audio === "started" && known.phase !== "completing") {
@@ -1375,8 +1438,9 @@ export class TaskStream {
         // that completes the task itself with an allowance to run has to have started the clock:
         // completed from in-progress, the allowance it stated was never given.
         ruleEvaluated("stream.taskEnded.unwrapped");
+        // An agent's own complete cuts the wrap short from wherever the task stands, so that ending says by agent and is not this.
         if (known.channel !== "voice" && known.completionMode === "provider-automatic" && known.wrapAllowance !== undefined && known.wrapAllowance > 0
-          && known.phase !== "completing" && isRecord(event.outcome) && event.outcome.type === "completed") {
+          && known.phase !== "completing" && isRecord(event.outcome) && event.outcome.type === "completed" && event.outcome.by === "provider") {
           refuse("stream.taskEnded.unwrapped", `${at}.outcome`,
             `${id} was completed from ${known.phase} with a wrap allowance of ${known.wrapAllowance}s under provider-automatic: off voice, completing is the provider's word that interaction ended and the allowance's start, and it was never published`);
         }
@@ -1429,7 +1493,7 @@ interface Drive<C extends Channel> {
   /** Reads a snapshot as the connect snapshot was read: observed, validated, its users described, its locks and terms noted. */
   snapshotRead: (source: Connection<C>, snapshot: unknown, path: string) => Promise<void>;
   /** The streams the run holds its events to, re-seeded from the reloaded client's snapshot. */
-  streams: { stream: TaskStream; breaks: BreakStream };
+  streams: { stream: TaskStream; breaks: BreakStream; team: TeamStream };
   channel: Channel;
   softphone: boolean;
   snapshot: unknown;
@@ -1526,6 +1590,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       await drive.snapshotRead(second, snapshot, "drive.reload.snapshot");
       found.push(...drive.streams.stream.resync(snapshot, "drive.reload.snapshot"));
       found.push(...drive.streams.breaks.seed(snapshot));
+      drive.streams.team.seed(snapshot);
       const carried = isRecord(snapshot) && Array.isArray(snapshot.tasks)
         ? snapshot.tasks.find(task => isRecord(task) && task.assignmentId === taskId) as Record<string, unknown> | undefined : undefined;
       ruleEvaluated("drive.reload.snapshot");
@@ -1835,11 +1900,12 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   if (typeof (session as { close?: unknown } | undefined)?.close === "function") {
     try { (session as { close: () => void }).close(); } catch { refuse("drive.openAudio.close", "drive.openAudio", "the audio session threw on close"); }
   }
-  // 6. Complete, where the agent completes; otherwise the provider does, and the drive waits for it.
-  // A conversation has no audio to end and no completing phase to wait for: a chat or an email,
-  // and a voice task offering no end-call, is completed from where it stands.
+  // 6. Complete, under either mode: the agent may finish early and the provider is free to end at
+  // once. Only a task with no wrap at all has nothing to complete, and there the drive waits for the
+  // provider. A conversation has no audio to end and no completing phase to wait for: a chat or an
+  // email, and a voice task offering no end-call, is completed from where it stands.
   const completable = latestTask().phase === "completing" || latestTask().phase === "in-progress" || latestTask().phase === "paused";
-  if (latestTask().completionMode === "agent-command" && completable) {
+  if (latestTask().wrapAllowance !== 0 && completable) {
     const command: Record<string, unknown> = { type: "complete" };
     const outcomes = isRecord(latestTask().capabilities) ? (latestTask().capabilities as Record<string, unknown>).outcomes : undefined;
     if (isRecord(outcomes) && outcomes.required === true && Array.isArray(outcomes.codes) && isRecord(outcomes.codes[0])) {
@@ -1911,6 +1977,59 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
 // preserves the committed break. A forced break arrives on-break
 // with `forced`. Nothing else is a move the guide describes.
 /** What a stream has said about the agent's break, and the moves it may not make. */
+/**
+ * The team as the events left it: whole on `team-updated` and on any snapshot carrying one, then
+ * one member at a time. A member event before the whole team, or a removal of a member the team
+ * never carried, is a change to a team the lead was never given.
+ */
+export class TeamStream {
+  private members: Set<string> | undefined;
+
+  private static ids(team: unknown): Set<string> | undefined {
+    if (!isRecord(team) || !Array.isArray(team.members)) return undefined;
+    return new Set(team.members.filter(isRecord).map(member => String(member.id)));
+  }
+
+  /** A snapshot carrying a team is the team whole; one carrying none leaves the lead with none. */
+  seed(snapshot: unknown): void {
+    this.members = TeamStream.ids(isRecord(snapshot) ? snapshot.team : undefined);
+  }
+
+  /** Whether the team currently carries this member, as the events left it. */
+  has(id: string): boolean { return this.members?.has(id) === true; }
+
+  apply(envelope: unknown, path = "event"): ProtocolViolation[] {
+    const event = isRecord(envelope) ? envelope.event : undefined;
+    if (!isRecord(event)) return [];
+    const at = `${path}.event`;
+    switch (event.type) {
+      case "snapshot": this.seed(event.snapshot); return [];
+      case "team-updated": this.members = TeamStream.ids(event.team); return [];
+      case "team-member-updated": case "team-member-removed": case "team-policies-updated": {
+        ruleEvaluated("stream.team.baseline");
+        if (this.members === undefined) {
+          return [{ rule: "stream.team.baseline", path: `${at}.type`,
+            message: `${event.type} arrived before the team: team-updated carries the whole team first, and it changes one member at a time after that` }];
+        }
+        if (event.type === "team-member-updated") {
+          if (isRecord(event.member) && typeof event.member.id === "string") this.members.add(event.member.id);
+          return [];
+        }
+        if (event.type === "team-member-removed") {
+          ruleEvaluated("stream.teamMember.unknown");
+          const id = String(event.memberId);
+          if (!this.members.has(id)) {
+            return [{ rule: "stream.teamMember.unknown", path: `${at}.memberId`, message: `${id} is not a member the team carried: a removal takes off somebody the lead was given` }];
+          }
+          this.members.delete(id);
+        }
+        return [];
+      }
+      default: return [];
+    }
+  }
+}
+
 export class BreakStream {
   private state: unknown;
   private recovery = true;
