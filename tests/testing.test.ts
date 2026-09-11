@@ -80,11 +80,11 @@ describe("assertCapabilityWithdrawal", () => {
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, team: { breakControl: true } } } satisfies AuthenticationState;
   const demoted = { status: "authenticated", identity: ada, capabilities: { breaks: true } } satisfies AuthenticationState;
   const bare: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [], taskCount: 0 };
-  const withRoster: Snapshot<"voice"> = { ...bare, team: { members: [{ id: "A-2", availability: "ready" }] } };
+  const withMembers: Snapshot<"voice"> = { ...bare, team: { members: [{ id: "A-2", availability: "ready" }] } };
 
-  it("accepts a roster gone with the capability that entitled it, and rejects one that stayed", () => {
+  it("accepts a team member list gone with the capability that entitled it, and rejects one that stayed", () => {
     expect(() => assertCapabilityWithdrawal([lead, demoted], bare, manifest)).not.toThrow();
-    expect(() => assertCapabilityWithdrawal([lead, demoted], withRoster, manifest)).toThrow(/team\.unentitled/);
+    expect(() => assertCapabilityWithdrawal([lead, demoted], withMembers, manifest)).toThrow(/team\.unentitled/);
   });
 
   it("holds requests to a withdrawn leadAssistControl, and a snapshot to withdrawn breaks", () => {
@@ -97,7 +97,7 @@ describe("assertCapabilityWithdrawal", () => {
     expect(() => assertCapabilityWithdrawal([consulting, watching], asking, manifest)).toThrow(/team\.requests\.capability/);
     // Breaks withdrawn: nothing on the snapshot depends on it, so the bare snapshot agrees.
     const noBreaks = { ...lead, capabilities: { team: { breakControl: true as const } } } satisfies AuthenticationState;
-    expect(() => assertCapabilityWithdrawal([lead, noBreaks], withRoster, manifest)).not.toThrow();
+    expect(() => assertCapabilityWithdrawal([lead, noBreaks], withMembers, manifest)).not.toThrow();
   });
 
   it("passes only through usable states, and refreshing must carry the login over", () => {
@@ -1086,7 +1086,7 @@ describe("exerciseAdapter", () => {
   });
 
   it("says what the run never reached, so a clean result is read for what it covers", async () => {
-    // The rich fixture carries a task, a contact and an activity but no roster, no break reasons,
+    // The rich fixture carries a task, a contact and an activity but no team member list, no break reasons,
     // no imposed break, and delivers no event; the bare fixture reaches nothing at all.
     const run = async (overrides: AdapterOverrides) =>
       (await exerciseAdapter(makeAdapter(overrides).adapter, context, { collectOnly: true })).notExercised;
@@ -1120,8 +1120,8 @@ describe("exerciseAdapter", () => {
       id: "evt-team", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } },
     };
-    const rosterOnly = { ...conformingSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
-    const withEvent = await run({ capabilities: { team: {} }, snapshot: rosterOnly, emit: listener => listener(later) });
+    const teamMembersOnly = { ...conformingSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
+    const withEvent = await run({ capabilities: { team: {} }, snapshot: teamMembersOnly, emit: listener => listener(later) });
     expect(state(withEvent)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.assisting", "task.monitoring", "task.acceptance", "task.locked", "break.reasons", "break.imposed", "team.requests", "team.policies"]);
     expect(events(withEvent)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
   });
@@ -1857,14 +1857,14 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("keeps the login it could trust when the session publishes a broken state", async () => {
-    // A state with no identity is reported and not adopted: the roster is still checked against
+    // A state with no identity is reported and not adopted: the team member list is still checked against
     // the lead who signed in, and the run completes instead of throwing inside a listener.
-    const roster = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "ready" }] } } satisfies Snapshot<"voice">;
+    const teamMembers = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "ready" }] } } satisfies Snapshot<"voice">;
     const broken = { status: "authenticated" } as unknown as AuthenticationState;
-    const found = await rules({ capabilities: { team: {} }, snapshot: roster, emitAuthentication: publish => publish(broken) });
+    const found = await rules({ capabilities: { team: {} }, snapshot: teamMembers, emitAuthentication: publish => publish(broken) });
     expect(found).toContain("authentication.identity");
     expect(found).not.toContain("team.unentitled");
-    expect(await rules({ manifest: plainManifest, capabilities: { team: {} }, snapshot: roster })).toEqual([]);
+    expect(await rules({ manifest: plainManifest, capabilities: { team: {} }, snapshot: teamMembers })).toEqual([]);
   });
 
   it("holds refreshing to the login it refreshes", async () => {
@@ -1872,11 +1872,11 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const same = { status: "refreshing", identity: asha, capabilities: { team: {} } } satisfies AuthenticationState;
     const fewer = { status: "refreshing", identity: asha, capabilities: {} } satisfies AuthenticationState;
     const other = { status: "refreshing", identity: { id: "A-9", displayName: "Bo", timeZone: "Pacific/Chatham" }, capabilities: { team: {} } } satisfies AuthenticationState;
-    const roster = { ...minimalSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
+    const teamMembers = { ...minimalSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
     const lead = { team: {} };
-    expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: roster, emitAuthentication: publish => publish(same) })).toEqual([]);
-    expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: roster, emitAuthentication: publish => publish(fewer) })).toEqual(["authentication.refreshing.capabilities"]);
-    expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: roster, emitAuthentication: publish => publish(other) })).toEqual(["authentication.refreshing.identity"]);
+    expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: teamMembers, emitAuthentication: publish => publish(same) })).toEqual([]);
+    expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: teamMembers, emitAuthentication: publish => publish(fewer) })).toEqual(["authentication.refreshing.capabilities"]);
+    expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: teamMembers, emitAuthentication: publish => publish(other) })).toEqual(["authentication.refreshing.identity"]);
   });
 
   it("requires the methods a later login grants, and reports the latest login", async () => {
@@ -1922,29 +1922,29 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("holds what follows to the latest login, not the one captured at sign-in", async () => {
-    // Signed in as a lead, then demoted before the snapshot: the roster on that snapshot is now
+    // Signed in as a lead, then demoted before the snapshot: the team member list on that snapshot is now
     // published to a login that does not lead. A harness that froze the login at sign-in would
     // pass it. The paired run republishes the same capabilities and stays clean.
     const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Pacific/Chatham" };
-    const roster = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "ready" }] } } satisfies Snapshot<"voice">;
+    const teamMembers = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "ready" }] } } satisfies Snapshot<"voice">;
     const demoted = { status: "authenticated", identity: asha, capabilities: {} } satisfies AuthenticationState;
     const unchanged = { status: "authenticated", identity: asha, capabilities: { team: {} } } satisfies AuthenticationState;
-    expect(await rules({ capabilities: { team: {} }, snapshot: roster, emitAuthentication: publish => publish(demoted) })).toContain("team.unentitled");
-    expect(await rules({ capabilities: { team: {} }, snapshot: roster, emitAuthentication: publish => publish(unchanged) })).not.toContain("team.unentitled");
+    expect(await rules({ capabilities: { team: {} }, snapshot: teamMembers, emitAuthentication: publish => publish(demoted) })).toContain("team.unentitled");
+    expect(await rules({ capabilities: { team: {} }, snapshot: teamMembers, emitAuthentication: publish => publish(unchanged) })).not.toContain("team.unentitled");
   });
 
-  it("a login that leads must publish a roster, and one that does not must not", async () => {
-    // The case a fixture cannot hide: the login says lead, and the run never saw a roster.
-    const roster = { ...minimalSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
+  it("a login that leads must publish a team member list, and one that does not must not", async () => {
+    // The case a fixture cannot hide: the login says lead, and the run never saw a team member list.
+    const teamMembers = { ...minimalSnapshot, team: { members: [] } } satisfies Snapshot<"voice">;
     expect(await rules({ capabilities: { team: {} }, snapshot: minimalSnapshot })).toContain("team.required");
-    expect(await rules({ capabilities: { team: {} }, snapshot: roster })).not.toContain("team.required");
-    expect(await rules({ capabilities: {}, snapshot: roster })).toContain("team.unentitled");
+    expect(await rules({ capabilities: { team: {} }, snapshot: teamMembers })).not.toContain("team.required");
+    expect(await rules({ capabilities: {}, snapshot: teamMembers })).toContain("team.unentitled");
     expect(await rules({ capabilities: {}, snapshot: minimalSnapshot })).not.toContain("team.unentitled");
   });
 
   it("nothing published to the signed-in agent may list them, on the snapshot or on a team-updated", async () => {
     // The stub authenticates as 1042. A colleague alone passes; the reader beside them fails —
-    // and fails just the same when the roster arrives after a clean connect snapshot.
+    // and fails just the same when the team member list arrives after a clean connect snapshot.
     const colleague = { id: "A-2", availability: "ready" } as const;
     const reader = { id: "1042", availability: "on-task" } as const;
     const withColleague = { ...minimalSnapshot, team: { members: [colleague] } } satisfies Snapshot<"voice">;
@@ -2142,7 +2142,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const withPolicies = { ...minimalSnapshot, team: { members: [], policies: { hold: { setting: "off", setBy: "team" } } } } satisfies Snapshot<"voice">;
     expect(await rules({ manifest: plainManifest, snapshot: withPolicies, capabilities: setting, connection: { executeTeamPolicy: undefined } })).toContain("connection.executeTeamPolicy.required");
     expect(await rules({ manifest: plainManifest, snapshot: withPolicies, capabilities: setting })).toEqual([]);
-    // The roster carries policies exactly when the login may set them.
+    // The team member list carries policies exactly when the login may set them.
     expect(await rules({ manifest: plainManifest, snapshot: { ...minimalSnapshot, team: { members: [] } }, capabilities: setting })).toEqual(["team.policies.required"]);
     expect(await rules({ manifest: plainManifest, snapshot: withPolicies, capabilities: { team: {} } })).toEqual(["team.policies.capability"]);
   });
@@ -2169,10 +2169,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   });
 
   it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
-    // The conforming snapshot names A-1 in a interaction step; a roster and an imposed break count too.
+    // The conforming snapshot names A-1 in a interaction step; a team member list and an imposed break count too.
     expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
-    const roster = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
-    expect(await rules({ snapshot: roster, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
+    const teamMembers = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
+    expect(await rules({ snapshot: teamMembers, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     const imposed = { ...minimalSnapshot, break: { approval: "in-effect", mayAsk: true, imposed: { by: "M-1", endsAutomatically: false } } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: imposed, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
     expect(await rules({ snapshot: minimalSnapshot, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");

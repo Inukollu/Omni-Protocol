@@ -25,7 +25,7 @@ import {
   type TeamPolicy,
   type Snapshot,
   type Task,
-  type TeamRoster,
+  type TeamMembers,
   type TaskBrowser,
   type TaskCommand,
   type OnCall,
@@ -356,9 +356,9 @@ export const completedSilently: CompleteAuthenticationResult = { status: "authen
 export const bareSnapshot: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { approval: "not-requested", mayAsk: true }, tasks: [], taskCount: 0 };
 // @ts-expect-error Capabilities live on the login, not the snapshot.
 export const staleSnapshot: Snapshot<"voice"> = { ...bareSnapshot, sessionCapabilities: {} };
-export const roster: TeamRoster = { members: [], requests: [] };
-// @ts-expect-error What the lead may do is on the login, not the roster.
-export const rosterWithControl: TeamRoster = { members: [], breakControl: true };
+export const teamMembers: TeamMembers = { members: [], requests: [] };
+// @ts-expect-error What the lead may do is on the login, not the team member list.
+export const teamMembersWithControl: TeamMembers = { members: [], breakControl: true };
 
 // The host reports; a request may lack the microphone, and a ready input may not.
 export const openWithoutHostAudio: OpenMediaRequest = { taskId: "call-42", allocationId: "alloc-42" };
@@ -404,3 +404,8 @@ import type { DispositionRules } from "../src/index.js";
 export const formerOutcomeCommand: TaskCommand = { type: "complete", disposition: "resolved" };
 // @ts-expect-error renamed away: task capabilities expose outcomes
 export type FormerOutcomeCapability = Task["capabilities"]["dispositions"];
+
+// @ts-expect-error renamed away: TeamMembers replaces the former type without an alias
+import type { TeamRoster } from "../src/index.js";
+// @ts-expect-error renamed away: use validateTeamMembers
+import { validateTeamRoster } from "../src/validation.js";
