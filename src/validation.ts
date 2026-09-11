@@ -18,7 +18,7 @@ import {
   BREAK_KINDS,
   LISTENING_BREAK_KINDS,
   BROWSER_ISOLATION_SCHEMES,
-  INTERACTION_STEPS_THAT_DIAL,
+  HISTORY_STEPS_THAT_DIAL,
   IDLE_CAPABILITIES,
   OMNI_FAILURE_CODES,
   OMNI_SUPPORTED_PROTOCOL_VERSIONS,
@@ -55,7 +55,7 @@ import {
   type Phone,
   type ListeningMode,
   type OutcomeRules,
-  type InteractionStep,
+  type HistoryStep,
   type IdleCapabilities,
   type IdleCapability,
   type PersonalBrowserCapability,
@@ -125,7 +125,7 @@ const BREAK_APPROVALS = membersOf<BreakStatus>({
 const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
   ready: true, "on-task": true, "on-break": true, reserved: true, "signed-out": true,
 });
-const INTERACTION_STEPS = membersOf<InteractionStep>({
+const HISTORY_STEPS = membersOf<HistoryStep>({
   queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
 });
 const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
@@ -235,7 +235,7 @@ const isDurationSeconds = (value: unknown): boolean =>
 /** Opaque, non-empty, provider-issued. Never parsed and never compared across providers. */
 const isUserId = isFilled;
 const isTaskId = isFilled;
-const isAllocationId = isFilled;
+const isAssignmentId = isFilled;
 
 const ruleListeners = new Set<(rule: string) => void>();
 
@@ -970,62 +970,62 @@ function validateTaskAttributes(value: unknown, path: string, into: Collector, l
   });
 }
 
-function validateInteractionHistory(value: unknown, path: string, into: Collector, task: { phase?: unknown; media?: unknown } = {}): void {
+function validateHistory(value: unknown, path: string, into: Collector, task: { phase?: unknown; media?: unknown } = {}): void {
   if (value === undefined) return;
   if (!isPlainObject(value)) {
-    into.add("task.interactionHistory.shape", path, "interactionHistory must be an object with its steps when present");
+    into.add("task.history.shape", path, "history must be an object with its steps when present");
     return;
   }
   // What the record adds up to before this agent: each total present when the provider knows it
   // and absent when it does not, never a plausible nought.
-  into.require(!Object.hasOwn(value, "handleSeconds"), "task.interactionHistory.interactionSeconds.renamed", `${path}.handleSeconds`,
+  into.require(!Object.hasOwn(value, "handleSeconds"), "task.history.interactionSeconds.renamed", `${path}.handleSeconds`,
     "use interactionSeconds; the former field is not accepted");
   for (const field of ["interactionSeconds", "holdSeconds", "queueSeconds"] as const) {
     if (value[field] !== undefined) {
-      into.require(isDurationSeconds(value[field]), `task.interactionHistory.${field}`, `${path}.${field}`,
+      into.require(isDurationSeconds(value[field]), `task.history.${field}`, `${path}.${field}`,
         `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
     }
   }
   if (value.transfers !== undefined) {
     into.require(typeof value.transfers === "number" && Number.isInteger(value.transfers) && value.transfers >= 0,
-      "task.interactionHistory.transfers", `${path}.transfers`, "transfers must be a whole number, zero or more, or omitted when unknown");
+      "task.history.transfers", `${path}.transfers`, "transfers must be a whole number, zero or more, or omitted when unknown");
   }
   if (!Array.isArray(value.steps)) {
-    into.add("task.interactionHistory.steps.shape", `${path}.steps`, "interactionHistory carries its steps as an array, empty when the task has had none");
+    into.add("task.history.steps.shape", `${path}.steps`, "history carries its steps as an array, empty when the task has had none");
     return;
   }
   let previous: number | undefined;
   value.steps.forEach((entry: unknown, index: number) => {
     const at = `${path}.steps[${index}]`;
     if (!isPlainObject(entry)) {
-      into.add("task.interactionHistory.entry", at, "each interaction step must be an object");
+      into.add("task.history.entry", at, "each history step must be an object");
       return;
     }
-    into.oneOf(entry.step, INTERACTION_STEPS, "task.interactionHistory.step", `${at}.step`);
-    if (into.timestamp(entry.at, "task.interactionHistory.at", `${at}.at`)) {
+    into.oneOf(entry.step, HISTORY_STEPS, "task.history.step", `${at}.step`);
+    if (into.timestamp(entry.at, "task.history.at", `${at}.at`)) {
       // The record is one entry per occurrence, oldest first: a second hold is a second entry
       // after the first, never a revision of it or an entry filed out of its turn.
       const instant = Date.parse(entry.at as string);
       if (previous !== undefined && instant < previous) {
-        into.add("task.interactionHistory.order", `${at}.at`, "interaction steps are oldest first; this entry is earlier than the one before it");
+        into.add("task.history.order", `${at}.at`, "history steps are oldest first; this entry is earlier than the one before it");
       }
       previous = instant;
     }
     if (entry.seconds !== undefined) {
       // Omitted while a leg is still running. Nought is a claim that it took no time.
       into.require(isDurationSeconds(entry.seconds) && (entry.seconds as number) > 0,
-        "task.interactionHistory.seconds", `${at}.seconds`,
+        "task.history.seconds", `${at}.seconds`,
         "seconds must be a positive whole number; omit it while the step is still running");
     } else {
       // An open leg is one still running, and the task says whether it can be: a hold runs only while
       // the task is paused, and a mute only while its media is up. An open entry after that is a leg
       // nobody closed, which reads exactly like a leg running now.
       if (entry.step === "held") {
-        into.require(task.phase === "paused", "task.interactionHistory.held.open", `${at}.seconds`,
+        into.require(task.phase === "paused", "task.history.held.open", `${at}.seconds`,
           `a held entry without seconds is a hold still running, and the task is ${describeValue(task.phase)}: the hold has ended, and its duration is stated`);
       }
       if (entry.step === "muted") {
-        into.require(task.media !== "ended" && task.phase !== "completing", "task.interactionHistory.muted.open", `${at}.seconds`,
+        into.require(task.media !== "ended" && task.phase !== "completing", "task.history.muted.open", `${at}.seconds`,
           "a muted entry without seconds is still running, but this interaction's media has ended: the provider closes its open leg and states the duration; other channels may continue");
       }
     }
@@ -1033,26 +1033,26 @@ function validateInteractionHistory(value: unknown, path: string, into: Collecto
     // And it names the agent: the host has exactly one, the provider knows who, so an unattributed
     // muted leg is a record that dropped a fact it held rather than one it could not establish.
     if (entry.step === "muted") {
-      into.oneOf(entry.mutedBy, MUTED_BY, "task.interactionHistory.mutedBy", `${at}.mutedBy`);
-      into.require(entry.by !== undefined, "task.interactionHistory.muted.by", `${at}.by`,
+      into.oneOf(entry.mutedBy, MUTED_BY, "task.history.mutedBy", `${at}.mutedBy`);
+      into.require(entry.by !== undefined, "task.history.muted.by", `${at}.by`,
         "a muted leg is attributed to the login's agent: the host reported it, and the provider knows who the host's agent is");
     }
-    else if ((INTERACTION_STEPS as readonly unknown[]).includes(entry.step)) {
-      into.require(entry.mutedBy === undefined, "task.interactionHistory.mutedBy.unexpected", `${at}.mutedBy`, "only a muted step says who silenced the microphone");
+    else if ((HISTORY_STEPS as readonly unknown[]).includes(entry.step)) {
+      into.require(entry.mutedBy === undefined, "task.history.mutedBy.unexpected", `${at}.mutedBy`, "only a muted step says who silenced the microphone");
     }
     if (entry.by !== undefined) {
-      into.require(isUserId(entry.by), "task.interactionHistory.by", `${at}.by`,
+      into.require(isUserId(entry.by), "task.history.by", `${at}.by`,
         "by must be a non-empty user id; omit it when the person cannot be identified");
       // On `queued` nobody takes part, so there is nothing to name.
-      into.require(entry.step !== "queued", "task.interactionHistory.by.unexpected", `${at}.by`,
+      into.require(entry.step !== "queued", "task.history.by.unexpected", `${at}.by`,
         "a queued step names nobody");
     }
     // A step that dialled says where to and, when a host placed it, which dial; no other step dialled.
-    const dialled = typeof entry.step === "string" && (INTERACTION_STEPS_THAT_DIAL as readonly string[]).includes(entry.step);
+    const dialled = typeof entry.step === "string" && (HISTORY_STEPS_THAT_DIAL as readonly string[]).includes(entry.step);
     for (const field of ["dialId", "destinationId"] as const) {
       if (entry[field] === undefined) continue;
-      if (into.filled(entry[field], `task.interactionHistory.${field}`, `${at}.${field}`, `${field} must not be empty when present`)) {
-        into.require(dialled, `task.interactionHistory.${field}.unexpected`, `${at}.${field}`,
+      if (into.filled(entry[field], `task.history.${field}`, `${at}.${field}`, `${field} must not be empty when present`)) {
+        into.require(dialled, `task.history.${field}.unexpected`, `${at}.${field}`,
           `${describeValue(entry.step)} dialled nothing; ${field} belongs on transferred, conferenced, or unanswered`);
       }
     }
@@ -1196,7 +1196,7 @@ function validateListening(value: unknown, channel: string, path: string, into: 
   }
   into.require(isUserId(value.memberId), "task.listening.memberId", `${path}.memberId`, "a call being listened to names the member on it");
   into.require(isTaskId(value.taskId), "task.listening.taskId", `${path}.taskId`, "a call being listened to names the member's task");
-  into.require(isAllocationId(value.allocationId), "task.listening.allocationId", `${path}.allocationId`, "a call being listened to names the member's task by its allocation too");
+  into.require(isAssignmentId(value.assignmentId), "task.listening.assignmentId", `${path}.assignmentId`, "a call being listened to names the member's task by its assignment too");
   into.oneOf(value.mode, LISTENING_MODES, "task.listening.mode", `${path}.mode`);
   into.timestamp(value.since, "task.listening.since", `${path}.since`);
 }
@@ -1237,11 +1237,15 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   }
   into.require(!Object.hasOwn(task, "monitoring"), "task.listening.renamed", `${path}.monitoring`,
     "use listening; the former field is not accepted");
-  into.require(!Object.hasOwn(task, "handlingHistory"), "task.interactionHistory.renamed", `${path}.handlingHistory`,
-    "use interactionHistory; the former field is not accepted");
+  for (const former of ["handlingHistory", "interactionHistory"] as const) {
+    into.require(!Object.hasOwn(task, former), "task.history.renamed", `${path}.${former}`,
+      "use history; the former field is not accepted");
+  }
+  into.require(!Object.hasOwn(task, "allocationId"), "task.assignmentId.renamed", `${path}.allocationId`,
+    "use assignmentId; the former field is not accepted");
   into.require(isTaskId(task.id), "task.id", `${path}.id`, "a task needs a non-empty id");
-  into.require(isAllocationId(task.allocationId), "task.allocationId", `${path}.allocationId`,
-    "a task names this life of itself: an allocation id minted once per offer, never reused for the life of the login");
+  into.require(isAssignmentId(task.assignmentId), "task.assignmentId", `${path}.assignmentId`,
+    "a task names this life of itself: an assignment id minted once per offer, never reused for the life of the login");
   into.filled(task.title, "task.title", `${path}.title`, "a task needs a title");
   into.filled(task.taskType, "task.taskType", `${path}.taskType`, "a task needs a task type");
   if (into.oneOf(task.phase, TASK_PHASES, "task.phase", `${path}.phase`) && task.phase === "preview") {
@@ -1327,7 +1331,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   }
   validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into, context.levels);
-  validateInteractionHistory(task.interactionHistory, `${path}.interactionHistory`, into, { phase: task.phase, media: task.media });
+  validateHistory(task.history, `${path}.history`, into, { phase: task.phase, media: task.media });
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
   // Media and onCall describe this agent's interaction, not the continuing caller journey.
   // Once the interaction's media ends or it enters wrap, its live room is cleared. Other
@@ -1797,7 +1801,7 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Re
             "the team member list carries the reader's own ask: an agent's request for a lead goes to whoever leads them");
         }
         into.require(isTaskId(request.taskId), "team.request.taskId", `${at}.taskId`, "a request names the task the lead would join");
-        into.require(isAllocationId(request.allocationId), "team.request.allocationId", `${at}.allocationId`, "a request names the task by its allocation too");
+        into.require(isAssignmentId(request.assignmentId), "team.request.assignmentId", `${at}.assignmentId`, "a request names the task by its assignment too");
         if (request.note !== undefined) into.filled(request.note, "team.request.note", `${at}.note`, "a note must not be empty when present");
         into.timestamp(request.since, "team.request.since", `${at}.since`);
       });
@@ -2086,7 +2090,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
         into.require((OFFERABLE_PHASES as readonly string[]).includes(event.task.phase), "event.taskOffered.phase", `${at}.task.phase`,
           `task-offered introduces a task as ${OFFERABLE_PHASES.join(", ")}, never as ${event.task.phase}`);
       }
-      if (event.allocationExpiresAt !== undefined) into.timestamp(event.allocationExpiresAt, "event.taskOffered.allocationExpiresAt", `${at}.allocationExpiresAt`);
+      if (event.assignmentExpiresAt !== undefined) into.timestamp(event.assignmentExpiresAt, "event.taskOffered.assignmentExpiresAt", `${at}.assignmentExpiresAt`);
       break;
     case "task-updated":
       validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${at}.task`, into);
@@ -2094,16 +2098,16 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
     case "task-media-started":
       into.require(channel === "voice", "event.media.channel", `${at}.type`, "only a voice provider publishes media transitions");
       into.require(isTaskId(event.taskId), "event.taskMediaStarted.taskId", `${at}.taskId`, "a task id is required");
-      into.require(isAllocationId(event.allocationId), "event.taskMediaStarted.allocationId", `${at}.allocationId`, "an event about a task names its allocation");
+      into.require(isAssignmentId(event.assignmentId), "event.taskMediaStarted.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
       break;
     case "task-media-ended":
       into.require(channel === "voice", "event.media.channel", `${at}.type`, "only a voice provider publishes media transitions");
       into.require(isTaskId(event.taskId), "event.taskMediaEnded.taskId", `${at}.taskId`, "a task id is required");
-      into.require(isAllocationId(event.allocationId), "event.taskMediaEnded.allocationId", `${at}.allocationId`, "an event about a task names its allocation");
+      into.require(isAssignmentId(event.assignmentId), "event.taskMediaEnded.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
       break;
     case "task-ended":
       into.require(isTaskId(event.taskId), "event.taskEnded.taskId", `${at}.taskId`, "a task id is required");
-      into.require(isAllocationId(event.allocationId), "event.taskEnded.allocationId", `${at}.allocationId`, "an event about a task names its allocation");
+      into.require(isAssignmentId(event.assignmentId), "event.taskEnded.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
       validateTaskOutcome(event.outcome, `${at}.outcome`, into);
       break;
     case "dial-outcome": {
@@ -2115,7 +2119,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
           `the manifest does not declare ${describeValue(event.outcome)} among its dialOutcomes`);
       }
       if (event.taskId !== undefined) into.require(isTaskId(event.taskId), "event.dialOutcome.taskId", `${at}.taskId`, "taskId must be a task id when present");
-      allocationWithTask(event, "event.dialOutcome", at, into);
+      assignmentWithTask(event, "event.dialOutcome", at, into);
       if (event.destinationId !== undefined) into.filled(event.destinationId, "event.dialOutcome.destinationId", `${at}.destinationId`, "a destinationId must not be empty when present");
       if (event.reason !== undefined) into.filled(event.reason, "event.dialOutcome.reason", `${at}.reason`, "a reason must not be empty when present");
       break;
@@ -2132,7 +2136,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       into.filled(event.expected, "event.diagnostic.expected", `${at}.expected`, "a diagnostic states the rule that was broken, as a sentence");
       into.filled(event.observed, "event.diagnostic.observed", `${at}.observed`, "a diagnostic states what was observed instead");
       if (event.taskId !== undefined) into.require(isTaskId(event.taskId), "event.diagnostic.taskId", `${at}.taskId`, "taskId must be a task id when present");
-      allocationWithTask(event, "event.diagnostic", at, into);
+      assignmentWithTask(event, "event.diagnostic", at, into);
       break;
     case "queue-summary":
       validateQueueSummary(event.summary, `${at}.summary`, into);
@@ -2284,7 +2288,7 @@ export function validateCapacity(capacity: unknown, path = "capacity"): Protocol
     return into.violations;
   }
   into.require(typeof capacity.count === "number" && Number.isInteger(capacity.count) && capacity.count >= 0, "capacity.count", `${path}.count`,
-    "count is a whole number, zero or more: how many tasks this provider may allocate at once, zero while the agent's capacity is elsewhere");
+    "count is a whole number, zero or more: how many tasks this provider may assign at once, zero while the agent's capacity is elsewhere");
   return into.violations;
 }
 
@@ -2336,34 +2340,34 @@ export function validateHostGuarantees(guarantees: unknown, path = "host.guarant
  * a task, a step, when it began, how long so far if the host says, and an explicit end that
  * carries the final duration.
  */
-export function validateInteractionReport(report: unknown, path = "interactionReport", manifest?: unknown): ProtocolViolation[] {
+export function validateHistoryReport(report: unknown, path = "historyReport", manifest?: unknown): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(report)) {
-    into.add("interactionReport.shape", path, "an interaction report must be an object");
+    into.add("historyReport.shape", path, "an history report must be an object");
     return into.violations;
   }
-  into.require(isTaskId(report.taskId), "interactionReport.taskId", `${path}.taskId`, "a report names the task");
-  into.require(isAllocationId(report.allocationId), "interactionReport.allocationId", `${path}.allocationId`, "a report names the task's allocation, so a late one never lands on the next life of the id");
-  into.oneOf(report.step, INTERACTION_STEPS, "interactionReport.step", `${path}.step`);
-  into.timestamp(report.at, "interactionReport.at", `${path}.at`);
+  into.require(isTaskId(report.taskId), "historyReport.taskId", `${path}.taskId`, "a report names the task");
+  into.require(isAssignmentId(report.assignmentId), "historyReport.assignmentId", `${path}.assignmentId`, "a report names the task's assignment, so a late one never lands on the next life of the id");
+  into.oneOf(report.step, HISTORY_STEPS, "historyReport.step", `${path}.step`);
+  into.timestamp(report.at, "historyReport.at", `${path}.at`);
   // A muted leg says whose the silence was; no other leg has anyone to name for it.
-  if (report.step === "muted") into.oneOf(report.mutedBy, MUTED_BY, "interactionReport.mutedBy", `${path}.mutedBy`);
-  else if ((INTERACTION_STEPS as readonly unknown[]).includes(report.step)) {
-    into.require(report.mutedBy === undefined, "interactionReport.mutedBy.unexpected", `${path}.mutedBy`, "only a muted leg says who silenced the microphone");
+  if (report.step === "muted") into.oneOf(report.mutedBy, MUTED_BY, "historyReport.mutedBy", `${path}.mutedBy`);
+  else if ((HISTORY_STEPS as readonly unknown[]).includes(report.step)) {
+    into.require(report.mutedBy === undefined, "historyReport.mutedBy.unexpected", `${path}.mutedBy`, "only a muted leg says who silenced the microphone");
   }
   if (report.seconds !== undefined) {
-    into.require(isDurationSeconds(report.seconds) && (report.seconds as number) > 0, "interactionReport.seconds", `${path}.seconds`,
+    into.require(isDurationSeconds(report.seconds) && (report.seconds as number) > 0, "historyReport.seconds", `${path}.seconds`,
       "seconds must be a positive whole number; omit it rather than report nought");
   }
   if (report.ended !== undefined) {
-    if (into.require(report.ended === true, "interactionReport.ended", `${path}.ended`, "ended is declared by presence, as true; a running leg omits it")) {
-      into.require(report.seconds !== undefined, "interactionReport.ended.seconds", `${path}.seconds`,
+    if (into.require(report.ended === true, "historyReport.ended", `${path}.ended`, "ended is declared by presence, as true; a running leg omits it")) {
+      into.require(report.seconds !== undefined, "historyReport.ended.seconds", `${path}.seconds`,
         "an ended leg states its final duration");
     }
   } else if (report.seconds !== undefined && manifest !== undefined) {
     // A running report crosses only to a provider that asked for one: begin and end are the whole
     // of what the rest receive.
-    into.require(isPlainObject(manifest) && manifest.runningStepReports === true, "interactionReport.running.unexpected", `${path}.seconds`,
+    into.require(isPlainObject(manifest) && manifest.runningStepReports === true, "historyReport.running.unexpected", `${path}.seconds`,
       "this provider takes begin and end only; a running report was never asked for");
   }
   return into.violations;
@@ -2379,12 +2383,12 @@ function validateMutedBy(device: Record<string, unknown>, rule: string, path: st
   }
 }
 
-/** An event that may name a task names its allocation with it, and never an allocation alone. */
-function allocationWithTask(event: Record<string, unknown>, rule: string, at: string, into: Collector): void {
+/** An event that may name a task names its assignment with it, and never an assignment alone. */
+function assignmentWithTask(event: Record<string, unknown>, rule: string, at: string, into: Collector): void {
   if (event.taskId !== undefined) {
-    into.require(isAllocationId(event.allocationId), `${rule}.allocationId`, `${at}.allocationId`, "an event that names a task names its allocation too");
+    into.require(isAssignmentId(event.assignmentId), `${rule}.assignmentId`, `${at}.assignmentId`, "an event that names a task names its assignment too");
   } else {
-    into.require(event.allocationId === undefined, `${rule}.allocationId.unexpected`, `${at}.allocationId`, "an allocation is named with its task, never alone");
+    into.require(event.assignmentId === undefined, `${rule}.assignmentId.unexpected`, `${at}.assignmentId`, "an assignment is named with its task, never alone");
   }
 }
 
@@ -2460,7 +2464,7 @@ const LEAD_ASSIST_ACTIONS = ["request", "cancel", "take-over-call", "leave"] as 
 const CONFERENCE_ACTIONS = ["add", "remove"] as const;
 
 
-/** Validate the exact interaction/allocation target before provider command dispatch. */
+/** Validate the exact interaction/assignment target before provider command dispatch. */
 export function validateTaskCommandRequest(request: unknown, task: unknown, path = "request",
   taskContext?: Omit<TaskValidationContext, "channel">): ProtocolViolation[] {
   const into = new Collector();
@@ -2469,10 +2473,10 @@ export function validateTaskCommandRequest(request: unknown, task: unknown, path
     return into.violations;
   }
   into.filled(request.taskId, "command.request.taskId", `${path}.taskId`, "name the interaction task");
-  into.filled(request.allocationId, "command.request.allocationId", `${path}.allocationId`, "name its allocation");
+  into.filled(request.assignmentId, "command.request.assignmentId", `${path}.assignmentId`, "name its assignment");
   into.require(request.taskId === task.id, "command.request.taskId.mismatch", `${path}.taskId`, "the command must target this exact interaction");
-  into.require(request.allocationId === task.allocationId, "command.request.allocationId.mismatch", `${path}.allocationId`, "the command must target this exact allocation");
-  for (const key of Object.keys(request)) into.require(["taskId", "allocationId", "command"].includes(key),
+  into.require(request.assignmentId === task.assignmentId, "command.request.assignmentId.mismatch", `${path}.assignmentId`, "the command must target this exact assignment");
+  for (const key of Object.keys(request)) into.require(["taskId", "assignmentId", "command"].includes(key),
     "command.request.field", `${path}.${key}`, "unsupported task command request field");
   into.violations.push(...validateTaskCommand(request.command, task, `${path}.command`, taskContext));
   return into.violations;
@@ -3184,10 +3188,10 @@ export function validateHostRecordings(value: unknown, path = "host.recordings")
   value.forEach((report, i) => {
     const at = `${path}[${i}]`;
     if (!object(report)) { check(false, "report.shape", at, "expected scoped report"); return; }
-    keys(report, ["taskId", "allocationId", "state"], at);
-    check(filled(report.taskId) && filled(report.allocationId), "report.scope", at, "report identifies task and allocation");
-    const key = JSON.stringify([report.taskId, report.allocationId]);
-    check(!seen.has(key), "report.duplicate", at, "one host state per task allocation"); seen.add(key);
+    keys(report, ["taskId", "assignmentId", "state"], at);
+    check(filled(report.taskId) && filled(report.assignmentId), "report.scope", at, "report identifies task and assignment");
+    const key = JSON.stringify([report.taskId, report.assignmentId]);
+    check(!seen.has(key), "report.duplicate", at, "one host state per task assignment"); seen.add(key);
     violations.push(...validateRecordingState(report.state, `${at}.state`));
   });
   return violations;
@@ -3242,8 +3246,8 @@ export function validateRecordingRequest(request: unknown, task: unknown, contex
   const { violations, check, keys } = collector();
   if (!object(request) || !object(task)) { check(false, "request.shape", path, "request and current task required"); return violations; }
   violations.push(...validateTask(task, { ...context.taskContext, channel: "voice" }, `${path}.task`));
-  keys(request, ["taskId", "allocationId", "command"], path);
-  check(filled(request.taskId) && filled(request.allocationId) && request.taskId === task.id && request.allocationId === task.allocationId, "request.scope", path, "task allocation changed or scope missing");
+  keys(request, ["taskId", "assignmentId", "command"], path);
+  check(filled(request.taskId) && filled(request.assignmentId) && request.taskId === task.id && request.assignmentId === task.assignmentId, "request.scope", path, "task assignment changed or scope missing");
   check(task.channel === "voice", "request.channel", path, "recording is voice-only");
   violations.push(...validateRecordingCommandShape(request.command, context.source, `${path}.command`));
   if (!object(request.command)) return violations;
@@ -3257,7 +3261,7 @@ export function validateRecordingRequest(request: unknown, task: unknown, contex
     check(object(context.host), "host.required", path, "host did not declare recording support");
     const reports = object(context.hostReport) ? context.hostReport.recordings : undefined;
     violations.push(...validateHostRecordings(reports));
-    state = Array.isArray(reports) ? reports.find(r => object(r) && r.taskId === task.id && r.allocationId === task.allocationId)?.state : undefined;
+    state = Array.isArray(reports) ? reports.find(r => object(r) && r.taskId === task.id && r.assignmentId === task.assignmentId)?.state : undefined;
     if (object(context.host)) {
       check(Array.isArray(context.host.actions) && context.host.actions.includes(command.action), "host.action", path, "host does not support action");
       check(object(policy) && Array.isArray(context.host.destinationIds) && context.host.destinationIds.includes(policy.destinationId), "host.destination", path, "task destination is not provisioned by this host");

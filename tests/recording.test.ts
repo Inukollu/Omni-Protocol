@@ -11,7 +11,7 @@ const state = (status: "inactive" | "active" | "paused" = "active"): RecordingSt
   : { status, observationId: "obs", observedAt, validUntil, recordingId: "capture-1" };
 const actions = { start: true, pause: true, resume: true, stop: true, cancel: true } as const;
 const task = (status: "inactive" | "active" | "paused" = "active"): Task<"voice"> => ({
-  id: "task-1", allocationId: "allocation-1", channel: "voice", title: "Call", taskType: "call",
+  id: "task-1", assignmentId: "assignment-1", channel: "voice", title: "Call", taskType: "call",
   phase: "in-progress", media: "started", capabilitySource: "queue", completionMode: "agent-command", browsers: [],
   capabilities: { recording: { provider: actions, host: { ...actions, destinationId: "recordings" } } },
   recording: { provider: state(status) },
@@ -25,9 +25,9 @@ const host: HostRecording = {
   execute: async () => ({ status: "applied" }),
 };
 function check(action: RecordingAction, status: "inactive" | "active" | "paused", source: "provider" | "host" = "provider", changes: Record<string, unknown> = {}, context: Record<string, unknown> = {}, current: Task<"voice"> = task(status)) {
-  return validateRecordingRequest({ taskId: "task-1", allocationId: "allocation-1", command: { ...command(action, source), ...changes } }, current, {
+  return validateRecordingRequest({ taskId: "task-1", assignmentId: "assignment-1", command: { ...command(action, source), ...changes } }, current, {
     source, now, host, softphone: true,
-    hostReport: { online: true, recordings: [{ taskId: "task-1", allocationId: "allocation-1", state: state(status) }] }, ...context,
+    hostReport: { online: true, recordings: [{ taskId: "task-1", assignmentId: "assignment-1", state: state(status) }] }, ...context,
   });
 }
 const rules = (v: ReturnType<typeof validateRecordingState>) => v.map(i => i.rule);
@@ -69,7 +69,7 @@ describe("independent recording controls", () => {
     expect(rules(check("pause", "active", "host", {}, { host: { ...host, actions: ["stop"] } }))).toContain("recording.host.action");
     expect(rules(check("stop", "active", "host", {}, { softphone: false }))).toContain("recording.host.channel");
     expect(check("stop", "active", "host", {}, { host: undefined })).not.toEqual([]);
-    expect(rules(check("stop", "active", "provider", {}, {}, { ...task(), allocationId: "next" }))).toContain("recording.request.scope");
+    expect(rules(check("stop", "active", "provider", {}, {}, { ...task(), assignmentId: "next" }))).toContain("recording.request.scope");
   });
   it("offers cancel as a discard-only action and refuses legacy effect fields", () => {
     expect(check("cancel", "active")).toEqual([]);
@@ -113,10 +113,10 @@ describe("recording evidence and declarations", () => {
   it("validates host declarations, reports, unique scopes and malformed nested inputs", () => {
     expect(validateHostRecording(host, true)).toEqual([]);
     for (const declaration of [{ ...host, actions: ["pause"] }, { ...host, actions: ["stop", "stop"] }, { ...host, actions: ["rewind"] }, { ...host, destinationIds: [] }, { ...host, execute: undefined }]) expect(validateHostRecording(declaration, true)).not.toEqual([]);
-    const report = { taskId: "task-1", allocationId: "allocation-1", state: state() };
+    const report = { taskId: "task-1", assignmentId: "assignment-1", state: state() };
     expect(validateHostReport({ online: true, recordings: [report] })).toEqual([]);
     expect(validateHostReport({ online: true, recordings: [report, report] })).not.toEqual([]);
-    expect(check("stop", "active", "host", {}, { hostReport: { recordings: [{ ...report, allocationId: "other" }] } })).not.toEqual([]);
+    expect(check("stop", "active", "host", {}, { hostReport: { recordings: [{ ...report, assignmentId: "other" }] } })).not.toEqual([]);
     for (const bad of [null, false, [], "x", 1, {}, { toString: null }]) {
       expect(() => validateRecordingRequest(bad, task(), { source: "provider", now })).not.toThrow();
       expect(() => validateRecordingPolicy({ provider: bad, host: bad })).not.toThrow();

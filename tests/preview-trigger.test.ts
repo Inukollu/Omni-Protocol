@@ -5,7 +5,7 @@ import { TaskStream } from "../src/testing.js";
 
 const at = "2026-09-11T10:00:00Z";
 const preview: Task<"voice"> = {
-  id: "interaction-1", allocationId: "interaction-1", title: "Preview", channel: "voice",
+  id: "interaction-1", assignmentId: "interaction-1", title: "Preview", channel: "voice",
   taskType: "Campaign", capabilitySource: "queue", phase: "preview", capabilities: {}, browsers: [],
   completionMode: "agent-command", party: { number: "+919876543210" },
 };
@@ -56,7 +56,7 @@ describe("preview trigger ownership", () => {
     stream.resync({ tasks: [task] }, "snapshot");
     const event = (type: "task-media-started" | "task-media-ended"): ProviderEventEnvelope => ({
       id: type, loginId: "login", occurredAt: at,
-      event: { type, taskId: task.id, allocationId: task.allocationId },
+      event: { type, taskId: task.id, assignmentId: task.assignmentId },
     });
     expect(stream.apply(event("task-media-started"))).toEqual([]);
     expect(stream.apply(event("task-media-ended"))).toEqual([]);

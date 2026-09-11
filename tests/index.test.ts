@@ -10,11 +10,11 @@ import {
   MUTED_BY,
   LISTENING_BREAK_KINDS,
   breakKindAllowsListening,
-  INTERACTION_STEPS_THAT_DIAL,
-  INTERACTION_STEPS_WITH_A_PERSON,
+  HISTORY_STEPS_THAT_DIAL,
+  HISTORY_STEPS_WITH_A_PERSON,
   IDLE_CAPABILITIES,
   commandDialId,
-  interactionStepDials,
+  historyStepDials,
   IDLE_CAPABILITY_UI,
   OMNI_FAILURE_CODES,
   OMNI_PROTOCOL_VERSION,
@@ -22,7 +22,7 @@ import {
   browserSessionKey,
   sameCapabilities,
   defineAdapter,
-  interactionStepExpectsAPerson,
+  historyStepExpectsAPerson,
   isAllowedBrowserUrl,
   negotiateProtocolVersion,
   normalizeContactEmail,
@@ -30,7 +30,7 @@ import {
   taskKey,
   userKey,
   type BrowserSessionKeyInput,
-  type InteractionStep,
+  type HistoryStep,
   type ProviderEvent,
   type TaskBrowser,
   type TaskPhase,
@@ -231,7 +231,7 @@ describe("browserSessionKey", () => {
   // The guide's own example: provider `mailflow`, task `EMAIL-829102`, type `Support`, tab `CRM`.
   const base = { id: "crm", name: "CRM", purpose: "Contact record", url: "https://crm.example.com/contact/42" };
   const input = (browser: TaskBrowser): BrowserSessionKeyInput =>
-    ({ providerId: "mailflow", taskId: "EMAIL-829102", allocationId: "EMAIL-829102.a1", taskType: "Support", browser });
+    ({ providerId: "mailflow", taskId: "EMAIL-829102", assignmentId: "EMAIL-829102.a1", taskType: "Support", browser });
   const reusing = (isolationScheme: TaskBrowser["isolationScheme"]) =>
     ({ ...base, sharedSession: true, isolationScheme } as TaskBrowser);
 
@@ -258,27 +258,27 @@ describe("browserSessionKey", () => {
     // `encodeURIComponent` leaves `.` unescaped, so a raw join once made provider "Acme.Voice"
     // with type "Support" collide with "Acme" and "Voice.Support".
     const scheme = BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME;
-    const left = browserSessionKey({ providerId: "Acme.Voice", taskId: "t1", allocationId: "t1-a", taskType: "Support", browser: reusing(scheme) });
-    const right = browserSessionKey({ providerId: "Acme", taskId: "t1", allocationId: "t1-a", taskType: "Voice.Support", browser: reusing(scheme) });
+    const left = browserSessionKey({ providerId: "Acme.Voice", taskId: "t1", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) });
+    const right = browserSessionKey({ providerId: "Acme", taskId: "t1", assignmentId: "t1-a", taskType: "Voice.Support", browser: reusing(scheme) });
     expect(left).not.toBe(right);
     // And the same two inputs do collide when they genuinely are the same, or the test above
     // would pass for a function that returned something different every time.
-    expect(browserSessionKey({ providerId: "Acme", taskId: "t1", allocationId: "t1-a", taskType: "Support", browser: reusing(scheme) }))
-      .toBe(browserSessionKey({ providerId: "Acme", taskId: "t2", allocationId: "t2-a", taskType: "Support", browser: reusing(scheme) }));
+    expect(browserSessionKey({ providerId: "Acme", taskId: "t1", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) }))
+      .toBe(browserSessionKey({ providerId: "Acme", taskId: "t2", assignmentId: "t2-a", taskType: "Support", browser: reusing(scheme) }));
   });
 });
 
-describe("interactionStepExpectsAPerson", () => {
+describe("historyStepExpectsAPerson", () => {
   it("says which steps have a person, so an absent agent can be read correctly", () => {
     // queued is the only step nobody takes part in: an absent agent there is not a gap.
-    expect(interactionStepExpectsAPerson("queued")).toBe(false);
+    expect(historyStepExpectsAPerson("queued")).toBe(false);
     // The control that matters: every other step does expect one, so an absent agent on any
     // of them means "handled, could not attribute" rather than "nobody involved".
-    const everyStep: InteractionStep[] = ["queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"];
+    const everyStep: HistoryStep[] = ["queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"];
     for (const step of everyStep.filter(step => step !== "queued")) {
-      expect(interactionStepExpectsAPerson(step)).toBe(true);
+      expect(historyStepExpectsAPerson(step)).toBe(true);
     }
-    expect(INTERACTION_STEPS_WITH_A_PERSON).toEqual(everyStep.filter(step => step !== "queued"));
+    expect(HISTORY_STEPS_WITH_A_PERSON).toEqual(everyStep.filter(step => step !== "queued"));
   });
 });
 
@@ -312,8 +312,8 @@ describe("every dial has an outcome", () => {
     expect(CAPABILITY_SOURCES).toEqual(["queue", "ungoverned", "undetermined"]);
     expect(HOST_MUTES).toEqual(["stream", "station"]);
     expect(MUTED_BY).toEqual(["host", "station"]);
-    expect(INTERACTION_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);
-    for (const step of INTERACTION_STEPS_THAT_DIAL) expect(interactionStepDials(step)).toBe(true);
-    for (const step of ["queued", "offered", "answered", "held", "muted"] as const) expect(interactionStepDials(step)).toBe(false);
+    expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);
+    for (const step of HISTORY_STEPS_THAT_DIAL) expect(historyStepDials(step)).toBe(true);
+    for (const step of ["queued", "offered", "answered", "held", "muted"] as const) expect(historyStepDials(step)).toBe(false);
   });
 });
