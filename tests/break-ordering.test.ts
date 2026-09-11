@@ -219,11 +219,11 @@ describe("lead break prerequisites", () => {
     expect(validateTeamBreakCommand(end, { ...lead, memberBreak: { ...state("in-effect"), forced: { by: "another-lead", endsAutomatically: false } } })).toEqual([]);
   });
   it("validates every break policy and rejects the old command name", () => {
-    for (const policy of ["suspended", "requests-blocked"]) {
+    for (const policy of ["suspended", "requests-blocked", "auto-approve"]) {
       expect(validateTeamBreakCommand({ command: { type: "set-break-policy", policy } }, lead).map(v => v.rule)).toContain("team.break.command.policy");
     }
     expect(validateTeamBreakCommand({ command: { type: "set-break-policy", policy: "ask" } }, lead).map(v => v.rule)).toContain("team.break.command.policy");
-    for (const policy of ["approval-required", "auto-approve", "requests-suspended"]) {
+    for (const policy of ["approval-required", "automatically-approved", "requests-suspended"]) {
       const command = { type: "set-break-policy", policy };
       expect(validateTeamBreakCommand({ command }, lead)).toEqual([]);
       expect(validateTeamBreakCommand({ command: { ...command, type: "policy" } }, lead).map(v => v.rule)).toContain("team.break.command.type");

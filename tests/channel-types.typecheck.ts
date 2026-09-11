@@ -456,7 +456,7 @@ export const decideMemberBreak: import("../src/index.js").TeamBreakCommand = { t
 // @ts-expect-error Use decide-break-request, not the retired generic decide command.
 export const ambiguousBreakDecision: import("../src/index.js").TeamBreakCommand = { type: "decide", memberId: "member-1", decision: "denied" };
 
-export const setTeamBreakPolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "auto-approve" };
+export const setTeamBreakPolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "automatically-approved" };
 // @ts-expect-error Use set-break-policy, not the retired generic policy command.
 export const ambiguousBreakPolicy: import("../src/index.js").TeamBreakCommand = { type: "policy", policy: "approval-required" };
 
@@ -467,3 +467,6 @@ export const retiredAskPolicy: import("../src/index.js").TeamBreakCommand = { ty
 export const suspendBreakRequests: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "requests-suspended" };
 // @ts-expect-error Use requests-suspended, not the retired suspended policy.
 export const retiredSuspendedPolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "suspended" };
+
+// @ts-expect-error Use automatically-approved, not the retired auto-approve policy.
+export const retiredAutoApprovePolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "auto-approve" };
