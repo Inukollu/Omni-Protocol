@@ -1,3 +1,15 @@
+# Current delivery: Forced break API
+
+Repository: /Users/vasu/Dev/Personal/Omni-Protocol
+Worktree: /private/tmp/omni-forced-break-api
+Branch: refactor/forced-break-api
+Implementation: 7d1c9c744a342c0df15aa99d68451b099fbb1f23
+PR: https://github.com/Inukollu/Omni-Protocol/pull/116
+
+ForcedBreak / BreakState.forced replace ImposedBreak / imposed; diagnostics and conformance coverage renamed. Retired field rejected even beside forced; no type alias. Actor/timing/status/order, agent-end prohibition and lead release unchanged. Hosts/providers must update together. No package or wire version changes.
+Checks: build, test typecheck, 430 tests including guide examples and migration rejection, package verification (10 files/3 entrypoints), diff check passed. Log /private/tmp/forced-break-check.log.
+Next: monitor CI/reviews and respond to failures; retain worktree/branch while open. No release, merge or cleanup performed. PR115 independently verified merged.
+
 # Current delivery: Take over call API
 
 Repository: /Users/vasu/Dev/Personal/Omni-Protocol
@@ -255,3 +267,8 @@ PID 10407; command python3 /private/tmp/omni-listen-api/.agent-memory/runtime/li
 Monitor omni-protocol-pr115-take-over-call-api: OPEN at 2026-09-11T08:12:17.120212+00:00. Await CI/review; monitor never merges.
 PID 6842; command python3 /private/tmp/omni-take-over-call-api/.agent-memory/runtime/take-over-call-monitor.py; state /private/tmp/omni-take-over-call-api/.agent-memory/runtime/take-over-call.state.json; log /private/tmp/omni-take-over-call-api/.agent-memory/runtime/take-over-call.log; PID file /private/tmp/omni-take-over-call-api/.agent-memory/runtime/take-over-call.pid; process log /private/tmp/omni-take-over-call-api/.agent-memory/runtime/take-over-call.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-take-over-call-api, branch refactor/take-over-call-api, PR https://github.com/Inukollu/Omni-Protocol/pull/115.
 <!-- take-over-call-monitor:end -->
+
+<!-- forced-break-monitor:begin -->
+Monitor omni-protocol-pr116-forced-break-api: OPEN at 2026-09-11T08:31:33.396884+00:00. Await CI/review; monitor never merges.
+PID 89428; command python3 /private/tmp/omni-forced-break-api/.agent-memory/runtime/forced-break-monitor.py; state /private/tmp/omni-forced-break-api/.agent-memory/runtime/forced-break.state.json; log /private/tmp/omni-forced-break-api/.agent-memory/runtime/forced-break.log; PID file /private/tmp/omni-forced-break-api/.agent-memory/runtime/forced-break.pid; process log /private/tmp/omni-forced-break-api/.agent-memory/runtime/forced-break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-forced-break-api, branch refactor/forced-break-api, PR https://github.com/Inukollu/Omni-Protocol/pull/116.
+<!-- forced-break-monitor:end -->
