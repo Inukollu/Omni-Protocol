@@ -1416,20 +1416,15 @@ function validateForcedBreak(value: unknown, path: string, into: Collector): voi
     into.add("break.forced.shape", path, "a forced break must be an object");
     return;
   }
-  // `by` is required either way. Who put somebody off the floor survives whether or not the
-  // break ends on a clock -- a forced break with no origin is a state the agent cannot
-  // reason about.
   into.require(isUserId(value.by), "break.forced.by", `${path}.by`, "a forced break must say who forced it");
-
-  if (value.endsAutomatically === true) {
-    into.timestamp(value.endsAt, "break.forced.endsAt", `${path}.endsAt`);
-  } else if (value.endsAutomatically === false) {
-    into.require(value.endsAt === undefined, "break.forced.endsAt.unexpected", `${path}.endsAt`,
-      "a break that does not end automatically must not carry an end time");
-  } else {
-    into.add("break.forced.endsAutomatically", `${path}.endsAutomatically`,
-      "a forced break must say whether it ends automatically");
+  for (const field of ["endsAutomatically", "endsAt"] as const) {
+    into.require(!Object.hasOwn(value, field), "break.forced.manualResume", `${path}.${field}`,
+      "automatic ending fields are unsupported; the agent must resume manually");
   }
+  if (value.expectedDurationMs !== undefined) into.require(
+    typeof value.expectedDurationMs === "number" && Number.isFinite(value.expectedDurationMs) && value.expectedDurationMs > 0,
+    "break.forced.expectedDurationMs", `${path}.expectedDurationMs`, "expectedDurationMs must be a positive finite number of milliseconds");
+
 }
 
 /** Checks break status against the full currently retained task set, after a transaction. */
@@ -1492,7 +1487,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   const command = request.command;
   const allowed: Record<string, readonly string[]> = {
     "decide-break-request": ["type", "memberId", "decision", "reason"], "set-break-policy": ["type", "policy"],
-    "force-break": ["type", "memberId", "reasonId", "reason"], "end-forced-break": ["type", "memberId"],
+    "force-break": ["type", "memberId", "reasonId", "reason", "expectedDurationMs"], "end-forced-break": ["type", "memberId"],
   };
   const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
   if (!fields) { into.add("team.break.command.type", path, "unknown lead break command"); return into.violations; }
@@ -1518,8 +1513,11 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
     validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
     if (command.type === "end-forced-break") into.require(state.forced !== undefined && (state.status === "on-break" || state.status === "starting-after-task"),
-      "team.break.command.endForcedBreak", path, "end a currently forced break");
+      "team.break.command.endForcedBreak", path, "lift a current forced-break restriction without resuming the agent");
     if (command.type === "force-break") {
+      if (command.expectedDurationMs !== undefined) into.require(
+        typeof command.expectedDurationMs === "number" && Number.isFinite(command.expectedDurationMs) && command.expectedDurationMs > 0,
+        "team.break.command.expectedDurationMs", `${path}.expectedDurationMs`, "expectedDurationMs must be positive finite milliseconds; it never resumes the agent");
       if (command.reasonId !== undefined) into.filled(command.reasonId, "team.break.command.reasonId", path, "reasonId must not be empty");
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
       into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
@@ -1584,7 +1582,7 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
     if (method === "endBreak") {
       into.require(status === "starting-after-task" || status === "on-break", "break.command.end.started", path,
         "end a committed break, including a returning provider still finishing work");
-      into.require(state.forced === undefined, "break.command.end.forced", path, "an agent cannot end a forced break; an authorized lead ends it");
+      // A forced break also ends only when the agent explicitly resumes.
     }
   }
   return into.violations;

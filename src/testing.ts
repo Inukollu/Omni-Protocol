@@ -1919,7 +1919,8 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
 
 // A request goes not-requested -> awaiting-decision | granted; a commit goes granted ->
 // starting-after-task | on-break; work ending goes starting-after-task -> on-break; a denial,
-// a cancel, an agent end or a lead end goes back to not-requested; a forced break arrives on-break
+// a cancel or an explicit agent end goes back to not-requested; a lead lifting forced status
+// preserves the committed break. A forced break arrives on-break
 // with `forced`. Nothing else is a move the guide describes.
 /** What a stream has said about the agent's break, and the moves it may not make. */
 export class BreakStream {

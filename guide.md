@@ -948,9 +948,10 @@ type BreakRequest = {
   reasonId?: string;
 };
 
-type ForcedBreak =
-  | { by: UserId; endsAutomatically: true; endsAt: IsoTimestamp }
-  | { by: UserId; endsAutomatically: false; endsAt?: never };
+type ForcedBreak = {
+  by: UserId;
+  expectedDurationMs?: number;
+};
 
 type BreakState = {
   status: BreakStatus;
@@ -1035,7 +1036,7 @@ type TeamLeadAssistCommand =
 type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
-  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string }
+  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationMs?: number }
   | { type: "end-forced-break"; memberId: UserId };
 
 type TeamBreakCommandRequest = {
@@ -3671,8 +3672,8 @@ mayAsk. Request eligibility remains distinct from approval; existing alwaysAvail
 exceptions are unchanged. Hosts and providers must update together.
 
 Migration: ImposedBreak is now `ForcedBreak`, and the former imposed field is now
-`BreakState.forced`. Diagnostic and harness coverage names use `break.forced`; the agent-end
-diagnostic is `break.command.end.forced`. Update hosts and providers together. The old field
+`BreakState.forced`. Diagnostic and harness coverage names use `break.forced`. The former agent-end prohibition
+has been removed: forced breaks also permit explicit agent resumption. Update hosts and providers together. The old field
 is rejected, including when both spellings are sent; no compatibility alias is provided.
 The break policy value formerly named auto-approve is now `automatically-approved`.
 Requests are approved automatically; approval does not skip commitment or the prerequisites
@@ -3691,11 +3692,11 @@ The team break command formerly named place is now `force-break`. Hosts and prov
 adopt the new command together; place and the interim force spelling are rejected without aliases.
 The team break command formerly named release is now `end-forced-break`, and its diagnostic is
 `team.break.command.endForcedBreak`. The former release command and the interim end spelling are rejected without aliases.
-**End a forced break** is a lead action through `executeTeamBreak`; the agent’s `endBreak`
-method still cannot end a forced break. Break ordering and permission rules are unchanged.
+The agent’s `endBreak` now applies to forced breaks as well as requested breaks.
 
-`ForcedBreak` says who forced the break, whether automatic ending is enabled, and, when enabled,
-when the provider will end it. A break the agent did not choose is not manually resumable by them.
+`ForcedBreak` names who forced the break and may include an advisory `expectedDurationMs`.
+The agent must explicitly resume when ready. The retired endsAutomatically and endsAt fields
+are rejected, including when an expected duration is also provided.
 
 **Every forced break has a person behind it.** A lead or a manager forced it; there is no such
 thing as a break the platform forced on its own. Where a platform applies one automatically, it is
@@ -3715,17 +3716,34 @@ For example:
 ```ts
 forced: {
   by: "manager-1042",
-  endsAutomatically: true,
-  endsAt: "2026-08-21T10:00:00.000Z"
+  expectedDurationMs: 600000
 }
 ```
 
-The presence of `forced` means the agent cannot end the break manually, so Omni withdraws its
-Resume control from that agent. With `endsAutomatically: true`, the provider ends the break at
-`endsAt`; with `endsAutomatically: false`, it does not end the break on a timer. An authorized lead
-may end either form with **Resume**, not only whoever forced it. Omni shows **Stopped by <who>**,
-resolving the name with `describeUsers()`, and shows when the break will end where automatic ending
-is enabled.
+The host keeps **Resume** available for an agent on a forced break. The agent explicitly chooses
+Resume; the host sends `endBreak()` and follows the provider-confirmed state before resuming
+work. An expected duration is a positive finite number of milliseconds, measured from actual
+entry into `on-break`, excluding any `starting-after-task` wait. Omission means no expected
+duration was supplied. Neither duration expiry nor an overdue indication authorizes the host
+or provider to end the break, restore availability, or route work to the agent.
+
+**A lead lifting the restriction does not resume the agent.** On an applied
+`end-forced-break`, the provider clears `BreakState.forced` while preserving the current
+`on-break` or `starting-after-task` status and `activeReasonId`. This command cannot publish
+`not-requested`, restore readiness, or start routing work. Ordinary progress from
+`starting-after-task` to `on-break` still happens when work finishes. The host follows the
+published state and waits for the agent's explicit Resume, even after reconnect. Historical
+attribution is not rewritten by clearing the current forced marker.
+
+The agent may explicitly resume either before or after the lead lifts the restriction. A lead
+command, timer, late snapshot or reconnect is never a substitute for that choice. Providers
+must correlate resumption to the authenticated agent's action; a state-only ordering validator
+cannot establish the cause of a transition. The usual multi-provider end/reconciliation flow
+still applies, and work resumes only on confirmed provider state.
+
+A host may display the expected duration. A countdown requires an evidenced actual start;
+a received snapshot, replay or reconnect is not a new start and cannot restart the duration.
+Without that evidence, show the duration without inventing a start or return time.
 
 A break applies to the **agent**, not to one provider. When a provider forces one, Omni immediately
 requests a break on every other connected provider, or they would keep routing work to somebody who
@@ -3812,7 +3830,7 @@ request object only to the request method, and undefined to the other three.
 | `requestBreak` | `not-requested`; selected current reason code when codes exist; `canRequestBreak` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
 | `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `canRequestBreak` does not revoke the grant. |
 | `cancelBreak` | `awaiting-decision` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
-| `endBreak` | `on-break` or `starting-after-task` during reconciliation; an agent cannot end a forced break. |
+| `endBreak` | `on-break` or `starting-after-task` during reconciliation; the agent may explicitly end a requested or forced break. |
 
 Use `validateTeamBreakCommand(request, context)` for lead decisions, forcing a break, ending a forced break and
 policy commands. It requires the live lead capability and active transport, a current target
@@ -4146,8 +4164,8 @@ One method, `executeTeamBreak`, taking a discriminated command exactly as `execu
 | --- | --- |
 | `{ type: "decide-break-request", memberId: UserId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
 | `{ type: "set-break-policy", policy }` | `approval-required`, `automatically-approved`, or `requests-suspended`. |
-| `{ type: "force-break", memberId: UserId, reasonId?, reason? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. |
-| `{ type: "end-forced-break", memberId: UserId }` | Ends a forced break on that member, whoever forced it. |
+| `{ type: "force-break", memberId: UserId, reasonId?, reason?, expectedDurationMs? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. Optional `expectedDurationMs` is advisory and is published on the resulting forced break. |
+| `{ type: "end-forced-break", memberId: UserId }` | Lifts the forced-break restriction, whoever forced it, by clearing `BreakState.forced`. The committed break continues; only the agent resumes work. |
 
 `memberId` is this provider's own identifier for the member, as published on its team member list. It is
 never an identifier from another provider, and Omni does not translate between them; names come
@@ -5026,7 +5044,7 @@ operation is dispatched. The source must fence delayed operations against its ow
 Normal order is `not-requested` → `awaiting-decision` → `granted` →
 `starting-after-task` → `on-break` → `not-requested`. Auto-approval may go directly to
 `granted`; a commit with no outstanding work may go directly to `on-break`. Denial/cancel
-returns a precommit request to `not-requested`; an authorized agent or lead end returns a committed
+returns a precommit request to `not-requested`; an explicit agent end returns a committed
 break there. Same-state restatements are allowed. An evidenced forced break is the explicit
 exception to requesting/granting, and must carry its forced actor/state. Neither skipped
 publication nor a host-local guess creates another exception. A later normal attempt starts

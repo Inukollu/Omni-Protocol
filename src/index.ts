@@ -1225,16 +1225,12 @@ export interface BreakRequest {
   reasonId?: string;
 }
 
-/**
- * A break forced on the agent rather than requested by them.
- *
- * `by` is required in both arms. Who put somebody off the floor survives whether or not the
- * break ends on a clock -- a forced break with no origin is a state the agent cannot reason
- * about, and one that ends on a condition is still somebody's decision.
- */
-export type ForcedBreak =
-  | { by: UserId; endsAutomatically: true; endsAt: IsoTimestamp }
-  | { by: UserId; endsAutomatically: false; endsAt?: never };
+/** A break forced on the agent; the agent must explicitly resume when ready. */
+export type ForcedBreak = {
+  by: UserId;
+  /** Optional expected time on break, in milliseconds from actual start. Advisory only. */
+  expectedDurationMs?: number;
+};
 
 export interface BreakState {
   status: BreakStatus;
@@ -1361,7 +1357,8 @@ export type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
   /** `reasonId` names a published `BreakReason.id`, required whenever the provider publishes reasons: the member's forced break carries it as `activeReasonId`. */
-  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string }
+  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationMs?: number }
+  /** Clears forced metadata only; preserves the committed break until the agent explicitly resumes. */
   | { type: "end-forced-break"; memberId: UserId };
 
 export type TeamCommandResult =

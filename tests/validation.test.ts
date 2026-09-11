@@ -589,7 +589,7 @@ describe("break state", () => {
   });
 
   it("lets a forced break travel with on-break or starting-after-task, and nothing else", () => {
-    const placed = { by: "lead-3", endsAutomatically: false };
+    const placed = { by: "lead-3" };
     expect(check({ status: "on-break", forced: placed })).toEqual([]);
     expect(rules(validateSnapshot(snapshot({ break: { status: "starting-after-task", canRequestBreak: false, forced: placed }, tasks: [task()] }), manifest()))).toEqual([]);
     // Beside granted or awaiting-decision the host would commit a break nobody asked for.
@@ -602,27 +602,24 @@ describe("break state", () => {
     const reasons = [{ id: "meal", label: "Meal", kind: "meal" }, { id: "coach", label: "Coaching", kind: "coaching" }];
     expect(check({ status: "on-break", reasons, activeReasonId: "meal" })).toEqual([]);
     expect(check({ status: "on-break", reasons })).toEqual(["break.activeReasonId.required"]);
-    expect(check({ status: "on-break", reasons, forced: { by: "lead-3", endsAutomatically: false } })).toEqual(["break.activeReasonId.required"]);
+    expect(check({ status: "on-break", reasons, forced: { by: "lead-3" } })).toEqual(["break.activeReasonId.required"]);
     // No reasons published, nothing to name; not in effect, nothing to name yet.
     expect(check({ status: "on-break" })).toEqual([]);
     expect(check({ status: "granted", reasons })).toEqual([]);
   });
 
-  it("keeps who forced a break whether or not it ends on a clock", () => {
+  it("keeps the actor and accepts only advisory forced-break duration", () => {
     const forced = (value: unknown) => check({ status: "on-break", forced: value });
-    // Both arms are legal. The origin is required in both, because a forced break with no
-    // origin is a state the agent cannot reason about.
-    expect(forced({ by: "lead-3", endsAutomatically: true, endsAt: "2026-08-21T10:00:00Z" })).toEqual([]);
-    expect(forced({ by: "lead-3", endsAutomatically: false })).toEqual([]);
-
-    expect(forced({ endsAutomatically: false })).toContain("break.forced.by");
-    expect(forced({ by: "", endsAutomatically: false })).toContain("break.forced.by");
-    expect(forced({ by: "lead-3" })).toContain("break.forced.endsAutomatically");
-    expect(forced({ by: "lead-3", endsAutomatically: true })).toContain("break.forced.endsAt");
-    expect(forced({ by: "lead-3", endsAutomatically: true, endsAt: "soon" })).toContain("break.forced.endsAt");
-    // A break that does not end automatically must not claim an end.
-    expect(forced({ by: "lead-3", endsAutomatically: false, endsAt: "2026-08-21T10:00:00Z" }))
-      .toContain("break.forced.endsAt.unexpected");
+    expect(forced({ by: "lead-3" })).toEqual([]);
+    expect(forced({ by: "lead-3", expectedDurationMs: 600000 })).toEqual([]);
+    expect(forced({})).toContain("break.forced.by");
+    expect(forced({ by: "" })).toContain("break.forced.by");
+    for (const expectedDurationMs of [0, -1, Infinity, NaN, "500", null]) {
+      expect(forced({ by: "lead-3", expectedDurationMs })).toContain("break.forced.expectedDurationMs");
+    }
+    for (const fields of [{ endsAutomatically: true }, { endsAutomatically: false }, { endsAt: "2026-09-11T10:00:00Z" }]) {
+      expect(forced({ by: "lead-3", ...fields })).toContain("break.forced.manualResume");
+    }
   });
 });
 
@@ -1182,7 +1179,7 @@ describe("the other direction, everywhere", () => {
       rules(validateSnapshot(snapshot({ break: { status: "not-requested", canRequestBreak: true, ...over } }), manifest()));
     expect(check({ canRequestBreak: false, requestUnavailableReason: "Busy hours" })).toEqual([]);
     expect(check({ canRequestBreak: true, requestUnavailableReason: "Busy hours" })).toEqual(["break.requestUnavailableReason.canRequestBreak"]);
-    const placed = { by: "M-1", endsAutomatically: false };
+    const placed = { by: "M-1" };
     expect(check({ status: "on-break", forced: placed })).toEqual([]);
     expect(check({ status: "not-requested", forced: placed })).toEqual(["break.forced.status"]);
     const reasons = [{ id: "lunch", label: "Lunch" }];

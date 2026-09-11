@@ -431,7 +431,7 @@ export type FormerListenMethod = import("../src/index.js").Connection["executeTe
 // @ts-expect-error The former lead-assist action has no compatibility alias.
 export const retiredLeadTakeOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over" };
 
-export const forcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAutomatically: false };
+export const forcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1" };
 export const forcedBreakState: import("../src/index.js").BreakState = { status: "on-break", canRequestBreak: false, forced: forcedBreak };
 // @ts-expect-error The old break type has no compatibility alias.
 import type { ImposedBreak } from "../src/index.js";
@@ -490,3 +490,9 @@ export const retiredBreakStatusField: import("../src/index.js").BreakState = { s
 
 // @ts-expect-error BreakApproval was renamed to BreakStatus without an alias.
 import type { BreakApproval } from "../src/index.js";
+
+export const advisoryForcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", expectedDurationMs: 600000 };
+// @ts-expect-error Forced breaks cannot declare automatic endings.
+export const automaticForcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAutomatically: true };
+// @ts-expect-error A fixed end timestamp cannot resume an agent.
+export const fixedForcedBreakEnd: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAt: "2026-09-11T12:00:00Z" };
