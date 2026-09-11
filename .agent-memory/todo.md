@@ -1,3 +1,13 @@
+# Join call API rename — PR112 — 2026-09-11
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-join-call-api; branch refactor/join-call-api; implementation 5d0a7d34be0368b205f210c0aae80e61177fb969; PR https://github.com/Inukollu/Omni-Protocol/pull/112.
+
+Renamed barge to join-call in MonitorMode, MONITOR_MODES, TeamMonitorCommand, permission declarations and published monitoring state. Guide labels it Join call and distinguishes monitoring from assistance/takeover. Existing prerequisites/permissions unchanged. Regression checks reject former/mixed mode declarations and former state; compile-time checks reject retired command/mode. No compatibility alias, package/wire version change, release or client adoption.
+
+Validation: build/test typecheck passed. Full 427-test run: 426 passed, one guide inline reference failed; corrected the reference, then all six guide/example/hygiene checks passed. Package verification passed (10 files; all three runtime/type entry points); diff check passed. No outstanding failed checks. Risk: producers/consumers must migrate action, permissions and retained monitoring state together. Runtime mode validators enforce the rename; no new monitor-command runtime validator was introduced. Next: CI/review; user merges; retain worktree/branch while open.
+
+PR111 independently verified MERGED at bb1935f311427f422545875b8f97745dd5a21408. New branch starts at merged main 1d36322; no version edit. Old worktrees retained; no cleanup requested. Following sections are historical records.
+
 # Team members API rename — PR111 — 2026-09-11
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-team-members-api; branch refactor/team-members-api; implementation ea0b90a1d73464fb9ff9980e1bbdfddc9241ad2f; PR https://github.com/Inukollu/Omni-Protocol/pull/111.
@@ -193,3 +203,8 @@ PID 77110; command python3 /private/tmp/omni-outcome-api/.agent-memory/runtime/o
 Monitor omni-protocol-pr111-team-members-api: OPEN at 2026-09-11T07:30:37.948493+00:00. Await CI/review; monitor never merges.
 PID 18952; command python3 /private/tmp/omni-team-members-api/.agent-memory/runtime/team-members-monitor.py; state /private/tmp/omni-team-members-api/.agent-memory/runtime/team-members.state.json; log /private/tmp/omni-team-members-api/.agent-memory/runtime/team-members.log; PID file /private/tmp/omni-team-members-api/.agent-memory/runtime/team-members.pid; process log /private/tmp/omni-team-members-api/.agent-memory/runtime/team-members.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-team-members-api, branch refactor/team-members-api, PR https://github.com/Inukollu/Omni-Protocol/pull/111.
 <!-- team-members-monitor:end -->
+
+<!-- join-call-monitor:begin -->
+Monitor omni-protocol-pr112-join-call-api: OPEN at 2026-09-11T07:39:29.213000+00:00. Await CI/review; monitor never merges.
+PID 58048; command python3 /private/tmp/omni-join-call-api/.agent-memory/runtime/join-call-monitor.py; state /private/tmp/omni-join-call-api/.agent-memory/runtime/join-call.state.json; log /private/tmp/omni-join-call-api/.agent-memory/runtime/join-call.log; PID file /private/tmp/omni-join-call-api/.agent-memory/runtime/join-call.pid; process log /private/tmp/omni-join-call-api/.agent-memory/runtime/join-call.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-join-call-api, branch refactor/join-call-api, PR https://github.com/Inukollu/Omni-Protocol/pull/112.
+<!-- join-call-monitor:end -->
