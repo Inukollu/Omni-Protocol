@@ -22,10 +22,12 @@ are used precisely throughout and mean nothing looser here.
 | **Host** | Omni, named that way where the contrast with a provider is the point — *the host carries the audio*, *host-side input*. |
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
-| **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; a transfer never names one, since a contact goes back to a queue. |
+| **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; transfer destinations may include an agent when the provider publishes that directory item. |
 | **Lead** | An agent whose login declares `capabilities.team`. The provider publishes a `TeamRoster` to them and to nobody else: **the login is the permission**. |
 | **Provisioning** | Omni-side policy about this agent, configured outside the protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and provisioning disagree, the stricter wins. |
-| **Task** | One unit of assigned work — a call, a chat, a mail. |
+| **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. |
+| **Interaction** | One agent’s part in the call or conversation. The same call may return to that agent for a new interaction. |
+| **Task** | The agent’s assigned work and its workspace, controls and completion work. A voice task represents one interaction, not the caller’s whole call. |
 | **Channel** | The kind of work a provider carries: `voice`, `chat`, or `email`. Fixed per provider by its manifest. |
 | **Task type** | The provider's own name for a category of work — a queue, a mailbox folder, a chat source. Free-form, and finer-grained than a channel. |
 | **Capability** | A provider's declaration that a control exists for a task or a session. It says *offer this*; the provider performs it, and the host only offers it — see **Where a command executes**. |
@@ -1481,7 +1483,7 @@ fired into a state that has moved on.
 Allocate only within the concurrent capacity Omni has stated for this agent.
 
 An allocation beyond that capacity, or with none currently stated, is invalid and Omni rejects it
-as a protocol violation. Work the agent was already handling when the connection came back is
+as a protocol violation. Work the agent was already working on when the connection came back is
 reported in the snapshot; it is not an allocation.
 
 ### 8. State is authoritative at the provider
@@ -1492,7 +1494,7 @@ replaces its local provider view; it does not overwrite the provider.
 
 ### 9. Define a vocabulary; do not merely list it
 
-Every member of a closed set — break kinds, handling steps, destination kinds — must have a
+Every member of a closed set — break kinds, interaction steps, destination kinds — must have a
 normative definition; matching names alone do not establish shared meaning.
 
 ### 10. Order on the wire is display order
@@ -2021,7 +2023,7 @@ failure:
 ```
 
 The `User` it carries is the **root of this provider's user namespace**. Every other person this
-provider names — a roster member, the manager on an imposed break, the agent on a handling step —
+provider names — a roster member, the manager on an imposed break, the agent on an interaction step —
 is identified from the same directory and carries the same `UserId` type.
 
 | Field | Contract |
@@ -2073,7 +2075,7 @@ Creates one live provider connection for the signed-in agent.
 | `autoAcceptTasks` | Agent provisioning policy relayed to the provider at login, stated by the host on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
 | `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's host states what its Mute does, and a desk-phone or conversation login's host cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the host's**. |
-| `store` | The login's operational store, kept by the host for the life of the login, across a reload of the host, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the handling legs a host reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store a host may clear aggressively. **A task's keys carry the task id and go with the task**: a key written about a task names the task's id in the key, and is deleted before the task's end is published, because a platform retires a task id minutes after closing it and a requeue takes seconds, so a key that outlives its task is inherited by the next offer of the same id -- a record with legs the host never reported against it. A login-scoped key carries no task id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`drive.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`drive.store.late`). The ordinary late write is the host's, not the adapter's: a host reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.task-not-found` and writes nothing -- the host ends its own open legs at the task's end, so such a report is the host's error to see, and a host reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
+| `store` | The login's operational store, kept by the host for the life of the login, across a reload of the host, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs a host reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store a host may clear aggressively. **A task's keys carry the task id and go with the task**: a key written about a task names the task's id in the key, and is deleted before the task's end is published, because a platform retires a task id minutes after closing it and a requeue takes seconds, so a key that outlives its task is inherited by the next offer of the same id -- a record with legs the host never reported against it. A login-scoped key carries no task id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`drive.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`drive.store.late`). The ordinary late write is the host's, not the adapter's: a host reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.task-not-found` and writes nothing -- the host ends its own open legs at the task's end, so such a report is the host's error to see, and a host reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
 | `host` | The host's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The host reports, the adapter decides**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -2216,7 +2218,7 @@ that reads as a database key.
 - **Omit an id you cannot resolve; do not invent a name for it.** A missing entry says *I do not
   know this person*, which Omni renders as such. Ordering is not significant and the response may
   be shorter than the request.
-- **Take the whole list in one call.** Omni resolves a roster or a handling history as a batch, and
+- **Take the whole list in one call.** Omni resolves a roster or an interaction history as a batch, and
   a per-id round trip multiplies that by its length.
 - **Omni caches a result for one hour, then resolves it again.** The identifier is stable across
   logins but the name behind it is not, so the cache expires on a clock rather than living for the
@@ -2354,7 +2356,7 @@ The provider does not introduce new work as already `in-progress`.
 
 A task appears already `in-progress` only in a snapshot taken after a reconnect or a resync,
 reporting work that began earlier in this login and never stopped. A fresh login has none to
-report: nothing has been allocated yet, and work the agent was handling elsewhere is not carried
+report: nothing has been allocated yet, and work the agent was working elsewhere is not carried
 into a new session.
 
 ## Tasks
@@ -2372,9 +2374,9 @@ time. Runtime conformance checks also require the task channel to match its prov
 | Field | Contract |
 | --- | --- |
 | `id` | Required `TaskId`, the platform's own identity for the task. Unique among the tasks open at once; a platform retires an id minutes after closing it, so the same id comes back for another customer. Omni scopes it with the provider ID. |
-| `allocationId` | Required `AllocationId`: this life of the task, minted once per offer and never reused for the life of the login, whatever the id does. Every event, command and report that names a task names its allocation too, so a late dial outcome or a late handling report for the first customer never lands on the next under the same id. The stream refuses an offer reusing one (`stream.taskOffered.allocation`), an update restating another life of the id (`stream.taskUpdated.allocation`), and a media or ending event naming a life that has ended or that nobody has seen (`stream.allocation.ended`, `.unknown`); a `dial-outcome` may name an ended life, since a dial placed late routinely outlives its call, and the host routes it there. See **A task's life on the wire**. |
+| `allocationId` | Required `AllocationId`: this life of the task, minted once per offer and never reused for the life of the login, whatever the id does. Every event, command and report that names a task names its allocation too, so a late dial outcome or a late interaction report for the first customer never lands on the next under the same id. The stream refuses an offer reusing one (`stream.taskOffered.allocation`), an update restating another life of the id (`stream.taskUpdated.allocation`), and a media or ending event naming a life that has ended or that nobody has seen (`stream.allocation.ended`, `.unknown`); a `dial-outcome` may name an ended life, since a dial placed late routinely outlives its call, and the host routes it there. See **A task's life on the wire**. |
 | `title` | Agent-facing task title. |
-| `channel` | Channel handling this task. It must equal the source provider's manifest channel. |
+| `channel` | Channel used for this task. It must equal the source provider's manifest channel. |
 | `taskType` | Required provider-defined source or category of work, such as a voice `Queue Name`, `Mailbox Folder`, `Chat Source`, `Support`, `Billing`, or `Returns`. |
 | `capabilities` | Controls and workspace features available for this specific task. |
 | `capabilitySource` | Required. Who chose the capabilities: `queue` when somebody configured these terms, `ungoverned` when nothing handed the work over -- an agent's own outbound -- and `undetermined` when a queue was named and its terms could not be read, in which case `capabilities` is what the provider will honour, not what the platform permits. A host shows `undetermined` where the agent works. See **Task capabilities**. |
@@ -2387,9 +2389,9 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` makes the provider initiate dialing, `host-calls` makes the host issue Call, `waits` keeps the task in preview awaiting the agent. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
-| `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
+| `wrapAllowance` | Fixed time allowed to complete the task after primary interaction ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
-| `handlingHistory` | The call record: `steps` — the ordered handling history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `handleSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **How a task has been handled**. |
+| `handlingHistory` | The call record: `steps` — the ordered interaction history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `handleSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **Interaction history**. |
 | `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the host's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where a host placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `leadAssist` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Lead assist**. |
 | `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead-assist` `take-over` and `leave` issuable. See **Lead assist**. |
@@ -2435,7 +2437,7 @@ The canonical task transitions are:
 | `in-progress` | Agent starts a warm transfer (`transfer` `warm`); the customer is parked | `paused` |
 | `paused` | Provider or agent resumes the task | `in-progress` |
 | `paused` | Agent cancels a warm transfer (`transfer` `cancel`) | `in-progress` |
-| `in-progress` or `paused` | Contact handling ends and follow-up work remains | `completing` |
+| `in-progress` or `paused` | Contact interaction ends and follow-up work remains | `completing` |
 | `completing` | Agent connects back to the party (`connect-back`) | `in-progress` |
 | Any phase | Provider emits `task-ended` | Removed |
 
@@ -2444,7 +2446,7 @@ The canonical task transitions are:
 A task id is the platform's, and platforms reuse them: a closed id is retired minutes later, a
 requeue takes seconds, and on one platform a call was offered twice, thirteen seconds apart, under
 one id, through a close and a re-offer. Everything that names a task after the fact -- a dial
-outcome, a media event, an ending, a handling report, a command -- would land on whichever life of
+outcome, a media event, an ending, an interaction report, a command -- would land on whichever life of
 the id is open when it arrives. So every offer mints an `allocationId`, unique for the life of the
 login, and every one of those names it beside the `taskId`. The host keys its state on the pair, a
 late event finds the life it belongs to or is refused, and a task-scoped browser session
@@ -2549,33 +2551,33 @@ is named on its side. The task past preview has no deadline to wait for, so it c
 field.
 
 **Provider execution and host controls are distinct.** Answer, hold/resume, transfer (including
-IVR routing), conference and handling completion are executed by the provider
+IVR routing), conference and interaction completion are executed by the provider
 through the adapter. The task's applicable capability, phase, completion mode and command-specific
 prerequisites decide which controls are offered. Caller disconnect also executes at the provider. Microphone mute is host-owned, never a provider
 TaskCommand or task capability. The separately declared host recording facility keeps its existing
 recording contract; this distinction does not remove it or move provider call operations to the host.
 
-A caller journey may revisit the same agent while an earlier handling still wraps. Public task
-IDs must remain distinct for concurrently open handlings. For source-owned handling IDs allocated
+A caller journey may revisit the same agent while an earlier interaction still wraps. Public task
+IDs must remain distinct for concurrently open interactions. For source-owned interaction IDs allocated
 before offer and never reused per assignment, both public task ID and allocation ID may equal that
-handling ID. Restore them unchanged on reconnect. Commands, media, endings and handling reports
-retain the exact pair; never retarget an old command to the newest handling of a journey.
+interaction ID. Restore them unchanged on reconnect. Commands, media, endings and interaction reports
+retain the exact pair; never retarget an old command to the newest interaction of a journey.
 `validateTaskCommandRequest` checks the request's pair against the supplied published task and
 then its command prerequisites. The caller must select that task within the correct provider/login
 and recheck at the provider; the validator cannot prove source freshness or authorization.
-`task-ended` retires only that handling's resources. Another handling, caller channel or IVR/queue
+`task-ended` retires only that interaction's resources. Another interaction, caller channel or IVR/queue
 portion must not be cleared because this task ended. Snapshot counts include all still-owned wrap
-and active handlings; task disposal is not caller hangup.
+and active interactions; task disposal is not caller hangup.
 
-**Voice describes the agent's handling within the wider call.** The task defines that agent's
+**Voice describes the agent's interaction within the wider call.** The task defines that agent's
 workspace, tools, permissions, media participation and completion work. The caller's channel may
-continue through IVR, queues, other agents, holds or conferences while this handling ends or wraps.
-Disposing this task ends this handling responsibility; it is not evidence that the caller's channel
+continue through IVR, queues, other agents, holds or conferences while this interaction ends or wraps.
+Disposing this task ends this interaction responsibility; it is not evidence that the caller's channel
 or journey ended. Task media describes this agent's attachment, not the lifetime of every party's
 connection. Commands retain their explicit targets and effects; task disposal must not silently
 become a caller-disconnect operation.
 
-**A task is never its audio.** A voice task is the allocation: the call is offered when it is
+**A task is never its audio.** A voice task represents the agent’s interaction: the call is offered when it is
 routed to the agent and accepted as its `acceptance` dictates, and its presence and phase follow
 the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
 consult, a conference leg joining or leaving, a transfer, a connect-back — the media follows
@@ -2586,7 +2588,7 @@ are the adapter's and the platform's, transient, and decide neither when a task 
 phase it is in.
 
 The line runs between the provider's word and Omni's own senses. `task-media-ended` is the
-provider's report that primary handling ended — a fact about the work, which is why the completion
+provider's report that primary interaction ended — a fact about the work, which is why the completion
 allowance starts on it and the Connect back control appears on it — and Omni follows that report as it
 follows any other. What Omni never does is derive a task's state from its own media session: a
 stream that drops, a track that ends, a transport that disconnects, a microphone that fails, an
@@ -2612,7 +2614,7 @@ whether the channel carries real-time media:
 | Email | The `task-updated` that moves the task to `completing`: the provider's word that the platform has accepted the outgoing message, the allowance running from that publication's `occurredAt` |
 | Other non-media channels | The `task-updated` that moves the task to `completing` |
 
-**Off voice, `completing` is the provider's word that handling ended.** There is no media event to
+**Off voice, `completing` is the provider's word that interaction ended.** There is no media event to
 carry it, so the phase does; a host starts the wrap clock at that publication and nowhere else. It
 is optional: a conversation with nothing to wrap moves from `in-progress` to `task-ended` and
 `completing` is never published. Under `provider-automatic` with a non-zero `wrapAllowance` it is
@@ -2712,7 +2714,11 @@ const immediateProviderCompletion = {
 } satisfies Pick<Task, "completionMode" | "wrapAllowance">;
 ```
 
-### How a task has been handled
+### Interaction history
+
+The guide calls the agent’s part an interaction. Existing API names such as `handlingHistory`,
+`HandlingReport` and `HandlingReportResult` retain their spelling; this wording change adds no
+new wire fields or types.
 
 `Task.handlingHistory` is the call record: the steps that brought the task to the agent, oldest
 first, and what they add up to before this agent:
@@ -2829,7 +2835,7 @@ Four rules a provider has to keep:
 - **Omit `seconds` while it is unknown. Never send `0`.** A leg still talking is not a zero-second
   conversation, and on live data that is the ordinary case rather than an edge. A zero is rejected.
 - **`by` is a bare `UserId`, and not necessarily an agent.** A lead or a manager takes part
-  in handling too — a transfer accepted, a call conferenced in — so the field names whoever it was,
+  during an interaction too — a transfer accepted, a call conferenced in — so the field names whoever it was,
   the same way `ImposedBreak.by` does. It comes from this provider's own directory, the same
   namespace as `AuthenticationState.identity.id` and the team roster, so entries pair
   within a provider and never across one.
@@ -3234,7 +3240,7 @@ queue, named agent or another configured destination. No destination kind is inf
 label. The host offers only the directory attached to this task's specific transfer capability,
 and sends the exact destination ID; it does not invent an agent picker or arbitrary dial target.
 The provider rechecks eligibility and executes the routing. Returning to an IVR or queue does not
-end the caller journey; a later assignment to the same agent is a new handling.
+end the caller journey; a later assignment to the same agent is a new interaction.
 
 #### Ending a call, and removing one person from it
 
@@ -3250,20 +3256,20 @@ provider.
 The host sends the ordinary task-scoped `execute` request with `command: { type: "end-call" }`.
 The provider knows the caller and agent-added channel bindings; no channel list or owner details
 are sent by the host. The task's `endCall` capability is permission, not an executor selection.
-`validateTaskCommandRequest` checks the exact handling/allocation and delegates the command's
+`validateTaskCommandRequest` checks the exact interaction/allocation and delegates the command's
 policy/phase checks. The provider rechecks current ownership atomically; no client validator can
 prove that its view is fresh. The host does not implement agent end-call; low-level removal of individual channels is not
 this agent action. There is no host end-call execution API or fallback route.
 
-`end-call` is gated by `endCall` on the current handling. It ends the caller connection and
-all agent-added channels owned by that handling, including channels originally added by previous
+`end-call` is gated by `endCall` on the current interaction. It ends the caller connection and
+all agent-added channels owned by that interaction, including channels originally added by previous
 agents and inherited through transfer or takeover. Ownership is not inferred from who originally
 dialed, the current UI selection, or a person's label. The provider maintains that authority
-and checks the exact handling/allocation when acting. Agent-added channels are not left behind
+and checks the exact interaction/allocation when acting. Agent-added channels are not left behind
 merely because another agent added them.
 
 On a successful transfer or takeover, ownership of those channels passes to the receiving
-handling (lead or another agent), not just ownership of the caller leg. The outgoing handling may
+interaction (lead or another agent), not just ownership of the caller leg. The outgoing interaction may
 still have its allowed wrap work, but cannot disconnect channels it no longer owns. A pending or
 unknown handover is not a confirmed ownership change: retain source reservations and reconcile.
 The provider must serialize handover and end-call so a delayed outgoing command cannot tear down
@@ -3276,7 +3282,7 @@ caller/channel disconnect. Other agents' independent tasks end or wrap only on t
 transitions. Neither disposal nor transfer itself ends the continuing caller journey.
 
 `conference` `remove` remains a person-specific provider operation, gated by `conference`.
-It does not implicitly dispose any other handling. Its person/consultation prerequisites
+It does not implicitly dispose any other interaction. Its person/consultation prerequisites
 remain separate from the permission to disconnect the caller. A remove that would leave the
 agent alone is not a remove but an `end-call`, and the provider answers it `failed`.
 The consulted destination of a warm transfer is not removed this way:
@@ -3332,7 +3338,7 @@ customer.
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
 | `decline` | Pending-task button: Decline | The provider can decline a pending chat offer. Omni shows it only when provisioning also permits declining. |
-| `hold` | Primary toggle: Hold | Omni may pause and resume agent handling of the chat. |
+| `hold` | Primary toggle: Hold | Omni may pause and resume the agent’s interaction in the chat. |
 | `dispositions` | Primary button: Complete | Omni may request task disposal with a provider disposition and notes. |
 
 ### Email capabilities
@@ -3507,11 +3513,11 @@ the platform added itself carries none. `held: true` is presence as claim. A sna
 after a transfer reads the room from here rather than inferring it from a sequence of outcomes it
 never saw.
 
-**`onCall` describes this agent's current handling.** When the caller disconnects but the agent
-and added channels remain connected, the remaining room is still valid. When this handling's
+**`onCall` describes this agent's current interaction.** When the caller disconnects but the agent
+and added channels remain connected, the remaining room is still valid. When this interaction's
 media ends or the task enters `completing`, clear its `onCall` view; absence is used only by a
 provider that never publishes the room. This does not assert that the caller, bridge or other
-agents' channels ended. A published room receives a final empty view for this handling, and the
+agents' channels ended. A published room receives a final empty view for this interaction, and the
 task may remain open for wrap. Disposal is a separate task action, not the caller's disconnect.
 
 **A field that describes the present is cleared by the transition that ends it.** `onCall`,
@@ -3793,7 +3799,7 @@ supports mapping them onto, and every member means something specific:
 | `meal` | A meal: lunch, dinner, whatever the shift calls it. |
 | `rest` | A rest period the agent is entitled to and a busy hour cannot cancel. Usually the reason also marked `alwaysAvailable`, though the two are separate: this says what the break *is*, that says whether policy can withdraw it. |
 | `training` | Learning something the agent is expected to know afterwards: a course, e-learning, a product walkthrough. However it is delivered, and whoever attends. |
-| `coaching` | Reviewing this agent's own work with somebody accountable for it: a call listened back, quality feedback, a one-to-one about their handling. Even where the outcome is that they learn something. |
+| `coaching` | Reviewing this agent's own work with somebody accountable for it: a call listened back, quality feedback, a one-to-one about their interactions. Even where the outcome is that they learn something. |
 | `meeting` | A scheduled gathering that is neither — a team huddle, a project call, a town hall. The agent attends and contributes; nobody is assessing their work and there is nothing they must know by the end. |
 | `administrative` | Paperwork and follow-up not attached to a particular contact. |
 | `technical` | Equipment or system trouble stopping the agent taking work: a dead headset, a phone that never registered, a tool that will not load. The one member that is not an activity — it says why the agent *cannot* work rather than what they are doing, which makes it the right home for a not-ready state raised about the agent's equipment. |
@@ -4000,7 +4006,7 @@ Each availability value means one thing:
 | Value | Meaning |
 | --- | --- |
 | `ready` | Signed in, able to take work, none assigned. |
-| `on-task` | Handling at least one task. It says nothing about how many, and nothing about whether more will fit. |
+| `on-task` | Working on at least one task. It says nothing about how many, and nothing about whether more will fit. |
 | `on-break` | Stopped and not taking work, whether they asked or somebody stopped them. The reason lives on their own `BreakState`, not here. |
 | `reserved` | Signed in here, and the host holds this agent's capacity for another provider (`count: 0`, host-stopped): not receiving this provider's work, and not on a break. See **Capacity**. |
 | `signed-out` | Known to this team but not signed in to this provider. |
@@ -4171,7 +4177,7 @@ the state, restated on every change, and a `whisper` or `barge` the login's list
 is answered `failed`. **A lead listens to one call at a time** (`snapshot.monitoring.single`), and
 a task is a joined call or a monitored one, never both (`task.monitoring.assisting`). The member's
 call ending ends the lead's task as it ends the member's, with `left`, since the lead was never
-handling it.
+working on it.
 
 **A lead listens only while holding no work of their own.** A monitoring task is the lead's only
 task, and a snapshot carrying one beside any other is refused (`snapshot.monitoring.alone`); Omni
@@ -4492,7 +4498,7 @@ and an adapter would take the agent out of ready in the middle of a call. A brow
 mute through the capture track's muted state, read-only, and cannot lift it; a native host reads
 the endpoint and can clear an operating-system mute. A hardware slider is nobody's to clear.
 
-**The record carries the same word.** A `muted` handling leg is a period the agent could not be
+**The record carries the same word.** A `muted` interaction leg is a period the agent could not be
 heard, and the record exists so that period is not a hole. The host reports every such period
 through `recordStep` -- its own Mute, and a station mute it observed during a call -- with
 `mutedBy` saying whose the silence was, and the provider writes the word into the entry
@@ -4557,14 +4563,14 @@ declared:
 | `custom` | A control the task published under `capabilities.custom`, by its `id` (`command.capability.custom`), carrying a non-empty string for each `required` prompt field and strings for any optional fields supplied (`command.custom.prompt`). A toggle carries its target `on` boolean (`command.custom.on`). |
 | Everything else | Its own named capability. |
 
-**A control on the contact belongs to the handling phases**, `in-progress` and `paused`:
+**A control on the contact belongs to the interaction phases**, `in-progress` and `paused`:
 `hold`, `resume` and `pause`, `end-call`, every `transfer` and `conference` action, and
-every `lead-assist` action. These controls act within this agent's current handling.
-In `completing`, that handling has ended and its wrap work remains. The caller may still be in
-an IVR, queue or another agent's handling, and other channels may remain connected. Completion
-of this handling does not establish that the caller or bridge ended. The capability stays
-declared while the task remains open; the phase prevents this task from controlling a handling
-it no longer owns. Omni shows these controls only in the two handling phases, and
+every `lead-assist` action. These controls act within this agent's current interaction.
+In `completing`, that interaction has ended and its wrap work remains. The caller may still be in
+an IVR, queue or another agent's interaction, and other channels may remain connected. Completion
+of this interaction does not establish that the caller or bridge ended. The capability stays
+declared while the task remains open; the phase prevents this task from controlling an interaction
+it no longer owns. Omni shows these controls only in the two interaction phases, and
 `validateTaskCommand` refuses them outside those phases (`command.phase.handling`).
 The commands with a phase of their own -- `answer`, `accept` and `decline` in `pending`,
 `call` in `preview`, `connect-back` in `completing`, `complete` in any -- are not among them.
@@ -5223,11 +5229,11 @@ handed the adapter holds no key naming the task's id, delimited, never as a run 
 another id (`drive.store.retained`); an adapter whose keys never named the task leaves the rule
 unevaluated, and the result says so rather than passing it: a task's keys go
 with the task, or the next offer of the same id inherits them. Outside the
-handling phases with `hold` still declared -- in
-`confirmed`, where the provider publishes it, and in `completing` once this agent's handling has ended -- the
+interaction phases with `hold` still declared -- in
+`confirmed`, where the provider publishes it, and in `completing` once this agent's interaction has ended -- the
 drive sends `hold` past the validator that would hold it back, and expects `failed`: the adapter
 is the second gate on a control on the contact, and one that applies it outside this task's
-current handling is named (`drive.command.handling`). The drive cannot put a task into a phase the provider
+current interaction is named (`drive.command.handling`). The drive cannot put a task into a phase the provider
 never publishes, so a provider that goes straight from `pending` to `in-progress` is checked in
 `completing` alone. A task the agent completes is
 completed from wherever it stands once the drive has nothing left to do on it -- from `completing`
@@ -5353,7 +5359,7 @@ host until its executor reconciles/finishes them, with visible unresolved cleanu
 
 Only start/resume require an in-progress or paused task with started media. Pause/stop/cancel may
 also finish an independently observed recorder while the task is completing. A pending task may
-show active recording, but agent controls wait until handling begins. The two recording paths may
+show active recording, but agent controls wait until interaction begins. The two recording paths may
 both be active. A command to either path has no implied effect on the other.
 
 Each confirmed observation has a fresh opaque observation identity, a canonical UTC millisecond
@@ -5382,7 +5388,7 @@ transition and disposition actually completed; publish the confirming task or ho
 resolving applied. Failed means confirmed no effect. Rejected promise means outcome unknown:
 show the failure, reconcile that path and do not automatically retry or pretend inactive. Authoritative
 updates remain full current task/host views, not replayed provider events. These current-state fields
-create no handling-history entries and infer no actors, durations or historical capture boundaries.
+create no interaction-history entries and infer no actors, durations or historical capture boundaries.
 
 Migration is explicit: replace the old true recording capability with per-path action policies,
 replace untargeted commands with scoped commands, and retain protocol version 1. During pre-release
