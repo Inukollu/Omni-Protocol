@@ -1491,7 +1491,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
     "the login must declare team.breakControl");
   const command = request.command;
   const allowed: Record<string, readonly string[]> = {
-    "decide-break-request": ["type", "memberId", "decision", "reason"], policy: ["type", "policy"],
+    "decide-break-request": ["type", "memberId", "decision", "reason"], "set-break-policy": ["type", "policy"],
     "force-break": ["type", "memberId", "reasonId", "reason"], "end-forced-break": ["type", "memberId"],
   };
   const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
@@ -1499,7 +1499,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   for (const key of Object.keys(request)) into.require(key === "command", "team.break.request.field", `${path}.${key}`, "only command is supported");
   for (const key of Object.keys(command)) into.require(fields.includes(key), "team.break.command.field", `${path}.${key}`, "field is not supported for this command");
   if (command.reason !== undefined) into.filled(command.reason, "team.break.command.reason", path, "reason must not be empty");
-  if (command.type === "policy") {
+  if (command.type === "set-break-policy") {
     into.require(["ask", "auto-approve", "suspended"].includes(command.policy as string), "team.break.command.policy", path, "unknown break policy");
     return into.violations;
   }

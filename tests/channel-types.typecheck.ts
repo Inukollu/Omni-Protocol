@@ -455,3 +455,7 @@ export const ambiguousForceBreak: import("../src/index.js").TeamBreakCommand = {
 export const decideMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "decide-break-request", memberId: "member-1", decision: "granted" };
 // @ts-expect-error Use decide-break-request, not the retired generic decide command.
 export const ambiguousBreakDecision: import("../src/index.js").TeamBreakCommand = { type: "decide", memberId: "member-1", decision: "denied" };
+
+export const setTeamBreakPolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "auto-approve" };
+// @ts-expect-error Use set-break-policy, not the retired generic policy command.
+export const ambiguousBreakPolicy: import("../src/index.js").TeamBreakCommand = { type: "policy", policy: "ask" };
