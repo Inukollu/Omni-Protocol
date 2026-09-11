@@ -1386,7 +1386,7 @@ describe("exerciseAdapter drives one call", () => {
           return { status: "applied" };
         },
         execute: async ({ command, assignmentId }: { command: { type: string }; assignmentId?: string }) => {
-          if (assignmentId !== myAssignment) return { status: "failed", failure: { code: "omni.task-not-found", message: `no assignment ${String(assignmentId)}`, retryable: false } };
+          if (assignmentId !== myAssignment) return { status: "failed", failure: { code: "omni.assignment-not-found", message: `no assignment ${String(assignmentId)}`, retryable: false } };
           if (script.throwsOn === "execute" && command.type === "hold") throw new Error("hub unreachable");
           switch (command.type) {
             case "answer":
@@ -1448,7 +1448,7 @@ describe("exerciseAdapter drives one call", () => {
         recordStep: async (report: { step: string; at: string; seconds?: number; ended?: boolean; mutedBy?: "host" | "station"; assignmentId?: string }) => {
           if (script.providerTime) report = { ...report, at: new Date(Date.parse(report.at) + 60000).toISOString() };
           if (script.throwsOn === "recordStep") throw new Error("record store down");
-          if (report.assignmentId !== myAssignment) return { status: "failed", failure: { code: "omni.task-not-found", message: `no assignment ${String(report.assignmentId)}`, retryable: false } };
+          if (report.assignmentId !== myAssignment) return { status: "failed", failure: { code: "omni.assignment-not-found", message: `no assignment ${String(report.assignmentId)}`, retryable: false } };
           if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
           // A closing report for a leg the provider already closed at media end is answered recorded and changes nothing.
           if (report.step === "muted" && closedAtEnd !== undefined && report.at === closedAtEnd.at) {
