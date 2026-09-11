@@ -1500,7 +1500,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   for (const key of Object.keys(command)) into.require(fields.includes(key), "team.break.command.field", `${path}.${key}`, "field is not supported for this command");
   if (command.reason !== undefined) into.filled(command.reason, "team.break.command.reason", path, "reason must not be empty");
   if (command.type === "set-break-policy") {
-    into.require(["ask", "auto-approve", "suspended"].includes(command.policy as string), "team.break.command.policy", path, "unknown break policy");
+    into.require(["approval-required", "auto-approve", "suspended"].includes(command.policy as string), "team.break.command.policy", path, "unknown break policy");
     return into.violations;
   }
   into.filled(command.memberId, "team.break.command.member", path, "name the target member");

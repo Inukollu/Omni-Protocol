@@ -458,4 +458,8 @@ export const ambiguousBreakDecision: import("../src/index.js").TeamBreakCommand 
 
 export const setTeamBreakPolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "auto-approve" };
 // @ts-expect-error Use set-break-policy, not the retired generic policy command.
-export const ambiguousBreakPolicy: import("../src/index.js").TeamBreakCommand = { type: "policy", policy: "ask" };
+export const ambiguousBreakPolicy: import("../src/index.js").TeamBreakCommand = { type: "policy", policy: "approval-required" };
+
+export const requireBreakApproval: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "approval-required" };
+// @ts-expect-error The old ask policy has no compatibility alias.
+export const retiredAskPolicy: import("../src/index.js").TeamBreakCommand = { type: "set-break-policy", policy: "ask" };

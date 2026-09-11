@@ -219,7 +219,8 @@ describe("lead break prerequisites", () => {
     expect(validateTeamBreakCommand(end, { ...lead, memberBreak: { ...state("in-effect"), forced: { by: "another-lead", endsAutomatically: false } } })).toEqual([]);
   });
   it("validates every break policy and rejects the old command name", () => {
-    for (const policy of ["ask", "auto-approve", "suspended"]) {
+    expect(validateTeamBreakCommand({ command: { type: "set-break-policy", policy: "ask" } }, lead).map(v => v.rule)).toContain("team.break.command.policy");
+    for (const policy of ["approval-required", "auto-approve", "suspended"]) {
       const command = { type: "set-break-policy", policy };
       expect(validateTeamBreakCommand({ command }, lead)).toEqual([]);
       expect(validateTeamBreakCommand({ command: { ...command, type: "policy" } }, lead).map(v => v.rule)).toContain("team.break.command.type");
@@ -230,7 +231,7 @@ describe("lead break prerequisites", () => {
   });
   it("rejects unsupported policy, malformed commands and extra fields", () => {
     expect(validateTeamBreakCommand({ command: { type: "set-break-policy", policy: "suspended" } }, lead)).toEqual([]);
-    for (const command of [null, { type: "toString" }, { type: "set-break-policy", policy: "anything" }, { type: "set-break-policy", policy: "ask", memberId: "member" }]) {
+    for (const command of [null, { type: "toString" }, { type: "set-break-policy", policy: "anything" }, { type: "set-break-policy", policy: "approval-required", memberId: "member" }]) {
       expect(validateTeamBreakCommand({ command }, lead)).not.toEqual([]);
     }
   });

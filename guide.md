@@ -1035,7 +1035,7 @@ type TeamLeadAssistCommand =
 
 type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
-  | { type: "set-break-policy"; policy: "ask" | "auto-approve" | "suspended" }
+  | { type: "set-break-policy"; policy: "approval-required" | "auto-approve" | "suspended" }
   | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string }
   | { type: "end-forced-break"; memberId: UserId };
 
@@ -3646,9 +3646,11 @@ Migration: ImposedBreak is now `ForcedBreak`, and the former imposed field is no
 `BreakState.forced`. Diagnostic and harness coverage names use `break.forced`; the agent-end
 diagnostic is `break.command.end.forced`. Update hosts and providers together. The old field
 is rejected, including when both spellings are sent; no compatibility alias is provided.
+The break policy value formerly named ask is now `approval-required`: requests require
+approval. The former value is rejected without an alias; auto-approve and suspended retain
+their existing behavior.
 The team break command formerly named policy is now `set-break-policy`. The former
-command is rejected without an alias; its policy field and ask/auto-approve/suspended values
-are unchanged. Hosts and providers must adopt the new name together.
+command is rejected without an alias; its policy field is unchanged. Hosts and providers must adopt the new name together.
 The team break command formerly named decide is now `decide-break-request`. The former
 spelling is rejected without an alias; the granted/denied decisions and pending-request
 prerequisite are unchanged.
@@ -4110,7 +4112,7 @@ One method, `executeTeamBreak`, taking a discriminated command exactly as `execu
 | Command | Effect |
 | --- | --- |
 | `{ type: "decide-break-request", memberId: UserId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
-| `{ type: "set-break-policy", policy }` | `ask`, `auto-approve`, or `suspended`. |
+| `{ type: "set-break-policy", policy }` | `approval-required`, `auto-approve`, or `suspended`. |
 | `{ type: "force-break", memberId: UserId, reasonId?, reason? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. |
 | `{ type: "end-forced-break", memberId: UserId }` | Ends a forced break on that member, whoever forced it. |
 
