@@ -1,3 +1,12 @@
+# Current PR119 revision: Automatically-approved policy
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation 0c7e81faddbb9a02b7f366240e281cfd97178b97.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+Final set-break-policy values: approval-required, automatically-approved, requests-suspended. Old auto-approve rejected without alias; commitment, break-start prerequisites and permissions unchanged. Hosts/providers update together; no version changes.
+Build/type checks, all 433 tests, guide examples, package verification and diff check passed. Log /private/tmp/automatically-approved-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. Existing named monitor remains responsible. No merge or release performed.
+
 # Current PR119 revision: Requests-suspended policy
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
@@ -362,6 +371,6 @@ PID 66818; command python3 /private/tmp/omni-end-forced-break/.agent-memory/runt
 <!-- end-forced-break-monitor:end -->
 
 <!-- set-break-policy-monitor:begin -->
-Monitor omni-protocol-pr119-set-break-policy: OPEN at 2026-09-11T09:16:23.081985+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr119-set-break-policy: OPEN at 2026-09-11T09:23:28.685199+00:00. Await CI/review; monitor never merges.
 PID 61280; command python3 /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy-monitor.py; state /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.state.json; log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.log; PID file /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.pid; process log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-set-break-policy, branch refactor/set-break-policy, PR https://github.com/Inukollu/Omni-Protocol/pull/119.
 <!-- set-break-policy-monitor:end -->
