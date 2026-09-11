@@ -1,3 +1,13 @@
+# Listen API rename — PR114 — 2026-09-11
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-listen-api; branch refactor/listen-api; implementation 84d02829a2616428959d35cea156622a7406577d; PR https://github.com/Inukollu/Omni-Protocol/pull/114.
+
+Renamed monitor action/mode to listen; ListeningMode/LISTENING_MODES, TeamListenCommand/Request, executeTeamListen, listeningControl, TaskListening/task.listening, LISTENING_BREAK_KINDS/breakKindAllowsListening and diagnostics now align. Existing listen/coach/join-call audio effects, permissions, break restrictions and single-call limits unchanged. Old/mixed task and permission fields and retired modes rejected; retired exports/methods refused by type checks. No compatibility aliases, package/wire bump, release or client adoption.
+
+Validation: build/test typecheck, all 429 tests, compiled guide examples, packed package verification (10 files, all three runtime/type entry points), diff check passed. Risk: producers/consumers must migrate imports, connection method, command mode, permissions, saved task snapshots and diagnostics together. No new runtime team-command validator introduced. Next: CI/review; user merges. Keep dedicated worktree/branch while open.
+
+PR113 independently verified MERGED at 7ee52eada404d236f571d9f6d00a5b7860755ce1. New branch starts at merged main 44ec0d3. Old worktrees retained; no cleanup requested. Following sections are historical delivery records.
+
 # Coach API rename — PR113 — 2026-09-11
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-coach-api; branch refactor/coach-api; implementation 329ee41578d7ac276454775bf8ead28c4a5e53ed; PR https://github.com/Inukollu/Omni-Protocol/pull/113.
@@ -223,3 +233,8 @@ PID 58048; command python3 /private/tmp/omni-join-call-api/.agent-memory/runtime
 Monitor omni-protocol-pr113-coach-api: OPEN at 2026-09-11T07:43:42.517682+00:00. Await CI/review; monitor never merges.
 PID 78236; command python3 /private/tmp/omni-coach-api/.agent-memory/runtime/coach-monitor.py; state /private/tmp/omni-coach-api/.agent-memory/runtime/coach.state.json; log /private/tmp/omni-coach-api/.agent-memory/runtime/coach.log; PID file /private/tmp/omni-coach-api/.agent-memory/runtime/coach.pid; process log /private/tmp/omni-coach-api/.agent-memory/runtime/coach.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-coach-api, branch refactor/coach-api, PR https://github.com/Inukollu/Omni-Protocol/pull/113.
 <!-- coach-monitor:end -->
+
+<!-- listen-monitor:begin -->
+Monitor omni-protocol-pr114-listen-api: OPEN at 2026-09-11T07:50:19.279786+00:00. Await CI/review; monitor never merges.
+PID 10407; command python3 /private/tmp/omni-listen-api/.agent-memory/runtime/listen-monitor.py; state /private/tmp/omni-listen-api/.agent-memory/runtime/listen.state.json; log /private/tmp/omni-listen-api/.agent-memory/runtime/listen.log; PID file /private/tmp/omni-listen-api/.agent-memory/runtime/listen.pid; process log /private/tmp/omni-listen-api/.agent-memory/runtime/listen.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-listen-api, branch refactor/listen-api, PR https://github.com/Inukollu/Omni-Protocol/pull/114.
+<!-- listen-monitor:end -->

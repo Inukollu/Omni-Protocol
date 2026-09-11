@@ -16,7 +16,7 @@ import {
   type RecordingAction,
   ALLOWED_BROWSER_URL_SCHEMES,
   BREAK_KINDS,
-  MONITORING_BREAK_KINDS,
+  LISTENING_BREAK_KINDS,
   BROWSER_ISOLATION_SCHEMES,
   INTERACTION_STEPS_THAT_DIAL,
   IDLE_CAPABILITIES,
@@ -53,7 +53,7 @@ import {
   type OnCallStage,
   type PreviewDeadline,
   type Phone,
-  type MonitorMode,
+  type ListeningMode,
   type OutcomeRules,
   type InteractionStep,
   type IdleCapabilities,
@@ -155,8 +155,8 @@ const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
 });
 const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, "host-calls": true, waits: true });
 const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
-const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, monitorControl: true });
-const MONITOR_MODES = membersOf<MonitorMode>({ monitor: true, coach: true, "join-call": true });
+const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, listeningControl: true });
+const LISTENING_MODES = membersOf<ListeningMode>({ listen: true, coach: true, "join-call": true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
 const CANCELLED_BY = membersOf<Extract<TaskOutcome, { type: "cancelled" }>["by"]>({ agent: true, provider: true, party: true });
 const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
@@ -1187,18 +1187,18 @@ function validateAssisting(value: unknown, channel: string, path: string, into: 
 }
 
 /** The lead's own task while they listen: whose call, which call, and how they are heard. Voice only. */
-function validateMonitoring(value: unknown, channel: string, path: string, into: Collector): void {
+function validateListening(value: unknown, channel: string, path: string, into: Collector): void {
   if (value === undefined) return;
-  if (!into.require(channel === "voice", "task.monitoring.channel", path, `a ${channel} task has no call to listen to`)) return;
+  if (!into.require(channel === "voice", "task.listening.channel", path, `a ${channel} task has no call to listen to`)) return;
   if (!isPlainObject(value)) {
-    into.add("task.monitoring.shape", path, "monitoring must be an object when present");
+    into.add("task.listening.shape", path, "listening must be an object when present");
     return;
   }
-  into.require(isUserId(value.memberId), "task.monitoring.memberId", `${path}.memberId`, "a monitored call names the member on it");
-  into.require(isTaskId(value.taskId), "task.monitoring.taskId", `${path}.taskId`, "a monitored call names the member's task");
-  into.require(isAllocationId(value.allocationId), "task.monitoring.allocationId", `${path}.allocationId`, "a monitored call names the member's task by its allocation too");
-  into.oneOf(value.mode, MONITOR_MODES, "task.monitoring.mode", `${path}.mode`);
-  into.timestamp(value.since, "task.monitoring.since", `${path}.since`);
+  into.require(isUserId(value.memberId), "task.listening.memberId", `${path}.memberId`, "a call being listened to names the member on it");
+  into.require(isTaskId(value.taskId), "task.listening.taskId", `${path}.taskId`, "a call being listened to names the member's task");
+  into.require(isAllocationId(value.allocationId), "task.listening.allocationId", `${path}.allocationId`, "a call being listened to names the member's task by its allocation too");
+  into.oneOf(value.mode, LISTENING_MODES, "task.listening.mode", `${path}.mode`);
+  into.timestamp(value.since, "task.listening.since", `${path}.since`);
 }
 
 export interface TaskValidationContext {
@@ -1218,10 +1218,10 @@ export interface TaskValidationContext {
   locked?: readonly string[];
 }
 
-/** Whether a task is the agent's own doing: a dial the host placed on its onCall, a lead's join, a lead's monitor. */
+/** Whether a task is the agent's own doing: a dial the host placed on its onCall, a lead's join, a lead's listen. */
 function originatedByTheAgent(task: Record<string, unknown>): boolean {
   if (Array.isArray(task.onCall) && task.onCall.some(entry => isPlainObject(entry) && typeof entry.dialId === "string")) return true;
-  return task.assisting !== undefined || task.monitoring !== undefined;
+  return task.assisting !== undefined || task.listening !== undefined;
 }
 
 export function validateTask(task: unknown, context: TaskValidationContext, path = "task"): ProtocolViolation[] {
@@ -1235,6 +1235,8 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.add("task.shape", path, "a task must be an object");
     return;
   }
+  into.require(!Object.hasOwn(task, "monitoring"), "task.listening.renamed", `${path}.monitoring`,
+    "use listening; the former field is not accepted");
   into.require(!Object.hasOwn(task, "handlingHistory"), "task.interactionHistory.renamed", `${path}.handlingHistory`,
     "use interactionHistory; the former field is not accepted");
   into.require(isTaskId(task.id), "task.id", `${path}.id`, "a task needs a non-empty id");
@@ -1268,7 +1270,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   // Acceptance is the offer's word, carried on the pending task so a snapshot can say it: it
   // travels exactly when Omni said tasks may be auto-accepted, and only while the task is pending.
   // Work the agent originated -- a dial or connect-back, carrying the host's dialId on onCall; a
-  // lead's join, carrying assisting; a monitor, carrying monitoring -- was accepted by the command
+  // lead's join, carrying assisting; a listen, carrying listening -- was accepted by the command
   // that created it, and says so whatever the provisioning: the desk shows no Accept for a call
   // the agent placed. The provisioning governs work the queue routes, and nothing else.
   const originated = task.phase === "pending" && originatedByTheAgent(task);
@@ -1279,14 +1281,14 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
       into.add("task.acceptance.unexpected", `${path}.acceptance`, "acceptance is an offer's word; a task past pending has been accepted");
     } else if (originated) {
       into.require(task.acceptance === "automatic", "task.acceptance.originated", `${path}.acceptance`,
-        "work the agent originated -- a dial, a connect-back, a join, a monitor -- was accepted by the command that created it, and says automatic whatever the provisioning");
+        "work the agent originated -- a dial, a connect-back, a join, a listen -- was accepted by the command that created it, and says automatic whatever the provisioning");
     } else if (context.autoAcceptTasks === false) {
       into.add("task.acceptance.unexpected", `${path}.acceptance`,
         "autoAcceptTasks is off, so every task the queue routes requires agent acceptance and a pending task carries no acceptance");
     }
   } else if (originated) {
     into.add("task.acceptance.originated", `${path}.acceptance`,
-      "work the agent originated -- a dial, a connect-back, a join, a monitor -- says acceptance: automatic whatever the provisioning: the command that created it accepted it");
+      "work the agent originated -- a dial, a connect-back, a join, a listen -- says acceptance: automatic whatever the provisioning: the command that created it accepted it");
   } else if (task.phase === "pending" && context.autoAcceptTasks === true) {
     into.add("task.acceptance.required", `${path}.acceptance`, "autoAcceptTasks is on, so a pending task states how it is accepted");
   }
@@ -1341,10 +1343,10 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateTaskMedia(task, task.media, context.channel, task.phase, `${path}.media`, into);
   validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
   validateAssisting(task.assisting, context.channel, `${path}.assisting`, into);
-  validateMonitoring(task.monitoring, context.channel, `${path}.monitoring`, into);
+  validateListening(task.listening, context.channel, `${path}.listening`, into);
   // A lead's task is one thing: a call they joined on request, or a call they listen to unasked.
-  if (task.assisting !== undefined && task.monitoring !== undefined) {
-    into.add("task.monitoring.assisting", `${path}.monitoring`, "a task is a joined call or a monitored one, never both");
+  if (task.assisting !== undefined && task.listening !== undefined) {
+    into.add("task.listening.assisting", `${path}.listening`, "a task is a joined call or a listened one, never both");
   }
 
   // Where the terms came from is stated with them: a host cannot tell "the platform permits
@@ -1453,7 +1455,7 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
   }
   if (isPlainObject(state) && state.approval === "in-effect"
     && Array.isArray(tasks) && tasks.length > 0) {
-    const listening = tasks.every((task: unknown) => isPlainObject(task) && task.monitoring !== undefined);
+    const listening = tasks.every((task: unknown) => isPlainObject(task) && task.listening !== undefined);
     if (!listening) {
       into.add("break.in-effect.tasks", `${path}.tasks`,
         "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task");
@@ -1461,8 +1463,8 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
       const active = reasons.find((reason: unknown) => isPlainObject(reason) && reason.id === state.activeReasonId);
       const kind = isPlainObject(active) ? active.kind : undefined;
-      into.require(typeof kind === "string" && (MONITORING_BREAK_KINDS as readonly string[]).includes(kind), "snapshot.monitoring.break", `${path}.tasks`,
-        `a lead listens during a ${MONITORING_BREAK_KINDS.join(", ")} break and no other; the active reason is ${kind === undefined ? "unstated" : describeValue(kind)}`);
+      into.require(typeof kind === "string" && (LISTENING_BREAK_KINDS as readonly string[]).includes(kind), "snapshot.listening.break", `${path}.tasks`,
+        `a lead listens during a ${LISTENING_BREAK_KINDS.join(", ")} break and no other; the active reason is ${kind === undefined ? "unstated" : describeValue(kind)}`);
     }
   }
 
@@ -1689,7 +1691,7 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   }
   // A break in effect, or about to be, on a provider that publishes reasons is on one of them: an
   // imposed one included, since the lead's place named it. A break of no kind is a break whose
-  // rules -- who may monitor through it, whether it counts -- nobody can apply.
+  // rules -- who may listen through it, whether it counts -- nobody can apply.
   ruleEvaluated("break.activeReasonId.required");
   if (seen.size > 0 && (value.approval === "in-effect" || value.approval === "starting-after-task")) {
     into.require(typeof value.activeReasonId === "string" && value.activeReasonId.length > 0, "break.activeReasonId.required", `${path}.activeReasonId`,
@@ -1853,7 +1855,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   } else {
     const seen = new Set<string>();
     let assisting: number | undefined;
-    let monitoring: number | undefined;
+    let listening: number | undefined;
     snapshot.tasks.forEach((task: unknown, index: number) => {
       validateTaskInto(task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${path}.tasks[${index}]`, into);
       // A lead assists one call at a time, and listens to one at a time.
@@ -1861,9 +1863,9 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
         if (assisting !== undefined) into.add("snapshot.assisting.single", `${path}.tasks[${index}].assisting`, "a lead assists one call at a time");
         assisting = index;
       }
-      if (isPlainObject(task) && task.monitoring !== undefined) {
-        if (monitoring !== undefined) into.add("snapshot.monitoring.single", `${path}.tasks[${index}].monitoring`, "a lead listens to one call at a time");
-        monitoring = index;
+      if (isPlainObject(task) && task.listening !== undefined) {
+        if (listening !== undefined) into.add("snapshot.listening.single", `${path}.tasks[${index}].listening`, "a lead listens to one call at a time");
+        listening = index;
       }
       if (isPlainObject(task) && isTaskId(task.id)) {
         if (seen.has(task.id as string)) into.add("task.id.unique", `${path}.tasks[${index}].id`, `duplicate task id: ${task.id}`);
@@ -1872,11 +1874,11 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     });
   }
 
-  // A lead listens while holding no work of their own: a monitoring task is the only task.
+  // A lead listens while holding no work of their own: a listening task is the only task.
   if (Array.isArray(snapshot.tasks) && snapshot.tasks.length > 1) {
     snapshot.tasks.forEach((task: unknown, index: number) => {
-      if (isPlainObject(task) && task.monitoring !== undefined) {
-        into.add("snapshot.monitoring.alone", `${path}.tasks[${index}].monitoring`, "a lead listens only while holding no task of their own");
+      if (isPlainObject(task) && task.listening !== undefined) {
+        into.add("snapshot.listening.alone", `${path}.tasks[${index}].listening`, "a lead listens only while holding no task of their own");
       }
     });
   }
@@ -2738,7 +2740,7 @@ export type ResultMethod =
   | "endBreak"
   | "executeTeamBreak"
   | "executeTeamLeadAssist"
-  | "executeTeamMonitor"
+  | "executeTeamListen"
   | "openMedia"
   | "setPreference"
   | "recordStep"
@@ -2757,7 +2759,7 @@ const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string |
   endBreak: { success: "ended", failure: "failed" },
   executeTeamBreak: { success: "applied", failure: "failed" },
   executeTeamLeadAssist: { success: "applied", failure: "failed" },
-  executeTeamMonitor: { success: "applied", failure: "failed" },
+  executeTeamListen: { success: "applied", failure: "failed" },
   openMedia: { success: "opened", failure: "unavailable" },
   setPreference: { success: "applied", failure: "failed" },
   recordStep: { success: "recorded", failure: "failed" },
@@ -2913,8 +2915,8 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
         if (on === undefined) continue;
         if (!into.require((TEAM_CAPABILITIES as readonly string[]).includes(control), "authentication.capability.team.unknown",
           `${path}.team.${control}`, `unsupported team capability: ${control}`)) continue;
-        if (control === "monitorControl") {
-          validateMonitorControl(on, `${path}.team.monitorControl`, into);
+        if (control === "listeningControl") {
+          validateListeningControl(on, `${path}.team.listeningControl`, into);
           continue;
         }
         into.require(on === true, "authentication.capability.value", `${path}.team.${control}`,
@@ -2928,22 +2930,22 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
 }
 
 /**
- * The modes a lead may listen in, as a list: coach and join-call begin from a monitor, so a list
- * without `monitor` names modes the lead could never reach.
+ * The modes a lead may listen in, as a list: coach and join-call begin with silent listening, so a list
+ * without `listen` names modes the lead could never reach.
  */
-function validateMonitorControl(value: unknown, path: string, into: Collector): void {
+function validateListeningControl(value: unknown, path: string, into: Collector): void {
   if (!Array.isArray(value) || value.length === 0) {
-    into.add("authentication.capability.team.monitorControl.shape", path,
-      "monitorControl lists the modes this lead may listen in: a non-empty array, or omitted for a lead who may not");
+    into.add("authentication.capability.team.listeningControl.shape", path,
+      "listeningControl lists the modes this lead may listen in: a non-empty array, or omitted for a lead who may not");
     return;
   }
   value.forEach((mode: unknown, index: number) => {
-    if (into.oneOf(mode, MONITOR_MODES, "authentication.capability.team.monitorControl.mode", `${path}[${index}]`) && value.indexOf(mode) !== index) {
-      into.add("authentication.capability.team.monitorControl.unique", `${path}[${index}]`, `duplicate monitor mode: ${describeValue(mode)}`);
+    if (into.oneOf(mode, LISTENING_MODES, "authentication.capability.team.listeningControl.mode", `${path}[${index}]`) && value.indexOf(mode) !== index) {
+      into.add("authentication.capability.team.listeningControl.unique", `${path}[${index}]`, `duplicate listen mode: ${describeValue(mode)}`);
     }
   });
-  into.require(value.includes("monitor"), "authentication.capability.team.monitorControl.monitor", path,
-    "coach and join-call begin from a monitor: a lead who may listen in any mode may monitor");
+  into.require(value.includes("listen"), "authentication.capability.team.listeningControl.listen", path,
+    "coach and join-call begin with silent listening: a lead who may listen in any mode may listen");
 }
 
 /** What a login is validated against beyond its own shape. */

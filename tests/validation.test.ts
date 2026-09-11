@@ -1264,10 +1264,10 @@ describe("the other direction, everywhere", () => {
     expect(originated({ ...dialled, acceptance: "consent" }, false)).toEqual(["task.acceptance.originated"]);
     expect(originated({ ...dialled }, false)).toEqual(["task.acceptance.originated"]);
     expect(originated({ ...dialled }, true)).toEqual(["task.acceptance.originated"]);
-    // A lead's join and a lead's monitor are the agent's doing too.
+    // A lead's join and a lead's listen are the agent's doing too.
     expect(originated({ capabilities: {}, assisting: { memberId: "A-1", since: at }, acceptance: "automatic" }, false)).toEqual([]);
     expect(originated({ capabilities: {}, assisting: { memberId: "A-1", since: at } }, false)).toEqual(["task.acceptance.originated"]);
-    expect(originated({ capabilities: {}, monitoring: { memberId: "A-1", taskId: "call-9", allocationId: "alloc-9", mode: "monitor", since: at }, acceptance: "automatic" }, false)).toEqual([]);
+    expect(originated({ capabilities: {}, listening: { memberId: "A-1", taskId: "call-9", allocationId: "alloc-9", mode: "listen", since: at }, acceptance: "automatic" }, false)).toEqual([]);
     // The control: work the queue routes keeps the provisioning's rule, on the same task without the dial.
     expect(originated({ acceptance: "automatic" }, false)).toEqual(["task.acceptance.unexpected"]);
     expect(originated({}, false)).toEqual([]);
@@ -2130,89 +2130,101 @@ describe("preview: the agent presses Call", () => {
   });
 });
 
-describe("monitoring a call", () => {
+describe("listening a call", () => {
   const voice = { channel: "voice" };
   const since = "2026-08-21T09:04:00Z";
   const user = { id: "L-9", displayName: "Lead", timeZone: "Asia/Kolkata" };
   const login = (team: Record<string, unknown>) =>
     rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { team }, expiresAt: "2026-08-21T12:00:00Z" }));
 
-  it("lists the modes a lead may listen in, and always monitor among them", () => {
-    expect(login({ monitorControl: ["monitor"] })).toEqual([]);
-    expect(login({ monitorControl: ["monitor", "coach", "join-call"] })).toEqual([]);
-    expect(login({ monitorControl: ["monitor", "coach"] })).toEqual([]);
-    expect(login({ monitorControl: true })).toEqual(["authentication.capability.team.monitorControl.shape"]);
-    expect(login({ monitorControl: [] })).toEqual(["authentication.capability.team.monitorControl.shape"]);
-    expect(login({ monitorControl: ["monitor", "listen"] })).toEqual(["authentication.capability.team.monitorControl.mode"]);
-    expect(login({ monitorControl: ["monitor", "coach", "coach"] })).toEqual(["authentication.capability.team.monitorControl.unique"]);
-    // Coach and join-call begin from a monitor.
-    expect(login({ monitorControl: ["coach", "join-call"] })).toEqual(["authentication.capability.team.monitorControl.monitor"]);
+  it("lists the modes a lead may listen in, and always listen among them", () => {
+    expect(login({ listeningControl: ["listen"] })).toEqual([]);
+    expect(login({ listeningControl: ["listen", "coach", "join-call"] })).toEqual([]);
+    expect(login({ listeningControl: ["listen", "coach"] })).toEqual([]);
+    expect(login({ listeningControl: true })).toEqual(["authentication.capability.team.listeningControl.shape"]);
+    expect(login({ listeningControl: [] })).toEqual(["authentication.capability.team.listeningControl.shape"]);
+    expect(login({ listeningControl: ["listen", "monitor"] })).toEqual(["authentication.capability.team.listeningControl.mode"]);
+    expect(login({ listeningControl: ["listen", "coach", "coach"] })).toEqual(["authentication.capability.team.listeningControl.unique"]);
+    // Coach and join-call begin from a listen.
+    expect(login({ listeningControl: ["coach", "join-call"] })).toEqual(["authentication.capability.team.listeningControl.listen"]);
     // The control: the other team controls are still declared by presence.
     expect(login({ leadAssistControl: true })).toEqual([]);
-    expect(login({ leadAssistControl: ["monitor"] })).toEqual(["authentication.capability.value"]);
+    expect(login({ leadAssistControl: ["listen"] })).toEqual(["authentication.capability.value"]);
   });
 
-  it("carries the monitored call on the lead's own voice task, one at a time, and never beside a joined one", () => {
-    const monitoring = { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "monitor", since };
+  it("carries the listened call on the lead's own voice task, one at a time, and never beside a joined one", () => {
+    const listening = { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "listen", since };
     const check = (over: Record<string, unknown>, context: { channel: string } = voice) => rules(validateTask(task({ capabilities: {}, ...over }), context));
-    for (const mode of ["monitor", "coach", "join-call"]) expect(check({ monitoring: { ...monitoring, mode } })).toEqual([]);
-    expect(check({ monitoring: { ...monitoring, mode: "listen" } })).toEqual(["task.monitoring.mode"]);
-    expect(check({ monitoring: { ...monitoring, memberId: "" } })).toEqual(["task.monitoring.memberId"]);
-    expect(check({ monitoring: { ...monitoring, taskId: "" } })).toEqual(["task.monitoring.taskId"]);
-    expect(check({ monitoring: { ...monitoring, since: "now" } })).toEqual(["task.monitoring.since"]);
-    expect(check({ monitoring: "A-1" })).toEqual(["task.monitoring.shape"]);
-    expect(check({ channel: "chat", monitoring }, { channel: "chat" })).toEqual(["task.monitoring.channel"]);
-    expect(check({ monitoring, assisting: { memberId: "A-1", since } })).toEqual(["task.monitoring.assisting"]);
+    for (const mode of ["listen", "coach", "join-call"]) expect(check({ listening: { ...listening, mode } })).toEqual([]);
+    expect(check({ listening: { ...listening, mode: "monitor" } })).toEqual(["task.listening.mode"]);
+    expect(check({ listening: { ...listening, memberId: "" } })).toEqual(["task.listening.memberId"]);
+    expect(check({ listening: { ...listening, taskId: "" } })).toEqual(["task.listening.taskId"]);
+    expect(check({ listening: { ...listening, since: "now" } })).toEqual(["task.listening.since"]);
+    expect(check({ listening: "A-1" })).toEqual(["task.listening.shape"]);
+    expect(check({ channel: "chat", listening }, { channel: "chat" })).toEqual(["task.listening.channel"]);
+    expect(check({ listening, assisting: { memberId: "A-1", since } })).toEqual(["task.listening.assisting"]);
     expect(check({ assisting: { memberId: "A-1", since } })).toEqual([]);
-    const listening = (id: string) => task({ id, capabilities: {}, monitoring });
-    expect(rules(validateSnapshot(snapshot({ tasks: [listening("m-1")] }), manifest()))).toEqual([]);
-    // Two monitored calls break two rules: one at a time, and a lead's only task.
-    expect(rules(validateSnapshot(snapshot({ tasks: [listening("m-1"), listening("m-2")] }), manifest()))).toEqual(["snapshot.monitoring.single", "snapshot.monitoring.alone", "snapshot.monitoring.alone"]);
+    const listeningTask = (id: string) => task({ id, capabilities: {}, listening });
+    expect(rules(validateSnapshot(snapshot({ tasks: [listeningTask("m-1")] }), manifest()))).toEqual([]);
+    // Two listened calls break two rules: one at a time, and a lead's only task.
+    expect(rules(validateSnapshot(snapshot({ tasks: [listeningTask("m-1"), listeningTask("m-2")] }), manifest()))).toEqual(["snapshot.listening.single", "snapshot.listening.alone", "snapshot.listening.alone"]);
   });
 
   it("lets a lead listen only with no task of their own, and on a working break, never a rest", () => {
-    const monitoring = { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "monitor", since };
-    const listening = task({ id: "m-1", capabilities: {}, monitoring });
+    const listening = { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "listen", since };
+    const listeningTask = task({ id: "m-1", capabilities: {}, listening });
     const own = task({ id: "call-7" });
-    expect(rules(validateSnapshot(snapshot({ tasks: [listening] }), manifest()))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [listening, own] }), manifest()))).toEqual(["snapshot.monitoring.alone"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [listeningTask] }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [listeningTask, own] }), manifest()))).toEqual(["snapshot.listening.alone"]);
     // The control: two tasks of the lead's own are ordinary.
     expect(rules(validateSnapshot(snapshot({ tasks: [own, task({ id: "call-8" })] }), manifest()))).toEqual([]);
     const onBreak = (kind: string | undefined, tasks: unknown[]) => rules(validateSnapshot(snapshot({
       break: { approval: "in-effect", mayAsk: true, reasons: [{ id: "b", label: "Break", ...(kind === undefined ? {} : { kind }) }], activeReasonId: "b" },
       tasks,
     }), manifest()));
-    for (const kind of ["coaching", "administrative", "training"]) expect(onBreak(kind, [listening])).toEqual([]);
-    for (const kind of ["meal", "rest", "short-break", "personal", "other"]) expect(onBreak(kind, [listening])).toEqual(["snapshot.monitoring.break"]);
-    expect(onBreak(undefined, [listening])).toEqual(["snapshot.monitoring.break"]);
+    for (const kind of ["coaching", "administrative", "training"]) expect(onBreak(kind, [listeningTask])).toEqual([]);
+    for (const kind of ["meal", "rest", "short-break", "personal", "other"]) expect(onBreak(kind, [listeningTask])).toEqual(["snapshot.listening.break"]);
+    expect(onBreak(undefined, [listeningTask])).toEqual(["snapshot.listening.break"]);
     // The rule it is an exception to still holds for the lead's own work.
     expect(onBreak("coaching", [own])).toEqual(["break.in-effect.tasks"]);
     expect(onBreak("coaching", [])).toEqual([]);
   });
 
   it("rejects the retired mode in permissions and state, including mixed permission lists", () => {
-    for (const monitorControl of [["monitor", "barge"], ["monitor", "join-call", "barge"]]) {
-      expect(login({ monitorControl })).toContain("authentication.capability.team.monitorControl.mode");
+    for (const listeningControl of [["listen", "barge"], ["listen", "join-call", "barge"]]) {
+      expect(login({ listeningControl })).toContain("authentication.capability.team.listeningControl.mode");
     }
-    expect(rules(validateTask(task({ capabilities: {}, monitoring: {
+    expect(rules(validateTask(task({ capabilities: {}, listening: {
       memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "barge", since,
-    } }), voice))).toContain("task.monitoring.mode");
+    } }), voice))).toContain("task.listening.mode");
   });
 
   it("rejects the retired private-audio mode in permissions and published state", () => {
-    for (const monitorControl of [["monitor", "whisper"], ["monitor", "coach", "whisper"]]) {
-      expect(login({ monitorControl })).toContain("authentication.capability.team.monitorControl.mode");
+    for (const listeningControl of [["listen", "whisper"], ["listen", "coach", "whisper"]]) {
+      expect(login({ listeningControl })).toContain("authentication.capability.team.listeningControl.mode");
     }
-    expect(rules(validateTask(task({ capabilities: {}, monitoring: {
+    expect(rules(validateTask(task({ capabilities: {}, listening: {
       memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "whisper", since,
-    } }), voice))).toContain("task.monitoring.mode");
+    } }), voice))).toContain("task.listening.mode");
   });
 
-  it("answers the monitor method as every team method answers", () => {
+  it("rejects legacy listening fields and mixed payloads", () => {
+    const current = { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "listen", since };
+    for (const listening of [undefined, current]) {
+      expect(rules(validateTask(task({ capabilities: {}, monitoring: current, listening }), voice)))
+        .toContain("task.listening.renamed");
+    }
+    for (const listeningControl of [undefined, ["listen"]]) {
+      expect(login({ monitorControl: ["monitor"], listeningControl }))
+        .toContain("authentication.capability.team.unknown");
+    }
+  });
+
+  it("answers the listen method as every team method answers", () => {
     const failure = { code: "omni.capability-not-enabled", message: "Join call is not this lead's", retryable: false };
-    expect(rules(validateResult({ status: "applied" }, "executeTeamMonitor"))).toEqual([]);
-    expect(rules(validateResult({ status: "failed", failure }, "executeTeamMonitor"))).toEqual([]);
-    expect(rules(validateResult({ status: "listening" }, "executeTeamMonitor"))).toEqual(["result.status"]);
+    expect(rules(validateResult({ status: "applied" }, "executeTeamListen"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure }, "executeTeamListen"))).toEqual([]);
+    expect(rules(validateResult({ status: "listening" }, "executeTeamListen"))).toEqual(["result.status"]);
   });
 });
 
