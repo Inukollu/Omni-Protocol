@@ -153,7 +153,7 @@ const MEMBER_BREAKS = membersOf<Extract<BreakApproval, "awaiting-decision" | "gr
 const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
   pending: true,
 });
-const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, "host-calls": true, expires: true });
+const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, "host-calls": true, waits: true });
 const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
 const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, monitorControl: true });
 const MONITOR_MODES = membersOf<MonitorMode>({ monitor: true, whisper: true, barge: true });
@@ -1198,7 +1198,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     }
     if (task.atDeadline === undefined) {
       into.add("task.preview.atDeadline.required", `${path}.atDeadline`,
-        "a preview with a deadline says what the system does at it: calls, or expires -- an agent counting down has to know which");
+        "a preview with a deadline says what happens at it: provider calls, host calls, or waits for the agent -- an agent counting down has to know which");
     } else {
       into.oneOf(task.atDeadline, PREVIEW_DEADLINES, "task.preview.atDeadline", `${path}.atDeadline`);
     }

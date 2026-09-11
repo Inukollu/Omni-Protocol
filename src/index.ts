@@ -759,8 +759,8 @@ export type PreviewDeadline =
   | "calls"
   /** Host initiates the ordinary call command when preparation ends. */
   | "host-calls"
-  /** Provider withdraws the record rather than dialing. */
-  | "expires";
+  /** Preparation target has elapsed; remain in preview until the agent presses Call. */
+  | "waits";
 
 /** Who ends the task: the agent issuing `complete`, or the provider deciding it is over. */
 export type CompletionMode = "agent-command" | "provider-automatic";
@@ -989,10 +989,10 @@ export type Task<C extends Channel = Channel> = {
    */
   acceptance?: AcceptanceMode;
   /**
-   * In `preview` only, and together: when the system stops waiting for the agent to press Call,
+   * In `preview` only, and together: the preparation target and behavior when it elapses,
    * and who acts then -- `calls` makes the provider initiate dialing, `host-calls` makes the
-   * host issue Call, and `expires` takes the record back and
-   * the task ends `expired`. Absent, the agent has as long as they need.
+   * host issue Call, and `waits` keeps waiting for the agent without dialing or ending the task.
+   * Absent, the agent has as long as they need, without a preparation countdown.
    */
   previewEndsAt?: IsoTimestamp;
   atDeadline?: PreviewDeadline;

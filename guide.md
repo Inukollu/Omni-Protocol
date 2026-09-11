@@ -739,7 +739,7 @@ type Task<C extends Channel = Channel> = {
     : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never }
 );
 
-type PreviewDeadline = "calls" | "host-calls" | "expires";
+type PreviewDeadline = "calls" | "host-calls" | "waits";
 
 type AcceptanceMode =
   | "no-preference"
@@ -2355,8 +2355,8 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preview`, `in-progress`, `paused`, or `completing`. `preview` is voice only. |
 | `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. Media names a task whose work has begun, or whose party the host is dialling: on a `pending`, `confirmed` or `preview` task with nobody ringing it is refused (`task.media.beforeWork`), on a snapshot as on the event, since a host opens the microphone on it; with the party ringing by a host dial or provider-triggered preview dial, actual ring-back media may precede answer. |
 | `acceptance` | How this offer is accepted — `no-preference`, `consent`, or `automatic` — stated on the pending task so a reconnect snapshot says it too. Required while `pending` when `autoAcceptTasks` was `true`, forbidden when it was `false`, and absent past `pending`. See **Acceptance modes**. |
-| `previewEndsAt` | Voice only, in `preview`: when the system stops waiting for the agent to press Call. Absent, the agent has as long as they need. Always with `atDeadline`. See **Preview: the agent presses Call**. |
-| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` makes the provider initiate dialing, `host-calls` makes the host issue Call, `expires` takes the record back and the task ends `expired`. |
+| `previewEndsAt` | Voice only, in `preview`: the preparation target instant. Absent, the agent has as long as they need without a preparation countdown. Always with `atDeadline`. See **Preview: the agent presses Call**. |
+| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` makes the provider initiate dialing, `host-calls` makes the host issue Call, `waits` keeps the task in preview awaiting the agent. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
@@ -2399,7 +2399,7 @@ The canonical task transitions are:
 | `confirmed` | Work begins | `in-progress` |
 | `preview` | Agent presses Call (`call`) and the customer answers, or the deadline `calls` and they answer | `in-progress` |
 | `preview` | The call goes out and nobody answers | `completing` |
-| `preview` | The deadline `expires` | Removed by `task-ended` with `expired` outcome |
+| `preview` | The preparation target passes with `atDeadline: "waits"` | Remains `preview`, waiting for the agent to press Call |
 | `pending` | Provider withdraws the allocation, the agent declines, or the party abandons the ring | Removed by `task-ended` with `cancelled` outcome, `by` saying which |
 | `pending` | The offer lapses at `allocationExpiresAt` | Removed by `task-ended` with `expired` outcome naming `pending` |
 | No task | Snapshot reports work already underway | `in-progress` |
@@ -2475,9 +2475,14 @@ carries the provider's authoritative preparation-end instant and exactly one tri
 | --- | --- |
 | `atDeadline: "calls"` | The provider initiates dialing. The host never sends a timer-triggered Call. |
 | `atDeadline: "host-calls"` | The host sends the ordinary `call` command with a fresh host `dialId`. The provider does not independently auto-dial this task. |
-| `atDeadline: "expires"` | Existing withdrawal behavior: the provider ends the record as expired rather than dialing. |
+| `atDeadline: "waits"` | Neither side auto-dials. The task remains in preview until the agent presses Call. |
 
-The agent may press Call early in either fixed-preparation dialing mode. The deadline ends
+The agent may press Call early in either fixed-preparation dialing mode, or at any time in
+`waits` mode. With `waits`, the countdown is a preparation target, not an expiry: when it reaches
+zero the UI says "Waiting for agent" and keeps Call available. There is no automatic task-ended,
+disposal, dialing or phase change. No repeating timer action occurs on later snapshots. This differs
+from unlimited preparation only by displaying a preparation target. The former `expires` deadline
+value is not supported; elapsed preparation must not withdraw the task. For `calls` and `host-calls`, the deadline ends
 preparation and triggers initiation; it does not promise ringing, playable audio or customer
 answer at that exact instant. Scheduling/dispatch delay must remain visible, and a failed or
 prevented initiation must be reported rather than leaving a silently expired countdown.

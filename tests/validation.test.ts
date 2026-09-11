@@ -2118,7 +2118,7 @@ describe("preview: the agent presses Call", () => {
 
   it("carries the deadline and what happens at it together, and only while previewing", () => {
     expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "calls" }), voice))).toEqual([]);
-    expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "expires" }), voice))).toEqual([]);
+    expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "waits" }), voice))).toEqual([]);
     expect(rules(validateTask(preview({ previewEndsAt: at }), voice))).toEqual(["task.preview.atDeadline.required"]);
     expect(rules(validateTask(preview({ atDeadline: "calls" }), voice))).toEqual(["task.preview.previewEndsAt.required"]);
     expect(rules(validateTask(preview({ previewEndsAt: "soon", atDeadline: "calls" }), voice))).toEqual(["task.preview.previewEndsAt"]);

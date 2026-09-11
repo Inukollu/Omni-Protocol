@@ -13,11 +13,18 @@ const voice = { channel: "voice" as const, dialOutcomesDeclared: true };
 const ringing = { role: "party" as const, stage: "ringing" as const, since: at };
 
 describe("preview trigger ownership", () => {
-  it("accepts unlimited preparation and either fixed trigger owner, plus existing expiry", () => {
+  it("accepts unlimited preparation and either fixed trigger owner, or waiting for the agent", () => {
     expect(validateTask(preview, voice)).toEqual([]);
-    for (const atDeadline of ["calls", "host-calls", "expires"] satisfies PreviewDeadline[]) {
+    for (const atDeadline of ["calls", "host-calls", "waits"] satisfies PreviewDeadline[]) {
       expect(validateTask({ ...preview, atDeadline, previewEndsAt: at }, voice)).toEqual([]);
     }
+  });
+  it("waits after the target without expiring the preview or disabling Call", () => {
+    const waiting = { ...preview, atDeadline: "waits", previewEndsAt: "2000-01-01T00:00:00Z" };
+    expect(validateTask(waiting, voice)).toEqual([]);
+    expect(validateTaskCommand({ type: "call", dialId: "manual-after-target" }, waiting, "voice")).toEqual([]);
+    expect(waiting.phase).toBe("preview");
+    expect(validateTask({ ...waiting, atDeadline: "expires" }, voice).map(v => v.rule)).toContain("task.preview.atDeadline");
   });
   it("requires a valid paired deadline, preview phase, and one declared owner", () => {
     for (const change of [
@@ -37,7 +44,7 @@ describe("preview trigger ownership", () => {
   it("allows actual provider-triggered preview ringback without a fabricated host identity", () => {
     const task = { ...preview, atDeadline: "calls", previewEndsAt: at, onCall: [ringing], media: "started" };
     expect(validateTask(task, voice)).toEqual([]);
-    for (const atDeadline of ["host-calls", "expires", undefined]) {
+    for (const atDeadline of ["host-calls", "waits", undefined]) {
       const candidate = { ...task, atDeadline, previewEndsAt: atDeadline ? at : undefined };
       expect(validateTask(candidate, voice).map(v => v.rule)).toContain("task.media.beforeWork");
     }
