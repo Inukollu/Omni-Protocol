@@ -1,3 +1,21 @@
+## pnpm store ignore rule
+
+PR121 commit cfbc47a80e5d443f4c1ec661b664ee7e3f81586a adds `.pnpm-store/` to `.gitignore`; verified with git check-ignore and diff --check. Branch refactor/user-details-api, worktree /private/tmp/omni-user-details-api, PR https://github.com/Inukollu/Omni-Protocol/pull/121. Also applied to default checkout so its local store is immediately ignored; that checkout retains this intentional uncommitted .gitignore change pending integration. No runtime changes/tests needed. Existing monitor continues; next action CI/review.
+
+## Guide terminology update — PR121
+
+Published guide commit: 0436c61c01e33cc8bc3b4977622c40a17ce528e3. Branch `refactor/user-details-api`, worktree `/private/tmp/omni-user-details-api`, PR https://github.com/Inukollu/Omni-Protocol/pull/121.
+“Host” is “Agent application” and “Provisioning” is “Local policy” in guide prose/comments. Existing API identifiers/literals and versions unchanged; glossary explicitly maps Host/host to agent application. Validation: all 4 guide tests passed, compiled examples/declaration matching passed, git diff --check passed. Log /private/tmp/agent-application-guide-check.log. No runtime change. Next: CI/review; existing PR121 monitor remains responsible (details below).
+
+# Current delivery: User details API
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-user-details-api; branch refactor/user-details-api.
+Implementation dc84751203a52234317c3ba00c82fdec2d6a572c.
+PR https://github.com/Inukollu/Omni-Protocol/pull/121.
+Connection.describeUsers renamed to getUserDetails; validateDescribedUsers renamed to validateUserDetails. Diagnostics/harness/guide aligned; old exports have no aliases. Arguments, results and directory obligations preserved. Hosts/providers update together; no version changes.
+All 443 tests, build/type checks, guide examples, package verification (10 files/3 entrypoints), diff check passed. Log /private/tmp/user-details-check.log.
+Next: monitor CI/reviews and respond to failures; retain worktree/branch while open. No merge/release/cleanup performed. PR120 independently verified merged.
+
 # Current PR120 revision: Awaiting approval
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-status-field; branch refactor/break-status-field.
@@ -466,3 +484,8 @@ PID 61280; command python3 /private/tmp/omni-set-break-policy/.agent-memory/runt
 Monitor omni-protocol-pr120-break-status-field: OPEN at 2026-09-11T10:31:38.910377+00:00. Await CI/review; monitor never merges.
 PID 77759; command python3 /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field-monitor.py; state /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.state.json; log /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.log; PID file /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.pid; process log /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-status-field, branch refactor/break-status-field, PR https://github.com/Inukollu/Omni-Protocol/pull/120.
 <!-- break-status-field-monitor:end -->
+
+<!-- user-details-api-monitor:begin -->
+Monitor omni-protocol-pr121-user-details-api: OPEN at 2026-09-11T10:49:13.949452+00:00. Await CI/review; monitor never merges.
+PID 59675; command python3 /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api-monitor.py; state /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.state.json; log /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.log; PID file /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.pid; process log /private/tmp/omni-user-details-api/.agent-memory/runtime/user-details-api.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-user-details-api, branch refactor/user-details-api, PR https://github.com/Inukollu/Omni-Protocol/pull/121.
+<!-- user-details-api-monitor:end -->

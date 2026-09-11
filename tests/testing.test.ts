@@ -851,7 +851,7 @@ const conformingManifest = {
 } satisfies Manifest<"voice">;
 
 // Declares breaks and publishes a UserId, so the conforming connection below has to carry the
-// four break methods and describeUsers().
+// four break methods and getUserDetails().
 const conformingSnapshot = {
   transport: "active",
   loginId: "session-1",
@@ -977,7 +977,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         refused: () => undefined,
         execute: async () => ({ status: "applied" }),
         disconnect,
-        describeUsers: async ids => ids.map(id => ({ id, displayName: `User ${id}`, timeZone: "Pacific/Chatham" })),
+        getUserDetails: async ids => ids.map(id => ({ id, displayName: `User ${id}`, timeZone: "Pacific/Chatham" })),
         dial: async ({ dialId }) => ({ status: "dialling", dialId }),
         requestBreak: async () => ({ status: "requested" }),
         commitBreak: async () => ({ status: "committed" }),
@@ -2122,16 +2122,16 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ snapshot: { ...carried, tasks: [{ ...carried.tasks[0]!, acceptance: "consent" as const }] } })).toEqual([]);
   });
 
-  it("describeUsers(), when a UserId arrives on an event or on a task's lead or assisting", async () => {
+  it("getUserDetails(), when a UserId arrives on an event or on a task's lead or assisting", async () => {
     const at = "2026-08-21T09:05:00Z";
     const bare = { ...minimalSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, interactionHistory: { steps: [] } }] } satisfies Snapshot<"voice">;
     const joined = { ...bare, tasks: [{ ...bare.tasks[0]!, capabilities: { ...bare.tasks[0]!.capabilities, leadAssist: true }, leadAssist: { stage: "joined", leadId: "L-9", since: at } }] } satisfies Snapshot<"voice">;
     const assisting = { ...bare, tasks: [{ ...bare.tasks[0]!, assisting: { memberId: "A-1", since: at } }] } satisfies Snapshot<"voice">;
-    expect(await rules({ manifest: plainManifest, snapshot: bare, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
-    expect(await rules({ manifest: plainManifest, snapshot: joined, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
-    expect(await rules({ manifest: plainManifest, snapshot: assisting, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
+    expect(await rules({ manifest: plainManifest, snapshot: bare, connection: { getUserDetails: undefined } })).not.toContain("connection.getUserDetails.required");
+    expect(await rules({ manifest: plainManifest, snapshot: joined, connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
+    expect(await rules({ manifest: plainManifest, snapshot: assisting, connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
     const later: ProviderEventEnvelope<"voice"> = { id: "evt-team", loginId: "session-1", occurredAt: at, event: { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } } };
-    expect(await rules({ manifest: plainManifest, capabilities: { team: {} }, snapshot: { ...bare, team: { members: [] } }, connection: { describeUsers: undefined }, emit: listener => listener(later) })).toContain("connection.describeUsers.required");
+    expect(await rules({ manifest: plainManifest, capabilities: { team: {} }, snapshot: { ...bare, team: { members: [] } }, connection: { getUserDetails: undefined }, emit: listener => listener(later) })).toContain("connection.getUserDetails.required");
   });
 
   it("setPreference() and executeTeamPolicy(), when the login declares preferences or policyControl", async () => {
@@ -2168,21 +2168,21 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(deskPhone.violations.map(v => v.rule)).not.toContain("connection.recordStep.required");
   });
 
-  it("describeUsers(), when the snapshot publishes a UserId anywhere", async () => {
+  it("getUserDetails(), when the snapshot publishes a UserId anywhere", async () => {
     // The conforming snapshot names A-1 in a interaction step; a team member list and a forced break count too.
-    expect(await rules({ connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
+    expect(await rules({ connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
     const teamMembers = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
-    expect(await rules({ snapshot: teamMembers, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
+    expect(await rules({ snapshot: teamMembers, connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
     const forced = { ...minimalSnapshot, break: { status: "on-break", canRequestBreak: true, forced: { by: "M-1" } } } satisfies Snapshot<"voice">;
-    expect(await rules({ snapshot: forced, connection: { describeUsers: undefined } })).toContain("connection.describeUsers.required");
-    expect(await rules({ snapshot: minimalSnapshot, connection: { describeUsers: undefined } })).not.toContain("connection.describeUsers.required");
+    expect(await rules({ snapshot: forced, connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
+    expect(await rules({ snapshot: minimalSnapshot, connection: { getUserDetails: undefined } })).not.toContain("connection.getUserDetails.required");
     // Present is not enough: the names the snapshot published are looked up, and the answer is held to the shape.
     // The conforming snapshot names A-1: it is looked up and the answer stands, or the answer is named.
     expect(await rules({})).toEqual([]);
-    expect(await rules({ connection: { describeUsers: async () => [] } })).toEqual(["connection.describeUsers.empty"]);
-    expect(await rules({ connection: { describeUsers: async () => [{ id: "Z-9", displayName: "Nobody asked", timeZone: "Pacific/Chatham" }] } })).toEqual(["describeUsers.unasked"]);
-    expect(await rules({ connection: { describeUsers: async (ids: string[]) => ids.map(id => ({ id, displayName: "" })) } })).toEqual(["describeUsers.user.displayName", "describeUsers.user.timeZone"]);
-    expect(await rules({ connection: { describeUsers: async () => { throw new Error("directory down"); } } })).toEqual(["connection.describeUsers.rejected"]);
+    expect(await rules({ connection: { getUserDetails: async () => [] } })).toEqual(["connection.getUserDetails.empty"]);
+    expect(await rules({ connection: { getUserDetails: async () => [{ id: "Z-9", displayName: "Nobody asked", timeZone: "Pacific/Chatham" }] } })).toEqual(["getUserDetails.unasked"]);
+    expect(await rules({ connection: { getUserDetails: async (ids: string[]) => ids.map(id => ({ id, displayName: "" })) } })).toEqual(["getUserDetails.user.displayName", "getUserDetails.user.timeZone"]);
+    expect(await rules({ connection: { getUserDetails: async () => { throw new Error("directory down"); } } })).toEqual(["connection.getUserDetails.rejected"]);
   });
 
   it("holds work to being pulled: no offer before capacity is stated, none beyond it, the host's own dial excepted", async () => {
@@ -2207,7 +2207,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       capabilities: {},
       snapshot: minimalSnapshot,
       connection: {
-        describeUsers: undefined, dial: undefined, requestBreak: undefined, commitBreak: undefined,
+        getUserDetails: undefined, dial: undefined, requestBreak: undefined, commitBreak: undefined,
         cancelBreak: undefined, endBreak: undefined, executeTeamBreak: undefined, executeTeamLeadAssist: undefined, openMedia: undefined,
       },
     });

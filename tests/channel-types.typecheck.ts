@@ -499,3 +499,9 @@ export const fixedForcedBreakEnd: import("../src/index.js").ForcedBreak = { by: 
 
 // @ts-expect-error Use awaiting-approval, not the retired awaiting-decision status.
 export const retiredAwaitingDecision: import("../src/index.js").BreakStatus = "awaiting-decision";
+
+export type UserDetailsMethod = import("../src/index.js").Connection["getUserDetails"];
+// @ts-expect-error The old connection method is not a compatibility alias.
+export type RetiredDescribeUsers = import("../src/index.js").Connection["describeUsers"];
+// @ts-expect-error Use validateUserDetails.
+import { validateDescribedUsers } from "../src/validation.js";

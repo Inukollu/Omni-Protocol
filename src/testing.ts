@@ -32,7 +32,7 @@ import {
   validateEventEnvelope,
   validateHostGuarantees,
   validateHostReport,
-  validateDescribedUsers,
+  validateUserDetails,
   observeRules,
   ruleEvaluated,
   validateHostMute,
@@ -434,7 +434,7 @@ export async function exerciseAdapter<C extends Channel>(
       }
       violations.push(...undeterminedTasks(eventTasks(envelope), "event"));
       lockedPartySeen ||= eventTasks(envelope).some(locksParty);
-      if (eventNamesUsers(envelope)) requireMethod(live, "describeUsers", "an event publishes a UserId");
+      if (eventNamesUsers(envelope)) requireMethod(live, "getUserDetails", "an event publishes a UserId");
       // Work is pulled, never pushed: an offer before the host stated capacity is an allocation
       // against nothing, and an offer beyond the count is one too many -- unless the task is the
       // host's own dial arriving, which counts against nothing.
@@ -514,21 +514,21 @@ export async function exerciseAdapter<C extends Channel>(
       violations.push(...undeterminedTasks(tasks, `${path}.tasks`));
       lockedPartySeen ||= tasks.some(locksParty);
       if (publishesUserIds(read as Snapshot)) {
-        requireMethod(source, "describeUsers", "the snapshot publishes a UserId");
+        requireMethod(source, "getUserDetails", "the snapshot publishes a UserId");
         // Required by presence is not enough: the names the snapshot published are looked up, and what
         // comes back is held to the shape -- an empty answer to a team member list of colleagues is named.
         const named = userIdsIn(read as Snapshot);
-        if (typeof source.describeUsers === "function" && named.length > 0) {
+        if (typeof source.getUserDetails === "function" && named.length > 0) {
           let described: unknown;
           try {
-            described = await source.describeUsers(named as UserId[]);
-            violations.push(...validateDescribedUsers(described, named, "connection.describeUsers"));
+            described = await source.getUserDetails(named as UserId[]);
+            violations.push(...validateUserDetails(described, named, "connection.getUserDetails"));
             if (Array.isArray(described) && described.length === 0) {
-              violations.push({ rule: "connection.describeUsers.empty", path: "connection.describeUsers",
+              violations.push({ rule: "connection.getUserDetails.empty", path: "connection.getUserDetails",
                 message: `asked about ${named.join(", ")}, whom the snapshot itself named, the provider described nobody` });
             }
           } catch (error) {
-            violations.push({ rule: "connection.describeUsers.rejected", path: "connection.describeUsers", message: `describeUsers rejected rather than answered: ${String(error)}` });
+            violations.push({ rule: "connection.getUserDetails.rejected", path: "connection.getUserDetails", message: `getUserDetails rejected rather than answered: ${String(error)}` });
           }
         }
       }
@@ -587,7 +587,7 @@ export async function exerciseAdapter<C extends Channel>(
     violations.push(...malformed);
     // The provider republishes the agent's day: once connected, the identity carries the zone the
     // host sent. That proves the round trip, not the store -- an echo passes it -- and the name
-    // says only what it tests; storage is proved by a colleague's zone arriving from describeUsers().
+    // says only what it tests; storage is proved by a colleague's zone arriving from getUserDetails().
     // A zone is judged by what it denotes: Asia/Kolkata and Asia/Calcutta are one zone, and a
     // provider that keeps the canonical name has kept the zone.
     if (isTimeZone(context.timeZone) && !sameTimeZone(current().identity.timeZone, context.timeZone)) {

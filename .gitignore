@@ -5,3 +5,4 @@ dist/
 
 .worktrees/
 .agent-memory/runtime/
+.pnpm-store/
