@@ -56,12 +56,12 @@ describe("provider interaction controls", () => {
     expect(stream.apply({ event: { type: "task-ended", assignmentId: "H1", outcome: { type: "completed", by: "agent" } } })).not.toEqual([]);
     expect(stream.apply({ event: { type: "task-updated", task } })).toEqual([]);
   });
-  it("requires media to end before the owned interaction ends, including inherited channels", () => {
-    const active = { ...task, media: "started", onCall: [{ role: "party", since: "2026-09-11T00:00:00Z" }, { role: "agent", userId: "previous-agent", since: "2026-09-11T00:00:00Z" }] };
+  it("requires audio to end before the owned interaction ends, including inherited channels", () => {
+    const active = { ...task, audio: "started", onCall: [{ role: "party", since: "2026-09-11T00:00:00Z" }, { role: "agent", userId: "previous-agent", since: "2026-09-11T00:00:00Z" }] };
     const stream = new TaskStream(); stream.resync({ tasks: [active] }, "snapshot");
     expect(validateTaskCommandRequest(request, active)).toEqual([]);
-    expect(stream.apply({ event: { type: "task-media-ended", assignmentId: "H2" } })).toEqual([]);
-    expect(stream.apply({ event: { type: "task-updated", task: { ...task, phase: "completing", media: "ended", onCall: [] } } })).toEqual([]);
+    expect(stream.apply({ event: { type: "task-audio-ended", assignmentId: "H2" } })).toEqual([]);
+    expect(stream.apply({ event: { type: "task-updated", task: { ...task, phase: "completing", audio: "ended", onCall: [] } } })).toEqual([]);
     expect(stream.apply({ event: { type: "task-ended", assignmentId: "H2", outcome: { type: "completed", by: "agent" } } })).toEqual([]);
   });
 });

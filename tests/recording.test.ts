@@ -12,8 +12,8 @@ const state = (status: "inactive" | "active" | "paused" = "active"): RecordingSt
 const actions = { start: true, pause: true, resume: true, stop: true, cancel: true } as const;
 const task = (status: "inactive" | "active" | "paused" = "active"): Task<"voice"> => ({
   assignmentId: "assignment-1", channel: "voice", title: "Call", taskType: "call",
-  phase: "in-progress", media: "started", capabilitySource: "queue", completionMode: "agent-command", browsers: [],
-  capabilities: { recording: { provider: actions, host: { ...actions, destinationId: "recordings" } } },
+  phase: "in-progress", audio: "started", capabilitySource: "queue", completionMode: "agent-command", browsers: [],
+  capabilities: { recording: { provider: actions, host: { ...actions, storageId: "recordings" } } },
   recording: { provider: state(status) },
 });
 const command = (action: RecordingAction, source: "provider" | "host" = "provider"): RecordingCommand => ({
@@ -21,7 +21,7 @@ const command = (action: RecordingAction, source: "provider" | "host" = "provide
   ...(action === "start" ? {} : { recordingId: "capture-1" }),
 }) as RecordingCommand;
 const host: HostRecording = {
-  actions: ["start", "pause", "resume", "stop", "cancel"], destinationIds: ["recordings"],
+  actions: ["start", "pause", "resume", "stop", "cancel"], storageIds: ["recordings"],
   execute: async () => ({ status: "applied" }),
 };
 function check(action: RecordingAction, status: "inactive" | "active" | "paused", source: "provider" | "host" = "provider", changes: Record<string, unknown> = {}, context: Record<string, unknown> = {}, current: Task<"voice"> = task(status)) {
@@ -40,7 +40,7 @@ describe("independent recording controls", () => {
     }
   });
   it("allows an already-active task without controls, even on arrival", () => {
-    const current = { ...task(), phase: "pending", media: undefined, capabilities: {} };
+    const current = { ...task(), phase: "pending", audio: undefined, capabilities: {} };
     expect(validateTask(current, { channel: "voice" })).toEqual([]);
     expect(rules(check("stop", "active", "provider", {}, {}, current as Task<"voice">))).toContain("recording.command.permission");
   });
@@ -57,7 +57,7 @@ describe("independent recording controls", () => {
     expect(rules(validateTask({ ...current, recording: { host: state() } }, { channel: "voice" }))).toContain("recording.task.owner");
     expect(rules(validateTask({ ...current, channel: "chat" }, { channel: "chat" }))).toContain("recording.task.channel");
   });
-  it("refuses changed task permissions, destinations, host abilities and stale identity", () => {
+  it("refuses changed task permissions, storage, host abilities and stale identity", () => {
     expect(rules(check("pause", "active", "provider", { observationId: "old" }))).toContain("recording.command.stale");
     expect(rules(check("stop", "active", "provider", { recordingId: "replacement" }))).toContain("recording.command.recordingId");
     const locked = { ...task(), capabilities: { recording: { lockedBy: "team" } } } as Task<"voice">;
@@ -65,7 +65,7 @@ describe("independent recording controls", () => {
     const restricted = { ...task(), capabilities: { recording: { provider: { stop: true } } } } as Task<"voice">;
     expect(check("pause", "active", "provider", {}, {}, restricted)).not.toEqual([]);
     expect(check("stop", "active", "provider", {}, {}, restricted)).toEqual([]);
-    expect(rules(check("start", "inactive", "host", {}, { host: { ...host, destinationIds: ["other"] } }))).toContain("recording.host.destination");
+    expect(rules(check("start", "inactive", "host", {}, { host: { ...host, storageIds: ["other"] } }))).toContain("recording.host.storage");
     expect(rules(check("pause", "active", "host", {}, { host: { ...host, actions: ["stop"] } }))).toContain("recording.host.action");
     expect(rules(check("stop", "active", "host", {}, { softphone: false }))).toContain("recording.host.channel");
     expect(check("stop", "active", "host", {}, { host: undefined })).not.toEqual([]);
@@ -86,12 +86,12 @@ describe("independent recording controls", () => {
     expect(check("cancel", "active", "host", {}, { host: { ...host, actions: ["stop"] } })).not.toEqual([]);
     expect(validateRecordingPolicy({ host: { start: true } })).not.toEqual([]);
   });
-  it("permits terminal actions during wrap-up but cannot resume/start ended media", () => {
-    const wrapping = { ...task(), phase: "completing", media: "ended" } as Task<"voice">;
+  it("permits terminal actions during wrap-up but cannot resume/start ended audio", () => {
+    const wrapping = { ...task(), phase: "completing", audio: "ended" } as Task<"voice">;
     expect(check("stop", "active", "provider", {}, {}, wrapping)).toEqual([]);
     expect(check("cancel", "active", "provider", {}, {}, wrapping)).toEqual([]);
     expect(check("resume", "paused", "host", {}, {}, wrapping)).not.toEqual([]);
-    expect(check("start", "inactive", "host", {}, {}, { ...task("inactive"), media: "ended" })).not.toEqual([]);
+    expect(check("start", "inactive", "host", {}, {}, { ...task("inactive"), audio: "ended" })).not.toEqual([]);
   });
 });
 
@@ -112,7 +112,7 @@ describe("recording evidence and declarations", () => {
   });
   it("validates host declarations, reports, unique scopes and malformed nested inputs", () => {
     expect(validateHostRecording(host, true)).toEqual([]);
-    for (const declaration of [{ ...host, actions: ["pause"] }, { ...host, actions: ["stop", "stop"] }, { ...host, actions: ["rewind"] }, { ...host, destinationIds: [] }, { ...host, execute: undefined }]) expect(validateHostRecording(declaration, true)).not.toEqual([]);
+    for (const declaration of [{ ...host, actions: ["pause"] }, { ...host, actions: ["stop", "stop"] }, { ...host, actions: ["rewind"] }, { ...host, storageIds: [] }, { ...host, execute: undefined }]) expect(validateHostRecording(declaration, true)).not.toEqual([]);
     const report = { assignmentId: "assignment-1", state: state() };
     expect(validateHostReport({ online: true, recordings: [report] })).toEqual([]);
     expect(validateHostReport({ online: true, recordings: [report, report] })).not.toEqual([]);
@@ -218,7 +218,7 @@ describe("host-only caller recording announcement guarantee", () => {
   it("cannot be placed on provider task policy or the general host guarantees", () => {
     expect(validateHostGuarantees({ announcesToCaller: true })).not.toEqual([]);
     expect(validateRecordingPolicy({ provider: { start: true, announcesToCaller: true } })).not.toEqual([]);
-    expect(validateRecordingPolicy({ host: { start: true, destinationId: "recordings", announcesToCaller: true } })).not.toEqual([]);
+    expect(validateRecordingPolicy({ host: { start: true, storageId: "recordings", announcesToCaller: true } })).not.toEqual([]);
   });
 
   it("does not grant recording permission or affect provider-owned dispatch", () => {

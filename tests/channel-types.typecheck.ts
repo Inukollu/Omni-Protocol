@@ -10,7 +10,7 @@ import {
   type AuthenticationState,
   type CompleteAuthenticationResult,
   type HostReport,
-  type OpenMediaRequest,
+  type OpenAudioRequest,
   type Manifest,
   type ProviderEvent,
   type Host,
@@ -205,10 +205,10 @@ export const voiceDialOutcomes: Manifest<"voice">["dialOutcomes"] = ["answered",
 export const chatDialOutcomes: Manifest<"chat">["dialOutcomes"] = ["answered", "no-answer"];
 
 // Preview: the record is on the agent's screen; they press Call, which dials. Voice only.
-export const previewTask = { ...emailTask, assignmentId: "call-13", channel: "voice", capabilities: {}, phase: "preview", previewEndsAt: "2026-08-21T09:02:00Z", atDeadline: "calls" } satisfies Task<"voice">;
-export const pressCall: TaskCommand<"voice"> = { type: "call", dialId: "dial-6" };
+export const previewTask = { ...emailTask, assignmentId: "call-13", channel: "voice", capabilities: {}, phase: "preview", previewEndsAt: "2026-08-21T09:02:00Z", atDeadline: "provider-dials" } satisfies Task<"voice">;
+export const pressCall: TaskCommand<"voice"> = { type: "dial", dialId: "dial-6" };
 // @ts-expect-error Pressing Call dials, and every dial carries the host's dialId.
-export const unplacedCall: TaskCommand<"voice"> = { type: "call" };
+export const unplacedCall: TaskCommand<"voice"> = { type: "dial" };
 // @ts-expect-error renamed away: the agent presses Call; the old two-word command is gone.
 export const startCall: TaskCommand<"voice"> = { type: "start-call" };
 export const waitingDeadline: Task<"voice">["atDeadline"] = "waits";
@@ -244,10 +244,10 @@ export const terminateCaller: TaskCommand<"voice"> = { type: "terminate-call" };
 export const terminable = { ...emailTask, assignmentId: "call-14", channel: "voice", capabilities: { endCall: true, terminateCall: true } } satisfies Task<"voice">;
 // @ts-expect-error A chat has no caller channel to terminate.
 export const chatTerminate: TaskCommand<"chat"> = { type: "terminate-call" };
-export const liveAudioTask = { ...emailTask, assignmentId: "call-12", channel: "voice", capabilities: {}, media: "started" } satisfies Task<"voice">;
+export const liveAudioTask = { ...emailTask, assignmentId: "call-12", channel: "voice", capabilities: {}, audio: "started" } satisfies Task<"voice">;
 export const audiolessEmailTask = { ...emailTask, assignmentId: "email-9",
-  // @ts-expect-error Real-time media is a voice affair; an email task carries no state for it.
-  media: "started" } satisfies Task<"email">;
+  // @ts-expect-error Real-time audio is a voice affair; an email task carries no state for it.
+  audio: "started" } satisfies Task<"email">;
 // @ts-expect-error A snapshot states its task count; a blank state cannot pass as a confirmed empty.
 export const uncountedSnapshot = { transport: "active", loginId: "s-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [] } satisfies Snapshot<"voice">;
 export const hiddenUrlBrowser = { id: "crm", name: "CRM", url: "https://crm.example.com/42", purpose: "Customer record", sharedSession: false, urlVisibility: "hidden" } satisfies TaskBrowser;
@@ -369,7 +369,7 @@ export const teamMembers: TeamMembers = { members: [], requests: [] };
 export const teamMembersWithControl: TeamMembers = { members: [], breakControl: true };
 
 // The host reports; a request may lack the microphone, and a ready input may not.
-export const openWithoutHostAudio: OpenMediaRequest = { assignmentId: "alloc-42" };
+export const openWithoutHostAudio: OpenAudioRequest = { assignmentId: "alloc-42" };
 // Everything that names a task after the fact names its life: a task id alone could land on the next customer under a reused id.
 export const endedEvent: ProviderEvent<"voice"> = { type: "task-ended", assignmentId: "alloc-42", outcome: { type: "completed", by: "agent" } };
 // @ts-expect-error An ending names the assignment it ends.
