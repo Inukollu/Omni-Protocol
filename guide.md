@@ -189,6 +189,8 @@ type Manifest<C extends Channel = Channel> = {
   supportedProtocolVersions: number[];
   authenticationMethods: AuthenticationMethod[];
   idleCapabilities?: IdleCapabilities<C>;
+  timeCheck?: true;
+  timestampAuthority?: "provider";
   phaseLabels?: TaskPhaseLabels;
   taskTypePresentation?: Record<string, TaskTypePresentation>;
   orgLevels?: LevelDeclaration[];
@@ -350,7 +352,15 @@ type HostGuarantees = {
   personConsent?: true;
 };
 
+type ProviderTimeScope = { providerId: string; loginId: string };
+type ProviderTimeEstimate = ProviderTimeScope & {
+  at: IsoTimestamp;
+  clockId: string;
+  uncertaintyMs?: number;
+};
+
 type Host = {
+  estimateProviderTime?(scope: ProviderTimeScope): ProviderTimeEstimate | undefined;
   recording?: HostRecording;
   guarantees: HostGuarantees;
   mute?: HostMute;
@@ -458,7 +468,7 @@ type HandlingReport = { taskId: TaskId; allocationId: AllocationId; at: IsoTimes
 );
 
 type HandlingReportResult =
-  | { status: "recorded" }
+  | { status: "recorded"; at: IsoTimestamp }
   | { status: "failed"; failure: ProtocolFailure };
 
 type PreferenceResult =
@@ -739,7 +749,7 @@ type Task<C extends Channel = Channel> = {
     : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never }
 );
 
-type PreviewDeadline = "calls" | "expires";
+type PreviewDeadline = "calls" | "host-calls" | "waits";
 
 type AcceptanceMode =
   | "no-preference"
@@ -1128,7 +1138,22 @@ type Refusal = {
   violations: ProtocolViolation[];
 };
 
+type ProviderTimeCheckPolicy = {
+  intervalMs: number;
+  timeoutMs: number;
+  maxRoundTripMs: number;
+  maxSampleAgeMs: number;
+};
+type ProviderTimeCheckRequest = { requestId: string };
+type ProviderTimeCheckResult = {
+  requestId: string;
+  loginId: string;
+  clockId: string;
+  providerTime: IsoTimestamp;
+};
+
 type Connection<C extends Channel = Channel> = {
+  checkTime?(request: ProviderTimeCheckRequest): Promise<ProviderTimeCheckResult>;
   snapshot(): Snapshot<C> | Promise<Snapshot<C>>;
   subscribe(listener: (envelope: ProviderEventEnvelope<C>) => void): Unsubscribe;
   refused(report: Refusal): void;
@@ -1583,6 +1608,8 @@ compile time.
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the host) and/or `deskPhone` (a handset the platform rings; the host shows the call and opens nothing). The host picks one per login. See **How the agent hears the call**. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that transfer, conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome**. |
+| `timeCheck` | Optional `true`: implements `checkTime` for fresh provider-clock samples; host polling is independently opt-in. |
+| `timestampAuthority` | Optional `"provider"`: provider timestamps are final; host instants are advisory. Omission makes no trust promise. |
 | `runningStepReports` | The provider takes running reports of a host-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the host sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The host records what it performs**. |
 | `disposalSettleMs` | Required. How long after an applied disposal -- `complete`, or a lead's `take-over` -- the provider's `task-ended` is owed, a positive whole number of milliseconds (`manifest.disposalSettleMs`). A warm transfer's `complete` is not a disposal: the agent's wrap runs after it. Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
 
@@ -2118,6 +2145,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | Method | Implement it when |
 | --- | --- |
 | `snapshot()` | Always. |
+| `checkTime(request)` | The manifest declares `timeCheck: true`. Read-only clock check; no task command or accuracy guarantee. |
 | `subscribe(listener)` | Always. |
 | `disconnect()` | Always. |
 | `refused(report)` | Always. The host tells the adapter what it would not take -- a snapshot it did not replace its state with, an event it dropped -- with every rule broken, so a refusal is visible on both sides. See **What the host does with what it refuses**. |
@@ -2353,10 +2381,10 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `browsers` | Named browser definitions for the task workspace: at least one when the task declares the `browsers` capability, empty when it does not. |
 | `party` | The person or entity on the other end of this task, as a `Contact`: often a name and one address; a withheld caller ID may leave nothing to send at all. Optional. The party is who the task is *with*; `contacts` is the directory. |
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preview`, `in-progress`, `paused`, or `completing`. `preview` is voice only. |
-| `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. Media names a task whose work has begun, or whose party the host is dialling: on a `pending`, `confirmed` or `preview` task with nobody ringing it is refused (`task.media.beforeWork`), on a snapshot as on the event, since a host opens the microphone on it; with the party ringing by a host dial, ring-back is audio and media starts on `dialling`. |
+| `media` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-media-started`**. Media names a task whose work has begun, or whose party the host is dialling: on a `pending`, `confirmed` or `preview` task with nobody ringing it is refused (`task.media.beforeWork`), on a snapshot as on the event, since a host opens the microphone on it; with the party ringing by a host dial or provider-triggered preview dial, actual ring-back media may precede answer. |
 | `acceptance` | How this offer is accepted — `no-preference`, `consent`, or `automatic` — stated on the pending task so a reconnect snapshot says it too. Required while `pending` when `autoAcceptTasks` was `true`, forbidden when it was `false`, and absent past `pending`. See **Acceptance modes**. |
-| `previewEndsAt` | Voice only, in `preview`: when the system stops waiting for the agent to press Call. Absent, the agent has as long as they need. Always with `atDeadline`. See **Preview: the agent presses Call**. |
-| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` places the call itself, `expires` takes the record back and the task ends `expired`. |
+| `previewEndsAt` | Voice only, in `preview`: the preparation target instant. Absent, the agent has as long as they need without a preparation countdown. Always with `atDeadline`. See **Preview: the agent presses Call**. |
+| `atDeadline` | Voice only, in `preview`, with `previewEndsAt`: what the system does at the deadline -- `calls` makes the provider initiate dialing, `host-calls` makes the host issue Call, `waits` keeps the task in preview awaiting the agent. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one. |
 | `wrapAllowance` | Fixed time allowed to complete the task after primary handling ends. For real-time media, it begins after `task-media-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. |
@@ -2399,7 +2427,7 @@ The canonical task transitions are:
 | `confirmed` | Work begins | `in-progress` |
 | `preview` | Agent presses Call (`call`) and the customer answers, or the deadline `calls` and they answer | `in-progress` |
 | `preview` | The call goes out and nobody answers | `completing` |
-| `preview` | The deadline `expires` | Removed by `task-ended` with `expired` outcome |
+| `preview` | The preparation target passes with `atDeadline: "waits"` | Remains `preview`, waiting for the agent to press Call |
 | `pending` | Provider withdraws the allocation, the agent declines, or the party abandons the ring | Removed by `task-ended` with `cancelled` outcome, `by` saying which |
 | `pending` | The offer lapses at `allocationExpiresAt` | Removed by `task-ended` with `expired` outcome naming `pending` |
 | No task | Snapshot reports work already underway | `in-progress` |
@@ -2437,8 +2465,9 @@ command.
 #### Preview: the agent presses Call
 
 An outbound campaign that lets the agent see who they are about to call is a **preview**: the
-record arrives as a task, the task sits in `preview` with the party on it, and no call has gone
-out. The agent reads and presses Call. That is the whole phase, and it exists on voice alone --
+record arrives as a task and sits in `preview` with the party on it before a call goes
+out. The agent prepares; manual or declared automatic initiation may then begin dialing. It
+remains preview while ringing until an evidenced answer or non-answer outcome. The agent may press Call. That is the whole phase, and it exists on voice alone --
 chat and email have no call to place, and their reading is ordinary work in `in-progress`.
 
 ```ts
@@ -2466,14 +2495,51 @@ no-answer as the disposition it is -- in a campaign that is the commonest outcom
 is work, not a cancellation. A `preview` task therefore needs a manifest that says how a dial ends
 (`task.preview.dialOutcomes.required`).
 
-**The deadline says what the system will do.** A provider that will not wait forever states
-`previewEndsAt`, and with it `atDeadline`: `calls` means the system places the call itself when the
-time runs out, which is progressive dialling; `expires` means the record is taken back and the task
-ends with an `expired` outcome naming `preview`. The two travel together
-(`task.preview.atDeadline.required`, `task.preview.previewEndsAt.required`), only while the task is in
-`preview` (`task.preview.deadline.unexpected`), and Omni's countdown reads "calling in 12s" or
-"expires in 12s" from the provider's word. With neither, the agent has as long as they need.
-Reaching the instant is not itself a transition: the provider reports what it did, as an event.
+**Preparation and trigger ownership are per task.** Unlimited preparation omits both
+`previewEndsAt` and `atDeadline`: only an agent pressing Call starts dialing. Fixed preparation
+carries the provider's authoritative preparation-end instant and exactly one trigger owner:
+
+| Declaration | At preparation end |
+| --- | --- |
+| `atDeadline: "calls"` | The provider initiates dialing. The host never sends a timer-triggered Call. |
+| `atDeadline: "host-calls"` | The host sends the ordinary `call` command with a fresh host `dialId`. The provider does not independently auto-dial this task. |
+| `atDeadline: "waits"` | Neither side auto-dials. The task remains in preview until the agent presses Call. |
+
+The agent may press Call early in either fixed-preparation dialing mode, or at any time in
+`waits` mode. With `waits`, the countdown is a preparation target, not an expiry: when it reaches
+zero the UI says "Waiting for agent" and keeps Call available. There is no automatic task-ended,
+disposal, dialing or phase change. No repeating timer action occurs on later snapshots. This differs
+from unlimited preparation only by displaying a preparation target. The former `expires` deadline
+value is not supported; elapsed preparation must not withdraw the task. For `calls` and `host-calls`, the deadline ends
+preparation and triggers initiation; it does not promise ringing, playable audio or customer
+answer at that exact instant. Scheduling/dispatch delay must remain visible, and a failed or
+prevented initiation must be reported rather than leaving a silently expired countdown.
+A source eligibility threshold that may never trigger an attempt is not this promise.
+
+The two deadline fields travel together and only in preview. The host uses trusted provider-domain
+time; clock estimation is allowed only under the explicit host-triggered preview exception below.
+Without usable provider-domain time
+it cannot safely auto-trigger and must expose the uncertainty and reconcile. No zero-duration,
+receipt-time or local-default deadline is inferred. Neither elapsed time nor submission changes
+the task phase: subsequent authoritative events state ringing, answer, media and completion.
+
+A host must serialize manual clicks and its timer under the exact provider/login/task/allocation
+scope, allowing at most one unresolved submission. Recheck the current phase, deadline owner,
+allocation and whether an attempt already exists before dispatch. A new snapshot or policy update
+cancels an obsolete timer; login loss, disconnect, task end and allocation replacement fence its
+callback. Reconnect past a deadline first reconciles current task and attempt state; it must not
+blindly submit again. An uncertain prior submission remains unresolved, without automatic retry.
+The provider atomically arbitrates any residual manual/timer race and does not accept a second
+command as ownership of an already-running independent attempt.
+
+Host-triggered automatic dialing is an ordinary host dial: its result is `dialling` with the same
+host `dialId`, followed by exactly one correlated terminal `dial-outcome`. A provider-triggered
+dial has no invented host ID or host dial outcome. It reports source-evidenced party ringing,
+actual media and customer answer separately. In preview with `atDeadline: "calls"`, a ringing
+party without a host ID may carry actual pre-answer media; the deadline alone permits no media.
+Media is still introduced/ended by the corresponding events and must not imply customer answer.
+Submission acceptance is never an answered outcome or permission to publish `in-progress` early.
+Unsupported source correlation/outcome/media evidence remains an integration blocker.
 
 **Drop both fields when the phase moves.** A provider that builds the `in-progress` task by
 spreading the `preview` one carries `previewEndsAt` and `atDeadline` with it, and the host refuses
@@ -2481,6 +2547,33 @@ the update (`task.preview.deadline.unexpected`): the desk keeps the task as it l
 provider is told through `refused` exactly which rule, so the state that looked right on its side
 is named on its side. The task past preview has no deadline to wait for, so it carries neither
 field.
+
+**Provider execution and host controls are distinct.** Answer, hold/resume, transfer (including
+IVR routing), conference and handling completion are executed by the provider
+through the adapter. The task's applicable capability, phase, completion mode and command-specific
+prerequisites decide which controls are offered. Caller disconnect also executes at the provider. Microphone mute is host-owned, never a provider
+TaskCommand or task capability. The separately declared host recording facility keeps its existing
+recording contract; this distinction does not remove it or move provider call operations to the host.
+
+A caller journey may revisit the same agent while an earlier handling still wraps. Public task
+IDs must remain distinct for concurrently open handlings. For source-owned handling IDs allocated
+before offer and never reused per assignment, both public task ID and allocation ID may equal that
+handling ID. Restore them unchanged on reconnect. Commands, media, endings and handling reports
+retain the exact pair; never retarget an old command to the newest handling of a journey.
+`validateTaskCommandRequest` checks the request's pair against the supplied published task and
+then its command prerequisites. The caller must select that task within the correct provider/login
+and recheck at the provider; the validator cannot prove source freshness or authorization.
+`task-ended` retires only that handling's resources. Another handling, caller channel or IVR/queue
+portion must not be cleared because this task ended. Snapshot counts include all still-owned wrap
+and active handlings; task disposal is not caller hangup.
+
+**Voice describes the agent's handling within the wider call.** The task defines that agent's
+workspace, tools, permissions, media participation and completion work. The caller's channel may
+continue through IVR, queues, other agents, holds or conferences while this handling ends or wraps.
+Disposing this task ends this handling responsibility; it is not evidence that the caller's channel
+or journey ended. Task media describes this agent's attachment, not the lifetime of every party's
+connection. Commands retain their explicit targets and effects; task disposal must not silently
+become a caller-disconnect operation.
 
 **A task is never its audio.** A voice task is the allocation: the call is offered when it is
 routed to the agent and accepted as its `acceptance` dictates, and its presence and phase follow
@@ -2688,12 +2781,27 @@ platform cannot hold a leg the host reported keeps it in the login's `store` for
 task, so a reload of the host restates the same record; the entry is keyed by `step` and `at`, so
 a running hold restated with its final `seconds` is the same entry.
 
-**The record is ordered by the instants stated in it, whoever stamped them.** The host stamps the
-legs it performs from the same clock it reports everything else with, and the provider writes a
-host leg into the record with the host's `at`, in its place among the others by that instant, and
-answers `recorded`: it never refuses a leg, or the task, for a timestamp it did not write. A host
-whose clock runs ahead of the platform's puts its own mute before the platform's answer, and the
-record shows what was stated; that is the host's clock to fix, not the provider's record to edit. **Handle time is anchored, not restarted.** It runs from the
+**The provider owns the timestamps in its record.** Host timestamps are advisory. The provider
+may retain a host instant it accepts or assign its own observation/receipt instant; it need not
+copy the host clock. A provider declaring `timestampAuthority: "provider"` uses its own timestamps
+for final records. Receipt time is an observation boundary, not a claim about when the physical
+host action happened. Records are ordered by their published provider-selected instants, with no
+rewriting of an already-published entry when a later host report arrives.
+
+The incoming host `step` and `at`, scoped to the task and its current life, identify one reported
+leg for correlation only. The provider retains a binding from that key to its chosen history
+`at`. Every successful `recordStep` returns `{ status: "recorded", at }` with that same canonical
+history instant, even for subsequent duration/end reports. The host keeps sending the original
+report key, never the returned history timestamp. A changed host timestamp is not a correction
+to the same report: it names a different leg. Bindings survive reconnect/reload for the retained
+task lifetime. The host renders provider-published history unchanged. It never compares the
+provider instant back to its own clock, substitutes its own timestamp, or adjusts later messages
+to match an earlier host estimate. The acknowledgment identifies the provider record for
+correlation/conformance only; it is not a host-side timestamp reconciliation instruction. Conflicting reuse is refused visibly, not paired by arrival time or nearest instant.
+If two distinct entries would collide under the history's `(step, at)` key, do not invent a time
+or combine them: report the representation conflict. No ambiguous event is silently accepted.
+
+**Handle time is anchored, not restarted.** It runs from the
 `answered` step's `at` — from the task's first `in-progress` where the provider reports no
 history — until the task's media ends, and a hold neither pauses nor resets it: the hold's own
 duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is
@@ -2776,8 +2884,9 @@ void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy:
 void connection.recordStep?.({ taskId, allocationId, step: "muted", at, mutedBy: "host", seconds: 42, ended: true }); // the moment they unmute
 ```
 
-The entry is keyed by `step` and `at`, so every report about one leg names the same instant. The
-host is the authority for the legs it performs, so it may say how long so far — `seconds` is
+Every report about one leg repeats its original `step` and host `at` as a correlation key;
+the published history uses the provider-selected `at` returned by `recordStep`. The host reports
+the action it performed and its measured duration, not an authoritative provider timestamp. It may say how long so far — `seconds` is
 elapsed while the leg runs and final once it has ended — and **the end is stated, never
 inferred**: `ended: true` marks the last report, and it carries the final duration. **What a
 provider never asked for never crosses.** The running report is sent only to a provider whose
@@ -2787,16 +2896,33 @@ a running one it was never asked for (`handlingReport.running.unexpected`). What
 did ask for them forwards upstream, and how often, is its own business. The step appears in
 `handlingHistory` when the *provider* publishes it: Omni never writes the record itself.
 `recordStep` is required of every softphone login's connection, since every call on a softphone
-can be muted by the host, and answers `recorded`. A `muted` report says whose the silence was,
+can be muted by the host, and answers `recorded` with the canonical history `at`. A `muted` report says whose the silence was,
 `mutedBy: "host"` or `"station"`, and no other report has the word (`handlingReport.mutedBy`,
 `.mutedBy.unexpected`). On a desk phone the microphone is the phone's:
 the host mutes nothing and records nothing.
 
-**A host-performed leg still open when the task's media ends, or the task ends, is ended by the
-host at that instant** — `ended: true`, `seconds` to the end, the same `at` — since a provider
-left to close it would be guessing at a host-performed duration. Both ends are read off one clock,
-the host's, and a leg shorter than a second is reported as the second it was, never as the nought
-the record refuses.
+**The provider's confirmed end is decisive.** The host keeps local state for interaction and
+reporting, but follows the provider's authoritative state. When the provider publishes the end
+of the current mute leg, the host ends that local mute and releases its host-controlled mute
+on the matching task's media. It does not wait for its own timer, reopen the leg, replace the
+provider timestamp, or overwrite the provider's final duration with a later host report.
+A later agent mute is a new leg, never a reopening of the ended one.
+
+Correlate the provider-published `muted` entry using the provider-selected `at` acknowledged
+for the current report key; a final `seconds` closes that leg under the history contract.
+This is identity matching, not reconciliation between clocks. An old closed entry, an unrelated
+task, or a stale connection cannot end a newer local mute. If publication precedes the acknowledgment,
+retain the current provider view and apply the matching closure once correlation is available;
+never guess a match from arrival order or nearest timestamp. Failure to release a host-controlled
+mute is reported visibly; local device reports still describe the actual device state.
+
+At a provider-confirmed task/media end, the host also stops the associated local mute and reports
+its observed ending where the report is still accepted. A host closing report repeats its original
+key and may include its measured duration, but cannot reverse an already confirmed provider end.
+The provider acknowledges a known closed leg without rewriting its final record; after the task
+has been disposed, it may refuse the report as task-not-found. The host reads that response rather
+than retrying or recreating the task. An observed host end before a provider closure is still
+reported normally; the provider decides the final timestamp and publishes the record.
 
 ### Browser capability
 
@@ -3037,7 +3163,7 @@ See **Which commands need a capability**.
 | --- | --- | --- |
 | `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when provisioning also permits declining. |
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
-| `endCall` | Primary button: End call | Omni may end the whole call: everyone leaves, the media ends, and the task stays for its wrap-up. See **Ending a call, and removing one person from it**. |
+| `endCall` | Primary button: End call | The provider ends the caller connection and all owned/inherited agent-added channels; wrap/disposal remain separate. See **Ending a call, and removing one person from it**. |
 | `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance disposes at provider end. See **Connecting back during completion**. |
 | `coldTransfer` | Secondary menu item: Cold transfer | Omni may hand the customer straight to a destination, with nobody spoken to first. |
 | `warmTransfer` | Secondary menu item: Warm transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Warm transfer**. |
@@ -3103,12 +3229,12 @@ kind travels, nothing is typed, and a control with an empty directory has nothin
 refused (`task.destinations.offer`). A control declared as bare `true` is refused for the same
 reason (`task.destinations.shape`): once nothing is typed, the directory is the control.
 
-**An agent never transfers to a named agent**, warm or cold. A contact that needs another pair of
-hands goes back to a queue or a menu the queue configured, and who takes it next is the queue's
-decision: routing by skill, availability and fairness is what the queue is for, and a hand-off to a
-chosen colleague bypasses all three. The desk shows no agent picker and no dial pad on a transfer.
-The one way a named person ends up with an agent's call is a lead taking it over through lead
-assist, which is the lead's act, not a transfer the agent chose.
+**The provider chooses the supported destinations.** A published item may route to an IVR,
+queue, named agent or another configured destination. No destination kind is inferred from its
+label. The host offers only the directory attached to this task's specific transfer capability,
+and sends the exact destination ID; it does not invent an agent picker or arbitrary dial target.
+The provider rechecks eligibility and executes the routing. Returning to an IVR or queue does not
+end the caller journey; a later assignment to the same agent is a new handling.
 
 #### Ending a call, and removing one person from it
 
@@ -3116,18 +3242,44 @@ A call has everyone on `Task.onCall`, and two commands take people off it, both 
 provider.
 
 ```ts
-{ type: "end-call" }                                             // everyone leaves; the media ends; the task stays for its wrap-up
+{ type: "end-call" }                                             // provider ends caller and owned/inherited agent-added channels; wrap/disposal are separate
 { type: "conference", action: "remove", party: true }            // the customer leaves; the agent stays with the colleague
 { type: "conference", action: "remove", destinationId: "tier2" } // the conferenced person leaves; ringing, this calls the dial off
 ```
 
-`end-call` ends the whole conversation for everyone on it, and is gated by `endCall`. The task does
-not end with it: `task-media-ended` follows, any wrap allowance runs, and the agent dispositions
-the call. `conference` `remove` takes one person off, named as the room names them, and the call
-goes on for the rest; it is gated by `conference`, since it only means something with a third
-person on the line. Removing the party leaves the agent with the colleague, a warm hand-over in
-reverse. A remove that would leave the agent alone is not a remove but an `end-call`, and a
-provider answers it `failed`. The consulted destination of a warm transfer is not removed this way:
+The host sends the ordinary task-scoped `execute` request with `command: { type: "end-call" }`.
+The provider knows the caller and agent-added channel bindings; no channel list or owner details
+are sent by the host. The task's `endCall` capability is permission, not an executor selection.
+`validateTaskCommandRequest` checks the exact handling/allocation and delegates the command's
+policy/phase checks. The provider rechecks current ownership atomically; no client validator can
+prove that its view is fresh. The host does not implement agent end-call; low-level removal of individual channels is not
+this agent action. There is no host end-call execution API or fallback route.
+
+`end-call` is gated by `endCall` on the current handling. It ends the caller connection and
+all agent-added channels owned by that handling, including channels originally added by previous
+agents and inherited through transfer or takeover. Ownership is not inferred from who originally
+dialed, the current UI selection, or a person's label. The provider maintains that authority
+and checks the exact handling/allocation when acting. Agent-added channels are not left behind
+merely because another agent added them.
+
+On a successful transfer or takeover, ownership of those channels passes to the receiving
+handling (lead or another agent), not just ownership of the caller leg. The outgoing handling may
+still have its allowed wrap work, but cannot disconnect channels it no longer owns. A pending or
+unknown handover is not a confirmed ownership change: retain source reservations and reconcile.
+The provider must serialize handover and end-call so a delayed outgoing command cannot tear down
+the recipient's call. No public channel-owner field or guessed identity is introduced here;
+the source must provide authoritative ownership and command fencing before declaring permission.
+
+The resulting end of this agent's media is published as `task-media-ended`. Any wrap remains
+until its own completion/disposal; `end-call` is not `task-ended`, and `complete` is not an implicit
+caller/channel disconnect. Other agents' independent tasks end or wrap only on their own source
+transitions. Neither disposal nor transfer itself ends the continuing caller journey.
+
+`conference` `remove` remains a person-specific provider operation, gated by `conference`.
+It does not implicitly dispose any other handling. Its person/consultation prerequisites
+remain separate from the permission to disconnect the caller. A remove that would leave the
+agent alone is not a remove but an `end-call`, and the provider answers it `failed`.
+The consulted destination of a warm transfer is not removed this way:
 `transfer` `cancel` is its own step, which returns the agent to the parked customer, and a remove
 never promises that.
 
@@ -3355,14 +3507,12 @@ the platform added itself carries none. `held: true` is presence as claim. A sna
 after a transfer reads the room from here rather than inferring it from a sequence of outcomes it
 never saw.
 
-**`onCall` is who is on the call now, and a task outlives its call.** Wrap-up is not an ending:
-the task is alive, the agent is working, and nothing arrives to say the call ended until they
-dispose. So the room must not be the last word about a call that has ended. Once the call is over
--- the task `completing`, or its `media` ended -- `onCall` is empty, or absent only where the
-provider never publishes the room at all, and a task carrying people on a call that has ended is
-refused (`task.onCall.ended`). Empty says nobody is on the call; absent says the provider does not
-say who is, which is a different claim, so a provider that publishes the room publishes one last
-change: the empty room.
+**`onCall` describes this agent's current handling.** When the caller disconnects but the agent
+and added channels remain connected, the remaining room is still valid. When this handling's
+media ends or the task enters `completing`, clear its `onCall` view; absence is used only by a
+provider that never publishes the room. This does not assert that the caller, bridge or other
+agents' channels ended. A published room receives a final empty view for this handling, and the
+task may remain open for wrap. Disposal is a separate task action, not the caller's disconnect.
 
 **A field that describes the present is cleared by the transition that ends it.** `onCall`,
 `previewEndsAt` and `atDeadline` are three instances of one shape, and there will be more: each
@@ -3551,6 +3701,40 @@ against it (`stream.taskOffered.overCapacity`).
 **Capacity gates what the provider allocates, not what the agent starts.** A call placed from the
 idle dialpad arrives through `task-offered` like any other task, and a full agent does not forbid
 it: the ceiling binds allocation, not the agent's own hand.
+
+### Runtime break prerequisite checks
+
+Use `validateBreakCommand(method, request, state, context)` from the validation entry point
+before any agent break dispatch. The context supplies current authentication and transport;
+all four methods require the live login's break capability and active transport. Pass the
+request object only to the request method, and undefined to the other three.
+
+| Method | Required current state |
+| --- | --- |
+| `requestBreak` | `not-requested`; selected current reason code when codes exist; `mayAsk` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
+| `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `mayAsk` does not revoke the grant. |
+| `cancelBreak` | `awaiting-decision` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
+| `endBreak` | `in-effect` or `starting-after-task` during reconciliation; an agent cannot end an imposed break. |
+
+Use `validateTeamBreakCommand(request, context)` for lead decisions, placement, release and
+policy commands. It requires the live lead capability and active transport, a current target
+roster for member commands, and the target's complete break state for placement/release.
+Approve/deny requires an awaiting decision; placement uses the target's reason codes; release
+requires an imposed committed break. The context's target state must belong to the named member;
+that association and backend authorization are provider responsibilities.
+
+Use `validateBreakStatus(state, tasks)` on the complete retained task view after each transaction,
+as well as `validateBreakTransition` for event ordering. Snapshot validation shares the status
+checks. Pending and completing tasks still count as work. Only the existing monitoring exception
+allows tasks beside a break in effect. Validate full task shapes and the envelope separately.
+
+These validators report violations without dispatching, rewriting state or proving freshness.
+Recheck prerequisites atomically at the provider; client validation cannot prevent a race.
+Continue to use `validateResult` for each method's response vocabulary. A request acknowledgment
+is not a grant, and no method response overwrites a newer state emission. Rejected promises
+remain unknown and recover by snapshot, not automatic retry. The host's frozen provider set,
+durable mutually exclusive commit/cancel decision and reconciliation obligations above remain
+required; per-provider validation does not implement the multi-provider coordinator.
 
 ### `requestBreak(request)`
 
@@ -4273,7 +4457,7 @@ an affordance, never the enforcement: the host asks, and the provider does or de
 answers `failed` for a command whose capability it did not publish, and that is the provider
 honouring its own declaration, not the host deciding policy -- a host that refuses a command on
 its own reading of a queue's flag has decided something that was never its to decide. What a
-command means on the platform is the provider's to work out: `end-call` ends the conversation, and
+command means on the platform is the provider's to work out: `end-call` disconnects the caller channel, and
 which legs on which bridge that touches is a fact about the switch, never a choice the host makes.
 The one thing the host performs physically is the microphone, and that is not a command at all.
 
@@ -4375,12 +4559,13 @@ declared:
 
 **A control on the contact belongs to the handling phases**, `in-progress` and `paused`:
 `hold`, `resume` and `pause`, `end-call`, every `transfer` and `conference` action, and
-every `lead-assist` action. Each acts on the call or the conversation, and only while there is one.
-Before `in-progress` nothing has been placed or opened; in `completing` the handling has ended -- a
-call with nobody on it, a conversation closed -- and a wrap-up that still shows Transfer shows it
-for nothing. The capability stays declared, because it is a property of the task and the task is
-still open; the phase says there is nothing to use it on. Omni shows none of these controls outside
-the two phases, and `validateTaskCommand` refuses each of them there (`command.phase.handling`).
+every `lead-assist` action. These controls act within this agent's current handling.
+In `completing`, that handling has ended and its wrap work remains. The caller may still be in
+an IVR, queue or another agent's handling, and other channels may remain connected. Completion
+of this handling does not establish that the caller or bridge ended. The capability stays
+declared while the task remains open; the phase prevents this task from controlling a handling
+it no longer owns. Omni shows these controls only in the two handling phases, and
+`validateTaskCommand` refuses them outside those phases (`command.phase.handling`).
 The commands with a phase of their own -- `answer`, `accept` and `decline` in `pending`,
 `call` in `preview`, `connect-back` in `completing`, `complete` in any -- are not among them.
 
@@ -4460,22 +4645,102 @@ They are published as `OMNI_FAILURE_CODES`.
 | `occurredAt` | Valid RFC-3339 timestamp with an explicit timezone, representing provider observation time. |
 | `event` | Typed `ProviderEvent` payload. |
 
-#### Provider instants are read against a provider clock
+#### Timestamp standard and explicit exceptions
 
-Every deadline in this contract is a provider instant that Omni counts down: `allocationExpiresAt`,
-`previewEndsAt`, and the wrap deadline of `task-media-ended` plus `wrapAllowance` where
-one is stated.
-Comparing those against the host clock is wrong by whatever the two machines disagree by, and the
-damaging direction is early — **Accept** withdrawn from an offer still ringing, a wrap timer
-expiring before the agent has finished.
+Every provider event envelope carries `occurredAt` as an ISO timestamp in the contract's RFC-3339
+form, with `Z` or an explicit numeric timezone offset. Preserve the original instant. Payloads
+carry their source event/observation instants wherever available and declared by their type;
+publication and receipt time must not be substituted for a missing source instant. A required
+instant that the source cannot establish makes that evidence unavailable, not permission to
+invent a timestamp or silently omit a required field.
 
-`occurredAt` is what fixes it. Omni notes the host time at which each envelope arrives, keeps the
-running offset against the `occurredAt` inside it, and translates provider instants through that
-offset before counting down. What remains is network delay, which biases every deadline later —
-the direction that costs a second rather than an action.
+Clock estimation is an exception, not the standard interpretation of events. An ISO timestamp
+identifies an instant; it does not prove that the host and provider clocks are synchronized.
+Use an explicitly trusted clock in the relevant domain. Do not infer a general clock offset
+from event arrivals, shift source timestamps, or use an estimate to order events or create history.
 
-**Report `seconds`; never expect Omni to derive it** is the same hazard from the provider's side:
-neither party recomputes a duration across a clock it does not own.
+The current exceptions and their reasons are:
+
+| Case | Exception and reason |
+| --- | --- |
+| Host display of provider deadlines (`allocationExpiresAt`, `previewEndsAt`, wrap deadline) | A countdown may use an explicitly bounded provider-clock estimate when a trusted direct clock is unavailable, because the deadline belongs to another clock domain. This estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
+| Host-triggered preview deadline | A bounded clock estimate with monotonic aging may schedule the host's Call command because the provider owns the deadline but the host owns the trigger. Do not trigger before the deadline is known to have passed; invalidate on clock discontinuity and reconcile when uncertain. |
+| Recording evidence expiry | A bounded observer-domain clock estimate with monotonic aging may assess freshness because observation and expiry belong to the recorder's clock. If time cannot be trusted, recording state is unknown; never renew evidence from receipt or replay. |
+| Unknown recording state | `observedAt` and `validUntil` are absent because there is no confirmed observation. The containing provider event still has its own `occurredAt`; that publication is not a recorder observation. |
+| Direct snapshot reads and method requests/results | These are reads/operations, not event envelopes, and their current types have no general event timestamp. A snapshot event still carries `occurredAt`; embedded source instants remain unchanged. Do not treat a method result or read completion time as an occurrence boundary. |
+| Host-provided provider-clock estimate | Best-effort ISO time may be supplied by the host for optional comparisons; it is not a source observation or accuracy guarantee. The reason is that the host does not own the provider clock. |
+| Provider receipt timestamps | The provider may use its own receipt instant for final records of receipt/processing because host timestamps are untrusted advisory input. Receipt must not be presented as an earlier action or capture boundary. |
+| Optional source instants and deadlines | Omit only where the declared type permits absence and the source has no evidence or the policy has no deadline (for example unlimited preview). Do not replace absence with host time. |
+
+Every additional exception must be listed with its scope and reason before adoption. Estimates
+must specify their uncertainty and validity; elapsed time should use monotonic aging, and a clock
+jump invalidates the estimate. The optional check below samples provider time without changing event timestamps. Report
+source-measured durations where required; timestamp subtraction is not a substitute.
+
+#### Optional periodic provider time checks and host estimates
+
+A provider may declare `Manifest.timeCheck: true` and implement `Connection.checkTime(request)`.
+Omission means unsupported. The host separately opts in with `ProviderTimeCheckPolicy`; these
+host-local settings are not task policy or a guarantee. All four durations are explicit positive
+safe integer milliseconds, with `maxRoundTripMs <= timeoutMs <= intervalMs`. No default interval
+is assumed. Validate settings with `validateProviderTimeCheckPolicy`.
+
+While the connection is active, the host checks immediately on opt-in and then at `intervalMs`
+using a monotonic scheduler. Only one check may be outstanding. Missed ticks are skipped, never
+replayed in a burst. Each request has a fresh ID. The provider samples its own event/deadline
+clock after receiving the request and before returning `providerTime` as an ISO/RFC3339 instant,
+with the request ID, authenticated login ID and `clockId`. No cached sample or adapter-local time
+may masquerade as provider time. A provider unable to sample that domain must not declare support.
+Clock authority replacement or a discontinuity changes `clockId`.
+
+Validate requests and responses with `validateProviderTimeCheckRequest` and
+`validateProviderTimeCheckResult`. The host also checks the outstanding request, provider/connection
+and login, monotonic elapsed time and cancellation after the await: a late successful response is
+still rejected. Reject samples at or beyond `timeoutMs`, or above `maxRoundTripMs`. Cancel local
+tracking and invalidate estimates on disconnect, logout, policy disable, clock change or clock
+jump; late results cannot restore them. Resume with a fresh check after reconnection. Expire a
+sample at `maxSampleAgeMs` using monotonic elapsed time. Failure is visible through the host's
+existing diagnostic path, with the estimate unavailable; the next scheduled check can recover.
+Checking failure alone does not assert call/recording state or require a healthy connection to close.
+This read-only check is not a task command. Protocol supplies declarations and validators; the
+host implements the scheduler and the provider implements the clock read.
+
+The host may also expose `Host.estimateProviderTime({ providerId, loginId })`. It returns an ISO
+`at` in that provider's clock domain, the same explicit scope and `clockId`, or `undefined` when
+unavailable. Optional `uncertaintyMs` is an estimate, not a guaranteed bound. The method is optional
+at the host level and is deliberately absent from `HostGuarantees`. A provider declaring time
+checks does not require the host to expose estimates, and an estimate need not originate from
+this check if the host has another explicitly configured source for that provider clock.
+
+To estimate the difference, the host brackets the request with local send/receive instants and
+measures elapsed time monotonically. For provider sample P and local bracketing instants H0/H1,
+the offset under stable clocks lies between P-H1 and P-H0, before clock error and timestamp
+precision are considered. A midpoint is only an estimate; one-way delays need not be symmetric.
+Never treat round-trip uncertainty as proof of the source clock's accuracy. Advance a retained
+sample with monotonic elapsed time, and return unavailable after its configured validity ends.
+`validateProviderTimeEstimate` checks shape and scope, not actual accuracy or freshness.
+
+A provider may declare `Manifest.timestampAuthority: "provider"`: its own timestamps are
+used for final records, and host-supplied timestamps are advisory. This declaration is independent
+of time-check support and the optional host estimate; neither changes who owns the final record.
+Omission makes no promise that host timestamps will be trusted. No host-authoritative default
+is inferred. Successful `recordStep` responses identify the provider-selected history instant;
+see **The host records what it performs** for correlation and retained bindings.
+
+A provider need not trust or adopt any host-supplied timestamp. It may timestamp an incoming
+message using its own clock at receipt and use that for its own processing/accounting. The reason
+for this exception is that host clocks and host estimates are not authoritative at the provider.
+Receipt time must be described as receipt/observation time, not relabeled as the original host
+action, recorder capture boundary, or proof an operation applied. An existing field with a
+specific occurrence meaning still requires that evidence; this option does not silently redefine
+it. Host-only instants remain advisory input; the provider owns its authoritative publication.
+
+This host estimate is another explicit timestamp exception: it helps optional displays and
+provider-clock comparisons when the host lacks that clock directly. It is not a source occurrence,
+may not replace event/history timestamps, and alone cannot authorize deadline actions or prove
+recording freshness. Uses requiring a trustworthy bound still need independently established
+clock accuracy/drift assumptions. It neither synchronizes the operating-system clock nor changes
+ISO timestamps already published by the provider.
 
 #### Nothing is lost until the connection drops
 
@@ -4587,6 +4852,48 @@ from `in-effect` or `starting-after-task` to a grant or a request, or from `gran
 `awaiting-decision` — a new request passes through `not-requested` (`stream.breakState.backwards`).
 `exerciseAdapter` holds the stream to that from the connect snapshot on;
 `assertBreakFollowsItsRequests` holds any sequence.
+
+Adapters and hosts can call `validateBreakTransition(before, after)` from the package’s validation entry point
+with two complete break objects before applying an event. It checks shape and the transition
+rules above; it does not mutate either state or apply the event. Report a violation visibly,
+retain the last accepted state without claiming it remains current, and reconcile from the
+source. Continue to validate the full envelope/login and task/break consistency separately.
+The conformance `BreakStream` validates its baseline, retains the last accepted state on a
+rejected delta, and sets `needsRecovery`. Transport loss also requires reseeding; an `active` transport
+notification alone does not restore a break baseline. Until a fresh validated snapshot is seeded, further
+break deltas are refused (`stream.breakState.baseline`); the first delta is never an implicit
+snapshot. `seed(snapshot)` returns violations, which callers must check. This is a conformance
+tracker, not a complete production reducer: snapshot freshness, login/connection fencing and
+full task consistency remain separately required.
+
+**Both sides must enforce the order.** The host validates immediately before dispatch; the
+provider rechecks current permission and state atomically before acting. The provider validates
+the resulting break/task state before publication and serializes those publications. The host
+validates the envelope, transition and full task consistency before replacing local state. A
+request result does not optimistically advance break state, and a delayed command cannot apply
+to a later attempt merely because its approval happens to look compatible. Keep at most one
+unresolved operation per provider/attempt; recovery must resolve uncertainty before another
+operation is dispatched. The source must fence delayed operations against its own attempt state.
+
+Normal order is `not-requested` → `awaiting-decision` → `granted` →
+`starting-after-task` → `in-effect` → `not-requested`. Auto-approval may go directly to
+`granted`; a commit with no outstanding work may go directly to `in-effect`. Denial/cancel
+returns a precommit request to `not-requested`; an authorized end/release returns a committed
+break there. Same-state restatements are allowed. An evidenced imposed break is the explicit
+exception to requesting/granting, and must carry its imposed actor/state. Neither skipped
+publication nor a host-local guess creates another exception. A later normal attempt starts
+from `not-requested`, never by regressing an active break into a request.
+
+A fresh authoritative snapshot establishes a new baseline; do not run this event-transition
+check across it. A snapshot may legitimately establish a later request or an already active
+break after reconnect. Its freshness must be established by the source/adapter's ordered
+snapshot/publication boundary and fencing of obsolete callbacks and reads. A delayed old
+snapshot is not detectable from break approval alone. Neither envelope time nor event ID
+supplies a break revision. Do not suppress all requests after an active break: a later attempt
+passes through `not-requested`, and then may request again. Do not replay earlier ProviderEvents
+after recovery. Raw backend break handlers must preserve source order too; this helper does
+not implement or assume invocation of Protocol's two-phase request/commit coordinator.
+
 
 For a multi-provider break attempt, "every provider" is the set of providers frozen when the
 attempt entered `requesting-break`. Omni commits only after every asked provider reports `granted` —
@@ -4766,6 +5073,10 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
 | `validateHostGuarantees(guarantees)` | What a host promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever host a test hands the adapter. |
+| `validateProviderTimeCheckPolicy(policy)` | Explicit optional polling settings, positive safe-integer durations and round-trip/timeout/interval ordering. |
+| `validateProviderTimeCheckRequest(request)` | Fresh-request shape; the host enforces actual uniqueness and outstanding-request lifetime. |
+| `validateProviderTimeCheckResult(result, request, loginId)` | ISO timestamp, clock identity, exact request/login correlation; timing and source accuracy remain runtime checks. |
+| `validateProviderTimeEstimate(estimate, scope)` | Optional host estimate shape and provider/login scope; no accuracy guarantee. |
 | `validateHandlingReport(report, path?, manifest?)` | What the host reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
 | `validateHostReport(report)` | The host's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever host a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateHostMute(mute, softphone)` | What the host's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the host holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
@@ -4880,7 +5191,7 @@ as each case was considered, so a test that needs a rule to have run asserts it 
 inferring it from an empty `violations`, and a rule absent from it was never looked at, which is a
 gap and not a pass. With the audio open on a softphone,
 the drive mutes it for one second and reports the leg through `recordStep`, begun and then ended,
-expecting each report `recorded` (`drive.recordStep.failed`, `.rejected`); then it mutes again and
+expecting each report `recorded` with the provider-selected history `at` (`drive.recordStep.failed`, `.rejected`, `result.recordStep.at`); then it mutes again and
 ends the call muted, as agents do, so the leg is open when the media ends, the provider closes it
 in the completing publication or the open entry is refused (`task.handlingHistory.muted.open`),
 and the drive's closing report after the media ended is expected `recorded` and to change nothing:
@@ -4890,7 +5201,7 @@ Where the provider restates the task's record afterwards, each leg is in it or t
 does, the drive reloads the host as a reload happens: the first client is unsubscribed,
 disconnected and its session closed (`drive.reload.handover`), and only then is a second adapter
 built and connected for the same login with the same context and the same `store`; its snapshot
-must carry the task with that leg and the host's word, and the run goes on with the second as its
+must carry the task with that leg at its acknowledged provider timestamp and the reported actor, and the run goes on with the second as its
 connection to the end. A platform that holds the record hands it back, and an adapter that composed
 the record in memory has nothing and is named (`drive.reload.snapshot`, `drive.reload.history`,
 `.rejected`). The second adapter's snapshot is taken as any resync is: held to what the stream knew
@@ -4913,10 +5224,10 @@ another id (`drive.store.retained`); an adapter whose keys never named the task 
 unevaluated, and the result says so rather than passing it: a task's keys go
 with the task, or the next offer of the same id inherits them. Outside the
 handling phases with `hold` still declared -- in
-`confirmed`, where the provider publishes it, and in `completing` once the call has ended -- the
+`confirmed`, where the provider publishes it, and in `completing` once this agent's handling has ended -- the
 drive sends `hold` past the validator that would hold it back, and expects `failed`: the adapter
-is the second gate on a control on the contact, and one that applies it where there is nothing to
-hold is named (`drive.command.handling`). The drive cannot put a task into a phase the provider
+is the second gate on a control on the contact, and one that applies it outside this task's
+current handling is named (`drive.command.handling`). The drive cannot put a task into a phase the provider
 never publishes, so a provider that goes straight from `pending` to `in-progress` is checked in
 `completing` alone. A task the agent completes is
 completed from wherever it stands once the drive has nothing left to do on it -- from `completing`
@@ -5050,7 +5361,8 @@ observation instant and an exclusive expiry. These times describe current eviden
 capture boundaries. A trusted observer-domain current time must satisfy observedAt <= now < validUntil.
 Use `effectiveRecordingState` with that explicitly trusted time; an unavailable clock yields unknown.
 Receipt, replay and task publication never extend freshness. Clock discontinuity invalidates evidence;
-consumers must invalidate their clock estimate and use monotonic aging so clock rollback cannot
+consumers using the explicit recording-expiry clock-estimation exception must invalidate that
+estimate and use monotonic aging so clock rollback cannot
 revive expired evidence. The executor compares observation identity and recording identity against
 its latest state atomically before I/O. An intervening observation or allocation change refuses the
 stale command; it never acts on a replacement recorder. Providers lacking trustworthy current-state

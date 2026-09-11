@@ -153,7 +153,7 @@ const MEMBER_BREAKS = membersOf<Extract<BreakApproval, "awaiting-decision" | "gr
 const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
   pending: true,
 });
-const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, expires: true });
+const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, "host-calls": true, waits: true });
 const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
 const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, monitorControl: true });
 const MONITOR_MODES = membersOf<MonitorMode>({ monitor: true, whisper: true, barge: true });
@@ -500,6 +500,60 @@ function manifestDials(manifest: unknown): boolean | undefined {
   return isPlainObject(manifest) ? Array.isArray(manifest.dialOutcomes) : undefined;
 }
 
+/** Undefined explicitly means unavailable; a returned estimate is not a clock guarantee. */
+export function validateProviderTimeEstimate(value: unknown, scope: unknown, path = "estimate"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(scope)) { into.add("timeEstimate.scope", path, "provider/login scope is required"); return into.violations; }
+  for (const key of ["providerId", "loginId"]) into.filled(scope[key], "timeEstimate.scope", `scope.${key}`, "explicit provider/login scope is required");
+  if (value === undefined) return into.violations;
+  if (!isPlainObject(value)) { into.add("timeEstimate.shape", path, "expected a provider time estimate or undefined"); return into.violations; }
+  for (const key of ["providerId", "loginId"]) into.require(value[key] === scope[key], "timeEstimate.scope", `${path}.${key}`, "estimate must match the requested provider/login");
+  into.timestamp(value.at, "timeEstimate.at", `${path}.at`);
+  into.filled(value.clockId, "timeEstimate.clock", `${path}.clockId`, "estimate must identify its clock domain");
+  if (value.uncertaintyMs !== undefined) into.require(typeof value.uncertaintyMs === "number" && Number.isFinite(value.uncertaintyMs) && value.uncertaintyMs >= 0,
+    "timeEstimate.uncertainty", `${path}.uncertaintyMs`, "estimated uncertainty must be finite and nonnegative");
+  for (const key of Object.keys(value)) into.require(["providerId", "loginId", "at", "clockId", "uncertaintyMs"].includes(key), "timeEstimate.field", `${path}.${key}`, "unsupported estimate field");
+  return into.violations;
+}
+
+/** Validate host-local periodic clock-check configuration. Omission disables checking. */
+export function validateProviderTimeCheckPolicy(value: unknown, path = "timeCheck"): ProtocolViolation[] {
+  const into = new Collector();
+  if (value === undefined) return into.violations;
+  if (!isPlainObject(value)) { into.add("timeCheck.policy.shape", path, "expected an explicit clock-check policy"); return into.violations; }
+  for (const field of ["intervalMs", "timeoutMs", "maxRoundTripMs", "maxSampleAgeMs"]) {
+    into.require(typeof value[field] === "number" && Number.isSafeInteger(value[field]) && (value[field] as number) > 0,
+      "timeCheck.policy.duration", `${path}.${field}`, "expected positive safe integer milliseconds");
+  }
+  for (const key of Object.keys(value)) into.require(["intervalMs", "timeoutMs", "maxRoundTripMs", "maxSampleAgeMs"].includes(key), "timeCheck.policy.field", `${path}.${key}`, "unsupported policy field");
+  if (!into.violations.length) into.require((value.maxRoundTripMs as number) <= (value.timeoutMs as number) && (value.timeoutMs as number) <= (value.intervalMs as number),
+    "timeCheck.policy.order", path, "maxRoundTripMs <= timeoutMs <= intervalMs is required");
+  return into.violations;
+}
+
+export function validateProviderTimeCheckRequest(value: unknown, path = "request"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(value)) { into.add("timeCheck.request.shape", path, "expected a clock-check request"); return into.violations; }
+  into.filled(value.requestId, "timeCheck.request.id", `${path}.requestId`, "a check needs a fresh request ID");
+  for (const key of Object.keys(value)) into.require(key === "requestId", "timeCheck.request.field", `${path}.${key}`, "unsupported request field");
+  return into.violations;
+}
+
+/** Checks response shape/correlation, not source-clock accuracy, round-trip delay or freshness. */
+export function validateProviderTimeCheckResult(value: unknown, request: unknown, loginId: string, path = "result"): ProtocolViolation[] {
+  const into = new Collector();
+  into.violations.push(...validateProviderTimeCheckRequest(request));
+  into.filled(loginId, "timeCheck.login", "loginId", "current authenticated login is required");
+  if (!isPlainObject(value)) { into.add("timeCheck.result.shape", path, "expected a clock-check response"); return into.violations; }
+  into.filled(value.requestId, "timeCheck.result.id", `${path}.requestId`, "response must identify its request");
+  into.require(isPlainObject(request) && value.requestId === request.requestId, "timeCheck.result.request", `${path}.requestId`, "response must match the outstanding check");
+  into.require(value.loginId === loginId, "timeCheck.result.login", `${path}.loginId`, "response belongs to the current login");
+  into.filled(value.clockId, "timeCheck.result.clock", `${path}.clockId`, "provider clock domain/incarnation is required");
+  into.timestamp(value.providerTime, "timeCheck.result.time", `${path}.providerTime`);
+  for (const key of Object.keys(value)) into.require(["requestId", "loginId", "clockId", "providerTime"].includes(key), "timeCheck.result.field", `${path}.${key}`, "unsupported response field");
+  return into.violations;
+}
+
 export function validateManifest(manifest: unknown, path = "manifest"): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(manifest)) {
@@ -543,6 +597,8 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
   }
 
   if (channelValid) validateIdleCapabilities(manifest.idleCapabilities, manifest.channel as string, `${path}.idleCapabilities`, into);
+  if (manifest.timestampAuthority !== undefined) into.require(manifest.timestampAuthority === "provider", "manifest.timestampAuthority", `${path}.timestampAuthority`, "provider timestamp authority must be explicit; omission makes no trust promise");
+  if (manifest.timeCheck !== undefined) into.require(manifest.timeCheck === true, "manifest.timeCheck", `${path}.timeCheck`, "declare true or omit unsupported clock checks");
   validateDialOutcomes(manifest, `${path}.dialOutcomes`, into);
   validatePhones(manifest, `${path}.phones`, into);
 
@@ -966,7 +1022,7 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector, 
       }
       if (entry.step === "muted") {
         into.require(task.media !== "ended" && task.phase !== "completing", "task.handlingHistory.muted.open", `${at}.seconds`,
-          "a muted entry without seconds is a mute still running, and the call is over: the provider closes every open leg at the instant the media ends, and the duration is stated");
+          "a muted entry without seconds is still running, but this handling's media has ended: the provider closes its open leg and states the duration; other channels may continue");
       }
     }
     // A muted entry carries whose the silence was, as the host reported it; no other step has it.
@@ -1003,10 +1059,10 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector, 
 const TASK_MEDIA_STATES = membersOf<TaskMediaState>({ started: true, ended: true });
 
 /** Real-time media is a voice affair, and its state is one of two words. */
-/** Whether a host dial is ringing the party: the party entry carries `stage: "ringing"` and the host's `dialId`. */
-function partyRingingByHost(task: Record<string, unknown>): boolean {
+/** A host dial, or explicitly provider-triggered preview dial, is ringing the party. */
+function partyRingingBeforeWork(task: Record<string, unknown>): boolean {
   return Array.isArray(task.onCall) && task.onCall.some(entry =>
-    isPlainObject(entry) && entry.role === "party" && entry.stage === "ringing" && typeof entry.dialId === "string");
+    isPlainObject(entry) && entry.role === "party" && entry.stage === "ringing" && (isFilled(entry.dialId) || (task.phase === "preview" && task.atDeadline === "calls" && entry.dialId === undefined)));
 }
 
 function validateTaskMedia(task: Record<string, unknown>, value: unknown, channel: string, phase: unknown, path: string, into: Collector): void {
@@ -1016,10 +1072,10 @@ function validateTaskMedia(task: Record<string, unknown>, value: unknown, channe
   if (into.oneOf(value, TASK_MEDIA_STATES, "task.media", path)) {
     // Nothing is acquired while pending, and a preview has placed no call: media names a task whose
     // work has begun, on a snapshot as on the event, or a host would open the microphone on an offer.
-    // The one task not yet at work that has audio is one whose party the host is dialling: ring-back
-    // is audio, and every host-placed dial's media starts on dialling.
-    into.require(!(WORK_NOT_BEGUN as readonly unknown[]).includes(phase) || partyRingingByHost(task), "task.media.beforeWork", path,
-      `a ${describeValue(phase)} task has no media: audio arrives once its work has begun, or once the host is dialling its party`);
+    // Ring-back may precede answer for a host dial or an explicitly provider-triggered preview.
+    // A deadline alone is never evidence that media started.
+    into.require(!(WORK_NOT_BEGUN as readonly unknown[]).includes(phase) || partyRingingBeforeWork(task), "task.media.beforeWork", path,
+      `a ${describeValue(phase)} task has no media: audio arrives once its work has begun, or once an evidenced host/provider preview dial is ringing its party`);
   }
 }
 const WORK_NOT_BEGUN = ["pending", "confirmed", "preview"] as const;
@@ -1198,7 +1254,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     }
     if (task.atDeadline === undefined) {
       into.add("task.preview.atDeadline.required", `${path}.atDeadline`,
-        "a preview with a deadline says what the system does at it: calls, or expires -- an agent counting down has to know which");
+        "a preview with a deadline says what happens at it: provider calls, host calls, or waits for the agent -- an agent counting down has to know which");
     } else {
       into.oneOf(task.atDeadline, PREVIEW_DEADLINES, "task.preview.atDeadline", `${path}.atDeadline`);
     }
@@ -1265,19 +1321,16 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   validateTaskAttributes(task.attributes, `${path}.attributes`, into, context.levels);
   validateHandlingHistory(task.handlingHistory, `${path}.handlingHistory`, into, { phase: task.phase, media: task.media });
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
-  // The room is who is on the call now, and a task outlives its call by the whole of wrap-up: a
-  // task whose call has ended -- completing, or media ended -- carries nobody, or the last thing the
-  // wire said about the call stays true for ever. Empty and absent both say nobody.
-  // A completing task's call is over: its media has ended, or it never started. Audio still stated
-  // as started on a task in wrap-up is a call whose audio never ended -- the customer heard through
-  // the agent's notes -- and a task stating it contradicts itself.
+  // Media and onCall describe this agent's handling, not the continuing caller journey.
+  // Once the handling's media ends or it enters wrap, its live room is cleared. Other
+  // channels may remain connected under another handling or in IVR/queue stages.
   if (task.phase === "completing" && task.media === "started") {
     into.add("task.media.completing", `${path}.media`,
-      "a completing task's media has ended or never started: the call is over, and media still started is audio that never ended");
+      "a completing task's handling media has ended or never started; it cannot still be started during wrap");
   }
   if (Array.isArray(task.onCall) && task.onCall.length > 0 && (task.phase === "completing" || task.media === "ended")) {
     into.add("task.onCall.ended", `${path}.onCall`,
-      `the call has ended (${task.phase === "completing" ? "the task is completing" : "its media ended"}) and onCall still names people on it: the room is who is on the call now, and now nobody is`);
+      `this handling is no longer connected (${task.phase === "completing" ? "the task is completing" : "its media ended"}); clear its onCall view without implying that other channels ended`);
   }
   validateTaskMedia(task, task.media, context.channel, task.phase, `${path}.media`, into);
   validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
@@ -1369,6 +1422,192 @@ function validateImposedBreak(value: unknown, path: string, into: Collector): vo
     into.add("break.imposed.endsAutomatically", `${path}.endsAutomatically`,
       "an imposed break must say whether it ends automatically");
   }
+}
+
+/** Checks break status against the full currently retained task set, after a transaction. */
+export function validateBreakStatus(state: unknown, tasks: unknown, path = "snapshot"): ProtocolViolation[] {
+  const into = new Collector();
+  validateBreakState(state, `${path}.break`, into);
+  into.require(Array.isArray(tasks), "break.tasks.shape", `${path}.tasks`, "the complete current task list is required");
+  if (Array.isArray(tasks)) tasks.forEach((task: unknown, index: number) => {
+    into.require(isPlainObject(task), "break.task.shape", `${path}.tasks[${index}]`, "each retained task must be an object");
+  });
+  // A break in effect begins when the work ends, so it holds no task. A snapshot reporting both
+  // describes a state the agent cannot be in, whichever half is stale. The one exception is a
+  // lead listening to a call during a break that is work of another sort -- coaching,
+  // administrative, training -- and on no other.
+  // The converse: a committed break with nothing outstanding has begun. starting-after-task beside
+  // no task is a break waiting on work that does not exist, and an empty list reading as "still
+  // finishing" is the plausible nought.
+  ruleEvaluated("break.starting-after-task.tasks");
+  if (isPlainObject(state) && state.approval === "starting-after-task"
+    && Array.isArray(tasks) && tasks.length === 0) {
+    into.add("break.starting-after-task.tasks", `${path}.break.approval`,
+      "a break starting after the task waits on a task, and the snapshot carries none: with nothing outstanding the break is in-effect");
+  }
+  if (isPlainObject(state) && state.approval === "in-effect"
+    && Array.isArray(tasks) && tasks.length > 0) {
+    const listening = tasks.every((task: unknown) => isPlainObject(task) && task.monitoring !== undefined);
+    if (!listening) {
+      into.add("break.in-effect.tasks", `${path}.tasks`,
+        "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task");
+    } else {
+      const reasons = Array.isArray(state.reasons) ? state.reasons : [];
+      const active = reasons.find((reason: unknown) => isPlainObject(reason) && reason.id === state.activeReasonId);
+      const kind = isPlainObject(active) ? active.kind : undefined;
+      into.require(typeof kind === "string" && (MONITORING_BREAK_KINDS as readonly string[]).includes(kind), "snapshot.monitoring.break", `${path}.tasks`,
+        `a lead listens during a ${MONITORING_BREAK_KINDS.join(", ")} break and no other; the active reason is ${kind === undefined ? "unstated" : describeValue(kind)}`);
+    }
+  }
+
+  return into.violations;
+}
+
+/**
+ * Checks lead break dispatch using current authentication, transport, roster (`team`) and,
+ * for place/release, the target's full `memberBreak`. The provider must authorize the target
+ * and recheck the decision atomically; a roster is not authority to act after it has changed.
+ */
+export function validateTeamBreakCommand(request: unknown, context: unknown, path = "teamBreakCommand"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(context) || !isPlainObject(request) || !isPlainObject(request.command)) {
+    into.add("team.break.command.shape", path, "a command and current authentication/transport/team context are required");
+    return into.violations;
+  }
+  const auth = isPlainObject(context.authentication) ? context.authentication : {};
+  into.violations.push(...validateAuthenticationState(auth, `${path}.authentication`));
+  const caps = isPlainObject(auth.capabilities) ? auth.capabilities : {};
+  into.require((auth.status === "authenticated" || auth.status === "refreshing") && context.transport === "active",
+    "team.break.command.connection", path, "lead commands require a live login and active transport");
+  into.require(isPlainObject(caps.team) && caps.team.breakControl === true, "team.break.command.capability", path,
+    "the login must declare team.breakControl");
+  const command = request.command;
+  const allowed: Record<string, readonly string[]> = {
+    decide: ["type", "memberId", "decision", "reason"], policy: ["type", "policy"],
+    place: ["type", "memberId", "reasonId", "reason"], release: ["type", "memberId"],
+  };
+  const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
+  if (!fields) { into.add("team.break.command.type", path, "unknown lead break command"); return into.violations; }
+  for (const key of Object.keys(request)) into.require(key === "command", "team.break.request.field", `${path}.${key}`, "only command is supported");
+  for (const key of Object.keys(command)) into.require(fields.includes(key), "team.break.command.field", `${path}.${key}`, "field is not supported for this command");
+  if (command.reason !== undefined) into.filled(command.reason, "team.break.command.reason", path, "reason must not be empty");
+  if (command.type === "policy") {
+    into.require(["ask", "auto-approve", "suspended"].includes(command.policy as string), "team.break.command.policy", path, "unknown break policy");
+    return into.violations;
+  }
+  into.filled(command.memberId, "team.break.command.member", path, "name the target member");
+  const team = isPlainObject(context.team) ? context.team : {};
+  const members = Array.isArray(team.members) ? team.members : [];
+  const member = members.find((m: unknown) => isPlainObject(m) && m.id === command.memberId);
+  const self = isPlainObject(auth.identity) ? auth.identity.id : undefined;
+  into.require(isPlainObject(member) && command.memberId !== self, "team.break.command.member", path,
+    "the target must be another member of the current authorized roster");
+  if (command.type === "decide") {
+    into.require(command.decision === "granted" || command.decision === "denied", "team.break.command.decision", path, "decide granted or denied");
+    into.require(isPlainObject(member) && member.break === "awaiting-decision", "team.break.command.awaiting", path,
+      "decide only a currently awaiting-decision request");
+  } else {
+    validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
+    const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
+    if (command.type === "release") into.require(state.imposed !== undefined && (state.approval === "in-effect" || state.approval === "starting-after-task"),
+      "team.break.command.release", path, "release a currently imposed break");
+    if (command.type === "place") {
+      if (command.reasonId !== undefined) into.filled(command.reasonId, "team.break.command.reasonId", path, "reasonId must not be empty");
+      const reasons = Array.isArray(state.reasons) ? state.reasons : [];
+      into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
+        "team.break.command.reasonId", path, "place uses the target's currently published reason codes");
+    }
+  }
+  return into.violations;
+}
+
+/** The four agent break methods; this is a validation API, not a wire command. */
+export type BreakMethod = "requestBreak" | "commitBreak" | "cancelBreak" | "endBreak";
+
+/**
+ * Validate immediately before dispatch against current provider state. Context must contain
+ * the current authentication and transport. This cannot fence a concurrent backend change;
+ * the provider must recheck atomically. Result validation never replaces authoritative state.
+ */
+export function validateBreakCommand(method: BreakMethod, request: unknown, state: unknown,
+  context: unknown, path = "breakCommand"): ProtocolViolation[] {
+  const into = new Collector();
+  validateBreakState(state, `${path}.state`, into);
+  if (!isPlainObject(context)) {
+    into.add("break.command.context", path, "current authentication and transport are required");
+    return into.violations;
+  }
+  into.violations.push(...validateAuthenticationState(context.authentication, `${path}.authentication`));
+  const auth = isPlainObject(context.authentication) ? context.authentication : {};
+  into.require(auth.status === "authenticated" || auth.status === "refreshing", "break.command.authentication", path,
+    "break commands require a live authenticated login");
+  into.require(isPlainObject(auth.capabilities) && auth.capabilities.breaks === true, "break.command.capability", path,
+    "the login must declare breaks");
+  into.require(context.transport === "active", "break.command.transport", path, "break commands require active transport");
+  if (!["requestBreak", "commitBreak", "cancelBreak", "endBreak"].includes(method)) {
+    into.add("break.command.method", path, "unknown break method");
+    return into.violations;
+  }
+  if (!isPlainObject(state) || into.violations.length) return into.violations;
+  const approval = state.approval;
+  if (method === "requestBreak") {
+    into.require(approval === "not-requested", "break.command.request.pending", path, "a new request starts only from not-requested");
+    if (!isPlainObject(request)) {
+      into.add("break.request.shape", path, "requestBreak takes a request object");
+      return into.violations;
+    }
+    for (const key of Object.keys(request)) into.require(key === "reason" || key === "reasonId",
+      "break.request.field", `${path}.${key}`, "a break request carries only reason and reasonId");
+    for (const key of ["reason", "reasonId"]) if (request[key] !== undefined)
+      into.filled(request[key], `break.request.${key}`, `${path}.${key}`, "a supplied reason must not be empty");
+    const reasons = Array.isArray(state.reasons) ? state.reasons : [];
+    const selected = reasons.find((r: unknown) => isPlainObject(r) && r.id === request.reasonId);
+    if (state.reasons !== undefined) into.require(selected !== undefined, "break.request.reasonId", path,
+      "choose a currently published reasonId; free text is not a substitute");
+    else into.require(request.reasonId === undefined, "break.request.reasonId.unexpected", path, "no reason codes were published");
+    into.require(state.mayAsk === true || (isPlainObject(selected) && selected.alwaysAvailable === true),
+      "break.request.mayAsk", path, "asking is disabled except for the selected alwaysAvailable reason");
+  } else {
+    into.require(request === undefined, "break.command.arguments", path, "this break method takes no arguments");
+    if (method === "commitBreak") into.require(approval === "granted" || approval === "starting-after-task" || approval === "in-effect",
+      "break.command.commit.grant", path, "commit requires a grant; repeated committed state is idempotent");
+    if (method === "cancelBreak") into.require(approval === "awaiting-decision" || approval === "granted",
+      "break.command.cancel.precommit", path, "cancel only a pre-commit request; a raced commit requires commit recovery");
+    if (method === "endBreak") {
+      into.require(approval === "starting-after-task" || approval === "in-effect", "break.command.end.started", path,
+        "end a committed break, including a returning provider still finishing work");
+      into.require(state.imposed === undefined, "break.command.end.imposed", path, "an agent cannot end an imposed break; an authorized lead releases it");
+    }
+  }
+  return into.violations;
+}
+
+/**
+ * Checks two complete break states within one provider/login's ordered event stream.
+ * Call before replacing accepted state; report violations and reconcile on failure.
+ * This is not a freshness check: validate a fresh authoritative snapshot separately and
+ * use it as a new baseline, never as an event transition. Source ordering and connection
+ * fencing remain required; neither timestamps nor approval rank identify a break attempt.
+ */
+export function validateBreakTransition(before: unknown, after: unknown, path = "break"): ProtocolViolation[] {
+  const into = new Collector();
+  validateBreakState(before, `${path}.before`, into);
+  validateBreakState(after, `${path}.after`, into);
+  if (into.violations.length || !isPlainObject(before) || !isPlainObject(after)) return into.violations;
+  const from = before.approval as BreakApproval;
+  const to = after.approval as BreakApproval;
+  const committed = to === "starting-after-task" || to === "in-effect";
+  if (committed && (from === "not-requested" || from === "awaiting-decision") && after.imposed === undefined) {
+    into.add("stream.breakState.commitBeforeGrant", `${path}.after.approval`,
+      `${to} follows a commit, and a commit follows granted; the break stood at ${from}`);
+  }
+  const backwards =
+    (from === "in-effect" && (to === "awaiting-decision" || to === "granted" || to === "starting-after-task")) ||
+    (from === "starting-after-task" && (to === "awaiting-decision" || to === "granted")) ||
+    (from === "granted" && to === "awaiting-decision");
+  if (backwards) into.add("stream.breakState.backwards", `${path}.after.approval`,
+    `a break does not go from ${from} back to ${to}; a new request passes through not-requested`);
+  return into.violations;
 }
 
 function validateBreakState(value: unknown, path: string, into: Collector): void {
@@ -1594,7 +1833,6 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       `a snapshot for session ${describeValue(snapshot.loginId)} on a login whose session is ${context.loginId}`);
   }
 
-  validateBreakState(snapshot.break, `${path}.break`, into);
 
   // The count is the provider's confirmation of how much work it answered with. Stated, never
   // inferred: an unanswered or blank state lacks it, and cannot pass as a confirmed empty.
@@ -1636,34 +1874,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       }
     });
   }
-  // A break in effect begins when the work ends, so it holds no task. A snapshot reporting both
-  // describes a state the agent cannot be in, whichever half is stale. The one exception is a
-  // lead listening to a call during a break that is work of another sort -- coaching,
-  // administrative, training -- and on no other.
-  // The converse: a committed break with nothing outstanding has begun. starting-after-task beside
-  // no task is a break waiting on work that does not exist, and an empty list reading as "still
-  // finishing" is the plausible nought.
-  ruleEvaluated("break.starting-after-task.tasks");
-  if (isPlainObject(snapshot.break) && snapshot.break.approval === "starting-after-task"
-    && Array.isArray(snapshot.tasks) && snapshot.tasks.length === 0) {
-    into.add("break.starting-after-task.tasks", `${path}.break.approval`,
-      "a break starting after the task waits on a task, and the snapshot carries none: with nothing outstanding the break is in-effect");
-  }
-  if (isPlainObject(snapshot.break) && snapshot.break.approval === "in-effect"
-    && Array.isArray(snapshot.tasks) && snapshot.tasks.length > 0) {
-    const listening = snapshot.tasks.every((task: unknown) => isPlainObject(task) && task.monitoring !== undefined);
-    if (!listening) {
-      into.add("break.in-effect.tasks", `${path}.tasks`,
-        "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task");
-    } else {
-      const state = snapshot.break;
-      const reasons = Array.isArray(state.reasons) ? state.reasons : [];
-      const active = reasons.find((reason: unknown) => isPlainObject(reason) && reason.id === state.activeReasonId);
-      const kind = isPlainObject(active) ? active.kind : undefined;
-      into.require(typeof kind === "string" && (MONITORING_BREAK_KINDS as readonly string[]).includes(kind), "snapshot.monitoring.break", `${path}.tasks`,
-        `a lead listens during a ${MONITORING_BREAK_KINDS.join(", ")} break and no other; the active reason is ${kind === undefined ? "unstated" : describeValue(kind)}`);
-    }
-  }
+  into.violations.push(...validateBreakStatus(snapshot.break, snapshot.tasks, path));
 
   // Presence is the permission, and it cuts both ways: data a provider never declared a
   // capability for is data Omni would show against a control the agent does not have.
@@ -2233,6 +2444,24 @@ const LEAD_ASSIST_ACTIONS = ["request", "cancel", "take-over", "leave"] as const
 const CONFERENCE_ACTIONS = ["add", "remove"] as const;
 
 
+/** Validate the exact handling/allocation target before provider command dispatch. */
+export function validateTaskCommandRequest(request: unknown, task: unknown, path = "request",
+  taskContext?: Omit<TaskValidationContext, "channel">): ProtocolViolation[] {
+  const into = new Collector();
+  if (!isPlainObject(request) || !isPlainObject(task)) {
+    into.add("command.request.shape", path, "a request and the current published task are required");
+    return into.violations;
+  }
+  into.filled(request.taskId, "command.request.taskId", `${path}.taskId`, "name the handling task");
+  into.filled(request.allocationId, "command.request.allocationId", `${path}.allocationId`, "name its allocation");
+  into.require(request.taskId === task.id, "command.request.taskId.mismatch", `${path}.taskId`, "the command must target this exact handling");
+  into.require(request.allocationId === task.allocationId, "command.request.allocationId.mismatch", `${path}.allocationId`, "the command must target this exact allocation");
+  for (const key of Object.keys(request)) into.require(["taskId", "allocationId", "command"].includes(key),
+    "command.request.field", `${path}.${key}`, "unsupported task command request field");
+  into.violations.push(...validateTaskCommand(request.command, task, `${path}.command`, taskContext));
+  return into.violations;
+}
+
 /**
  * What a command needs to be issuable, checked against the task it names: the capability the
  * guide's table gates it on, the phase it belongs to, and the state that has to stand -- a
@@ -2257,6 +2486,29 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   if (type !== "custom" && !into.require(typeof type === "string" && names.includes(type), "command.type", `${path}.type`,
     channel === undefined ? `unsupported command: ${describeValue(type)}` : `a ${channel} task has no ${describeValue(type)} command`)) {
     return into.violations;
+  }
+  // Built-in commands carry only their declared fields; custom controls own their payload.
+  // Recording already applies its action-specific field check below.
+  if (type !== "custom" && type !== "recording") {
+    let fields = ["type"];
+    switch (type) {
+      case "call": case "connect-back": fields.push("dialId"); break;
+      case "complete": fields.push("disposition", "notes"); break;
+      case "transfer":
+        fields.push("action");
+        if (command.action === "cold" || command.action === "warm") fields.push("dialId", "destinationId");
+        break;
+      case "lead-assist":
+        fields.push("action");
+        if (command.action === "request") fields.push("note");
+        break;
+      case "conference":
+        fields.push("action", "destinationId");
+        fields.push(command.action === "add" ? "dialId" : "party");
+        break;
+    }
+    for (const key of Object.keys(command)) into.require(fields.includes(key), "command.field", `${path}.${key}`,
+      "field is not supported for this command");
   }
   const dial = (rule: string) => into.filled(command.dialId, rule, `${path}.dialId`, "a command that dials carries the host's dialId");
   switch (type) {
@@ -2356,8 +2608,8 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   const inPhase = (rule: string, ...phases: string[]) =>
     into.require(typeof task.phase === "string" && phases.includes(task.phase), rule, path, `${describeValue(type)} belongs to ${phases.join(" or ")}, and the task is ${describeValue(task.phase)}`);
   // A control on the contact acts on a contact being handled. Before in-progress there is nothing
-  // to act on yet, and in completing the handling has ended: a call with nobody on it, a
-  // conversation closed. What a capability offers, the phase decides whether there is anything to use it on.
+  // to act on yet, and in completing this agent's handling has ended. The caller and other
+  // channels may continue elsewhere; this task's phase no longer permits these controls.
   const handling = () => inPhase("command.phase.handling", "in-progress", "paused");
   // A destination is one the directory offered: the id Omni sends is the id the provider published.
   const listed = (name: string) => {
@@ -2548,6 +2800,7 @@ export function validateResult(result: unknown, method: ResultMethod, path = "re
     } else {
       into.require(result.dialId === undefined, "result.dialId.unexpected", `${path}.dialId`, `${statuses.success} dialled nothing and names no dial`);
     }
+    if (method === "recordStep") into.timestamp(result.at, "result.recordStep.at", `${path}.at`);
   } else if (statuses.failure !== undefined && result.status === statuses.failure) {
     if (result.failure === undefined) {
       into.add("result.failure.required", `${path}.failure`, `${statuses.failure} carries the failure that says why`);

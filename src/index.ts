@@ -204,6 +204,10 @@ export interface Manifest<C extends Channel = Channel> {
   supportedProtocolVersions: number[];
   authenticationMethods: AuthenticationMethod[];
   idleCapabilities?: IdleCapabilities<C>;
+  /** Optional provider-clock sampling through Connection.checkTime; absent means unsupported. */
+  timeCheck?: true;
+  /** Provider uses its own timestamps for final records; host timestamps are advisory. Omission makes no trust promise. */
+  timestampAuthority?: "provider";
   phaseLabels?: TaskPhaseLabels;
   /** Keyed by `taskType`. An entry replaces the channel default outright rather than merging. */
   taskTypePresentation?: Record<string, TaskTypePresentation>;
@@ -523,7 +527,22 @@ export interface HostGuarantees {
   personConsent?: true;
 }
 
+export interface ProviderTimeScope {
+  providerId: string;
+  loginId: string;
+}
+
+/** Best-effort host estimate, never a provider observation or accuracy guarantee. The provider may ignore it and timestamp receipt itself. */
+export interface ProviderTimeEstimate extends ProviderTimeScope {
+  at: IsoTimestamp;
+  clockId: string;
+  /** Estimated uncertainty only; not a guaranteed error bound. */
+  uncertaintyMs?: number;
+}
+
 export interface Host {
+  /** Optional current provider-clock estimate; undefined when no usable estimate exists. */
+  estimateProviderTime?(scope: ProviderTimeScope): ProviderTimeEstimate | undefined;
   /** Voice softphone recording support; policy and destination remain per task. */
   recording?: HostRecording;
   guarantees: HostGuarantees;
@@ -619,7 +638,7 @@ export interface DispositionRules {
 /**
  * One item the queue configured for the agent to send a contact to: a button or a menu item. The
  * protocol does not say what it does -- a queue, a menu, a line -- the provider executes it when a
- * command names its `id`. Never a named agent: who takes a contact next is the queue's decision.
+ * command names its `id`. The provider may publish a queue, IVR, named agent or other supported destination; the host does not invent one.
  */
 export interface Destination {
   id: string;
@@ -660,7 +679,7 @@ export type TaskCapabilities<C extends Channel = Channel> =
     ? SharedTaskCapabilities & {
         decline?: Lockable<true>;
         hold?: Lockable<true>;
-        /** The agent may end the whole call: everyone leaves and the media ends, the task stays for its wrap-up. */
+        /** The provider ends the caller connection and agent-added channels owned by this handling, including inherited channels after transfer/takeover. Handling disposal remains separate. */
         endCall?: Lockable<true>;
         /** Connect back to the party while `completing`, whoever placed the call; the task returns to `in-progress`. */
         connectBack?: Lockable<true>;
@@ -744,7 +763,7 @@ export type TaskPhase =
   /** Accepted, and not yet started. */
   | "confirmed"
   /**
-   * Voice only: the customer's record is on the agent's screen and no call has gone out. The agent
+   * Voice only: the customer's record is available for preparation, then dialing before answer. The agent
    * presses Call, or `previewEndsAt` arrives and `atDeadline` says what the system does instead.
    */
   | "preview"
@@ -754,7 +773,13 @@ export type TaskPhase =
   | "completing";
 
 /** What the system does when a preview's deadline passes with no Call pressed. */
-export type PreviewDeadline = "calls" | "expires";
+export type PreviewDeadline =
+  /** Provider initiates dialing when preparation ends; never a host timer command. */
+  | "calls"
+  /** Host initiates the ordinary call command when preparation ends. */
+  | "host-calls"
+  /** Preparation target has elapsed; remain in preview until the agent presses Call. */
+  | "waits";
 
 /** Who ends the task: the agent issuing `complete`, or the provider deciding it is over. */
 export type CompletionMode = "agent-command" | "provider-automatic";
@@ -983,9 +1008,10 @@ export type Task<C extends Channel = Channel> = {
    */
   acceptance?: AcceptanceMode;
   /**
-   * In `preview` only, and together: when the system stops waiting for the agent to press Call,
-   * and what it does then -- `calls` places the call itself, `expires` takes the record back and
-   * the task ends `expired`. Absent, the agent has as long as they need.
+   * In `preview` only, and together: the preparation target and behavior when it elapses,
+   * and who acts then -- `calls` makes the provider initiate dialing, `host-calls` makes the
+   * host issue Call, and `waits` keeps waiting for the agent without dialing or ending the task.
+   * Absent, the agent has as long as they need, without a preparation countdown.
    */
   previewEndsAt?: IsoTimestamp;
   atDeadline?: PreviewDeadline;
@@ -994,7 +1020,8 @@ export type Task<C extends Channel = Channel> = {
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingHistory;
 } & TaskCompletion
-  // Who is on the call, a lead on it or listening to it, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
+  // onCall is this handling's current room, not the lifetime of the caller or whole bridge.
+  // Its room, a lead on it or listening to it, and real-time media are voice affairs; forbidden elsewhere.
   & (C extends "voice"
     ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
     : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never });
@@ -1050,7 +1077,7 @@ export type VoiceTaskCommand =
   | { type: "call"; dialId: DialId }
   | { type: "hold" }
   | { type: "resume" }
-  /** End the whole call: everyone leaves and the task's media ends; the task stays for its wrap-up. Gated by `endCall`. */
+  /** End the caller connection and all agent-added channels owned or inherited by this handling. Wrap/disposal remain separate. Gated by `endCall`. */
   | { type: "end-call" }
   /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
   | { type: "connect-back"; dialId: DialId }
@@ -1435,7 +1462,7 @@ export type HandlingReport = { taskId: TaskId; allocationId: AllocationId; at: I
 );
 
 export type HandlingReportResult =
-  | { status: "recorded" }
+  | { status: "recorded"; at: IsoTimestamp }
   | { status: "failed"; failure: ProtocolFailure };
 
 export type PreferenceResult =
@@ -1556,7 +1583,31 @@ export interface Refusal {
   violations: ProtocolViolation[];
 }
 
+/** Host-local opt-in configuration; no implicit interval or timeout. */
+export interface ProviderTimeCheckPolicy {
+  intervalMs: number;
+  timeoutMs: number;
+  maxRoundTripMs: number;
+  maxSampleAgeMs: number;
+}
+
+export interface ProviderTimeCheckRequest {
+  /** Fresh opaque correlation ID for one outstanding check, never reused on retry. */
+  requestId: string;
+}
+
+export interface ProviderTimeCheckResult {
+  requestId: string;
+  loginId: string;
+  /** Provider clock domain/incarnation; changes on clock discontinuity or authority replacement. */
+  clockId: string;
+  /** Provider-domain ISO instant sampled after this request arrived, before its response leaves. */
+  providerTime: IsoTimestamp;
+}
+
 export interface Connection<C extends Channel = Channel> {
+  /** Required only when Manifest.timeCheck is true. A read-only clock sample, never cached/replayed. */
+  checkTime?(request: ProviderTimeCheckRequest): Promise<ProviderTimeCheckResult>;
   snapshot(): Snapshot<C> | Promise<Snapshot<C>>;
   /** Delivery order must match the order the provider observes changes. Never replay. */
   subscribe(listener: (envelope: ProviderEventEnvelope<C>) => void): Unsubscribe;

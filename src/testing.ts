@@ -28,6 +28,7 @@ import {
 import {
   assertNoViolations,
   validateAuthenticationState,
+  validateBreakTransition,
   validateEventEnvelope,
   validateHostGuarantees,
   validateHostReport,
@@ -389,6 +390,7 @@ export async function exerciseAdapter<C extends Channel>(
     // What every connection owes on connect, the first and a reloaded second alike.
     const connectObligations = (on: Connection<C>): void => {
       // A refusal is visible on both sides: what the host would not take, the adapter is told, with the rules.
+      if (adapter.manifest.timeCheck === true) requireMethod(on, "checkTime", "the manifest declares timeCheck");
       requireMethod(on, "refused", "every connection is told what the host refused");
       // Dial is declared by presence: the capability object carries a destination policy rather
       // than an `enabled` flag, so its presence is the declaration.
@@ -534,7 +536,7 @@ export async function exerciseAdapter<C extends Channel>(
     const snapshot = await connection.snapshot() as Snapshot;
     await snapshotRead(live, snapshot, "snapshot");
     stream.seed(snapshot);
-    breaks.seed(snapshot);
+    violations.push(...breaks.seed(snapshot));
     seeded = true;
     // A snapshot supersedes what it restates and nothing else. Of the events held during the read,
     // a state-replacing kind is dropped, since the snapshot carries that state and must account for
@@ -1113,7 +1115,7 @@ export class TaskStream {
     return [...was].filter(key => !now.has(key));
   }
 
-  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string; channel: string; completionMode: string; wrapAllowance: number | undefined; partyRingingByHost: boolean } {
+  private static stated(task: unknown): { phase: string; media: string; source: string; stages: Map<string, string>; record: Set<string> | undefined; allocation: string; channel: string; completionMode: string; wrapAllowance: number | undefined; partyRingingBeforeWork: boolean } {
     const media = isRecord(task) && (task.media === "started" || task.media === "ended") ? task.media : "none";
     // The stage of every dialled entry the room names by its dial, so an update can be held to the
     // outcome that moves it.
@@ -1123,9 +1125,9 @@ export class TaskStream {
         if (isRecord(entry) && typeof entry.dialId === "string" && typeof entry.stage === "string") stages.set(entry.dialId, entry.stage);
       }
     }
-    const partyRingingByHost = isRecord(task) && Array.isArray(task.onCall)
-      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && entry.stage === "ringing" && typeof entry.dialId === "string");
-    return { partyRingingByHost, channel: String(isRecord(task) ? task.channel : undefined), completionMode: String(isRecord(task) ? task.completionMode : undefined),
+    const partyRingingBeforeWork = isRecord(task) && Array.isArray(task.onCall)
+      && task.onCall.some(entry => isRecord(entry) && entry.role === "party" && entry.stage === "ringing" && (typeof entry.dialId === "string" || (task.phase === "preview" && task.atDeadline === "calls" && entry.dialId === undefined)));
+    return { partyRingingBeforeWork, channel: String(isRecord(task) ? task.channel : undefined), completionMode: String(isRecord(task) ? task.completionMode : undefined),
       wrapAllowance: isRecord(task) && typeof task.wrapAllowance === "number" ? task.wrapAllowance : undefined,
       phase: String(isRecord(task) ? task.phase : undefined), media, source: String(isRecord(task) ? task.capabilitySource : undefined), stages, record: TaskStream.record(task), allocation: String(isRecord(task) ? task.allocationId : undefined) };
   }
@@ -1326,7 +1328,7 @@ export class TaskStream {
           refuse("stream.taskMedia.channel", `${at}.type`, "only a voice task has media transitions");
           break;
         }
-        if (!AT_WORK.has(known.phase) && !known.partyRingingByHost) {
+        if (!AT_WORK.has(known.phase) && !known.partyRingingBeforeWork) {
           refuse("stream.taskMediaStarted.beforeWork", `${at}.taskId`,
             `media cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
@@ -1347,7 +1349,7 @@ export class TaskStream {
           refuse("stream.taskMedia.channel", `${at}.type`, "only a voice task has media transitions");
           break;
         }
-        if (!WORK_BEGUN.has(known.phase)) {
+        if (!WORK_BEGUN.has(known.phase) && !known.partyRingingBeforeWork) {
           refuse("stream.taskMediaEnded.beforeWork", `${at}.taskId`,
             `media cannot end on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
@@ -1529,7 +1531,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       // is a place the stream's rules keep working, not one where they all stop.
       await drive.snapshotRead(second, snapshot, "drive.reload.snapshot");
       found.push(...drive.streams.stream.resync(snapshot, "drive.reload.snapshot"));
-      drive.streams.breaks.seed(snapshot);
+      found.push(...drive.streams.breaks.seed(snapshot));
       const carried = isRecord(snapshot) && Array.isArray(snapshot.tasks)
         ? snapshot.tasks.find(task => isRecord(task) && task.id === taskId) as Record<string, unknown> | undefined : undefined;
       ruleEvaluated("drive.reload.snapshot");
@@ -1732,12 +1734,13 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // 3b. The microphone is the host's. With the audio open, the drive mutes it for a moment and
   // reports the leg the provider's record would otherwise miss -- begun, then ended -- and
   // expects each report recorded. If the provider restates the task's record afterwards, the leg is in it.
-  const reportedLegs: { at: string; task: Record<string, unknown>; closedAs?: number }[] = [];
+  const canonicalTimes = new Map<string, string>();
+  const reportedLegs: { at: string | undefined; task: Record<string, unknown>; closedAs?: number }[] = [];
   /** The duration the provider's record states for the leg at `at`, as the task stands now. */
   const closedAs = (at: string): number | undefined => {
     const history = latestTask().handlingHistory;
     const leg = isRecord(history) && Array.isArray(history.steps)
-      ? history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined : undefined;
+      ? history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === canonicalTimes.get(at)) as Record<string, unknown> | undefined : undefined;
     return typeof leg?.seconds === "number" ? leg.seconds : undefined;
   };
   const canRecordMute = session !== undefined && typeof session.setMuted === "function" && typeof drive.connection.recordStep === "function";
@@ -1755,7 +1758,13 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         refuse("drive.recordStep.rejected", "drive.recordStep", `recordStep rejected rather than answered: ${String(error)}`);
         return;
       }
-      found.push(...validateResult(answer, "recordStep", "drive.recordStep.result"));
+      const resultErrors = validateResult(answer, "recordStep", "drive.recordStep.result");
+      found.push(...resultErrors);
+      if (!resultErrors.length && isRecord(answer) && answer.status === "recorded" && typeof answer.at === "string" && typeof body.at === "string") {
+        const prior = canonicalTimes.get(body.at);
+        if (prior !== undefined && prior !== answer.at) refuse("drive.recordStep.identity", "drive.recordStep.result.at", "one reported leg must retain its provider-assigned history instant");
+        else canonicalTimes.set(body.at, answer.at);
+      }
       if (isRecord(answer) && answer.status === "failed") {
         refuse("drive.recordStep.failed", "drive.recordStep",
           `the provider refused to record the host's muted leg: ${String(isRecord(answer.failure) ? answer.failure.code : answer.failure)}`);
@@ -1776,12 +1785,12 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     await new Promise<void>(resolve => setTimeout(resolve, 1000));
     setMuted(false);
     await report({ at, seconds: Math.round((Date.now() - began) / 1000), ended: true });
-    reportedLegs.push({ at, task: latestTask() });
+    reportedLegs.push({ at: canonicalTimes.get(at), task: latestTask() });
     // 3c. A host reload destroys the adapter object and keeps the login's store. Built again from
     // the same login, a second adapter carries the task and the leg -- from its platform, or from
     // the store -- or it composed the record in memory and the record died with it.
-    if (drive.rebuild !== undefined) {
-      await recordSurvivesReload(at);
+    if (drive.rebuild !== undefined && canonicalTimes.has(at)) {
+      await recordSurvivesReload(canonicalTimes.get(at)!);
       // A reload that stood no client ends the run: there is nothing left to drive.
       if (!drive.handOver.isLive()) return found;
     }
@@ -1828,7 +1837,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         // record as it stands now is what every later restatement is held to.
         const before = closedAs(openLeg.at);
         await report({ at: openLeg.at, seconds: Math.max(1, Math.round((Date.now() - openLeg.began) / 1000)), ended: true });
-        reportedLegs.push({ at: openLeg.at, task: openLeg.task, closedAs: before });
+        reportedLegs.push({ at: canonicalTimes.get(openLeg.at), task: openLeg.task, closedAs: before });
       }
       if (completing !== undefined && offers("hold")) {
         await holdRefusedOutsideHandling();
@@ -1880,6 +1889,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     return latestTask();
   };
   for (const reported of reportedLegs) {
+    if (reported.at === undefined) continue; // A refused/malformed report provides no accepted history identity.
     const published = lastPublished();
     if (published === reported.task) continue;
     const history = published.handlingHistory;
@@ -1911,63 +1921,48 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
 // starting-after-task | in-effect; work ending goes starting-after-task -> in-effect; a denial,
 // a cancel, an end or a release goes back to not-requested; a placed break arrives in-effect
 // with `imposed`. Nothing else is a move the guide describes.
-const COMMITTED = new Set(["starting-after-task", "in-effect"]);
-const BACKWARDS: Record<string, readonly string[]> = {
-  "in-effect": ["awaiting-decision", "granted", "starting-after-task"],
-  "starting-after-task": ["awaiting-decision", "granted"],
-  granted: ["awaiting-decision"],
-};
-
 /** What a stream has said about the agent's break, and the moves it may not make. */
 export class BreakStream {
-  private approval: string | undefined;
+  private state: unknown;
+  private recovery = true;
 
-  /** Takes the break state a snapshot carries as the point the stream continues from. */
-  seed(snapshot: unknown): void {
+  /** True until a validated authoritative snapshot establishes a usable baseline. */
+  get needsRecovery(): boolean { return this.recovery; }
+
+  /** Caller establishes snapshot freshness/login scope separately; malformed state never replaces the baseline. */
+  seed(snapshot: unknown): ProtocolViolation[] {
     const state = isRecord(snapshot) ? snapshot.break : undefined;
-    this.approval = isRecord(state) && typeof state.approval === "string" ? state.approval : undefined;
+    const found = validateBreakTransition(state, state, "snapshot.break");
+    if (found.length) { this.recovery = true; return found; }
+    this.state = state;
+    this.recovery = false;
+    return [];
   }
 
-  /** Applies one envelope and returns the moves it may not make given where the break stood. */
+  /** Rejected transitions keep accepted state and require snapshot recovery before further deltas. */
   apply(envelope: unknown, path = "event"): ProtocolViolation[] {
-    const found: ProtocolViolation[] = [];
     const event = isRecord(envelope) ? envelope.event : undefined;
-    if (!isRecord(event)) return found;
-    if (event.type === "snapshot") {
-      this.seed(event.snapshot);
-      return found;
-    }
-    if (event.type !== "break-state" || !isRecord(event.break) || typeof event.break.approval !== "string") return found;
-    const from = this.approval;
-    const to = event.break.approval;
-    const at = `${path}.event.break.approval`;
-    if (from !== undefined) {
-      // A commit's states need a grant behind them. A placed break is the one arrival in a
-      // committed state that nobody asked for -- in effect at once, or starting-after-task while
-      // the member finishes a call -- and it says so with `imposed`.
-      if (COMMITTED.has(to) && (from === "not-requested" || from === "awaiting-decision") && event.break.imposed === undefined) {
-        found.push({ rule: "stream.breakState.commitBeforeGrant", path: at,
-          message: `${to} follows a commit, and a commit follows granted; the break stood at ${from}` });
-      }
-      if ((BACKWARDS[from] ?? []).includes(to)) {
-        found.push({ rule: "stream.breakState.backwards", path: at,
-          message: `a break does not go from ${from} back to ${to}; a new request passes through not-requested` });
-      }
-    }
-    this.approval = to;
+    if (!isRecord(event)) return [];
+    if (event.type === "transport-status" && event.status !== "active") { this.recovery = true; return []; }
+    if (event.type === "snapshot") return this.seed(event.snapshot);
+    if (event.type !== "break-state") return [];
+    if (this.recovery) return [{ rule: "stream.breakState.baseline", path: `${path}.event.break`,
+      message: "a validated authoritative snapshot is required before accepting break updates" }];
+    const found = validateBreakTransition(this.state, event.break, `${path}.event.break`);
+    if (found.length) this.recovery = true;
+    else this.state = event.break;
     return found;
   }
 }
 
 /**
- * A break follows its requests. Given a provider's stream -- optionally seeded with the snapshot
- * it began from -- every `break-state` moves the way the guide describes: a commit's states only
+ * A break follows its requests. Given a provider's stream -- seeded with its initial snapshot,
+ * either supplied separately or carried by a snapshot event -- every `break-state` moves the way the guide describes: a commit's states only
  * after a grant, never backwards, and a break placed on the agent arriving in effect with `imposed`.
  */
 export function assertBreakFollowsItsRequests(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
   const stream = new BreakStream();
-  if (snapshot !== undefined) stream.seed(snapshot);
-  const found: ProtocolViolation[] = [];
+  const found: ProtocolViolation[] = snapshot === undefined ? [] : stream.seed(snapshot);
   envelopes.forEach((envelope, index) => found.push(...stream.apply(envelope, `envelopes[${index}]`)));
   assertNoViolations(found, "A break follows its requests");
 }

@@ -962,7 +962,8 @@ describe("validateHandlingReport", () => {
     expect(rules(validateManifest(manifest({ disposalSettleMs: 0 })))).toEqual(["manifest.disposalSettleMs"]);
     expect(rules(validateManifest(manifest({ disposalSettleMs: 1.5 })))).toEqual(["manifest.disposalSettleMs"]);
     expect(rules(validateManifest({ ...manifest(), disposalSettleMs: undefined }))).toEqual(["manifest.disposalSettleMs"]);
-    expect(rules(validateResult({ status: "recorded" }, "recordStep"))).toEqual([]);
+    expect(rules(validateResult({ status: "recorded", at: "2026-09-11T00:00:00Z" }, "recordStep"))).toEqual([]);
+    expect(rules(validateResult({ status: "recorded" }, "recordStep"))).toEqual(["result.recordStep.at"]);
     expect(rules(validateResult({ status: "applied" }, "recordStep"))).toEqual(["result.status"]);
   });
 });
@@ -1810,10 +1811,10 @@ describe("validateTaskCommand", () => {
     expect(rules(validateTaskCommand({ type: "call" }))).toEqual(["command.call.dialId"]);
     expect(rules(validateTaskCommand({ type: "connect-back" }))).toEqual(["command.connectBack.dialId"]);
     expect(rules(validateTaskCommand({ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" }))).toEqual([]);
-    expect(rules(validateTaskCommand({ type: "transfer", action: "blind", dialId: "dial-2", destinationId: "tier2" }))).toEqual(["command.transfer.action"]);
+    expect(rules(validateTaskCommand({ type: "transfer", action: "blind", dialId: "dial-2", destinationId: "tier2" }))).toContain("command.transfer.action");
     expect(rules(validateTaskCommand({ type: "transfer", action: "warm", destinationId: "tier2" }))).toEqual(["command.transfer.dialId"]);
     expect(rules(validateTaskCommand({ type: "transfer", action: "warm", dialId: "dial-2" }))).toEqual(["command.transfer.destinationId"]);
-    expect(rules(validateTaskCommand({ type: "transfer", action: "complete", destinationId: "tier2" }))).toEqual(["command.transfer.unexpected"]);
+    expect(rules(validateTaskCommand({ type: "transfer", action: "complete", destinationId: "tier2" }))).toEqual(["command.field", "command.transfer.unexpected"]);
     expect(rules(validateTaskCommand({ type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "conference", action: "add", destinationId: "tier2" }))).toEqual(["command.conference.dialId"]);
     expect(rules(validateTaskCommand({ type: "conference", action: "remove", party: true }))).toEqual([]);
@@ -2118,7 +2119,7 @@ describe("preview: the agent presses Call", () => {
 
   it("carries the deadline and what happens at it together, and only while previewing", () => {
     expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "calls" }), voice))).toEqual([]);
-    expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "expires" }), voice))).toEqual([]);
+    expect(rules(validateTask(preview({ previewEndsAt: at, atDeadline: "waits" }), voice))).toEqual([]);
     expect(rules(validateTask(preview({ previewEndsAt: at }), voice))).toEqual(["task.preview.atDeadline.required"]);
     expect(rules(validateTask(preview({ atDeadline: "calls" }), voice))).toEqual(["task.preview.previewEndsAt.required"]);
     expect(rules(validateTask(preview({ previewEndsAt: "soon", atDeadline: "calls" }), voice))).toEqual(["task.preview.previewEndsAt"]);

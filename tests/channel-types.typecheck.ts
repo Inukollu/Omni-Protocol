@@ -213,8 +213,9 @@ export const pressCall: TaskCommand<"voice"> = { type: "call", dialId: "dial-6" 
 export const unplacedCall: TaskCommand<"voice"> = { type: "call" };
 // @ts-expect-error renamed away: the agent presses Call; the old two-word command is gone.
 export const startCall: TaskCommand<"voice"> = { type: "start-call" };
-// @ts-expect-error The deadline does one of two things.
-export const undecidedDeadline: Task<"voice">["atDeadline"] = "waits";
+export const waitingDeadline: Task<"voice">["atDeadline"] = "waits";
+// @ts-expect-error Preparation expiry must not withdraw the task.
+export const expiredPreviewDeadline: Task<"voice">["atDeadline"] = "expires";
 
 // Monitoring: the lead's own task while they listen, voice only, in one of three modes.
 export const monitoringLeadTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, monitoring: { memberId: "A-1", taskId: "call-42", allocationId: "alloc-42", mode: "whisper", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
