@@ -26,9 +26,9 @@ are used precisely throughout and mean nothing looser here.
 | **Lead** | An agent whose login declares `capabilities.team`. The provider publishes a `TeamMembers` object to them and to nobody else: **the login is the permission**. |
 | **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and local policy disagree, the stricter wins. |
 | **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. The protocol never describes the IVR or the queue; it carries the call's history and details to whichever agent holds it now. |
-| **Assignment** | The call routed to this agent, from the offer until the task ends. `assignmentId` identifies it, minted once per offer: a call that comes back is a new assignment on the same call, and a declined or lapsed offer is an assignment that became nothing more. |
+| **Assignment** | The call routed to this agent, from the offer until the task ends. It is the one thing that crosses: the provider assigns, names the assignment with `assignmentId`, and that is the only name the desk ever uses back. A call that comes back is a new assignment on the same call, and a declined or lapsed offer is an assignment that became nothing more. What the platform calls its own record, and whether it reuses that name, is the adapter's business and unknown to the desk. |
 | **Interaction** | The agent's time on the call, from answer until their audio ends: the `in-progress` and `paused` phases. An assignment produces at most one interaction, and a call that returns produces a new assignment and so a new interaction. |
-| **Task** | The record the desk holds across both, from offer through wrap: the agent's assigned work with its workspace, controls and completion work. `pending`, `confirmed` and `preview` are assigned and not yet interacting; `in-progress` and `paused` are the interaction; `completing` is the assignment outliving its interaction. A voice task is one assignment, never the caller's whole call. |
+| **Task** | The desk's record of one assignment, from offer through wrap: the workspace, controls and completion work the agent has for it, described by the provider and held by the desk. A task is identified by the assignment it is the record of. `pending`, `confirmed` and `preview` are assigned and not yet interacting; `in-progress` and `paused` are the interaction; `completing` is the assignment outliving its interaction. A voice task is one assignment, never the caller's whole call. |
 | **Channel** | The kind of work a provider carries: `voice`, `chat`, or `email`. Fixed per provider by its manifest. |
 | **Task type** | The provider's own name for a category of work — a queue, a mailbox folder, a chat source. Free-form, and finer-grained than a channel. |
 | **Capability** | A provider's declaration that a control exists for a task or a session. It says *offer this*; the provider performs it, and the agent application only offers it — see **Where a command executes**. |
@@ -105,7 +105,6 @@ the semantic name in every contract field rather than repeating the primitive ty
 ```ts
 type IsoTimestamp = string;
 type UserId = string;
-type TaskId = string;
 type AssignmentId = string;
 type DialId = string;
 type DurationSeconds = number;
@@ -115,7 +114,7 @@ type DurationSeconds = number;
 | --- | --- | --- |
 | `IsoTimestamp` | `string` | An RFC-3339 timestamp with `Z` or an explicit numeric offset. Timezone-less values are invalid. It must pass the shared runtime validator. A JavaScript `Date` never crosses the protocol boundary. |
 | `UserId` | `string` | A non-empty, opaque, stable identifier for a person, **issued by the provider** and drawn from the same directory as `AuthenticationState.identity.id`. It names agents and managers alike; the role is established by where the value appears, not by its type. Compare it exactly and only within one provider; do not parse it or infer meaning from its format. |
-| `TaskId` | `string` | A non-empty, opaque task identifier unique within one provider. Omni scopes it with the provider ID. |
+| `AssignmentId` | `string` | A non-empty, opaque identifier for one assignment, **issued by the provider**: unique within the provider and never reused while the provider is still speaking about it. Whether it is the platform's own handle passed through or one the adapter minted is the adapter's business. Omni scopes it with the provider ID -- see `taskKey()`. |
 | `DurationSeconds` | `number` | A non-negative integer duration measured in seconds. |
 
 ### There is no Omni-wide user identity
@@ -328,7 +327,6 @@ type RecordingCommand = {
   | { action: "pause" | "resume" | "stop" | "cancel"; recordingId: string }
 );
 interface HostRecordingReport {
-  taskId: TaskId;
   assignmentId: AssignmentId;
   state: RecordingState;
 }
@@ -340,7 +338,6 @@ interface HostRecording {
 }
 type RecordingCommandResult = Exclude<TaskCommandResult, { status: "dialling" }>;
 interface HostRecordingRequest {
-  taskId: TaskId;
   assignmentId: AssignmentId;
   command: RecordingCommand & { source: "host" };
 }
@@ -466,7 +463,7 @@ type SetPreferenceRequest =
   | { id: PreferenceId; enabled: boolean }
   | { id: PreferenceId; inherit: true };
 
-type HistoryReport = { taskId: TaskId; assignmentId: AssignmentId; at: IsoTimestamp } & (
+type HistoryReport = { assignmentId: AssignmentId; at: IsoTimestamp } & (
   | { step: "muted"; mutedBy: MutedBy }
   | { step: Exclude<HistoryStep, "muted">; mutedBy?: never }
 ) & (
@@ -619,7 +616,6 @@ type PersonalBrowser = Browser;
 
 type BrowserSessionKeyInput = {
   providerId: string;
-  taskId: TaskId;
   assignmentId: AssignmentId;
   taskType: string;
   browser: TaskBrowser;
@@ -703,13 +699,13 @@ type TaskLeadAssist = { note?: string; since: IsoTimestamp } & (
 
 type TaskAssisting = {
   memberId: UserId;
+  assignmentId: AssignmentId;
   note?: string;
   since: IsoTimestamp;
 };
 
 type TaskListening = {
   memberId: UserId;
-  taskId: TaskId;
   assignmentId: AssignmentId;
   mode: ListeningMode;
   since: IsoTimestamp;
@@ -734,7 +730,6 @@ type TaskMediaState = "started" | "ended";
 type CapabilitySource = "queue" | "ungoverned" | "undetermined";
 
 type Task<C extends Channel = Channel> = {
-  id: TaskId;
   assignmentId: AssignmentId;
   title: string;
   channel: C;
@@ -841,7 +836,6 @@ type TaskCommand<C extends Channel = Channel> =
   | CustomTaskCommand;
 
 type TaskCommandRequest<C extends Channel = Channel> = {
-  taskId: TaskId;
   assignmentId: AssignmentId;
   command: TaskCommand<C>;
 };
@@ -1002,7 +996,6 @@ type TeamMember = {
 type LeadRequest = {
   id: string;
   memberId: UserId;
-  taskId: TaskId;
   assignmentId: AssignmentId;
   note?: string;
   since: IsoTimestamp;
@@ -1082,7 +1075,6 @@ type OpenMediaResult =
   | { status: "unavailable"; failure: ProtocolFailure };
 
 type OpenMediaRequest = {
-  taskId: TaskId;
   assignmentId: AssignmentId;
   localAudio?: MediaStream;
 };
@@ -1114,13 +1106,13 @@ type ProviderEvent =
       assignmentExpiresAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task }
-  | { type: "task-media-started"; taskId: TaskId; assignmentId: AssignmentId }
-  | { type: "task-media-ended"; taskId: TaskId; assignmentId: AssignmentId }
-  | { type: "task-ended"; taskId: TaskId; assignmentId: AssignmentId; outcome: TaskOutcome }
-  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; assignmentId?: AssignmentId; destinationId?: string; reason?: string }
+  | { type: "task-media-started"; assignmentId: AssignmentId }
+  | { type: "task-media-ended"; assignmentId: AssignmentId }
+  | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; assignmentId?: AssignmentId; destinationId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
-  | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId; assignmentId?: AssignmentId }
+  | { type: "diagnostic"; expected: string; observed: string; assignmentId?: AssignmentId }
   | { type: "team-updated"; team: TeamMembers }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
@@ -1463,8 +1455,8 @@ is never the provider's answer: an answer travels only as a resolved `{ status: 
 and every rejection is transport loss, whatever the last `transport-status` said and whatever the
 rejection carries.
 
-A command therefore carries no key. The provider names its own records — a task, a lead request, a
-member — and Omni refers to them by those names; **Omni never asks a provider to remember a name
+A command therefore carries no key. The provider names the assignment, the lead request and the
+member, and Omni refers to them by those names; **Omni never asks a provider to remember a name
 Omni made up.**
 
 A command whose second execution changes nothing needs no protection: committing a break that is
@@ -1552,7 +1544,7 @@ something it made up: an assignment minted for the connection, media remembered 
 phone the second never read. Three pieces of exactly that state were found in one adapter in an
 afternoon, and none of it was visible until the adapter was built twice. The drive's `rebuild` is the test of this
 principle: given a way to build the adapter again, the run hands the login over and holds the
-second to what the first published (`drive.reload.assignment`, `.history`, `.openMedia`, and the
+second to what the first published (`drive.reload.snapshot`, `.history`, `.openMedia`, and the
 stream's own rules across the resync). An adapter that cannot be built twice against its platform
 and publish the same task is not a conformant adapter yet, whatever a single run says.
 
@@ -2029,7 +2021,7 @@ failure:
 ```
 
 The `User` it carries is the **root of this provider's user namespace**. Every other person this
-provider names — a team member, the manager on a forced break, the agent on an history step —
+provider names — a team member, the manager on a forced break, the agent on a history step —
 is identified from the same directory and carries the same `UserId` type.
 
 | Field | Contract |
@@ -2081,7 +2073,7 @@ Creates one live provider connection for the signed-in agent.
 | `autoAcceptTasks` | Agent local policy policy relayed to the provider at login, stated by the agent application on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
 | `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's agent application states what its Mute does, and a desk-phone or conversation login's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's**. |
-| `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry the task id and go with the task**: a key written about a task names the task's id in the key, and is deleted before the task's end is published, because a platform retires a task id minutes after closing it and a requeue takes seconds, so a key that outlives its task is inherited by the next offer of the same id -- a record with legs the agent application never reported against it. A login-scoped key carries no task id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`drive.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`drive.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.task-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
+| `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A login-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`drive.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`drive.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.task-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
 | `host` | The agent application's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The agent application reports, the adapter decides**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -2379,8 +2371,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 
 | Field | Contract |
 | --- | --- |
-| `id` | Required `TaskId`, the platform's own identity for the task. Unique among the tasks open at once; a platform retires an id minutes after closing it, so the same id comes back for another customer. Omni scopes it with the provider ID. |
-| `assignmentId` | Required `AssignmentId`: this life of the task, minted once per offer and never reused for the life of the login, whatever the id does. Every event, command and report that names a task names its assignment too, so a late dial outcome or a late history report for the first customer never lands on the next under the same id. The stream refuses an offer reusing one (`stream.taskOffered.assignment`), an update restating another life of the id (`stream.taskUpdated.assignment`), and a media or ending event naming a life that has ended or that nobody has seen (`stream.assignment.ended`, `.unknown`); a `dial-outcome` may name an ended life, since a dial placed late routinely outlives its call, and the agent application routes it there. See **A task's life on the wire**. |
+| `assignmentId` | Required `AssignmentId`: the assignment this task is the record of, and its one identity. Issued by the provider, unique within the provider, never reused. Every event, command and report that names a task names it by this, so a late dial outcome or a late history report for one customer never lands on the next. The stream refuses an assignment introduced twice (`stream.taskOffered.duplicate`) and a media or ending event naming one that has ended or that nobody has seen (`stream.assignment.ended`, `.unknown`); a `dial-outcome` may name an ended assignment, since a dial placed late routinely outlives its call, and the agent application routes it there. See **A task's life on the wire**. |
 | `title` | Agent-facing task title. |
 | `channel` | Channel used for this task. It must equal the source provider's manifest channel. |
 | `taskType` | Required provider-defined source or category of work, such as a voice `Queue Name`, `Mailbox Folder`, `Chat Source`, `Support`, `Billing`, or `Returns`. |
@@ -2400,7 +2391,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `history` | The call record: `steps` — the ordered interaction history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `interactionSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **Interaction history**. |
 | `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the agent application's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where an agent application placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the agent application supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `leadAssist` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Lead assist**. |
-| `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead-assist` `take-over-call` and `leave` issuable. See **Lead assist**. |
+| `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, the member's `assignmentId`, and their note. The lead's task has an assignment of its own, so the member's is named, or the copy no longer says which call it joined. Its presence is what makes `lead-assist` `take-over-call` and `leave` issuable. See **Lead assist**. |
 | `listening` | Voice only, on the lead's own task while they listen to a member's call: whose call, which call, and the `mode` they are heard in, restated on every change. Never on the member's task, and never together with `assisting`. See **Listening to a call**. |
 
 `TaskAttribute` entries carry typed detail alongside the task:
@@ -2449,21 +2440,24 @@ The canonical task transitions are:
 
 #### A task's life on the wire
 
-A task id is the platform's, and platforms reuse them: a closed id is retired minutes later, a
-requeue takes seconds, and on one platform a call was offered twice, thirteen seconds apart, under
-one id, through a close and a re-offer. Everything that names a task after the fact -- a dial
-outcome, a media event, an ending, an history report, a command -- would land on whichever life of
-the id is open when it arrives. So every offer mints an `assignmentId`, unique for the life of the
-login, and every one of those names it beside the `taskId`. The agent application keys its state on the pair, a
-late event finds the life it belongs to or is refused, and a task-scoped browser session
-(`PROVIDER_NAME__TASK_ID__TAB_NAME`) lives one assignment, never the next customer's cookies under
-a reused id. A dial the agent application placed was already safe, since its outcome is placed by the agent application's own
-`dialId`; where the assignment earns its place is everything the agent application does not mint --
+A task has one name, the assignment it is the record of, and the provider issues it. Platforms
+reuse their own handles: a closed one is retired minutes later, a requeue takes seconds, and on
+one platform a call was offered twice, thirteen seconds apart, under one handle, through a close
+and a re-offer. Everything that names a task after the fact -- a dial outcome, a media event, an
+ending, a history report, a command -- would land on whichever assignment is open when it arrives.
+So the assignment id is unique within the provider and never reused: where the platform's handle
+never comes back, the adapter passes it through; where it does, the adapter mints the assignment id
+and keeps the mapping, and the desk never learns which. A late event finds the assignment it
+belongs to or is refused, and a task-scoped browser session (`PROVIDER_NAME__TASK_ID__TAB_NAME`)
+lives one assignment, never the next customer's cookies. A dial the agent application placed was
+already safe, since its outcome is placed by the agent application's own `dialId`; where the
+assignment earns its place is everything the agent application does not mint --
 `task-media-started`, `task-media-ended`, `task-ended`, a `recordStep` naming a task -- any of which
-would otherwise find the new task under the old id and act on it. The assignment is part of the task
-the adapter keeps, not a field held in memory beside it: a rebuilt adapter comes back with the same
-assignment on the same task, or every late event it was minted to catch mismatches
-(`drive.reload.assignment`).
+would otherwise find the next customer under a reused handle and act on them. A minted id is part
+of the task the adapter keeps, not a field held in memory beside it: it lives in the login's
+`store` with the task, or is derived from a platform handle that itself never reuses, so a rebuilt
+adapter comes back with the same assignment on the same task, or every late event it was minted to
+catch mismatches and the second adapter's snapshot no longer carries the task (`drive.reload.snapshot`).
 
 Assignment, acceptance, and progress are distinct. Acceptance follows `autoAcceptTasks` and the
 task's `acceptance`, moving the task from `pending` to `confirmed`. The provider reports
@@ -2563,14 +2557,13 @@ prerequisites decide which controls are offered. Caller disconnect also executes
 TaskCommand or task capability. The separately declared agent application recording facility keeps its existing
 recording contract; this distinction does not remove it or move provider call operations to the agent application.
 
-A caller journey may revisit the same agent while an earlier interaction still wraps. Public task
-IDs must remain distinct for concurrently open interactions. For source-owned interaction IDs assigned
-before offer and never reused per assignment, both public task ID and assignment ID may equal that
-interaction ID. Restore them unchanged on reconnect. Commands, media, endings and history report
-retain the exact pair; never retarget an old command to the newest interaction of a journey.
-`validateTaskCommandRequest` checks the request's pair against the supplied published task and
-then its command prerequisites. The caller must select that task within the correct provider/login
-and recheck at the provider; the validator cannot prove source freshness or authorization.
+A caller journey may revisit the same agent while an earlier interaction still wraps. Each is its
+own assignment, and two open at once carry two assignment ids. Restore them unchanged on
+reconnect. Commands, media, endings and history reports name the exact assignment; never retarget
+an old command to the newest interaction of a journey. `validateTaskCommandRequest` checks the
+request's assignment against the supplied published task and then its command prerequisites. The
+caller must select that task within the correct provider/login and recheck at the provider; the
+validator cannot prove source freshness or authorization.
 `task-ended` retires only that interaction's resources. Another interaction, caller channel or IVR/queue
 portion must not be cleared because this task ended. Snapshot counts include all still-owned wrap
 and active interactions; task completion is not caller hangup.
@@ -2743,14 +2736,16 @@ Migration from the earlier spellings:
 | handlingStepExpectsAPerson, handlingStepDials, and their interaction spellings | `historyStepExpectsAPerson`, `historyStepDials` |
 | handleSeconds | `interactionSeconds` |
 | Task.allocationId, AllocationId, allocationExpiresAt | `Task.assignmentId`, `AssignmentId`, `assignmentExpiresAt` |
+| Task.id, TaskId, and `taskId` on every event, command, report and lead request | gone: a task is named by `assignmentId` alone, and `taskKey(providerId, assignmentId)` scopes it |
 | Manifest.disposalSettleMs | `Manifest.completionSettleMs` |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
 History and report rule names use `history` and `historyReport`; assignment rules use
-`assignment` (`task.assignmentId`, `stream.taskOffered.assignment`, `stream.assignment.ended`);
+`assignment` (`task.assignmentId`, `stream.taskOffered.duplicate`, `stream.assignment.ended`);
 phase and conformance rules use `interaction` and final-task rules use `completion`. The former
 fields are refused even when the new field is also supplied (`task.history.renamed`,
-`task.assignmentId.renamed`).
+`task.assignmentId.renamed` for a task's `id` or `allocationId`, `event.assignmentId.renamed`,
+`command.request.assignmentId.renamed` and `historyReport.assignmentId.renamed` for a `taskId`).
 
 
 `Task.history` is the call record: the steps that brought the task to the agent, oldest
@@ -2914,13 +2909,12 @@ writes it into its record as it writes every other leg:
 
 ```ts
 declare const connection: Connection<"voice">;
-declare const taskId: TaskId;
 declare const assignmentId: AssignmentId;
 declare const at: IsoTimestamp;
 
-void connection.recordStep?.({ taskId, assignmentId, step: "muted", at, mutedBy: "host" });                          // the moment the agent mutes
-void connection.recordStep?.({ taskId, assignmentId, step: "muted", at, mutedBy: "host", seconds: 15 });             // still running, if the agent application chooses to say
-void connection.recordStep?.({ taskId, assignmentId, step: "muted", at, mutedBy: "host", seconds: 42, ended: true }); // the moment they unmute
+void connection.recordStep?.({ assignmentId, step: "muted", at, mutedBy: "host" });                          // the moment the agent mutes
+void connection.recordStep?.({ assignmentId, step: "muted", at, mutedBy: "host", seconds: 15 });             // still running, if the agent application chooses to say
+void connection.recordStep?.({ assignmentId, step: "muted", at, mutedBy: "host", seconds: 42, ended: true }); // the moment they unmute
 ```
 
 Every report about one leg repeats its original `step` and agent application `at` as a correlation key;
@@ -3055,7 +3049,7 @@ The supported `BrowserIsolationScheme` values, declared under **Shapes**, key as
 
 | Enum member | Example session key |
 | --- | --- |
-| `PROVIDER_NAME__TASK_ID__TAB_NAME` | `mailflow.EMAIL-829102%2Ea1.CRM` -- the task's assignment, so one life of the id, never the next customer's cookies |
+| `PROVIDER_NAME__TASK_ID__TAB_NAME` | `mailflow.EMAIL-829102%2Ea1.CRM` -- the task's assignment id, so one assignment, never the next customer's cookies; the scheme's name is a stable wire value and keeps its spelling |
 | `TAB_NAME` | `CRM` |
 | `PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME` | `mailflow.Support.CRM` |
 | `PROVIDER_NAME__TAB_NAME` | `mailflow.CRM` |
@@ -3433,7 +3427,7 @@ control and invokes it with the shared custom task command:
 }
 ```
 
-`name` is the `id` of the custom capability the agent used. There is no `taskId` here: like every
+`name` is the `id` of the custom capability the agent used. There is no `assignmentId` here: like every
 other command it travels on the `TaskCommandRequest` around it. A `toggle` carries the state it
 wants — `{ type: "custom", name: "mark-vip", on: true }` — never a flip, for the reason under
 **Task commands**.
@@ -3472,17 +3466,16 @@ across the installation, and it travels four ways so no leg is a lookup:
 
 ```ts
 declare const connection: Connection<"voice">;
-declare const taskId: TaskId;
 declare const assignmentId: AssignmentId;
 
 // 1. Out, minted by the agent application.
-const result = await connection.execute({ taskId, assignmentId, command: { type: "conference", action: "add", dialId: "dial-7f2", destinationId: "tier2" } });
+const result = await connection.execute({ assignmentId, command: { type: "conference", action: "add", dialId: "dial-7f2", destinationId: "tier2" } });
 
 // 2. Back on the result, restated, so the agent application compares and confirms.
 expect(result).toEqual({ status: "dialling", dialId: "dial-7f2" });
 
 // 3. On the outcome, however late, against the task it belonged to.
-const outcome: ProviderEvent<"voice"> = { type: "dial-outcome", dialId: "dial-7f2", taskId, assignmentId, destinationId: "tier2", outcome: "no-answer", reason: "No route to destination" };
+const outcome: ProviderEvent<"voice"> = { type: "dial-outcome", dialId: "dial-7f2", assignmentId, destinationId: "tier2", outcome: "no-answer", reason: "No route to destination" };
 
 // 4. In the record, so a dial made before a transfer is placeable by whoever holds the task now.
 const step: TaskHistoryStep = { step: "unanswered", at: "2026-08-21T09:15:30Z", by: "A-12", dialId: "dial-7f2", destinationId: "tier2" };
@@ -3514,7 +3507,7 @@ create dialog" in words and still name no cause a code would carry, so `unexplai
 `reason` is a dial the switch described but did not classify, and a desk renders the words without
 inventing the class.
 
-**`taskId` is the task the dial was placed on**, resolved from the dial's own identity and never from
+**`assignmentId` is the task the dial was placed on**, resolved from the dial's own identity and never from
 whatever task the agent is looking at when the outcome arrives. That task may already have ended,
 and the harness places the outcome all the same (`TaskStream`, `stream.dialOutcome.unknown`,
 `stream.dialOutcome.duplicate`); an agent who moved on still learns nobody was reached, against the
@@ -4222,20 +4215,21 @@ Required when the login declares `capabilities.team.leadAssistControl`, and gate
 
 ```ts
 // 1. The agent asks, with a small note. Their task carries `leadAssist` from here on.
-execute({ taskId: "call-42", command: { type: "lead-assist", action: "request", note: "Refund dispute, needs approval" } })
+execute({ assignmentId: "alloc-42", command: { type: "lead-assist", action: "request", note: "Refund dispute, needs approval" } })
 //    task.leadAssist = { stage: "requested", note: "Refund dispute, needs approval", since }
 
 // 2. Every lead entitled to it sees the request on their team member list.
-//    team-updated: requests: [{ id: "req-7", memberId: "A-1", taskId: "call-42", assignmentId: "alloc-42", note, since }]
+//    team-updated: requests: [{ id: "req-7", memberId: "A-1", assignmentId: "alloc-42", note, since }]
 
 // 3. A lead joins, or declines.
 executeTeamLeadAssist({ command: { type: "join", requestId: "req-7" } })
 executeTeamLeadAssist({ command: { type: "decline", requestId: "req-7", reason: "In a call" } })
 ```
 
-**On `join` the provider bridges three parties and the lead is on a task of their own**, on the
-same task id, arriving on the lead's connection as `task-offered` with `automatic`
--- the way a call an agent placed themselves arrives -- and carrying `assisting`. The agent's task
+**On `join` the provider bridges three parties and the lead is on a task of their own**, an
+assignment of its own, arriving on the lead's connection as `task-offered` with `automatic`
+-- the way a call an agent placed themselves arrives -- and carrying `assisting`, which names the
+member and the member's assignment. The agent's task
 moves to `leadAssist: { stage: "joined", leadId }`. A join is the lead's own act, so capacity does not
 trigger it; but from then on it is an outstanding task the provider counts against the lead's
 stated ceiling like any other, nothing more is assigned to the lead while it stands, and a
@@ -4346,8 +4340,8 @@ declaration requires `executeTeamListen`, gated exactly as `executeTeamLeadAssis
 executeTeamListen({ command: { type: "listen", memberId: "A-1" } })
 
 // 2. The lead's own task arrives -- task-offered with `automatic`, as a joined call does -- and
-//    carries `listening`; the task id is the lead's, the member's call is named inside it.
-//    listening: { memberId: "A-1", taskId: "call-42", assignmentId: "alloc-42", mode: "listen", since }
+//    carries `listening`; the assignment is the lead's own, the member's is named inside it.
+//    listening: { memberId: "A-1", assignmentId: "alloc-42", mode: "listen", since }
 
 // 3. The lead changes how they are heard; the provider restates the task with the new mode.
 executeTeamListen({ command: { type: "coach" } })
@@ -4385,7 +4379,7 @@ const listeningLead = {
   channel: "voice",
   capabilities: {},
   phase: "in-progress",
-  listening: { memberId: "A-1", taskId: "call-42", assignmentId: "alloc-42", mode: "coach", since: "2026-08-21T09:04:00Z" },
+  listening: { memberId: "A-1", assignmentId: "alloc-42", mode: "coach", since: "2026-08-21T09:04:00Z" },
 } satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "listening">;
 ```
 
@@ -4587,7 +4581,7 @@ is the administrator's, and a login is not a request to reconfigure an agent.
 `softphone` implements it, because on a softphone the call's audio lands in Omni:
 
 ```ts
-openMedia({ taskId, localAudio }): Promise<OpenMediaResult>
+openMedia({ assignmentId, localAudio }): Promise<OpenMediaResult>
 // { status: "opened", session } | { status: "unavailable", failure }
 ```
 
@@ -4627,7 +4621,7 @@ Command names follow the channel's operational vocabulary, and each channel's co
 discriminated by `type` — the same discriminant `executeTeamBreak` and `custom` already use. The
 unions are declared under **Shapes**.
 
-`taskId` is not repeated on the command. It travels on the `TaskCommandRequest` around it.
+`assignmentId` is not repeated on the command. It travels on the `TaskCommandRequest` around it.
 
 **A toggle carries the state it wants, not a flip.** Inverting whatever is found cannot converge
 with a stale view: a flip against a state the provider has already changed turns something on and
@@ -4818,7 +4812,7 @@ react rather than only display the message:
 | --- | --- |
 | `omni.not-authenticated` | The provider session is no longer usable. The adapter has published `expired` at or before this answer — the state is what Omni surfaces reauthentication from; the code says why this action failed, and is never the only signal. |
 | `omni.capability-not-enabled` | The action targets a capability this task, manifest, or login did not declare — including a lead command from a login whose `capabilities` no longer carry it. |
-| `omni.task-not-found` | The provider-local task id is unknown, typically after the task already ended. |
+| `omni.task-not-found` | The assignment named is not one the provider holds, typically after the task already ended. |
 | `omni.phone-not-permitted` | The agent application declared a `phone` the platform does not permit for this agent -- a softphone for an agent configured for a desk phone, or the reverse. The login is refused at authentication, and the provider never reconfigures the agent to make the declaration true. See **How the agent hears the call**. |
 | `omni.destination-not-permitted` | The dialled number, or the `destinationId` named, is not one the provider offers this agent. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
@@ -5159,13 +5153,13 @@ task, since the ending was owed and lost. The drive holds a provider to the same
 non-terminal. A replacement
 snapshot that no longer contains the task also clears it. Repeated `task-ended` delivery with the
 same envelope ID is harmless, and a `task-ended` naming an assignment that has already ended is
-recognised as the late event it is, never applied to the life now open under the same id.
+recognised as the late event it is, never applied to whatever assignment is open now.
 
 ### `dial-outcome`
 
 How a dial the agent application placed ended, once, either way, named by the `dialId` the agent application sent: `answered`,
 or one of the declared ways of not reaching the destination, with the switch's `reason` where it
-gave one. `taskId` names the task the dial was on, where there was one, and that task may already
+gave one. `assignmentId` names the task the dial was on, where there was one, and that task may already
 have ended. Omni shows it to the agent against the call it belonged to and does nothing else: no
 audio moves, since the provider bridges the leg on its side, and no dial is repeated. See **Every
 dial has an outcome**.
@@ -5181,7 +5175,7 @@ explicit timezones.
 The provider's report that something its platform answered broke a rule the adapter relies on — a
 state read that contradicted itself, a `task-ended` naming a task nobody held, a party arriving
 without a name. `expected` is the rule as a sentence, `observed` is what came instead, and
-`taskId` names the task where there is one. **Informational, never behavioural**: the provider has
+`assignmentId` names the task where there is one. **Informational, never behavioural**: the provider has
 already done the safe thing before it speaks, and nothing in the task or break machinery reacts to
 a diagnostic. It exists so that the loudness reaches a person — an agent application renders each one where the
 agent works and keeps a count an operator can read, because a healthy workspace over a shouting
@@ -5196,7 +5190,7 @@ fails loudly rather than passing with a note. A task published under `capability
 | --- | --- |
 | `expected` | Required. The rule that was broken, as a sentence a person can read. |
 | `observed` | Required. What the platform answered instead. |
-| `taskId` | Optional. The task concerned, where there is one, with its `assignmentId` beside it: a task is named with its life, and an assignment never alone. |
+| `assignmentId` | Optional. The task concerned, where there is one, named by its assignment. |
 
 ### `queue-summary`
 
@@ -5230,10 +5224,11 @@ declares the `calendar` idle capability.
 
 ## Utilities
 
-### `taskKey(providerId, taskId)`
+### `taskKey(providerId, assignmentId)`
 
-Returns a collision-safe global task key by encoding and joining the provider-local identifiers.
-Use this key in Omni state; never assume task IDs are unique across providers.
+Returns a collision-safe global task key by encoding and joining the provider id and the
+assignment id. Use this key in Omni state; an assignment id is unique within its provider and
+never across providers.
 
 ### `userKey(providerId, userId)`
 
@@ -5412,10 +5407,10 @@ open task back to, and nothing about the reload is exempt from any rule. The sec
 has already put what would rebuild it into the secrets store, from the moment it was handed one,
 not only when a flow completes -- the session is the adapter's, the store is the agent application's, and a
 agent application reload is exactly when no flow will run. And once the task has ended, the store the drive
-handed the adapter holds no key naming the task's id, delimited, never as a run of characters inside
+handed the adapter holds no key naming the task's assignment id, delimited, never as a run of characters inside
 another id (`drive.store.retained`); an adapter whose keys never named the task leaves the rule
 unevaluated, and the result says so rather than passing it: a task's keys go
-with the task, or the next offer of the same id inherits them. Outside the
+with the task, or whatever comes next inherits them. Outside the
 interaction phases with `hold` still declared -- in
 `confirmed`, where the provider publishes it, and in `completing` once this agent's interaction has ended -- the
 drive sends `hold` past the validator that would hold it back, and expects `failed`: the adapter
@@ -5534,7 +5529,7 @@ of no effect. It rejects with unknown outcome, reports the failure visibly and p
 current capture state is actually known. Retention is not a promise of sample-perfect audio.
 
 Provider commands go exclusively to `Connection.execute`; agent application commands go exclusively to
-`HostRecording.execute`. Both include task, assignment, request and observation identities; all
+`HostRecording.execute`. Both include the assignment, request and observation identities; all
 non-start commands identify the particular recording. IDs are opaque and scoped by provider login,
 task and recorder owner. They are never inferred from filenames or current agent identity. A
 recording ID survives pause/resume and reassignment only where the same recorder confirms continuity;

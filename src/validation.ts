@@ -234,7 +234,6 @@ const isDurationSeconds = (value: unknown): boolean =>
 
 /** Opaque, non-empty, provider-issued. Never parsed and never compared across providers. */
 const isUserId = isFilled;
-const isTaskId = isFilled;
 const isAssignmentId = isFilled;
 
 const ruleListeners = new Set<(rule: string) => void>();
@@ -1182,6 +1181,7 @@ function validateAssisting(value: unknown, channel: string, path: string, into: 
     return;
   }
   into.require(isUserId(value.memberId), "task.assisting.memberId", `${path}.memberId`, "a joined call names the member who asked");
+  into.require(isAssignmentId(value.assignmentId), "task.assisting.assignmentId", `${path}.assignmentId`, "a joined call names the member's assignment");
   if (value.note !== undefined) into.filled(value.note, "task.assisting.note", `${path}.note`, "a note must not be empty when present");
   into.timestamp(value.since, "task.assisting.since", `${path}.since`);
 }
@@ -1195,8 +1195,7 @@ function validateListening(value: unknown, channel: string, path: string, into: 
     return;
   }
   into.require(isUserId(value.memberId), "task.listening.memberId", `${path}.memberId`, "a call being listened to names the member on it");
-  into.require(isTaskId(value.taskId), "task.listening.taskId", `${path}.taskId`, "a call being listened to names the member's task");
-  into.require(isAssignmentId(value.assignmentId), "task.listening.assignmentId", `${path}.assignmentId`, "a call being listened to names the member's task by its assignment too");
+  into.require(isAssignmentId(value.assignmentId), "task.listening.assignmentId", `${path}.assignmentId`, "a call being listened to names the member's assignment");
   into.oneOf(value.mode, LISTENING_MODES, "task.listening.mode", `${path}.mode`);
   into.timestamp(value.since, "task.listening.since", `${path}.since`);
 }
@@ -1241,11 +1240,12 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.require(!Object.hasOwn(task, former), "task.history.renamed", `${path}.${former}`,
       "use history; the former field is not accepted");
   }
-  into.require(!Object.hasOwn(task, "allocationId"), "task.assignmentId.renamed", `${path}.allocationId`,
-    "use assignmentId; the former field is not accepted");
-  into.require(isTaskId(task.id), "task.id", `${path}.id`, "a task needs a non-empty id");
+  for (const former of ["id", "allocationId"] as const) {
+    into.require(!Object.hasOwn(task, former), "task.assignmentId.renamed", `${path}.${former}`,
+      "use assignmentId; a task is named by its assignment alone, and the former field is not accepted");
+  }
   into.require(isAssignmentId(task.assignmentId), "task.assignmentId", `${path}.assignmentId`,
-    "a task names this life of itself: an assignment id minted once per offer, never reused for the life of the login");
+    "a task names the assignment it is the record of: the provider's name for it, unique within the provider and never reused");
   into.filled(task.title, "task.title", `${path}.title`, "a task needs a title");
   into.filled(task.taskType, "task.taskType", `${path}.taskType`, "a task needs a task type");
   if (into.oneOf(task.phase, TASK_PHASES, "task.phase", `${path}.phase`) && task.phase === "preview") {
@@ -1800,8 +1800,7 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Re
           into.require(request.memberId !== context.self, "team.request.self", `${at}.memberId`,
             "the team member list carries the reader's own ask: an agent's request for a lead goes to whoever leads them");
         }
-        into.require(isTaskId(request.taskId), "team.request.taskId", `${at}.taskId`, "a request names the task the lead would join");
-        into.require(isAssignmentId(request.assignmentId), "team.request.assignmentId", `${at}.assignmentId`, "a request names the task by its assignment too");
+        into.require(isAssignmentId(request.assignmentId), "team.request.assignmentId", `${at}.assignmentId`, "a request names the member's assignment the lead would join");
         if (request.note !== undefined) into.filled(request.note, "team.request.note", `${at}.note`, "a note must not be empty when present");
         into.timestamp(request.since, "team.request.since", `${at}.since`);
       });
@@ -1879,9 +1878,9 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
         if (listening !== undefined) into.add("snapshot.listening.single", `${path}.tasks[${index}].listening`, "a lead listens to one call at a time");
         listening = index;
       }
-      if (isPlainObject(task) && isTaskId(task.id)) {
-        if (seen.has(task.id as string)) into.add("task.id.unique", `${path}.tasks[${index}].id`, `duplicate task id: ${task.id}`);
-        seen.add(task.id as string);
+      if (isPlainObject(task) && isAssignmentId(task.assignmentId)) {
+        if (seen.has(task.assignmentId as string)) into.add("task.assignmentId.unique", `${path}.tasks[${index}].assignmentId`, `duplicate assignment id: ${task.assignmentId}`);
+        seen.add(task.assignmentId as string);
       }
     });
   }
@@ -2058,6 +2057,8 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
     return into.violations;
   }
   const at = `${path}.event`;
+  into.require(!Object.hasOwn(event, "taskId"), "event.assignmentId.renamed", `${at}.taskId`,
+    "an event names a task by its assignment alone; the former field is not accepted");
 
   switch (event.type) {
     case "snapshot":
@@ -2097,16 +2098,13 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       break;
     case "task-media-started":
       into.require(channel === "voice", "event.media.channel", `${at}.type`, "only a voice provider publishes media transitions");
-      into.require(isTaskId(event.taskId), "event.taskMediaStarted.taskId", `${at}.taskId`, "a task id is required");
       into.require(isAssignmentId(event.assignmentId), "event.taskMediaStarted.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
       break;
     case "task-media-ended":
       into.require(channel === "voice", "event.media.channel", `${at}.type`, "only a voice provider publishes media transitions");
-      into.require(isTaskId(event.taskId), "event.taskMediaEnded.taskId", `${at}.taskId`, "a task id is required");
       into.require(isAssignmentId(event.assignmentId), "event.taskMediaEnded.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
       break;
     case "task-ended":
-      into.require(isTaskId(event.taskId), "event.taskEnded.taskId", `${at}.taskId`, "a task id is required");
       into.require(isAssignmentId(event.assignmentId), "event.taskEnded.assignmentId", `${at}.assignmentId`, "an event about a task names its assignment");
       validateTaskOutcome(event.outcome, `${at}.outcome`, into);
       break;
@@ -2118,8 +2116,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
         into.require(declared !== undefined && declared.includes(event.outcome), "event.dialOutcome.undeclared", `${at}.outcome`,
           `the manifest does not declare ${describeValue(event.outcome)} among its dialOutcomes`);
       }
-      if (event.taskId !== undefined) into.require(isTaskId(event.taskId), "event.dialOutcome.taskId", `${at}.taskId`, "taskId must be a task id when present");
-      assignmentWithTask(event, "event.dialOutcome", at, into);
+      if (event.assignmentId !== undefined) into.require(isAssignmentId(event.assignmentId), "event.dialOutcome.assignmentId", `${at}.assignmentId`, "assignmentId must name an assignment when present");
       if (event.destinationId !== undefined) into.filled(event.destinationId, "event.dialOutcome.destinationId", `${at}.destinationId`, "a destinationId must not be empty when present");
       if (event.reason !== undefined) into.filled(event.reason, "event.dialOutcome.reason", `${at}.reason`, "a reason must not be empty when present");
       break;
@@ -2135,8 +2132,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
     case "diagnostic":
       into.filled(event.expected, "event.diagnostic.expected", `${at}.expected`, "a diagnostic states the rule that was broken, as a sentence");
       into.filled(event.observed, "event.diagnostic.observed", `${at}.observed`, "a diagnostic states what was observed instead");
-      if (event.taskId !== undefined) into.require(isTaskId(event.taskId), "event.diagnostic.taskId", `${at}.taskId`, "taskId must be a task id when present");
-      assignmentWithTask(event, "event.diagnostic", at, into);
+      if (event.assignmentId !== undefined) into.require(isAssignmentId(event.assignmentId), "event.diagnostic.assignmentId", `${at}.assignmentId`, "assignmentId must name an assignment when present");
       break;
     case "queue-summary":
       validateQueueSummary(event.summary, `${at}.summary`, into);
@@ -2343,10 +2339,10 @@ export function validateHostGuarantees(guarantees: unknown, path = "host.guarant
 export function validateHistoryReport(report: unknown, path = "historyReport", manifest?: unknown): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(report)) {
-    into.add("historyReport.shape", path, "an history report must be an object");
+    into.add("historyReport.shape", path, "a history report must be an object");
     return into.violations;
   }
-  into.require(isTaskId(report.taskId), "historyReport.taskId", `${path}.taskId`, "a report names the task");
+  into.require(!Object.hasOwn(report, "taskId"), "historyReport.assignmentId.renamed", `${path}.taskId`, "a report names the assignment alone; the former field is not accepted");
   into.require(isAssignmentId(report.assignmentId), "historyReport.assignmentId", `${path}.assignmentId`, "a report names the task's assignment, so a late one never lands on the next life of the id");
   into.oneOf(report.step, HISTORY_STEPS, "historyReport.step", `${path}.step`);
   into.timestamp(report.at, "historyReport.at", `${path}.at`);
@@ -2380,15 +2376,6 @@ function validateMutedBy(device: Record<string, unknown>, rule: string, path: st
   } else {
     into.require(device.mutedBy === undefined, `${rule}.mutedBy.unexpected`, `${path}.mutedBy`,
       "mutedBy says who silenced a device that is not flowing; a flowing one names nobody");
-  }
-}
-
-/** An event that may name a task names its assignment with it, and never an assignment alone. */
-function assignmentWithTask(event: Record<string, unknown>, rule: string, at: string, into: Collector): void {
-  if (event.taskId !== undefined) {
-    into.require(isAssignmentId(event.assignmentId), `${rule}.assignmentId`, `${at}.assignmentId`, "an event that names a task names its assignment too");
-  } else {
-    into.require(event.assignmentId === undefined, `${rule}.assignmentId.unexpected`, `${at}.assignmentId`, "an assignment is named with its task, never alone");
   }
 }
 
@@ -2472,11 +2459,10 @@ export function validateTaskCommandRequest(request: unknown, task: unknown, path
     into.add("command.request.shape", path, "a request and the current published task are required");
     return into.violations;
   }
-  into.filled(request.taskId, "command.request.taskId", `${path}.taskId`, "name the interaction task");
-  into.filled(request.assignmentId, "command.request.assignmentId", `${path}.assignmentId`, "name its assignment");
-  into.require(request.taskId === task.id, "command.request.taskId.mismatch", `${path}.taskId`, "the command must target this exact interaction");
+  into.require(!Object.hasOwn(request, "taskId"), "command.request.assignmentId.renamed", `${path}.taskId`, "a command names the assignment alone; the former field is not accepted");
+  into.filled(request.assignmentId, "command.request.assignmentId", `${path}.assignmentId`, "name the assignment");
   into.require(request.assignmentId === task.assignmentId, "command.request.assignmentId.mismatch", `${path}.assignmentId`, "the command must target this exact assignment");
-  for (const key of Object.keys(request)) into.require(["taskId", "assignmentId", "command"].includes(key),
+  for (const key of Object.keys(request)) into.require(["assignmentId", "command"].includes(key),
     "command.request.field", `${path}.${key}`, "unsupported task command request field");
   into.violations.push(...validateTaskCommand(request.command, task, `${path}.command`, taskContext));
   return into.violations;
@@ -3188,10 +3174,10 @@ export function validateHostRecordings(value: unknown, path = "host.recordings")
   value.forEach((report, i) => {
     const at = `${path}[${i}]`;
     if (!object(report)) { check(false, "report.shape", at, "expected scoped report"); return; }
-    keys(report, ["taskId", "assignmentId", "state"], at);
-    check(filled(report.taskId) && filled(report.assignmentId), "report.scope", at, "report identifies task and assignment");
-    const key = JSON.stringify([report.taskId, report.assignmentId]);
-    check(!seen.has(key), "report.duplicate", at, "one host state per task assignment"); seen.add(key);
+    keys(report, ["assignmentId", "state"], at);
+    check(filled(report.assignmentId), "report.scope", at, "report identifies the assignment");
+    const key = JSON.stringify([report.assignmentId]);
+    check(!seen.has(key), "report.duplicate", at, "one host state per assignment"); seen.add(key);
     violations.push(...validateRecordingState(report.state, `${at}.state`));
   });
   return violations;
@@ -3246,8 +3232,8 @@ export function validateRecordingRequest(request: unknown, task: unknown, contex
   const { violations, check, keys } = collector();
   if (!object(request) || !object(task)) { check(false, "request.shape", path, "request and current task required"); return violations; }
   violations.push(...validateTask(task, { ...context.taskContext, channel: "voice" }, `${path}.task`));
-  keys(request, ["taskId", "assignmentId", "command"], path);
-  check(filled(request.taskId) && filled(request.assignmentId) && request.taskId === task.id && request.assignmentId === task.assignmentId, "request.scope", path, "task assignment changed or scope missing");
+  keys(request, ["assignmentId", "command"], path);
+  check(filled(request.assignmentId) && request.assignmentId === task.assignmentId, "request.scope", path, "task assignment changed or scope missing");
   check(task.channel === "voice", "request.channel", path, "recording is voice-only");
   violations.push(...validateRecordingCommandShape(request.command, context.source, `${path}.command`));
   if (!object(request.command)) return violations;
@@ -3261,7 +3247,7 @@ export function validateRecordingRequest(request: unknown, task: unknown, contex
     check(object(context.host), "host.required", path, "host did not declare recording support");
     const reports = object(context.hostReport) ? context.hostReport.recordings : undefined;
     violations.push(...validateHostRecordings(reports));
-    state = Array.isArray(reports) ? reports.find(r => object(r) && r.taskId === task.id && r.assignmentId === task.assignmentId)?.state : undefined;
+    state = Array.isArray(reports) ? reports.find(r => object(r) && r.assignmentId === task.assignmentId)?.state : undefined;
     if (object(context.host)) {
       check(Array.isArray(context.host.actions) && context.host.actions.includes(command.action), "host.action", path, "host does not support action");
       check(object(policy) && Array.isArray(context.host.destinationIds) && context.host.destinationIds.includes(policy.destinationId), "host.destination", path, "task destination is not provisioned by this host");

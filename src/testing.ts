@@ -556,11 +556,11 @@ export async function exerciseAdapter<C extends Channel>(
       ruleEvaluated("snapshot.accounts.task", "snapshot.accounts.ended");
       if ((event.type === "task-offered" || event.type === "task-updated") && isRecord(event.task) && typeof event.task.assignmentId === "string" && !carried.has(event.task.assignmentId)) {
         violations.push({ rule: "snapshot.accounts.task", path: "snapshot.tasks",
-          message: `${String(event.task.id)} (${event.task.assignmentId}) was published while the snapshot was read and the snapshot does not carry it: a snapshot accounts for everything the adapter emitted before it resolved` });
+          message: `${String(event.task.assignmentId)} (${event.task.assignmentId}) was published while the snapshot was read and the snapshot does not carry it: a snapshot accounts for everything the adapter emitted before it resolved` });
       }
       if (event.type === "task-ended" && typeof event.assignmentId === "string" && carried.has(event.assignmentId)) {
         violations.push({ rule: "snapshot.accounts.ended", path: "snapshot.tasks",
-          message: `${String(event.taskId)} (${event.assignmentId}) ended while the snapshot was read and the snapshot still carries it: a snapshot accounts for everything the adapter emitted before it resolved` });
+          message: `${String(event.assignmentId)} (${event.assignmentId}) ended while the snapshot was read and the snapshot still carries it: a snapshot accounts for everything the adapter emitted before it resolved` });
       }
     }
     duringRead.length = 0;
@@ -812,7 +812,7 @@ function eventTasks(envelope: unknown): unknown[] {
 function undeterminedTasks(tasks: readonly unknown[], path: string): ProtocolViolation[] {
   return tasks.flatMap((task, index) => isRecord(task) && task.capabilitySource === "undetermined"
     ? [{ rule: "capabilitySource.undetermined", path: `${path}[${index}].capabilitySource`,
-        message: `task ${String(task.id)} was published under terms the provider could not determine` }]
+        message: `task ${String(task.assignmentId)} was published under terms the provider could not determine` }]
     : []);
 }
 
@@ -907,8 +907,8 @@ export function assertTaskCapabilityWithdrawal(
   };
   tasks.forEach((task, index) => {
     assertNoViolations(validateTask(task, context, `tasks[${index}]`), `Task capability withdrawal: tasks[${index}] must be a task the wire could carry`);
-    if (task.id !== first.id) {
-      throw new Error(`Task capability withdrawal must keep the task: tasks[${index}] is ${task.id}, and the offer was ${first.id}`);
+    if (task.assignmentId !== first.assignmentId) {
+      throw new Error(`Task capability withdrawal must keep the task: tasks[${index}] is ${task.assignmentId}, and the offer was ${first.assignmentId}`);
     }
   });
   const withdrawn = Object.keys(first.capabilities).filter(name => (last.capabilities as Record<string, unknown>)[name] === undefined);
@@ -971,8 +971,8 @@ export function assertReconnectWithMissedAssignments<C extends Channel>(
   if (reconnect.event.type !== "snapshot" || reconnect.event.reason !== "reconnected") {
     throw new Error("Reconnect scenario requires a reconnected snapshot event");
   }
-  const beforeIds = new Set(before.tasks.map(task => task.id));
-  const refreshedIds = new Set(reconnect.event.snapshot.tasks.map(task => task.id));
+  const beforeIds = new Set(before.tasks.map(task => task.assignmentId));
+  const refreshedIds = new Set(reconnect.event.snapshot.tasks.map(task => task.assignmentId));
   for (const taskId of missedTaskIds) {
     if (beforeIds.has(taskId)) throw new Error(`Task '${taskId}' was not missed before reconnect`);
     if (!refreshedIds.has(taskId)) throw new Error(`Reconnect snapshot is missing task '${taskId}'`);
@@ -1039,9 +1039,9 @@ export const SUPERSEDED_BY_A_SNAPSHOT: ReadonlySet<string> = new Set([
 
 export class TaskStream {
   private readonly tasks = new Map<string, ReturnType<typeof TaskStream.stated>>();
-  // Every assignment this login has seen, and the ones whose task has ended: an offer never reuses
-  // one, an event about a task names the life that is open, and a late event for a life that ended
-  // is recognised as that rather than landing on the next customer under the same id.
+  // Every assignment this stream has seen, and the ones whose task has ended: an assignment is
+  // introduced once, and an event naming one that ended is the late event it is, never applied to
+  // a task that is open.
   private readonly assignments = new Set<string>();
   private readonly endedAssignments = new Set<string>();
   // Every dial the stream can place an outcome against: one the host said it placed, or one a
@@ -1066,20 +1066,16 @@ export class TaskStream {
   }
 
   /**
-   * Whether an event about a task names the life that is open under its id. One naming a life that
-   * has ended is the late event the assignment exists to catch; one naming a life nobody has seen is
-   * a different fault. Either way it is not applied to the open task.
+   * Why an event names no open task: the assignment ended, so this is the late event that must not
+   * land on anything, or nobody has seen it. Either way it is not applied.
    */
-  private namesTheOpenLife(event: Record<string, unknown>, known: { assignment: string }, at: string, refuse: (rule: string, where: string, message: string) => void): boolean {
-    const named = event.assignmentId;
-    if (typeof named !== "string" || named === known.assignment) return true;
-    if (this.endedAssignments.has(named)) {
+  private notOpen(event: Record<string, unknown>, id: string, at: string, refuse: (rule: string, where: string, message: string) => void): void {
+    if (this.endedAssignments.has(id)) {
       refuse("stream.assignment.ended", `${at}.assignmentId`,
-        `${String(event.type)} names assignment ${named}, a life of ${String(event.taskId)} that has ended; the life open under that id is ${known.assignment}, and a late event lands on the life it names, never the next`);
+        `${String(event.type)} names ${id}, an assignment that has ended: a late event lands on the assignment it names, never on another`);
     } else {
-      refuse("stream.assignment.unknown", `${at}.assignmentId`, `${named} is not an assignment this login has seen`);
+      refuse("stream.assignment.unknown", `${at}.assignmentId`, `${id} is not an assignment this stream has seen`);
     }
-    return false;
   }
 
   /** How many tasks the stream currently holds open. */
@@ -1146,18 +1142,18 @@ export class TaskStream {
     ruleEvaluated("stream.snapshot.capabilitySource", "stream.snapshot.history", "stream.snapshot.phase", "stream.snapshot.media");
     if (isRecord(snapshot) && Array.isArray(snapshot.tasks)) {
       snapshot.tasks.forEach((task, index) => {
-        if (!isRecord(task) || typeof task.id !== "string") return;
-        const was = this.tasks.get(task.id);
-        if (was === undefined || was.assignment !== String(task.assignmentId)) return;
+        if (!isRecord(task) || typeof task.assignmentId !== "string") return;
+        const was = this.tasks.get(task.assignmentId);
+        if (was === undefined) return;
         if ((was.source === "queue" || was.source === "ungoverned") && task.capabilitySource === "undetermined") {
           refuse("stream.snapshot.capabilitySource", `${at}.tasks[${index}].capabilitySource`,
-            `${task.id} was published under ${was.source} terms and the snapshot says undetermined: terms once read stay read`);
+            `${task.assignmentId} was published under ${was.source} terms and the snapshot says undetermined: terms once read stay read`);
         }
         // A record once read is not unread: a resync restates it whole, or with more, never with less.
         const lost = TaskStream.lost(was.record, TaskStream.record(task));
         if (lost.length > 0) {
           refuse("stream.snapshot.history", `${at}.tasks[${index}].history`,
-            `${task.id}'s record lost ${lost.join(", ")} on the snapshot: an entry read by the host stays in the record until the task ends`);
+            `${task.assignmentId}'s record lost ${lost.join(", ")} on the snapshot: an entry read by the host stays in the record until the task ends`);
         }
         const to = String(task.phase);
         const reachable = REACHABLE_PHASES[was.phase];
@@ -1165,12 +1161,12 @@ export class TaskStream {
           const connectingBack = was.phase === "completing" && this.partyDialled(task) && (to === "in-progress" || to === "paused");
           if (!connectingBack) {
             refuse("stream.snapshot.phase", `${at}.tasks[${index}].phase`,
-              `${task.id} was ${was.phase} and the snapshot says ${to}: a task does not go backwards, on an update or on a resync`);
+              `${task.assignmentId} was ${was.phase} and the snapshot says ${to}: a task does not go backwards, on an update or on a resync`);
           }
         }
         if (was.media === "started" && (to === "in-progress" || to === "paused") && task.media !== "started") {
           refuse("stream.snapshot.media", `${at}.tasks[${index}].media`,
-            `${task.id}'s audio was up and the snapshot carries it ${to} without it: media ends on task-media-ended and the call moves on, so a snapshot that forgets the audio lost state`);
+            `${task.assignmentId}'s audio was up and the snapshot carries it ${to} without it: media ends on task-media-ended and the call moves on, so a snapshot that forgets the audio lost state`);
         }
       });
     }
@@ -1183,8 +1179,8 @@ export class TaskStream {
     this.tasks.clear();
     if (!isRecord(snapshot) || !Array.isArray(snapshot.tasks)) return;
     for (const task of snapshot.tasks) {
-      if (isRecord(task) && typeof task.id === "string") {
-        this.tasks.set(task.id, TaskStream.stated(task));
+      if (isRecord(task) && typeof task.assignmentId === "string") {
+        this.tasks.set(task.assignmentId, TaskStream.stated(task));
         if (typeof task.assignmentId === "string") this.assignments.add(task.assignmentId);
       }
       this.noteDials(task);
@@ -1198,24 +1194,22 @@ export class TaskStream {
     if (!isRecord(event)) return found;
     const at = `${path}.event`;
     const refuse = (rule: string, where: string, message: string) => found.push({ rule, path: where, message });
-    const id = typeof event.taskId === "string" ? event.taskId : isRecord(event.task) && typeof event.task.id === "string" ? event.task.id : undefined;
+    const id = typeof event.assignmentId === "string" ? event.assignmentId : isRecord(event.task) && typeof event.task.assignmentId === "string" ? event.task.assignmentId : undefined;
     const known = id === undefined ? undefined : this.tasks.get(id);
     switch (event.type) {
       case "snapshot":
         found.push(...this.resync(event.snapshot, `${at}.snapshot`));
         break;
       case "task-offered": {
-        ruleEvaluated("stream.taskOffered.duplicate", "stream.taskOffered.assignment");
+        ruleEvaluated("stream.taskOffered.duplicate");
         if (id === undefined) break;
-        if (known !== undefined) refuse("stream.taskOffered.duplicate", `${at}.task.id`, `${id} is already on the stream; an offer introduces a task once`);
-        const assignment = isRecord(event.task) ? event.task.assignmentId : undefined;
-        if (typeof assignment === "string") {
-          if (this.assignments.has(assignment)) {
-            refuse("stream.taskOffered.assignment", `${at}.task.assignmentId`,
-              `${assignment} was already an assignment on this login: an assignment is minted once per offer and never reused, whatever the task id does`);
-          }
-          this.assignments.add(assignment);
+        // An assignment is introduced once: not while it is open, and never again once it has ended,
+        // whatever the platform did with its own handle.
+        if (this.assignments.has(id)) {
+          refuse("stream.taskOffered.duplicate", `${at}.task.assignmentId`,
+            known !== undefined ? `${id} is already on the stream; an offer introduces an assignment once` : `${id} was already an assignment on this stream: an assignment is named once per offer and never reused, whatever the platform does with its own handle`);
         }
+        this.assignments.add(id);
         this.tasks.set(id, TaskStream.stated(event.task));
         this.noteDials(event.task);
         break;
@@ -1224,11 +1218,11 @@ export class TaskStream {
         if (id === undefined) break;
         ruleEvaluated("stream.taskUpdated.unknown");
         if (known === undefined) {
-          refuse("stream.taskUpdated.unknown", `${at}.task.id`, `${id} was never offered or carried on a snapshot`);
+          refuse("stream.taskUpdated.unknown", `${at}.task.assignmentId`, `${id} was never offered or carried on a snapshot`);
           break;
         }
         // The rules about a known task are evaluated only once there is one.
-        ruleEvaluated("stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.assignment", "stream.taskUpdated.mediaOpen",
+        ruleEvaluated("stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.mediaOpen",
           "stream.taskUpdated.history", "stream.taskMediaEnded.follow", "stream.taskUpdated.media", "stream.taskUpdated.stage", "stream.taskUpdated.stage.lingering");
         // Terms once read stay read. A re-read that fails is not a new fact about the task, so the
         // last statement stands and the failure is a diagnostic; undetermined is a place a task
@@ -1236,12 +1230,6 @@ export class TaskStream {
         if ((known.source === "queue" || known.source === "ungoverned") && isRecord(event.task) && event.task.capabilitySource === "undetermined") {
           refuse("stream.taskUpdated.capabilitySource", `${at}.task.capabilitySource`,
             `${id} was published under ${known.source} terms and now says undetermined: terms once read stay read, and a re-read that fails is a diagnostic, not a republish`);
-        }
-        // An update is of the life that is open. One carrying another assignment is a copy of a
-        // different life of this id -- a stale republish of the last customer's call, or the next one's.
-        if (isRecord(event.task) && String(event.task.assignmentId) !== known.assignment) {
-          refuse("stream.taskUpdated.assignment", `${at}.task.assignmentId`,
-            `${id} is open as assignment ${known.assignment} and the update says ${String(event.task.assignmentId)}: an update restates the life that is open, never another`);
         }
         // A task does not go backwards. The stream sees publications, not transitions, and a task may
         // pass through a phase between two, so what is refused is a phase unreachable from the last
@@ -1315,13 +1303,12 @@ export class TaskStream {
         this.noteDials(event.task);
         break;
       case "task-media-started":
-        ruleEvaluated("stream.taskMediaStarted.unknown", "stream.taskMediaStarted.beforeWork", "stream.taskMediaStarted.duplicate", "stream.taskMedia.channel", "stream.assignment.ended", "stream.assignment.unknown");
+        ruleEvaluated("stream.taskMediaStarted.beforeWork", "stream.taskMediaStarted.duplicate", "stream.taskMedia.channel", "stream.assignment.ended", "stream.assignment.unknown");
         if (id === undefined) break;
         if (known === undefined) {
-          refuse("stream.taskMediaStarted.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
+          this.notOpen(event, id, at, refuse);
           break;
         }
-        if (!this.namesTheOpenLife(event, known, at, refuse)) break;
         // Ring-back is audio: a task whose party the host is dialling has media from dialling on,
         // whatever its phase; every other task not at work has none.
         if (known.channel !== "voice") {
@@ -1329,51 +1316,48 @@ export class TaskStream {
           break;
         }
         if (!AT_WORK.has(known.phase) && !known.partyRingingBeforeWork) {
-          refuse("stream.taskMediaStarted.beforeWork", `${at}.taskId`,
+          refuse("stream.taskMediaStarted.beforeWork", `${at}.assignmentId`,
             `media cannot arrive on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
         if (known.media === "started") {
-          refuse("stream.taskMediaStarted.duplicate", `${at}.taskId`, `media already started on ${id}; started and ended alternate`);
+          refuse("stream.taskMediaStarted.duplicate", `${at}.assignmentId`, `media already started on ${id}; started and ended alternate`);
         }
         known.media = "started";
         break;
       case "task-media-ended":
-        ruleEvaluated("stream.taskMediaEnded.unknown", "stream.taskMediaEnded.beforeWork", "stream.taskMediaEnded.silent", "stream.taskMedia.channel", "stream.assignment.ended", "stream.assignment.unknown");
+        ruleEvaluated("stream.taskMediaEnded.beforeWork", "stream.taskMediaEnded.silent", "stream.taskMedia.channel", "stream.assignment.ended", "stream.assignment.unknown");
         if (id === undefined) break;
         if (known === undefined) {
-          refuse("stream.taskMediaEnded.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
+          this.notOpen(event, id, at, refuse);
           break;
         }
-        if (!this.namesTheOpenLife(event, known, at, refuse)) break;
         if (known.channel !== "voice") {
           refuse("stream.taskMedia.channel", `${at}.type`, "only a voice task has media transitions");
           break;
         }
         if (!WORK_BEGUN.has(known.phase) && !known.partyRingingBeforeWork) {
-          refuse("stream.taskMediaEnded.beforeWork", `${at}.taskId`,
+          refuse("stream.taskMediaEnded.beforeWork", `${at}.assignmentId`,
             `media cannot end on ${id} while it is ${known.phase}: a task is never its audio, and its work has not begun`);
         }
         if (known.media !== "started") {
-          refuse("stream.taskMediaEnded.silent", `${at}.taskId`,
+          refuse("stream.taskMediaEnded.silent", `${at}.assignmentId`,
             `media cannot end on ${id} where none arrived: audio attaches on task-media-started, or on a task carried with media started`);
         }
         known.media = "ended";
         break;
       case "task-ended":
-        ruleEvaluated("stream.taskEnded.unknown", "stream.assignment.ended", "stream.assignment.unknown");
+        ruleEvaluated("stream.assignment.ended", "stream.assignment.unknown");
         if (id === undefined) break;
         if (known === undefined) {
-          refuse("stream.taskEnded.unknown", `${at}.taskId`, `${id} was never offered or carried on a snapshot`);
+          this.notOpen(event, id, at, refuse);
           break;
         }
-        // A late ending for a life that is over must not end the life that is open under the same id.
-        if (!this.namesTheOpenLife(event, known, at, refuse)) break;
         // A voice task ends after its audio ends, never around it, whatever the outcome: a take-over
         // and a lead leaving included. An ending with the audio still up leaves the host holding an
         // open media session and an open leg on a task that no longer exists.
         ruleEvaluated("stream.taskEnded.mediaOpen");
         if (known.media === "started") {
-          refuse("stream.taskEnded.mediaOpen", `${at}.taskId`,
+          refuse("stream.taskEnded.mediaOpen", `${at}.assignmentId`,
             `${id} ended with its media still started: the audio ends first, on task-media-ended, whatever the outcome`);
         }
         // Off voice there is no media event, so the update that moves a task to completing is the
@@ -1386,7 +1370,7 @@ export class TaskStream {
           refuse("stream.taskEnded.unwrapped", `${at}.outcome`,
             `${id} was completed from ${known.phase} with a wrap allowance of ${known.wrapAllowance}s under provider-automatic: off voice, completing is the provider's word that interaction ended and the allowance's start, and it was never published`);
         }
-        this.endedAssignments.add(known.assignment);
+        this.endedAssignments.add(id);
         this.tasks.delete(id);
         break;
       case "dial-outcome": {
@@ -1395,7 +1379,7 @@ export class TaskStream {
         // and why the outcome names the assignment: the host routes it to that life, ended or not.
         ruleEvaluated("stream.assignment.unknown");
         if (typeof event.assignmentId === "string" && !this.assignments.has(event.assignmentId)) {
-          refuse("stream.assignment.unknown", `${at}.assignmentId`, `${event.assignmentId} is not an assignment this login has seen`);
+          refuse("stream.assignment.unknown", `${at}.assignmentId`, `${event.assignmentId} is not an assignment this stream has seen`);
         }
         if (typeof event.dialId !== "string") break;
         const dial = this.dials.get(event.dialId);
@@ -1456,7 +1440,7 @@ interface Drive<C extends Channel> {
 async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<ProtocolViolation[]> {
   const found: ProtocolViolation[] = [];
   const refuse = (rule: string, path: string, message: string) => found.push({ rule, path, message });
-  const isTask = (value: unknown): value is Record<string, unknown> => isRecord(value) && typeof value.id === "string";
+  const isTask = (value: unknown): value is Record<string, unknown> => isRecord(value) && typeof value.assignmentId === "string";
 
   // Wait for an envelope that satisfies `matches`, looking first at what already arrived.
   const waitFor = <T>(what: string, matches: (envelope: ProviderEventEnvelope<C>) => T | undefined, from: number,
@@ -1533,19 +1517,14 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       found.push(...drive.streams.stream.resync(snapshot, "drive.reload.snapshot"));
       found.push(...drive.streams.breaks.seed(snapshot));
       const carried = isRecord(snapshot) && Array.isArray(snapshot.tasks)
-        ? snapshot.tasks.find(task => isRecord(task) && task.id === taskId) as Record<string, unknown> | undefined : undefined;
+        ? snapshot.tasks.find(task => isRecord(task) && task.assignmentId === taskId) as Record<string, unknown> | undefined : undefined;
       ruleEvaluated("drive.reload.snapshot");
       if (carried === undefined) {
         refuse("drive.reload.snapshot", "drive.reload.snapshot",
           `a second adapter built from the same login does not carry ${taskId} on its snapshot, and the task is still open`);
         return;
       }
-      // The assignment is part of the task, not memory beside it: a reload brings the same life back.
-      ruleEvaluated("drive.reload.assignment", "drive.reload.history");
-      if (carried.assignmentId !== assignmentOf()) {
-        refuse("drive.reload.assignment", "drive.reload.assignment",
-          `a second adapter built from the same login carries ${taskId} as assignment ${String(carried.assignmentId)}; the first published ${assignmentOf()}, and a life does not change its name on a reload`);
-      }
+      ruleEvaluated("drive.reload.history");
       const history = carried.history;
       const steps: unknown[] = isRecord(history) && Array.isArray(history.steps) ? history.steps : [];
       // A record once read is not unread across a reload either: every entry the first adapter published is here.
@@ -1575,7 +1554,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         }
         session = undefined;
         ruleEvaluated("drive.reload.openMedia");
-        const reopened = await second.openMedia?.({ taskId, assignmentId: assignmentOf(), localAudio: drive.localAudio });
+        const reopened = await second.openMedia?.({ assignmentId: taskId, localAudio: drive.localAudio });
         const malformed = validateResult(reopened, "openMedia", "drive.reload.openMedia");
         found.push(...malformed);
         if (malformed.length === 0 && isRecord(reopened) && reopened.status === "opened") session = reopened.session as unknown as Record<string, unknown>;
@@ -1628,13 +1607,12 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (offered === undefined) return found;
     task = offered.found; cursor = offered.at;
   }
-  const taskId = task.id as string;
-  const assignmentOf = (): string => String(latestTask().assignmentId);
+  const taskId = task.assignmentId as string;
   const latestTask = (): Record<string, unknown> => task!;
   const updated = (until: (task: Record<string, unknown>) => boolean, what: string) =>
     waitFor(what, envelope => {
       const event = envelope.event as Record<string, unknown>;
-      if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.id === taskId) {
+      if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.assignmentId === taskId) {
         task = event.task;
         return until(event.task) ? event.task : undefined;
       }
@@ -1642,7 +1620,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     }, cursor).then(hit => { if (hit) cursor = hit.at; return hit; });
   const ended = (within?: { ms: number; onExpiry: () => void }) => waitFor("a task-ended for the driven task", envelope => {
     const event = envelope.event as Record<string, unknown>;
-    return event.type === "task-ended" && event.taskId === taskId ? event : undefined;
+    return event.type === "task-ended" && event.assignmentId === taskId ? event : undefined;
   }, cursor, within);
 
   // Every command the drive sends is validated against the task as published, and its answer for its method.
@@ -1658,7 +1636,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     ruleEvaluated("drive.command.rejected");
     let result: unknown;
     try {
-      result = await drive.connection.execute({ taskId, assignmentId: assignmentOf(), command } as never);
+      result = await drive.connection.execute({ assignmentId: taskId, command } as never);
     } catch (error) {
       refuse("drive.command.rejected", `drive.command.${String(command.type)}`, `execute rejected rather than answered: ${String(error)}`);
       return undefined;
@@ -1702,7 +1680,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     const phase = String(latestTask().phase);
     let answer: unknown;
     try {
-      answer = await drive.connection.execute({ taskId, assignmentId: assignmentOf(), command: { type: "hold" } } as never);
+      answer = await drive.connection.execute({ assignmentId: taskId, command: { type: "hold" } } as never);
     } catch (error) {
       refuse("drive.command.rejected", "drive.command.hold", `execute rejected rather than answered: ${String(error)}`);
     }
@@ -1720,12 +1698,12 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (latestTask().media !== "started") {
       const started = await waitFor("task-media-started for the driven task", envelope => {
         const event = envelope.event as Record<string, unknown>;
-        return event.type === "task-media-started" && event.taskId === taskId ? event : undefined;
+        return event.type === "task-media-started" && event.assignmentId === taskId ? event : undefined;
       }, acceptedAt);
       if (started === undefined) return found;
       cursor = Math.max(cursor, started.at);
     }
-    const opened = await drive.connection.openMedia?.({ taskId, assignmentId: assignmentOf(), localAudio: drive.localAudio });
+    const opened = await drive.connection.openMedia?.({ assignmentId: taskId, localAudio: drive.localAudio });
     const malformed = validateResult(opened, "openMedia", "drive.openMedia");
     found.push(...malformed);
     if (malformed.length === 0 && isRecord(opened) && opened.status === "opened") session = opened.session as unknown as Record<string, unknown>;
@@ -1747,7 +1725,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   const report = async (body: Record<string, unknown>): Promise<void> => {
       ruleEvaluated("drive.recordStep.rejected", "drive.recordStep.failed");
       // The drive holds its own report to the contract before it crosses, as a host must.
-      const leg = { taskId, assignmentId: assignmentOf(), step: "muted", mutedBy: "host", ...body };
+      const leg = { assignmentId: taskId, step: "muted", mutedBy: "host", ...body };
       const own = validateHistoryReport(leg, "drive.recordStep.report", drive.manifest);
       found.push(...own);
       if (own.length > 0) return;
@@ -1824,8 +1802,8 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       // that is not coming, so the run reads by the rule and not by its timeout.
       const mediaEnded = await waitFor("task-media-ended after end-call", envelope => {
         const event = envelope.event as Record<string, unknown>;
-        if (event.type === "task-media-ended" && event.taskId === taskId) return "ended" as const;
-        if (event.type === "task-updated" && isTask(event.task) && event.task.id === taskId && event.task.phase === "completing") return "completing" as const;
+        if (event.type === "task-media-ended" && event.assignmentId === taskId) return "ended" as const;
+        if (event.type === "task-updated" && isTask(event.task) && event.task.assignmentId === taskId && event.task.phase === "completing") return "completing" as const;
         return undefined;
       }, cursor);
       if (mediaEnded?.found === "ended") cursor = mediaEnded.at;
@@ -1869,7 +1847,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       else if (unsettled) {
         let resync: unknown;
         try { resync = await drive.connection.snapshot(); } catch (error) { refuse("drive.command.rejected", "drive.completion", `snapshot() after an unsettled completion rejected: ${String(error)}`); }
-        const still = isRecord(resync) && Array.isArray(resync.tasks) && resync.tasks.some(t => isRecord(t) && t.id === taskId && t.assignmentId === assignmentOf());
+        const still = isRecord(resync) && Array.isArray(resync.tasks) && resync.tasks.some(t => isRecord(t) && t.assignmentId === taskId);
         refuse("drive.completion.unsettled", "drive.completion",
           still
             ? `complete was applied and ${settle}ms later the task-ended has not come and a snapshot still carries ${taskId}: applied says the provider completed the task, and it has not`
@@ -1884,7 +1862,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   const lastPublished = (): Record<string, unknown> => {
     for (let index = drive.events.length - 1; index >= 0; index -= 1) {
       const event = drive.events[index]!.event as Record<string, unknown>;
-      if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.id === taskId) return event.task;
+      if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.assignmentId === taskId) return event.task;
     }
     return latestTask();
   };

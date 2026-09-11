@@ -47,14 +47,13 @@ export type IsoTimestamp = string;
  */
 export type UserId = string;
 
-/** A non-empty, opaque task identifier unique within one provider. Scope it with `taskKey()`. */
-export type TaskId = string;
 /**
- * One life of a task on the wire. A platform retires a task id minutes after closing it and a
- * requeue takes seconds, so the same `TaskId` comes back for another customer while a late dial
- * outcome or a late history report for the first is still in flight. The assignment id is minted
- * once per offer and never reused for the life of the login, and every event, command and report
- * that names a task names its assignment too, so nothing lands on the next life of the id.
+ * The provider's name for one assignment: the call routed to this agent, from the offer until the
+ * task ends. Non-empty, opaque, unique within the provider and never reused while the provider is
+ * still speaking about it -- a lead names a member's assignment from another login, so the scope is
+ * the provider, not the login. What the platform calls its own record, and whether it reuses that
+ * name, is the adapter's business: a platform that reoffers a closed call under the same handle
+ * seconds later is why the adapter, not the desk, is held to this. Scope it with `taskKey()`.
  */
 export type AssignmentId = string;
 
@@ -481,7 +480,6 @@ export type RecordingCommand = {
   | { action: "pause" | "resume" | "stop" | "cancel"; recordingId: string }
 );
 export interface HostRecordingReport {
-  taskId: TaskId;
   assignmentId: AssignmentId;
   state: RecordingState;
 }
@@ -497,7 +495,6 @@ export interface HostRecording {
 /** Recording applies or fails; it never dials. Rejection without result means unknown. */
 export type RecordingCommandResult = Exclude<TaskCommandResult, { status: "dialling" }>;
 export interface HostRecordingRequest {
-  taskId: TaskId;
   assignmentId: AssignmentId;
   command: RecordingCommand & { source: "host" };
 }
@@ -905,6 +902,8 @@ export type TaskLeadAssist = { note?: string; since: IsoTimestamp } & (
  */
 export interface TaskAssisting {
   memberId: UserId;
+  /** The member's assignment the lead joined: the lead's task has an assignment of its own. */
+  assignmentId: AssignmentId;
   note?: string;
   since: IsoTimestamp;
 }
@@ -918,7 +917,6 @@ export interface TaskAssisting {
  */
 export interface TaskListening {
   memberId: UserId;
-  taskId: TaskId;
   assignmentId: AssignmentId;
   mode: ListeningMode;
   since: IsoTimestamp;
@@ -979,8 +977,7 @@ export type CapabilitySource = "queue" | "ungoverned" | "undetermined";
 export const CAPABILITY_SOURCES = ["queue", "ungoverned", "undetermined"] as const satisfies readonly CapabilitySource[];
 
 export type Task<C extends Channel = Channel> = {
-  id: TaskId;
-  /** This life of the task: minted once per offer, never reused for the life of the login. See `AssignmentId`. */
+  /** The assignment this task is the record of, and its one identity. See `AssignmentId`. */
   assignmentId: AssignmentId;
   title: string;
   channel: C;
@@ -1133,7 +1130,6 @@ export type TaskCommand<C extends Channel = Channel> =
   | CustomTaskCommand;
 
 export interface TaskCommandRequest<C extends Channel = Channel> {
-  taskId: TaskId;
   assignmentId: AssignmentId;
   command: TaskCommand<C>;
 }
@@ -1289,7 +1285,6 @@ export interface TeamMember {
 export interface LeadRequest {
   id: string;
   memberId: UserId;
-  taskId: TaskId;
   assignmentId: AssignmentId;
   note?: string;
   since: IsoTimestamp;
@@ -1388,7 +1383,6 @@ export interface VoiceMediaSession {
 }
 
 export interface OpenMediaRequest {
-  taskId: TaskId;
   assignmentId: AssignmentId;
   /** The agent's microphone as Omni captured it, `HostReport.audio.input.localAudio`; absent while that input is `unavailable`. */
   localAudio?: MediaStream;
@@ -1450,7 +1444,7 @@ export type SetPreferenceRequest =
  * legs it performs, so `seconds` may say how long so far at any time; the end is stated, never
  * inferred from a number's presence. What the adapter forwards upstream, and how often, is its own.
  */
-export type HistoryReport = { taskId: TaskId; assignmentId: AssignmentId; at: IsoTimestamp } & (
+export type HistoryReport = { assignmentId: AssignmentId; at: IsoTimestamp } & (
   /** A muted leg says whose the silence was: the host's own Mute, or the station's slider or system. */
   | { step: "muted"; mutedBy: MutedBy }
   | { step: Exclude<HistoryStep, "muted">; mutedBy?: never }
@@ -1520,20 +1514,20 @@ export type ProviderEvent<C extends Channel = Channel> =
       assignmentExpiresAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task<C> }
-  | { type: "task-media-started"; taskId: TaskId; assignmentId: AssignmentId }
-  | { type: "task-media-ended"; taskId: TaskId; assignmentId: AssignmentId }
-  | { type: "task-ended"; taskId: TaskId; assignmentId: AssignmentId; outcome: TaskOutcome }
+  | { type: "task-media-started"; assignmentId: AssignmentId }
+  | { type: "task-media-ended"; assignmentId: AssignmentId }
+  | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
   /**
    * How a dial the host placed ended, once, either way -- `answered` is stated, never read off
    * somebody appearing on the call, and says what happened to the dial; who is on the call is
-   * `Task.onCall`. `taskId` is the task the dial was placed on, resolved from the dial and never
+   * `Task.onCall`. `assignmentId` is the task the dial was placed on, resolved from the dial and never
    * from what the agent is looking at, and that task may already have ended: a dial placed late
    * routinely outlives its call. `reason` is the switch's own words, shown to the agent as such.
    */
-  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; assignmentId?: AssignmentId; destinationId?: string; reason?: string }
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; assignmentId?: AssignmentId; destinationId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
-  | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId; assignmentId?: AssignmentId }
+  | { type: "diagnostic"; expected: string; observed: string; assignmentId?: AssignmentId }
   | { type: "team-updated"; team: TeamMembers }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
@@ -1697,8 +1691,8 @@ export const DEFAULT_TASK_TYPE_PRESENTATION = {
  * string. Encoding before joining is what stops a provider id containing a separator from
  * forging another provider's key.
  */
-export const taskKey = (providerId: string, taskId: TaskId): string =>
-  `${encodeURIComponent(providerId)}:${encodeURIComponent(taskId)}`;
+export const taskKey = (providerId: string, assignmentId: AssignmentId): string =>
+  `${encodeURIComponent(providerId)}:${encodeURIComponent(assignmentId)}`;
 
 /**
  * The same treatment for a `UserId`, and needed for the same reason.
@@ -1733,8 +1727,7 @@ export function historyStepExpectsAPerson(step: HistoryStep): boolean {
 export interface BrowserSessionKeyInput {
   /** `Manifest.id`, never `displayName`: only the id is unique across an installation and stable. */
   providerId: string;
-  taskId: TaskId;
-  /** The task's assignment: a task-scoped session lives one life of the task, never the next customer's under a reused id. */
+  /** The task's assignment: a task-scoped session lives one assignment, never the next customer's. */
   assignmentId: AssignmentId;
   /** `Task.taskType`. */
   taskType: string;

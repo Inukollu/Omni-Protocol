@@ -231,7 +231,7 @@ describe("browserSessionKey", () => {
   // The guide's own example: provider `mailflow`, task `EMAIL-829102`, type `Support`, tab `CRM`.
   const base = { id: "crm", name: "CRM", purpose: "Contact record", url: "https://crm.example.com/contact/42" };
   const input = (browser: TaskBrowser): BrowserSessionKeyInput =>
-    ({ providerId: "mailflow", taskId: "EMAIL-829102", assignmentId: "EMAIL-829102.a1", taskType: "Support", browser });
+    ({ providerId: "mailflow", assignmentId: "EMAIL-829102.a1", taskType: "Support", browser });
   const reusing = (isolationScheme: TaskBrowser["isolationScheme"]) =>
     ({ ...base, sharedSession: true, isolationScheme } as TaskBrowser);
 
@@ -258,13 +258,13 @@ describe("browserSessionKey", () => {
     // `encodeURIComponent` leaves `.` unescaped, so a raw join once made provider "Acme.Voice"
     // with type "Support" collide with "Acme" and "Voice.Support".
     const scheme = BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME;
-    const left = browserSessionKey({ providerId: "Acme.Voice", taskId: "t1", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) });
-    const right = browserSessionKey({ providerId: "Acme", taskId: "t1", assignmentId: "t1-a", taskType: "Voice.Support", browser: reusing(scheme) });
+    const left = browserSessionKey({ providerId: "Acme.Voice", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) });
+    const right = browserSessionKey({ providerId: "Acme", assignmentId: "t1-a", taskType: "Voice.Support", browser: reusing(scheme) });
     expect(left).not.toBe(right);
     // And the same two inputs do collide when they genuinely are the same, or the test above
     // would pass for a function that returned something different every time.
-    expect(browserSessionKey({ providerId: "Acme", taskId: "t1", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) }))
-      .toBe(browserSessionKey({ providerId: "Acme", taskId: "t2", assignmentId: "t2-a", taskType: "Support", browser: reusing(scheme) }));
+    expect(browserSessionKey({ providerId: "Acme", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) }))
+      .toBe(browserSessionKey({ providerId: "Acme", assignmentId: "t2-a", taskType: "Support", browser: reusing(scheme) }));
   });
 });
 

@@ -79,7 +79,6 @@ export const mergedTiersManifest = {
 } satisfies Manifest<"voice">;
 
 export const emailTask = {
-  id: "email-1",
   title: "Reply to customer",
   channel: "email",
   taskType: "Customer Support",
@@ -140,13 +139,13 @@ export const voiceDtmf: TaskCommand<"voice"> = { type: "dtmf", digits: "12" };
 
 // The allowance is coupled to the mode: a provider that completes the task itself must say when;
 // one waiting for `complete` may leave the deadline open.
-export const untimedAgentCommandTask = { ...emailTask, id: "email-3", completionMode: "agent-command", wrapAllowance: undefined } satisfies Task<"email">;
-export const timedProviderAutomaticTask = { ...emailTask, id: "email-4", completionMode: "provider-automatic", wrapAllowance: 0 } satisfies Task<"email">;
+export const untimedAgentCommandTask = { ...emailTask, assignmentId: "email-3", completionMode: "agent-command", wrapAllowance: undefined } satisfies Task<"email">;
+export const timedProviderAutomaticTask = { ...emailTask, assignmentId: "email-4", completionMode: "provider-automatic", wrapAllowance: 0 } satisfies Task<"email">;
 // @ts-expect-error provider-automatic completion needs an allowance to act on.
-export const untimedProviderAutomaticTask: Task<"email"> = { ...emailTask, id: "email-5", completionMode: "provider-automatic", wrapAllowance: undefined };
+export const untimedProviderAutomaticTask: Task<"email"> = { ...emailTask, assignmentId: "email-5", completionMode: "provider-automatic", wrapAllowance: undefined };
 
 // Connecting back belongs to voice: the capability and the command exist on no other channel.
-export const connectBackCapableVoiceTask = { ...emailTask, id: "call-9", channel: "voice", capabilities: { connectBack: true, outcomes: true } } satisfies Task<"voice">;
+export const connectBackCapableVoiceTask = { ...emailTask, assignmentId: "call-9", channel: "voice", capabilities: { connectBack: true, outcomes: true } } satisfies Task<"voice">;
 export const voiceConnectBack: TaskCommand<"voice"> = { type: "connect-back", dialId: "dial-1" };
 // @ts-expect-error Connecting back dials, and every dial carries the host's dialId.
 export const unplacedConnectBack: TaskCommand<"voice"> = { type: "connect-back" };
@@ -169,11 +168,11 @@ export const aimlessTransfer: TaskCommand<"voice"> = { type: "transfer" };
 // @ts-expect-error Completing a consultation names no destination: there is exactly one already.
 export const overdeterminedCompletion: TaskCommand<"voice"> = { type: "transfer", action: "complete", destinationId: "tier2" };
 // Who is on the call is voice-only, like the commands that bring people onto it.
-export const consultingVoiceTask = { ...emailTask, id: "call-10", channel: "voice", capabilities: { warmTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } }, phase: "paused", onCall: [{ role: "consulted", destinationId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
+export const consultingVoiceTask = { ...emailTask, assignmentId: "call-10", channel: "voice", capabilities: { warmTransfer: { destinations: [{ id: "tier2", label: "Tier 2" }] } }, phase: "paused", onCall: [{ role: "consulted", destinationId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
 // @ts-expect-error A dialled entry says where it stands: ringing or joined.
 export const unstagedConsulted: OnCall = { role: "consulted", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error Email has nobody on a call.
-export const consultingEmailTask: Task<"email"> = { ...emailTask, id: "email-6", onCall: [{ role: "consulted", destinationId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
+export const consultingEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-6", onCall: [{ role: "consulted", destinationId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
 // @ts-expect-error A party was dialled from nowhere and names no destination.
 export const misplacedParty: OnCall = { role: "party", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
 // The party being connected back carries the host's dial and its stage, together and only together.
@@ -207,7 +206,7 @@ export const voiceDialOutcomes: Manifest<"voice">["dialOutcomes"] = ["answered",
 export const chatDialOutcomes: Manifest<"chat">["dialOutcomes"] = ["answered", "no-answer"];
 
 // Preview: the record is on the agent's screen; they press Call, which dials. Voice only.
-export const previewTask = { ...emailTask, id: "call-13", channel: "voice", capabilities: {}, phase: "preview", previewEndsAt: "2026-08-21T09:02:00Z", atDeadline: "calls" } satisfies Task<"voice">;
+export const previewTask = { ...emailTask, assignmentId: "call-13", channel: "voice", capabilities: {}, phase: "preview", previewEndsAt: "2026-08-21T09:02:00Z", atDeadline: "calls" } satisfies Task<"voice">;
 export const pressCall: TaskCommand<"voice"> = { type: "call", dialId: "dial-6" };
 // @ts-expect-error Pressing Call dials, and every dial carries the host's dialId.
 export const unplacedCall: TaskCommand<"voice"> = { type: "call" };
@@ -218,9 +217,9 @@ export const waitingDeadline: Task<"voice">["atDeadline"] = "waits";
 export const expiredPreviewDeadline: Task<"voice">["atDeadline"] = "expires";
 
 // Listening: the lead's own task while they listen, voice only, in one of three modes.
-export const listeningLeadTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, listening: { memberId: "A-1", taskId: "call-42", assignmentId: "alloc-42", mode: "coach", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
+export const listeningLeadTask = { ...emailTask, assignmentId: "call-12", channel: "voice", capabilities: {}, listening: { memberId: "A-1", assignmentId: "alloc-42", mode: "coach", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
 // @ts-expect-error Email has no call to listen to.
-export const listeningEmailTask: Task<"email"> = { ...emailTask, id: "email-7", listening: { memberId: "A-1", taskId: "call-42", assignmentId: "alloc-42", mode: "listen", since: "2026-08-21T09:04:00Z" } };
+export const listeningEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-7", listening: { memberId: "A-1", assignmentId: "alloc-42", mode: "listen", since: "2026-08-21T09:04:00Z" } };
 export const startListen: TeamListenCommand = { type: "listen", memberId: "A-1" };
 export const coach: TeamListenCommand = { type: "coach" };
 // @ts-expect-error There is no take-over in listening; a lead who wants the call uses lead assist.
@@ -236,10 +235,10 @@ export const leadTakesOver: TaskCommand<"voice"> = { type: "lead-assist", action
 export const leadLeaves: TaskCommand<"voice"> = { type: "lead-assist", action: "leave" };
 // @ts-expect-error A chat has no call for a lead to join.
 export const chatAskLead: TaskCommand<"chat"> = { type: "lead-assist", action: "request" };
-export const leadRequestedTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: { leadAssist: true }, leadAssist: { stage: "requested", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
-export const leadsOwnTask = { ...emailTask, id: "call-11", channel: "voice", capabilities: {}, assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } } satisfies Task<"voice">;
-export const liveAudioTask = { ...emailTask, id: "call-12", channel: "voice", capabilities: {}, media: "started" } satisfies Task<"voice">;
-export const audiolessEmailTask = { ...emailTask, id: "email-9",
+export const leadRequestedTask = { ...emailTask, assignmentId: "call-11", channel: "voice", capabilities: { leadAssist: true }, leadAssist: { stage: "requested", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
+export const leadsOwnTask = { ...emailTask, assignmentId: "call-11", channel: "voice", capabilities: {}, assisting: { memberId: "A-1", assignmentId: "alloc-42", since: "2026-08-21T09:05:00Z" } } satisfies Task<"voice">;
+export const liveAudioTask = { ...emailTask, assignmentId: "call-12", channel: "voice", capabilities: {}, media: "started" } satisfies Task<"voice">;
+export const audiolessEmailTask = { ...emailTask, assignmentId: "email-9",
   // @ts-expect-error Real-time media is a voice affair; an email task carries no state for it.
   media: "started" } satisfies Task<"email">;
 // @ts-expect-error A snapshot states its task count; a blank state cannot pass as a confirmed empty.
@@ -260,10 +259,10 @@ export const staleBreak = { transport: "active", loginId: "login-1", tasks: [], 
 export const staleLadder = { ...voiceManifest,
   // @ts-expect-error The org's ladder is orgLevels.
   orgTiers: [{ id: "org", label: "Your organisation" }] } satisfies Manifest<"voice">;
-export const staleWrap = { ...emailTask, id: "email-10",
+export const staleWrap = { ...emailTask, assignmentId: "email-10",
   // @ts-expect-error The wrap allowance is wrapAllowance.
   completionAllowance: 30 } satisfies Task<"email">;
-export const staleParty = { ...emailTask, id: "email-11",
+export const staleParty = { ...emailTask, assignmentId: "email-11",
   // @ts-expect-error The person on the other end is the party.
   contact: { name: "Asha" } } satisfies Task<"email">;
 export const staleSharing = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup",
@@ -313,24 +312,24 @@ export const silencedByNobody: HostAudioInput = { status: "available", localAudi
 export const flowingYetMuted: HostAudioInput = { status: "available", localAudio: {} as MediaStream, flowing: true, mutedBy: "host" };
 export const speakerOff: HostAudioOutput = { status: "available", flowing: false, mutedBy: "station" };
 export const speakerUnknown: HostAudioOutput = { status: "available" };
-export const hostMutedLeg: HistoryReport = { taskId: "call-1", assignmentId: "alloc-1", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
+export const hostMutedLeg: HistoryReport = { assignmentId: "alloc-1", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
 // @ts-expect-error A muted leg says whose the silence was.
-export const anonymousMutedLeg: HistoryReport = { taskId: "call-1", assignmentId: "alloc-1", step: "muted", at: "2026-08-21T09:00:00Z" };
+export const anonymousMutedLeg: HistoryReport = { assignmentId: "alloc-1", step: "muted", at: "2026-08-21T09:00:00Z" };
 // @ts-expect-error Only a muted leg has anyone to name for the silence.
-export const mutedHold: HistoryReport = { taskId: "call-1", assignmentId: "alloc-1", step: "held", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
+export const mutedHold: HistoryReport = { assignmentId: "alloc-1", step: "held", at: "2026-08-21T09:00:00Z", mutedBy: "host" };
 export const lyingHost: Host = {
   // @ts-expect-error A guarantee is declared by presence; a host that does not make one omits it, never false.
   guarantees: { personConsent: false }, report: () => noAudioHere, subscribe: () => () => undefined };
-export const consentOffer = { type: "task-offered", task: { ...emailTask, id: "email-12", phase: "pending", acceptance: "consent" } } satisfies ProviderEvent<"email">;
-export const staleOfferMode = { type: "task-offered", task: { ...emailTask, id: "email-13", phase: "pending" },
+export const consentOffer = { type: "task-offered", task: { ...emailTask, assignmentId: "email-12", phase: "pending", acceptance: "consent" } } satisfies ProviderEvent<"email">;
+export const staleOfferMode = { type: "task-offered", task: { ...emailTask, assignmentId: "email-13", phase: "pending" },
   // @ts-expect-error Acceptance is the task's word now, not the offer's.
   acceptanceMode: "consent" } satisfies ProviderEvent<"email">;
-export const spokenDiagnostic = { type: "diagnostic", expected: "a party arrives with a name", observed: "party 4471 arrived id-only", taskId: "call-42" } satisfies ProviderEvent<"voice">;
+export const spokenDiagnostic = { type: "diagnostic", expected: "a party arrives with a name", observed: "party 4471 arrived id-only", assignmentId: "alloc-42" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error A diagnostic says what was observed; a rule broken with nothing observed is half a sentence.
 export const halfDiagnostic = { type: "diagnostic", expected: "a party arrives with a name" } satisfies ProviderEvent<"voice">;
-export const recordedTask = { ...emailTask, id: "email-14", history: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], interactionSeconds: 312, transfers: 1 } } satisfies Task<"email">;
-export const bareStepsTask = { ...emailTask, id: "email-15", history: { steps: [] } } satisfies Task<"email">;
-export const arrayRecordTask = { ...emailTask, id: "email-16",
+export const recordedTask = { ...emailTask, assignmentId: "email-14", history: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], interactionSeconds: 312, transfers: 1 } } satisfies Task<"email">;
+export const bareStepsTask = { ...emailTask, assignmentId: "email-15", history: { steps: [] } } satisfies Task<"email">;
+export const arrayRecordTask = { ...emailTask, assignmentId: "email-16",
   // @ts-expect-error The record is an object carrying its steps and what they add up to, not a bare array.
   history: [{ step: "answered", at: "2026-08-21T00:59:41Z" }] } satisfies Task<"email">;
 export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
@@ -340,7 +339,7 @@ export const plainActive = { type: "transport-status", status: "active",
   // @ts-expect-error Recovery goes with an error; an active status has nothing to revive.
   recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An email task cannot be a joined call.
-export const emailAssisting: Task<"email"> = { ...emailTask, id: "email-7", assisting: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } };
+export const emailAssisting: Task<"email"> = { ...emailTask, assignmentId: "email-7", assisting: { memberId: "A-1", assignmentId: "alloc-42", since: "2026-08-21T09:05:00Z" } };
 
 // What the login may do travels with the identity, and nowhere else.
 const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
@@ -361,9 +360,9 @@ export const teamMembers: TeamMembers = { members: [], requests: [] };
 export const teamMembersWithControl: TeamMembers = { members: [], breakControl: true };
 
 // The host reports; a request may lack the microphone, and a ready input may not.
-export const openWithoutHostAudio: OpenMediaRequest = { taskId: "call-42", assignmentId: "alloc-42" };
+export const openWithoutHostAudio: OpenMediaRequest = { assignmentId: "alloc-42" };
 // Everything that names a task after the fact names its life: a task id alone could land on the next customer under a reused id.
-export const endedEvent: ProviderEvent<"voice"> = { type: "task-ended", taskId: "call-42", assignmentId: "alloc-42", outcome: { type: "completed", by: "agent" } };
+export const endedEvent: ProviderEvent<"voice"> = { type: "task-ended", assignmentId: "alloc-42", outcome: { type: "completed", by: "agent" } };
 // @ts-expect-error An ending names the assignment it ends.
 export const endedByIdAlone: ProviderEvent<"voice"> = { type: "task-ended", taskId: "call-42", outcome: { type: "completed", by: "agent" } };
 // @ts-expect-error A command names the life it acts on.
@@ -375,11 +374,11 @@ export const readyWithoutAudio: HostReport = { online: true, audio: { input: { s
 
 // Who decides: a control the queue could allow may stand locked in its place, naming the level;
 // a preference carries who set it; only hold and skills are ever the person's.
-export const lockedRecording: Task<"voice"> = { ...emailTask, id: "call-12", channel: "voice", capabilities: { hold: true, recording: { lockedBy: "team", reason: "Nobody on this team records" } }, party: { name: "Asha", number: { lockedBy: "org" }, email: { lockedBy: "site" } } };
+export const lockedRecording: Task<"voice"> = { ...emailTask, assignmentId: "call-12", channel: "voice", capabilities: { hold: true, recording: { lockedBy: "team", reason: "Nobody on this team records" } }, party: { name: "Asha", number: { lockedBy: "org" }, email: { lockedBy: "site" } } };
 // @ts-expect-error An email task has no recording to lock.
 export const emailLockedRecording: Task<"email"> = { ...emailTask, capabilities: { recording: { lockedBy: "team" } } };
 // @ts-expect-error Mute is the host's, never a capability the provider declares or locks.
-export const lockedMute: Task<"voice"> = { ...emailTask, id: "call-13", channel: "voice", capabilities: { mute: { lockedBy: "team" } } };
+export const lockedMute: Task<"voice"> = { ...emailTask, assignmentId: "call-13", channel: "voice", capabilities: { mute: { lockedBy: "team" } } };
 export const skillChoice: AgentPreference = { id: "skill:billing", label: "Billing", enabled: true, setBy: "person" };
 // @ts-expect-error Connecting back is the team's, never the person's.
 export const connectBackChoice: AgentPreference = { id: "connectBack", label: "Connect back", enabled: false, setBy: "team" };
