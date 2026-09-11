@@ -1,3 +1,42 @@
+# Current PR118 revision: Explicit break request decision
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-end-forced-break; branch refactor/end-forced-break.
+Implementation fe4f1054ac1464a9b2a810b0b4b036ef93f66fe6.
+PR https://github.com/Inukollu/Omni-Protocol/pull/118.
+Commands: decide-break-request, force-break, end-forced-break. Old decide rejected; granted/denied choices, permissions and awaiting-decision prerequisite unchanged. Hosts/providers must update together; no aliases or version changes.
+Build/type checks, all 432 tests, guide examples, package verification and diff check passed. Log /private/tmp/decide-break-request-check.log.
+Next: monitor CI/reviews, respond to failures; retain worktree/branch while open. Existing named monitor remains responsible. No release or merge performed.
+
+# Current PR118 revision: Descriptive team break commands
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-end-forced-break; branch refactor/end-forced-break.
+Implementation 962b55780e41ad0f16896cc9910c7db02d444930.
+PR https://github.com/Inukollu/Omni-Protocol/pull/118.
+Final commands: force-break and end-forced-break. Supersedes interim force/end descriptions below. Old place/release and interim force/end rejected; permissions, target state/reasons and ordering unchanged. Hosts/providers update together; no version changes.
+Build/type checks, all 432 tests, guide examples, package verification and diff check passed. Log /private/tmp/force-break-specific-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. Existing named monitor remains responsible; no merge or release performed.
+
+# Current PR118 revision: Descriptive end-forced-break command
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-end-forced-break; branch refactor/end-forced-break.
+Implementation b5ae16712ea1fbb6c22e673962efd09ade45f0f5.
+PR https://github.com/Inukollu/Omni-Protocol/pull/118.
+Team command is now end-forced-break, diagnostic team.break.command.endForcedBreak. Supersedes the earlier end name below. Retired release/end/end-break rejected; agent endBreak and existing permissions/state rules unchanged. Hosts/providers must update together; no aliases or version changes.
+Build/typechecks, all 432 tests, guide examples, package verification and diff check passed. Log /private/tmp/end-forced-break-specific-check.log.
+Existing observer monitor remains responsible for CI/reviews; retain worktree/branch while open. Next action: respond to CI/review failures; no release or merge performed.
+
+# Current delivery: End forced break command
+
+Repository: /Users/vasu/Dev/Personal/Omni-Protocol
+Worktree: /private/tmp/omni-end-forced-break
+Branch: refactor/end-forced-break
+Implementation: 54425321b28907193823861a44f0093e14dffe80
+PR: https://github.com/Inukollu/Omni-Protocol/pull/118
+
+TeamBreakCommand release renamed to end; guide, validator and team.break.command.end diagnostic aligned. Old literal rejected; no alias. Agent endBreak still cannot end forced breaks. Permissions, target state and ordering unchanged. Hosts/providers must adopt together. No package/wire version changes.
+Checks: build/test typecheck, 432 tests, compiled guide examples, package verification (10 files/3 entrypoints), diff check passed. Log /private/tmp/end-forced-break-check.log.
+Next: monitor CI/reviews and respond to failures; retain worktree/branch while open. No release/merge/cleanup performed. PR117 independently verified merged.
+
 # Current delivery: Force break command
 
 Repository: /Users/vasu/Dev/Personal/Omni-Protocol
@@ -289,3 +328,8 @@ PID 89428; command python3 /private/tmp/omni-forced-break-api/.agent-memory/runt
 Monitor omni-protocol-pr117-force-break-command: OPEN at 2026-09-11T08:44:24.441504+00:00. Await CI/review; monitor never merges.
 PID 44983; command python3 /private/tmp/omni-force-break-command/.agent-memory/runtime/force-break-command-monitor.py; state /private/tmp/omni-force-break-command/.agent-memory/runtime/force-break-command.state.json; log /private/tmp/omni-force-break-command/.agent-memory/runtime/force-break-command.log; PID file /private/tmp/omni-force-break-command/.agent-memory/runtime/force-break-command.pid; process log /private/tmp/omni-force-break-command/.agent-memory/runtime/force-break-command.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-force-break-command, branch refactor/force-break-command, PR https://github.com/Inukollu/Omni-Protocol/pull/117.
 <!-- force-break-command-monitor:end -->
+
+<!-- end-forced-break-monitor:begin -->
+Monitor omni-protocol-pr118-end-forced-break: OPEN at 2026-09-11T09:01:33.042458+00:00. Await CI/review; monitor never merges.
+PID 66818; command python3 /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break-monitor.py; state /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.state.json; log /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.log; PID file /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.pid; process log /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-end-forced-break, branch refactor/end-forced-break, PR https://github.com/Inukollu/Omni-Protocol/pull/118.
+<!-- end-forced-break-monitor:end -->

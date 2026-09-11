@@ -438,6 +438,20 @@ import type { ImposedBreak } from "../src/index.js";
 // @ts-expect-error Use forced, including when the new field is also present.
 export const retiredBreakField: import("../src/index.js").BreakState = { ...forcedBreakState, imposed: forcedBreak };
 
-export const forceMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "force", memberId: "member-1", reasonId: "bio" };
+export const forceMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "force-break", memberId: "member-1", reasonId: "bio" };
 // @ts-expect-error The retired place command has no compatibility alias.
 export const retiredPlaceBreak: import("../src/index.js").TeamBreakCommand = { type: "place", memberId: "member-1" };
+
+export const endMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "end-forced-break", memberId: "member-1" };
+// @ts-expect-error The former release command has no compatibility alias.
+export const retiredReleaseBreak: import("../src/index.js").TeamBreakCommand = { type: "release", memberId: "member-1" };
+
+// @ts-expect-error Use the specific end-forced-break command, not the interim end name.
+export const ambiguousTeamBreakEnd: import("../src/index.js").TeamBreakCommand = { type: "end", memberId: "member-1" };
+
+// @ts-expect-error Use force-break, not the interim generic force command.
+export const ambiguousForceBreak: import("../src/index.js").TeamBreakCommand = { type: "force", memberId: "member-1" };
+
+export const decideMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "decide-break-request", memberId: "member-1", decision: "granted" };
+// @ts-expect-error Use decide-break-request, not the retired generic decide command.
+export const ambiguousBreakDecision: import("../src/index.js").TeamBreakCommand = { type: "decide", memberId: "member-1", decision: "denied" };
