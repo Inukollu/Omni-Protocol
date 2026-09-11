@@ -1617,7 +1617,7 @@ export interface Connection<C extends Channel = Channel> {
   disconnect(): Promise<void>;
 
   /** Required of any adapter publishing a `UserId` -- on a forced break, a team member list, or history. */
-  describeUsers?(ids: UserId[]): Promise<User[]>;
+  getUserDetails?(ids: UserId[]): Promise<User[]>;
   /** Required when the manifest declares `idleCapabilities.dial`. */
   dial?(request: DialRequest): Promise<DialResult>;
 

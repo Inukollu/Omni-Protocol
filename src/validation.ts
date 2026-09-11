@@ -2863,21 +2863,21 @@ export function validateTimeZone(value: unknown, path = "context.timeZone"): Pro
 }
 
 /**
- * What `describeUsers(ids)` answered: an array of users, each one asked for, each a valid identity.
+ * What `getUserDetails(ids)` answered: an array of users, each one asked for, each a valid identity.
  * The provider may answer fewer than asked, which is what "unknown to it" looks like; it never
  * answers somebody nobody asked about.
  */
-export function validateDescribedUsers(users: unknown, asked: readonly string[], path = "describeUsers"): ProtocolViolation[] {
+export function validateUserDetails(users: unknown, asked: readonly string[], path = "getUserDetails"): ProtocolViolation[] {
   const into = new Collector();
   if (!Array.isArray(users)) {
-    into.add("describeUsers.shape", path, "describeUsers answers an array of users, empty when it knows none of them");
+    into.add("getUserDetails.shape", path, "getUserDetails answers an array of users, empty when it knows none of them");
     return into.violations;
   }
   users.forEach((user: unknown, index: number) => {
     const at = `${path}[${index}]`;
-    validateUser(user, "describeUsers.user", at, into);
+    validateUser(user, "getUserDetails.user", at, into);
     if (isPlainObject(user) && typeof user.id === "string") {
-      into.require(asked.includes(user.id), "describeUsers.unasked", `${at}.id`, `${user.id} was not among the ids asked for`);
+      into.require(asked.includes(user.id), "getUserDetails.unasked", `${at}.id`, `${user.id} was not among the ids asked for`);
     }
   });
   return into.violations;

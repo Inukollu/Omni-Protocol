@@ -55,6 +55,11 @@ state use `status`; name the object when discussing them to avoid ambiguity.
 | `status` | The agent’s break lifecycle | `not-requested`, `awaiting-approval`, `granted`, `starting-after-task`, `on-break` |
 | `availability` | A team member | `ready`, `on-task`, `on-break`, `signed-out` |
 
+Migration: describeUsers is now `getUserDetails`, and validateDescribedUsers is now
+`validateUserDetails`. Related diagnostics use getUserDetails. Hosts and providers must
+update together; the old method and validator have no compatibility aliases. The requested
+user IDs, returned user details and directory requirements are unchanged.
+
 ## Versioning
 
 ### `OMNI_PROTOCOL_VERSION`
@@ -1163,7 +1168,7 @@ type Connection<C extends Channel = Channel> = {
   execute(request: TaskCommandRequest<C>): Promise<TaskCommandResult>;
   disconnect(): Promise<void>;
 
-  describeUsers?(ids: UserId[]): Promise<User[]>;
+  getUserDetails?(ids: UserId[]): Promise<User[]>;
   dial?(request: DialRequest): Promise<DialResult>;
 
   requestBreak?(request: BreakRequest): Promise<BreakRequestResult>;
@@ -2093,7 +2098,7 @@ agent's zone as an IANA name -- `Asia/Kolkata`, `America/Chicago` -- never an of
 offset cannot survive a daylight-saving boundary and a day boundary is exactly where that bites
 (`context.timeZone`). It is stated before any identity exists, and `ConnectContext.timeZone` is the
 same value again. The provider **stores it on the agent** and carries it as `identity.timeZone` on
-every `authenticated` state and on every `User` it returns from `describeUsers()`, so a lead
+every `authenticated` state and on every `User` it returns from `getUserDetails()`, so a lead
 reading a colleague's yesterday sees the colleague's yesterday and a summary is bucketed by the
 right day after a session has ended. A roaming agent corrects it by signing in from where they are.
 
@@ -2107,7 +2112,7 @@ host stated (`authentication.identity.timeZone.republished`), judged by what the
 kept the zone. **The round trip is not the store.**
 An adapter that echoes the stated zone back onto the identity passes that check with nothing kept,
 and a lead reading a colleague's day would still get the wrong one. What proves the store is a zone
-the run never sent: a colleague's `User` from `describeUsers()` carrying theirs. A provider's own
+the run never sent: a colleague's `User` from `getUserDetails()` carrying theirs. A provider's own
 tests are where that is shown, with a second agent whose zone arrived through another session.
 
 ### Who the agent is
@@ -2153,7 +2158,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `refused(report)` | Always. The host tells the adapter what it would not take -- a snapshot it did not replace its state with, an event it dropped -- with every rule broken, so a refusal is visible on both sides. See **What the host does with what it refuses**. |
 | `setCapacity(capacity)` | Always. Nothing may be allocated until a capacity is stated, so there is no connection that does not receive it. |
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability**. |
-| `describeUsers(ids)` | The adapter publishes any `UserId`: on `ForcedBreak.by`, a team member list, or `interactionHistory[].by`. Each `User` carries its `timeZone`; a person whose zone the provider cannot name is omitted from the answer, as any unresolvable id is. |
+| `getUserDetails(ids)` | The adapter publishes any `UserId`: on `ForcedBreak.by`, a team member list, or `interactionHistory[].by`. Each `User` carries its `timeZone`; a person whose zone the provider cannot name is omitted from the answer, as any unresolvable id is. |
 | `dial(request)` | The manifest declares `idleCapabilities.dial`, and with it `dialOutcomes`. |
 | `requestBreak(request)` | The login declares `capabilities.breaks`. |
 | `commitBreak()` | The login declares `capabilities.breaks`. Commit and cancel are not optional halves of it. |
@@ -2203,12 +2208,12 @@ Registers a listener for provider changes and returns an idempotent unsubscribe 
   while disconnected without requiring a durable event log.
 - After unsubscribe, the listener must receive no further events.
 
-### `Connection.describeUsers(ids)`
+### `Connection.getUserDetails(ids)`
 
 Turns `UserId` values into something an agent can read.
 
 ```ts
-describeUsers(ids: UserId[]): Promise<User[]>
+getUserDetails(ids: UserId[]): Promise<User[]>
 ```
 
 Required of any adapter that publishes a `UserId` — on `ForcedBreak.by`, a team member list, or
@@ -2859,7 +2864,7 @@ Four rules a provider has to keep:
   the same way `ForcedBreak.by` does. It comes from this provider's own directory, the same
   namespace as `AuthenticationState.identity.id` and the team member list, so entries pair
   within a provider and never across one.
-- **A task carries no names.** Omni resolves what to display with `describeUsers()`. Two people
+- **A task carries no names.** Omni resolves what to display with `getUserDetails()`. Two people
   called Arun on one site is ordinary, and anything pairing entries on a display name pairs them
   wrongly; carrying the name here would also copy it into every task and leave it to go stale.
 
@@ -3707,7 +3712,7 @@ thing as a break the platform forced on its own. Where a platform applies one au
 executing a preference somebody configured, and that person is the owner of the action — `by` names
 them, not the machinery that carried it out.
 
-Omni resolves the name to show with `describeUsers()`, so a provider sends the identifier and never
+Omni resolves the name to show with `getUserDetails()`, so a provider sends the identifier and never
 a display name.
 
 **A forced break travels with `on-break` or `starting-after-task`, and nothing else.** It is a
@@ -4128,7 +4133,7 @@ an absent `team` still means the login is not entitled to that contribution.
 
 | `TeamMember` field | Contract |
 | --- | --- |
-| `id` | Required `UserId`. A task carries no names and neither does a team member list: Omni resolves what to display with `describeUsers()`. |
+| `id` | Required `UserId`. A task carries no names and neither does a team member list: Omni resolves what to display with `getUserDetails()`. |
 | `availability` | Required. What the member is doing now. |
 | `since` | Optional. When the current `availability` began — not when they signed in, and not when the team member list was read. |
 | `break` | Present only while the member has an outstanding break request. See **A member waiting for a break**. |
@@ -4183,7 +4188,7 @@ One method, `executeTeamBreak`, taking a discriminated command exactly as `execu
 
 `memberId` is this provider's own identifier for the member, as published on its team member list. It is
 never an identifier from another provider, and Omni does not translate between them; names come
-from `describeUsers()`.
+from `getUserDetails()`.
 
 `requests-suspended` means requests are **rejected outright** rather than left pending — nobody is coming to
 approve them. A provider that suspends break requests must also publish `canRequestBreak: false` to the team's
@@ -4272,7 +4277,7 @@ const leadAssistCapable = {
 ```
 
 Lead and member alike are `UserId`s of this provider, so an adapter publishing them implements
-`describeUsers()`; names never travel on a task or a team member list.
+`getUserDetails()`; names never travel on a task or a team member list.
 
 ### Listening to a call
 
@@ -5359,8 +5364,8 @@ violation (`drive.command.failed`), and an event the provider owes and never sen
 the run to what a host holds a provider to between commands: an offer before the host stated
 capacity, or beyond the count with nothing dialled on it, is named
 (`stream.taskOffered.beforeCapacity`, `.overCapacity`); every user the snapshot names is looked up
-through `describeUsers` and the answer held to the shape, nobody unasked, nobody described as
-nothing (`describeUsers.user.*`, `describeUsers.unasked`, `connection.describeUsers.empty`); and
+through `getUserDetails` and the answer held to the shape, nobody unasked, nobody described as
+nothing (`getUserDetails.user.*`, `getUserDetails.unasked`, `connection.getUserDetails.empty`); and
 the second adapter a `rebuild` gives comes up signed in as the same login from the secrets alone
 before it reads anything (`drive.reload.login`), and is then held to everything the first was on
 connect: the methods its declarations call for, the host's report, a capacity stated to it, its
