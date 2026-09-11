@@ -297,7 +297,7 @@ export interface AuthenticationFailure {
 export interface TeamCapabilities {
   /**
    * This lead may act on their team's breaks through `executeTeamBreak` -- force-break, end-forced-break, decide-break-request,
-   * set policy -- as far as the provider supports; a command it lacks answers
+   * set-break-policy -- as far as the provider supports; a command it lacks answers
    * `omni.capability-not-enabled`. Requires `executeTeamBreak`.
    */
   breakControl?: true;
@@ -1184,7 +1184,7 @@ export type BreakApproval =
   | "granted"
   /** Granted and begins when the current task ends. Nobody needs to act. */
   | "starting-after-task"
-  | "in-effect";
+  | "on-break";
 
 export const BREAK_KINDS = [
   "short-break", "meal", "rest", "training", "coaching",
@@ -1215,7 +1215,7 @@ export interface BreakReason {
   label: string;
   group?: string;
   kind?: BreakKind;
-  /** Survives `mayAsk: false`: a mandatory rest is not something a busy hour can cancel. */
+  /** Survives `canRequestBreak: false`: a mandatory rest is not something a busy hour can cancel. */
   alwaysAvailable?: true;
 }
 
@@ -1239,11 +1239,11 @@ export type ForcedBreak =
 export interface BreakState {
   approval: BreakApproval;
   /** Whether the agent may ask at all. Distinct from the fate of a request already made. */
-  mayAsk: boolean;
-  /** Shown when `mayAsk` is false, such as "Busy hours". */
-  refusedReason?: string;
+  canRequestBreak: boolean;
+  /** Shown when `canRequestBreak` is false, such as "Busy hours". */
+  requestUnavailableReason?: string;
   decisionReason?: string;
-  retryAfterMs?: number;
+  retryRequestAfterMs?: number;
   /** Not-ready codes this provider offers. Omitted when it defines none. */
   reasons?: BreakReason[];
   /** Which reason the current break is on, a published `BreakReason.id`. Omitted when there is no break; required on a break in effect or starting after the task where the provider publishes `reasons`, a forced one included. */
@@ -1284,7 +1284,7 @@ export interface TeamMember {
   availability: TeamMemberAvailability;
   /** Omitted rather than invented: Omni renders it as a duration. */
   since?: IsoTimestamp;
-  /** A request in flight or a grant not yet in effect. `not-requested` is absence, and `in-effect` is `availability: "on-break"`. */
+  /** A request in flight or a grant not yet in effect. `not-requested` is absence, and `on-break` is `availability: "on-break"`. */
   break?: Extract<BreakApproval, "awaiting-decision" | "granted" | "starting-after-task">;
 }
 
@@ -1359,7 +1359,7 @@ export interface TeamListenCommandRequest {
 
 export type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
-  | { type: "policy"; policy: "ask" | "auto-approve" | "suspended" }
+  | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
   /** `reasonId` names a published `BreakReason.id`, required whenever the provider publishes reasons: the member's forced break carries it as `activeReasonId`. */
   | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string }
   | { type: "end-forced-break"; memberId: UserId };

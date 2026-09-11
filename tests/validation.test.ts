@@ -128,7 +128,7 @@ const task = (over: Record<string, unknown> = {}) => {
 const snapshot = (over: Record<string, unknown> = {}) => ({
   transport: "active",
   loginId: "session-1",
-  break: { approval: "not-requested", mayAsk: true },
+  break: { approval: "not-requested", canRequestBreak: true },
   tasks: [],
   taskCount: Array.isArray(over.tasks) ? over.tasks.length : 0,
   ...over,
@@ -535,23 +535,23 @@ describe("validateTask", () => {
 
 describe("break state", () => {
   const check = (over: Record<string, unknown>) =>
-    rules(validateSnapshot(snapshot({ break: { approval: "not-requested", mayAsk: true, ...over } }), manifest()));
+    rules(validateSnapshot(snapshot({ break: { approval: "not-requested", canRequestBreak: true, ...over } }), manifest()));
 
-  it("refuses accepting beside mayAsk, which replaced it", () => {
+  it("refuses accepting beside canRequestBreak, which replaced it", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
     const brk = (state: Record<string, unknown>) => rules(validateSnapshot(snapshot({ break: { approval: "not-requested", ...state } }), manifest()));
-    expect(brk({ mayAsk: true })).toEqual([]);
-    expect(brk({ accepting: true })).toEqual(["break.mayAsk"]);
-    expect(brk({ mayAsk: "yes" })).toEqual(["break.mayAsk"]);
+    expect(brk({ canRequestBreak: true })).toEqual([]);
+    expect(brk({ accepting: true })).toEqual(["break.canRequestBreak"]);
+    expect(brk({ canRequestBreak: "yes" })).toEqual(["break.canRequestBreak"]);
   });
 
   it("accepts each approval and rejects one the contract dropped", () => {
-    for (const approval of ["not-requested", "awaiting-decision", "granted", "in-effect"]) {
+    for (const approval of ["not-requested", "awaiting-decision", "granted", "on-break"]) {
       expect(check({ approval })).toEqual([]);
     }
     // A break starting after the task waits on a task: beside one it stands, beside none it is refused, since with
     // nothing outstanding the break is in effect.
-    expect(rules(validateSnapshot(snapshot({ break: { approval: "starting-after-task", mayAsk: true }, tasks: [task()] }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ break: { approval: "starting-after-task", canRequestBreak: true }, tasks: [task()] }), manifest()))).toEqual([]);
     expect(check({ approval: "starting-after-task" })).toEqual(["break.starting-after-task.tasks"]);
     {
     }
@@ -563,19 +563,19 @@ describe("break state", () => {
 
   it("refuses a break in effect beside a task, and accepts one that is waiting for it to end", () => {
     // A break begins when the work ends. Until then the state is starting-after-task, which may
-    // stand beside any task; in-effect beside one is a report of a state the agent cannot be in.
+    // stand beside any task; on-break beside one is a report of a state the agent cannot be in.
     const withTask = (approval: string) =>
-      rules(validateSnapshot(snapshot({ tasks: [task()], break: { approval, mayAsk: true } }), manifest()));
+      rules(validateSnapshot(snapshot({ tasks: [task()], break: { approval, canRequestBreak: true } }), manifest()));
     expect(withTask("starting-after-task")).toEqual([]);
     expect(withTask("granted")).toEqual([]);
-    expect(withTask("in-effect")).toEqual(["break.in-effect.tasks"]);
-    expect(check({ approval: "in-effect" })).toEqual([]);
+    expect(withTask("on-break")).toEqual(["break.on-break.tasks"]);
+    expect(check({ approval: "on-break" })).toEqual([]);
   });
 
   it("reports an active reason only when a break is happening", () => {
     expect(check({ approval: "not-requested", activeReasonId: "lunch" })).toContain("break.activeReasonId.approval");
-    expect(check({ approval: "in-effect", activeReasonId: "lunch" })).toEqual([]);
-    expect(check({ approval: "in-effect", activeReasonId: "" })).toContain("break.activeReasonId");
+    expect(check({ approval: "on-break", activeReasonId: "lunch" })).toEqual([]);
+    expect(check({ approval: "on-break", activeReasonId: "" })).toContain("break.activeReasonId");
   });
 
   it("validates break reasons and their kinds", () => {
@@ -588,10 +588,10 @@ describe("break state", () => {
     expect(reasons([{ id: "rest", label: "Rest", alwaysAvailable: true }])).toEqual([]);
   });
 
-  it("lets a forced break travel with in-effect or starting-after-task, and nothing else", () => {
+  it("lets a forced break travel with on-break or starting-after-task, and nothing else", () => {
     const placed = { by: "lead-3", endsAutomatically: false };
-    expect(check({ approval: "in-effect", forced: placed })).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ break: { approval: "starting-after-task", mayAsk: false, forced: placed }, tasks: [task()] }), manifest()))).toEqual([]);
+    expect(check({ approval: "on-break", forced: placed })).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ break: { approval: "starting-after-task", canRequestBreak: false, forced: placed }, tasks: [task()] }), manifest()))).toEqual([]);
     // Beside granted or awaiting-decision the host would commit a break nobody asked for.
     expect(check({ approval: "granted", forced: placed })).toEqual(["break.forced.approval"]);
     expect(check({ approval: "awaiting-decision", forced: placed })).toEqual(["break.forced.approval"]);
@@ -600,16 +600,16 @@ describe("break state", () => {
 
   it("requires a break in effect on a provider that publishes reasons to name the one it is on, a forced one included", () => {
     const reasons = [{ id: "meal", label: "Meal", kind: "meal" }, { id: "coach", label: "Coaching", kind: "coaching" }];
-    expect(check({ approval: "in-effect", reasons, activeReasonId: "meal" })).toEqual([]);
-    expect(check({ approval: "in-effect", reasons })).toEqual(["break.activeReasonId.required"]);
-    expect(check({ approval: "in-effect", reasons, forced: { by: "lead-3", endsAutomatically: false } })).toEqual(["break.activeReasonId.required"]);
+    expect(check({ approval: "on-break", reasons, activeReasonId: "meal" })).toEqual([]);
+    expect(check({ approval: "on-break", reasons })).toEqual(["break.activeReasonId.required"]);
+    expect(check({ approval: "on-break", reasons, forced: { by: "lead-3", endsAutomatically: false } })).toEqual(["break.activeReasonId.required"]);
     // No reasons published, nothing to name; not in effect, nothing to name yet.
-    expect(check({ approval: "in-effect" })).toEqual([]);
+    expect(check({ approval: "on-break" })).toEqual([]);
     expect(check({ approval: "granted", reasons })).toEqual([]);
   });
 
   it("keeps who forced a break whether or not it ends on a clock", () => {
-    const forced = (value: unknown) => check({ approval: "in-effect", forced: value });
+    const forced = (value: unknown) => check({ approval: "on-break", forced: value });
     // Both arms are legal. The origin is required in both, because a forced break with no
     // origin is a state the agent cannot reason about.
     expect(forced({ by: "lead-3", endsAutomatically: true, endsAt: "2026-08-21T10:00:00Z" })).toEqual([]);
@@ -854,7 +854,7 @@ describe("validateEventEnvelope", () => {
   it("validates each event type", () => {
     expect(check({ type: "snapshot", reason: "reconnected", snapshot: snapshot() })).toEqual([]);
     expect(check({ type: "snapshot", reason: "because", snapshot: snapshot() })).toContain("event.snapshot.reason");
-    expect(check({ type: "break-state", break: { approval: "in-effect", mayAsk: false } })).toEqual([]);
+    expect(check({ type: "break-state", break: { approval: "on-break", canRequestBreak: false } })).toEqual([]);
     expect(check({ type: "task-offered", task: task({ phase: "pending", acceptance: "consent" }) })).toEqual([]);
     expect(check({ type: "task-offered", task: task({ phase: "pending", acceptance: "whenever" }) })).toContain("task.acceptance");
     expect(check({ type: "task-media-ended", taskId: "call-42", allocationId: "alloc-42" })).toEqual([]);
@@ -1179,16 +1179,16 @@ describe("the other direction, everywhere", () => {
 
   it("holds the break state's parts to its approval", () => {
     const check = (over: Record<string, unknown>) =>
-      rules(validateSnapshot(snapshot({ break: { approval: "not-requested", mayAsk: true, ...over } }), manifest()));
-    expect(check({ mayAsk: false, refusedReason: "Busy hours" })).toEqual([]);
-    expect(check({ mayAsk: true, refusedReason: "Busy hours" })).toEqual(["break.refusedReason.mayAsk"]);
+      rules(validateSnapshot(snapshot({ break: { approval: "not-requested", canRequestBreak: true, ...over } }), manifest()));
+    expect(check({ canRequestBreak: false, requestUnavailableReason: "Busy hours" })).toEqual([]);
+    expect(check({ canRequestBreak: true, requestUnavailableReason: "Busy hours" })).toEqual(["break.requestUnavailableReason.canRequestBreak"]);
     const placed = { by: "M-1", endsAutomatically: false };
-    expect(check({ approval: "in-effect", forced: placed })).toEqual([]);
+    expect(check({ approval: "on-break", forced: placed })).toEqual([]);
     expect(check({ approval: "not-requested", forced: placed })).toEqual(["break.forced.approval"]);
     const reasons = [{ id: "lunch", label: "Lunch" }];
-    expect(check({ approval: "in-effect", reasons, activeReasonId: "lunch" })).toEqual([]);
-    expect(check({ approval: "in-effect", activeReasonId: "lunch" })).toEqual([]);
-    expect(check({ approval: "in-effect", reasons, activeReasonId: "tea" })).toEqual(["break.activeReasonId.known"]);
+    expect(check({ approval: "on-break", reasons, activeReasonId: "lunch" })).toEqual([]);
+    expect(check({ approval: "on-break", activeReasonId: "lunch" })).toEqual([]);
+    expect(check({ approval: "on-break", reasons, activeReasonId: "tea" })).toEqual(["break.activeReasonId.known"]);
     // A provider with no reasons omits the field; the empty list is a second spelling of that.
     expect(check({ reasons })).toEqual([]);
     expect(check({})).toEqual([]);
@@ -1199,7 +1199,7 @@ describe("the other direction, everywhere", () => {
     const member = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", ...over }] }));
     for (const approval of ["awaiting-decision", "granted", "starting-after-task"]) expect(member({ break: approval })).toEqual([]);
     expect(member({ availability: "on-break" })).toEqual([]);
-    expect(member({ break: "in-effect" })).toEqual(["team.member.break"]);
+    expect(member({ break: "on-break" })).toEqual(["team.member.break"]);
     expect(member({ break: "not-requested" })).toEqual(["team.member.break"]);
     expect(member({ availability: "signed-out", break: "granted" })).toEqual(["team.member.break.availability"]);
     expect(member({ availability: "on-break", break: "granted" })).toEqual(["team.member.break.availability"]);
@@ -1501,7 +1501,7 @@ describe("the validators accept exactly what the contract publishes", () => {
   });
 
   it("every published break kind, and no unpublished one", () => {
-    const withKind = (kind: unknown) => snapshot({ break: { approval: "not-requested", mayAsk: true, reasons: [{ id: "r1", label: "Rest", kind }] } });
+    const withKind = (kind: unknown) => snapshot({ break: { approval: "not-requested", canRequestBreak: true, reasons: [{ id: "r1", label: "Rest", kind }] } });
     for (const kind of BREAK_KINDS) {
       expect(rules(validateSnapshot(withKind(kind), manifest()))).toEqual([]);
     }
@@ -2181,14 +2181,14 @@ describe("listening a call", () => {
     // The control: two tasks of the lead's own are ordinary.
     expect(rules(validateSnapshot(snapshot({ tasks: [own, task({ id: "call-8" })] }), manifest()))).toEqual([]);
     const onBreak = (kind: string | undefined, tasks: unknown[]) => rules(validateSnapshot(snapshot({
-      break: { approval: "in-effect", mayAsk: true, reasons: [{ id: "b", label: "Break", ...(kind === undefined ? {} : { kind }) }], activeReasonId: "b" },
+      break: { approval: "on-break", canRequestBreak: true, reasons: [{ id: "b", label: "Break", ...(kind === undefined ? {} : { kind }) }], activeReasonId: "b" },
       tasks,
     }), manifest()));
     for (const kind of ["coaching", "administrative", "training"]) expect(onBreak(kind, [listeningTask])).toEqual([]);
     for (const kind of ["meal", "rest", "short-break", "personal", "other"]) expect(onBreak(kind, [listeningTask])).toEqual(["snapshot.listening.break"]);
     expect(onBreak(undefined, [listeningTask])).toEqual(["snapshot.listening.break"]);
     // The rule it is an exception to still holds for the lead's own work.
-    expect(onBreak("coaching", [own])).toEqual(["break.in-effect.tasks"]);
+    expect(onBreak("coaching", [own])).toEqual(["break.on-break.tasks"]);
     expect(onBreak("coaching", [])).toEqual([]);
   });
 

@@ -1,3 +1,75 @@
+# Current PR119 revision: Break request retry delay
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation 8d356b8a1d981155934d4f62f7e1fb9d30fc26d7.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+BreakState.retryRequestAfterMs replaces retryAfterMs; diagnostic break.retryRequestAfterMs. Old/mixed break fields rejected; optional finite non-negative milliseconds preserved. Authentication/general failure retryAfterMs unchanged. Hosts/providers update together; no aliases/version changes.
+Build/type checks, all 437 tests, guide examples, package verification and diff check passed. Log /private/tmp/retry-request-after-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. Existing named monitor remains responsible. No merge or release performed.
+
+# Current PR119 revision: On-break state
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation 76a1e38dfb7870b63d669f923a3b7086d7f4a184.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+BreakApproval on-break replaces in-effect; diagnostic break.on-break.tasks and ordering/conformance checks updated. Old value rejected without alias. granted, decisionReason, starting-after-task and existing task/listening prerequisites preserved. Team member availability unchanged. Hosts/providers must update together; no version changes.
+Build/type checks, all 436 tests, guide examples, package verification and diff check passed. Log /private/tmp/on-break-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. Existing named monitor remains responsible. No merge or release performed.
+
+# Current PR119 revision: Request unavailable reason
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation 3cda86c0ed6b4ecf9130554a4add4d73271b885f.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+BreakState.requestUnavailableReason replaces refusedReason; related diagnostics renamed. Old/mixed fields rejected. Nonempty reason is allowed only when canRequestBreak is false; decisionReason remains distinct. Hosts/providers must update together; no aliases or version changes.
+Build/type checks, all 435 tests, guide examples, package verification and diff check passed. Log /private/tmp/request-unavailable-reason-check.log.
+Next: monitor CI/reviews and respond to failures; keep worktree/branch while open. Existing named monitor remains responsible. No merge or release performed.
+
+# Current PR119 revision: Explicit break request eligibility
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation f10a663805d1da1ca2fa154271615ff67c0e20f7.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+BreakState.canRequestBreak replaces mayAsk; related validation diagnostics renamed. Old/mixed fields rejected without alias. Eligibility remains distinct from approval, with alwaysAvailable exceptions preserved. Final policy values remain approval-required, automatically-approved, requests-suspended. Hosts/providers update together; no version changes.
+Build/type checks, all 434 tests, guide examples, package verification and diff check passed. Log /private/tmp/can-request-break-check.log.
+Next: monitor CI/reviews and respond to failures; retain worktree/branch while open. Existing named monitor remains responsible. No merge or release performed.
+
+# Current PR119 revision: Automatically-approved policy
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation 0c7e81faddbb9a02b7f366240e281cfd97178b97.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+Final set-break-policy values: approval-required, automatically-approved, requests-suspended. Old auto-approve rejected without alias; commitment, break-start prerequisites and permissions unchanged. Hosts/providers update together; no version changes.
+Build/type checks, all 433 tests, guide examples, package verification and diff check passed. Log /private/tmp/automatically-approved-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. Existing named monitor remains responsible. No merge or release performed.
+
+# Current PR119 revision: Requests-suspended policy
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation 3973b2848c977aade85f15cf7ccde6c4f4b356d4.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+Final set-break-policy values: approval-required, auto-approve, requests-suspended. Old suspended and unadopted requests-blocked rejected. New requests are rejected, not queued; existing breaks unaffected. Permissions unchanged. Hosts/providers update together; no aliases/version changes.
+Build/type checks, all 433 tests, guide examples, package verification and diff check passed. Log /private/tmp/requests-suspended-check.log.
+Next: monitor CI/reviews and respond to failures; retain branch/worktree while open. Existing named monitor remains responsible. No merge or release performed.
+
+# Current PR119 revision: Approval-required break policy
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation d1a7adaa6c9eaa6f0184cb38f010aec08763da38.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+set-break-policy now accepts approval-required (formerly ask), auto-approve or suspended. Old ask value rejected without alias; behavior and permissions unchanged. Hosts/providers update together. No version changes.
+Build/type checks, all 433 tests, guide examples, package verification and diff check passed. Log /private/tmp/approval-required-check.log.
+Next: monitor CI/reviews and respond to failures; keep worktree/branch while open. Existing named monitor remains responsible; no merge or release performed.
+
+# Current delivery: Set break policy command
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
+Implementation 60565aaa5c5520e4dbf85c2f2ffc7a2bdf30ceeb.
+PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+TeamBreakCommand policy renamed to set-break-policy. Old command rejected without alias; policy field and ask/auto-approve/suspended values, permissions and behavior unchanged. Hosts/providers must update together. No package or wire version changes.
+Checks: build/test typecheck, all 433 tests, guide examples, package verification (10 files/3 entrypoints), diff check passed. Log /private/tmp/set-break-policy-check.log.
+Next: monitor CI/reviews and respond to failures; retain worktree/branch while open. No merge/release/cleanup performed. PR118 independently verified merged.
+
 # Current PR118 revision: Explicit break request decision
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-end-forced-break; branch refactor/end-forced-break.
@@ -333,3 +405,8 @@ PID 44983; command python3 /private/tmp/omni-force-break-command/.agent-memory/r
 Monitor omni-protocol-pr118-end-forced-break: OPEN at 2026-09-11T09:01:33.042458+00:00. Await CI/review; monitor never merges.
 PID 66818; command python3 /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break-monitor.py; state /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.state.json; log /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.log; PID file /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.pid; process log /private/tmp/omni-end-forced-break/.agent-memory/runtime/end-forced-break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-end-forced-break, branch refactor/end-forced-break, PR https://github.com/Inukollu/Omni-Protocol/pull/118.
 <!-- end-forced-break-monitor:end -->
+
+<!-- set-break-policy-monitor:begin -->
+Monitor omni-protocol-pr119-set-break-policy: OPEN at 2026-09-11T09:40:42.810800+00:00. Await CI/review; monitor never merges.
+PID 61280; command python3 /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy-monitor.py; state /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.state.json; log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.log; PID file /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.pid; process log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-set-break-policy, branch refactor/set-break-policy, PR https://github.com/Inukollu/Omni-Protocol/pull/119.
+<!-- set-break-policy-monitor:end -->

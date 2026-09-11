@@ -996,10 +996,10 @@ export function assertDeniedAndRetriedBreak(approvals: readonly BreakApproval[])
   const refused = approvals.indexOf("not-requested", asked + 1);
   if (refused < 0) throw new Error("A refused break must return to not-requested, leaving nothing pending");
   const granted = approvals.findIndex((approval, index) =>
-    index > refused && (approval === "granted" || approval === "in-effect"));
+    index > refused && (approval === "granted" || approval === "on-break"));
   if (granted < 0) throw new Error("Break retry scenario must grant a later request");
   const last = approvals.at(-1);
-  if (last !== "granted" && last !== "in-effect") {
+  if (last !== "granted" && last !== "on-break") {
     throw new Error(`Break retry scenario must end granted or in effect, ended ${String(last)}`);
   }
 }
@@ -1918,8 +1918,8 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
 }
 
 // A request goes not-requested -> awaiting-decision | granted; a commit goes granted ->
-// starting-after-task | in-effect; work ending goes starting-after-task -> in-effect; a denial,
-// a cancel, an agent end or a lead end goes back to not-requested; a forced break arrives in-effect
+// starting-after-task | on-break; work ending goes starting-after-task -> on-break; a denial,
+// a cancel, an agent end or a lead end goes back to not-requested; a forced break arrives on-break
 // with `forced`. Nothing else is a move the guide describes.
 /** What a stream has said about the agent's break, and the moves it may not make. */
 export class BreakStream {
@@ -2060,7 +2060,7 @@ export interface BreakOnTaskStep {
 /**
  * A break asked for on a task begins when the work ends. `steps` is the sequence the provider
  * published, first to last: the request is made while work is outstanding, the commit is reported
- * as `starting-after-task` while it remains, and `in-effect` arrives only once nothing is
+ * as `starting-after-task` while it remains, and `on-break` arrives only once nothing is
  * outstanding -- never beside a task, and never later than the step that has none.
  */
 export function assertBreakBeginsAfterTask(steps: readonly BreakOnTaskStep[]): void {
@@ -2070,14 +2070,14 @@ export function assertBreakBeginsAfterTask(steps: readonly BreakOnTaskStep[]): v
   const committed = steps.findIndex((step, index) => index > asked && step.approval === "starting-after-task");
   if (committed < 0) throw new Error("A break committed on a task is reported as starting-after-task while the work remains");
   steps.forEach((step, index) => {
-    if (step.approval === "in-effect" && step.outstanding > 0) {
-      throw new Error(`steps[${index}] reports in-effect with ${step.outstanding} task(s) outstanding: a break begins when the work ends`);
+    if (step.approval === "on-break" && step.outstanding > 0) {
+      throw new Error(`steps[${index}] reports on-break with ${step.outstanding} task(s) outstanding: a break begins when the work ends`);
     }
     if (step.approval === "starting-after-task" && step.outstanding < 1) {
       throw new Error(`steps[${index}] reports starting-after-task with nothing outstanding: the break should have begun`);
     }
   });
-  if (steps.at(-1)?.approval !== "in-effect") {
+  if (steps.at(-1)?.approval !== "on-break") {
     throw new Error(`Break-on-task scenario must end in effect, ended ${String(steps.at(-1)?.approval)}`);
   }
 }
