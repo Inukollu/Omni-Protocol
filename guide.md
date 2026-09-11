@@ -114,7 +114,7 @@ type DurationSeconds = number;
 | --- | --- | --- |
 | `IsoTimestamp` | `string` | An RFC-3339 timestamp with `Z` or an explicit numeric offset. Timezone-less values are invalid. It must pass the shared runtime validator. A JavaScript `Date` never crosses the protocol boundary. |
 | `UserId` | `string` | A non-empty, opaque, stable identifier for a person, **issued by the provider** and drawn from the same directory as `AuthenticationState.identity.id`. It names agents and managers alike; the role is established by where the value appears, not by its type. Compare it exactly and only within one provider; do not parse it or infer meaning from its format. |
-| `AssignmentId` | `string` | A non-empty, opaque identifier for one assignment, **issued by the provider**: unique within the provider and never reused while the provider is still speaking about it. Whether it is the platform's own handle passed through or one the adapter minted is the adapter's business. Omni scopes it with the provider ID -- see `taskKey()`. |
+| `AssignmentId` | `string` | A non-empty, opaque identifier for one assignment, **issued by the provider**: unique within the provider and never reused while the provider is still speaking about it. Whether it is the platform's own handle passed through or one the adapter minted is the adapter's business. Omni scopes it with the provider ID -- see `assignmentKey()`. |
 | `DurationSeconds` | `number` | A non-negative integer duration measured in seconds. |
 
 ### There is no Omni-wide user identity
@@ -127,7 +127,7 @@ So a `UserId` means nothing outside the provider that issued it. Provider A's
 `history[].by` and provider B's team member list `memberId` are unrelated strings that will
 eventually collide, and one person on several providers has several identities that nothing here
 pairs. Scope every user identifier with its provider ID before storing or comparing it, exactly as
-`taskKey()` already does for tasks — see `userKey()` under **Utilities**.
+`assignmentKey()` already does for tasks — see `userKey()` under **Utilities**.
 
 ## Shapes
 
@@ -587,7 +587,7 @@ The channel arms are why `Task<"email">` rejects `hold` at compile time rather t
 
 ```ts
 const BROWSER_ISOLATION_SCHEMES = {
-  PROVIDER_NAME__TASK_ID__TAB_NAME: "ProviderName.TaskId.TabName",
+  PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME: "ProviderName.AssignmentId.TabName",
   TAB_NAME: "TabName",
   PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME: "ProviderName.TaskTypeName.TabName",
   PROVIDER_NAME__TAB_NAME: "ProviderName.TabName",
@@ -1235,7 +1235,7 @@ const HISTORY_STEPS_WITH_A_PERSON = [
 const OMNI_FAILURE_CODES = [
   "omni.not-authenticated",
   "omni.capability-not-enabled",
-  "omni.task-not-found",
+  "omni.assignment-not-found",
   "omni.destination-not-permitted",
   "omni.phone-not-permitted",
   "omni.rate-limited",
@@ -2073,7 +2073,7 @@ Creates one live provider connection for the signed-in agent.
 | `autoAcceptTasks` | Agent local policy policy relayed to the provider at login, stated by the agent application on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
 | `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's agent application states what its Mute does, and a desk-phone or conversation login's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's**. |
-| `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A login-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`drive.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`drive.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.task-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
+| `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A login-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`drive.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`drive.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.assignment-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
 | `host` | The agent application's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The agent application reports, the adapter decides**. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -2448,7 +2448,7 @@ ending, a history report, a command -- would land on whichever assignment is ope
 So the assignment id is unique within the provider and never reused: where the platform's handle
 never comes back, the adapter passes it through; where it does, the adapter mints the assignment id
 and keeps the mapping, and the desk never learns which. A late event finds the assignment it
-belongs to or is refused, and a task-scoped browser session (`PROVIDER_NAME__TASK_ID__TAB_NAME`)
+belongs to or is refused, and a task-scoped browser session (`PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME`)
 lives one assignment, never the next customer's cookies. A dial the agent application placed was
 already safe, since its outcome is placed by the agent application's own `dialId`; where the
 assignment earns its place is everything the agent application does not mint --
@@ -2736,7 +2736,8 @@ Migration from the earlier spellings:
 | handlingStepExpectsAPerson, handlingStepDials, and their interaction spellings | `historyStepExpectsAPerson`, `historyStepDials` |
 | handleSeconds | `interactionSeconds` |
 | Task.allocationId, AllocationId, allocationExpiresAt | `Task.assignmentId`, `AssignmentId`, `assignmentExpiresAt` |
-| Task.id, TaskId, and `taskId` on every event, command, report and lead request | gone: a task is named by `assignmentId` alone, and `taskKey(providerId, assignmentId)` scopes it |
+| Task.id, TaskId, and `taskId` on every event, command, report and lead request | gone: a task is named by `assignmentId` alone, and `assignmentKey(providerId, assignmentId)` scopes it |
+| taskKey, omni.task-not-found, PROVIDER_NAME__TASK_ID__TAB_NAME (ProviderName.TaskId.TabName) | `assignmentKey`, `omni.assignment-not-found`, `PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME` (`ProviderName.AssignmentId.TabName`) |
 | Manifest.disposalSettleMs | `Manifest.completionSettleMs` |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
@@ -2953,7 +2954,7 @@ At a provider-confirmed task/media end, the agent application also stops the ass
 its observed ending where the report is still accepted. An agent application closing report repeats its original
 key and may include its measured duration, but cannot reverse an already confirmed provider end.
 The provider acknowledges a known closed leg without rewriting its final record; after the task
-has been completed, it may refuse the report as task-not-found. The agent application reads that response rather
+has been completed, it may refuse the report as assignment-not-found. The agent application reads that response rather
 than retrying or recreating the task. An observed agent application end before a provider closure is still
 reported normally; the provider decides the final timestamp and publishes the record.
 
@@ -3049,7 +3050,7 @@ The supported `BrowserIsolationScheme` values, declared under **Shapes**, key as
 
 | Enum member | Example session key |
 | --- | --- |
-| `PROVIDER_NAME__TASK_ID__TAB_NAME` | `mailflow.EMAIL-829102%2Ea1.CRM` -- the task's assignment id, so one assignment, never the next customer's cookies; the scheme's name is a stable wire value and keeps its spelling |
+| `PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME` | `mailflow.EMAIL-829102%2Ea1.CRM` -- the task's assignment id, so one assignment, never the next customer's cookies |
 | `TAB_NAME` | `CRM` |
 | `PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME` | `mailflow.Support.CRM` |
 | `PROVIDER_NAME__TAB_NAME` | `mailflow.CRM` |
@@ -4812,7 +4813,7 @@ react rather than only display the message:
 | --- | --- |
 | `omni.not-authenticated` | The provider session is no longer usable. The adapter has published `expired` at or before this answer — the state is what Omni surfaces reauthentication from; the code says why this action failed, and is never the only signal. |
 | `omni.capability-not-enabled` | The action targets a capability this task, manifest, or login did not declare — including a lead command from a login whose `capabilities` no longer carry it. |
-| `omni.task-not-found` | The assignment named is not one the provider holds, typically after the task already ended. |
+| `omni.assignment-not-found` | The assignment named is not one the provider holds, typically after the task already ended. |
 | `omni.phone-not-permitted` | The agent application declared a `phone` the platform does not permit for this agent -- a softphone for an agent configured for a desk phone, or the reverse. The login is refused at authentication, and the provider never reconfigures the agent to make the declaration true. See **How the agent hears the call**. |
 | `omni.destination-not-permitted` | The dialled number, or the `destinationId` named, is not one the provider offers this agent. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
@@ -5224,7 +5225,7 @@ declares the `calendar` idle capability.
 
 ## Utilities
 
-### `taskKey(providerId, assignmentId)`
+### `assignmentKey(providerId, assignmentId)`
 
 Returns a collision-safe global task key by encoding and joining the provider id and the
 assignment id. Use this key in Omni state; an assignment id is unique within its provider and

@@ -53,7 +53,7 @@ export type UserId = string;
  * still speaking about it -- a lead names a member's assignment from another login, so the scope is
  * the provider, not the login. What the platform calls its own record, and whether it reuses that
  * name, is the adapter's business: a platform that reoffers a closed call under the same handle
- * seconds later is why the adapter, not the desk, is held to this. Scope it with `taskKey()`.
+ * seconds later is why the adapter, not the desk, is held to this. Scope it with `assignmentKey()`.
  */
 export type AssignmentId = string;
 
@@ -703,7 +703,7 @@ export type TaskCapabilities<C extends Channel = Channel> =
  * mistype and unreadable as an argument.
  */
 export const BROWSER_ISOLATION_SCHEMES = {
-  PROVIDER_NAME__TASK_ID__TAB_NAME: "ProviderName.TaskId.TabName",
+  PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME: "ProviderName.AssignmentId.TabName",
   TAB_NAME: "TabName",
   PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME: "ProviderName.TaskTypeName.TabName",
   PROVIDER_NAME__TAB_NAME: "ProviderName.TabName",
@@ -1548,7 +1548,7 @@ export interface ProviderEventEnvelope<C extends Channel = Channel> {
 export const OMNI_FAILURE_CODES = [
   "omni.not-authenticated",
   "omni.capability-not-enabled",
-  "omni.task-not-found",
+  "omni.assignment-not-found",
   "omni.destination-not-permitted",
   "omni.phone-not-permitted",
   "omni.rate-limited",
@@ -1691,7 +1691,7 @@ export const DEFAULT_TASK_TYPE_PRESENTATION = {
  * string. Encoding before joining is what stops a provider id containing a separator from
  * forging another provider's key.
  */
-export const taskKey = (providerId: string, assignmentId: AssignmentId): string =>
+export const assignmentKey = (providerId: string, assignmentId: AssignmentId): string =>
   `${encodeURIComponent(providerId)}:${encodeURIComponent(assignmentId)}`;
 
 /**
@@ -1772,7 +1772,7 @@ export function browserSessionKey(input: BrowserSessionKeyInput): string | undef
   // provider `Acme.Voice` with type `Support` forge the key of `Acme` with `Voice.Support`.
   const part = (value: string) => encodeURIComponent(value).replaceAll(".", "%2E");
   switch (browser.isolationScheme) {
-    case BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_ID__TAB_NAME:
+    case BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME:
       return `${part(providerId)}.${part(assignmentId)}.${part(browser.name)}`;
     case BROWSER_ISOLATION_SCHEMES.TAB_NAME:
       return part(browser.name);

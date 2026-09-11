@@ -27,7 +27,7 @@ import {
   negotiateProtocolVersion,
   normalizeContactEmail,
   normalizeContactNumber,
-  taskKey,
+  assignmentKey,
   userKey,
   type BrowserSessionKeyInput,
   type HistoryStep,
@@ -39,10 +39,10 @@ import { exerciseAdapter, memoryStore, stillHost } from "../src/testing.js";
 
 describe("Omni protocol", () => {
   it("creates collision-safe composite task and user keys", () => {
-    expect(taskKey("voice:west", "call/42")).toBe("voice%3Awest:call%2F42");
+    expect(assignmentKey("voice:west", "call/42")).toBe("voice%3Awest:call%2F42");
     expect(userKey("voice:west", "agent/7")).toBe("voice%3Awest:agent%2F7");
     // The control: a provider id containing the separator cannot forge another provider's key.
-    expect(taskKey("a:b", "c")).not.toBe(taskKey("a", "b:c"));
+    expect(assignmentKey("a:b", "c")).not.toBe(assignmentKey("a", "b:c"));
     expect(userKey("a:b", "c")).not.toBe(userKey("a", "b:c"));
   });
 
@@ -136,7 +136,7 @@ describe("Omni protocol", () => {
 
   it("keeps naming scheme serialization values readable and stable", () => {
     expect(BROWSER_ISOLATION_SCHEMES).toEqual({
-      PROVIDER_NAME__TASK_ID__TAB_NAME: "ProviderName.TaskId.TabName",
+      PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME: "ProviderName.AssignmentId.TabName",
       TAB_NAME: "TabName",
       PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME: "ProviderName.TaskTypeName.TabName",
       PROVIDER_NAME__TAB_NAME: "ProviderName.TabName",
@@ -236,7 +236,7 @@ describe("browserSessionKey", () => {
     ({ ...base, sharedSession: true, isolationScheme } as TaskBrowser);
 
   it("keys each scheme exactly as the guide documents it", () => {
-    expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_ID__TAB_NAME)))).toBe("mailflow.EMAIL-829102%2Ea1.CRM");
+    expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME)))).toBe("mailflow.EMAIL-829102%2Ea1.CRM");
     expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.TAB_NAME)))).toBe("CRM");
     expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME)))).toBe("mailflow.Support.CRM");
     expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TAB_NAME)))).toBe("mailflow.CRM");
