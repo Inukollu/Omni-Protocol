@@ -296,7 +296,7 @@ export interface AuthenticationFailure {
 /** What a lead may do with their team. Declared by presence. */
 export interface TeamCapabilities {
   /**
-   * This lead may act on their team's breaks through `executeTeamBreak` -- force-break, end-forced-break, decide,
+   * This lead may act on their team's breaks through `executeTeamBreak` -- force-break, end-forced-break, decide-break-request,
    * set policy -- as far as the provider supports; a command it lacks answers
    * `omni.capability-not-enabled`. Requires `executeTeamBreak`.
    */
@@ -1358,7 +1358,7 @@ export interface TeamListenCommandRequest {
 }
 
 export type TeamBreakCommand =
-  | { type: "decide"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
+  | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "policy"; policy: "ask" | "auto-approve" | "suspended" }
   /** `reasonId` names a published `BreakReason.id`, required whenever the provider publishes reasons: the member's forced break carries it as `activeReasonId`. */
   | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string }

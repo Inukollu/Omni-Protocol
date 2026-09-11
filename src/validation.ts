@@ -1491,7 +1491,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
     "the login must declare team.breakControl");
   const command = request.command;
   const allowed: Record<string, readonly string[]> = {
-    decide: ["type", "memberId", "decision", "reason"], policy: ["type", "policy"],
+    "decide-break-request": ["type", "memberId", "decision", "reason"], policy: ["type", "policy"],
     "force-break": ["type", "memberId", "reasonId", "reason"], "end-forced-break": ["type", "memberId"],
   };
   const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
@@ -1510,7 +1510,7 @@ export function validateTeamBreakCommand(request: unknown, context: unknown, pat
   const self = isPlainObject(auth.identity) ? auth.identity.id : undefined;
   into.require(isPlainObject(member) && command.memberId !== self, "team.break.command.member", path,
     "the target must be another member of the current authorized team member list");
-  if (command.type === "decide") {
+  if (command.type === "decide-break-request") {
     into.require(command.decision === "granted" || command.decision === "denied", "team.break.command.decision", path, "decide granted or denied");
     into.require(isPlainObject(member) && member.break === "awaiting-decision", "team.break.command.awaiting", path,
       "decide only a currently awaiting-decision request");

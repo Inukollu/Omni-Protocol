@@ -451,3 +451,7 @@ export const ambiguousTeamBreakEnd: import("../src/index.js").TeamBreakCommand =
 
 // @ts-expect-error Use force-break, not the interim generic force command.
 export const ambiguousForceBreak: import("../src/index.js").TeamBreakCommand = { type: "force", memberId: "member-1" };
+
+export const decideMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "decide-break-request", memberId: "member-1", decision: "granted" };
+// @ts-expect-error Use decide-break-request, not the retired generic decide command.
+export const ambiguousBreakDecision: import("../src/index.js").TeamBreakCommand = { type: "decide", memberId: "member-1", decision: "denied" };

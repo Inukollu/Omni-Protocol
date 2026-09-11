@@ -180,8 +180,10 @@ describe("lead break prerequisites", () => {
     memberBreak: { ...state("not-requested"), reasons: [{ id: "bio", label: "Bio" }] },
   };
   it("requires current decision eligibility, target membership and explicit lead permission", () => {
-    const request = { command: { type: "decide", memberId: "member", decision: "granted" } };
+    const request = { command: { type: "decide-break-request", memberId: "member", decision: "granted" } };
     expect(validateTeamBreakCommand(request, lead)).toEqual([]);
+    expect(validateTeamBreakCommand({ command: { ...request.command, decision: "denied" } }, lead)).toEqual([]);
+    expect(validateTeamBreakCommand({ command: { ...request.command, type: "decide" } }, lead).map(v => v.rule)).toContain("team.break.command.type");
     for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [] } },
       { ...lead, team: { members: [{ id: "member", break: "granted" }] } }]) {
       expect(validateTeamBreakCommand(request, bad)).not.toEqual([]);

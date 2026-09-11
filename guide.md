@@ -1034,7 +1034,7 @@ type TeamLeadAssistCommand =
   | { type: "decline"; requestId: string; reason?: string };
 
 type TeamBreakCommand =
-  | { type: "decide"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
+  | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "policy"; policy: "ask" | "auto-approve" | "suspended" }
   | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string }
   | { type: "end-forced-break"; memberId: UserId };
@@ -1924,7 +1924,7 @@ them from what arrives later.
 | --- | --- |
 | `breaks` | This login may request a break. Requires the four break methods on the connection. |
 | `team` | This login leads a team. The provider publishes a `TeamMembers` object to it on every snapshot — `members: []` when nobody is in it — and to nobody else. |
-| `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — force-break, end-forced-break, decide, set policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-decision`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
+| `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — force-break, end-forced-break, decide-break-request, set policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-decision`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
 | `team.leadAssistControl` | This lead may join a member's call on request. Requires `executeTeamLeadAssist`. |
 | `team.listeningControl` | This lead may listen to a member's call unasked, in the listed modes and no others: `listen`, `coach`, `join-call`. The list always includes `listen`, since the other two begin from one. Requires `executeTeamListen`. See **Listening to a call**. |
 | `team.policyControl` | This lead sets the team's policy per capability — on, off, or the person's — within what the queue allows. Requires `executeTeamPolicy`; the team member list carries `policies`. |
@@ -3646,6 +3646,9 @@ Migration: ImposedBreak is now `ForcedBreak`, and the former imposed field is no
 `BreakState.forced`. Diagnostic and harness coverage names use `break.forced`; the agent-end
 diagnostic is `break.command.end.forced`. Update hosts and providers together. The old field
 is rejected, including when both spellings are sent; no compatibility alias is provided.
+The team break command formerly named decide is now `decide-break-request`. The former
+spelling is rejected without an alias; the granted/denied decisions and pending-request
+prerequisite are unchanged.
 The team break command formerly named place is now `force-break`. Hosts and providers must
 adopt the new command together; place and the interim force spelling are rejected without aliases.
 The team break command formerly named release is now `end-forced-break`, and its diagnostic is
@@ -4103,7 +4106,7 @@ One method, `executeTeamBreak`, taking a discriminated command exactly as `execu
 
 | Command | Effect |
 | --- | --- |
-| `{ type: "decide", memberId: UserId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
+| `{ type: "decide-break-request", memberId: UserId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
 | `{ type: "policy", policy }` | `ask`, `auto-approve`, or `suspended`. |
 | `{ type: "force-break", memberId: UserId, reasonId?, reason? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. |
 | `{ type: "end-forced-break", memberId: UserId }` | Ends a forced break on that member, whoever forced it. |
