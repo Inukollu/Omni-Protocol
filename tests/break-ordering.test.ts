@@ -173,6 +173,13 @@ const context = {
   authentication: { status: "authenticated", identity: { id: "agent", displayName: "Agent", timeZone: "UTC" }, capabilities: { breaks: true } },
 };
 describe("break prerequisites", () => {
+  it("allows an agent request without explanatory text with or without reason choices", () => {
+    expect(validateBreakCommand("requestBreak", {}, state("not-requested"), context)).toEqual([]);
+    expect(validateBreakCommand("requestBreak", { reasonId: "lunch" }, {
+      ...state("not-requested"), reasons: [{ id: "lunch", label: "Lunch" }],
+    }, context)).toEqual([]);
+  });
+
   it("checks all four methods against every approval", () => {
     const allowed: Record<BreakMethod, BreakStatus[]> = {
       requestBreak: ["not-requested"], commitBreak: ["granted", "starting-after-task", "on-break"],
@@ -266,6 +273,12 @@ describe("lead break prerequisites", () => {
       expect(validateTeamBreakCommand({ command }, bad)).not.toEqual([]);
     }
     expect(validateTeamBreakCommand({ command }, { ...current, memberBreak: { ...current.memberBreak, status: "starting-after-task" } })).toEqual([]);
+  });
+  it("allows a lead to force a break without explanatory text", () => {
+    expect(validateTeamBreakCommand({ command: { type: "force-break", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
+    expect(validateTeamBreakCommand({ command: { type: "force-break", memberId: "member" } }, {
+      ...lead, memberBreak: state("not-requested"),
+    })).toEqual([]);
   });
   it("accepts an optional expected duration on force-break and rejects timer controls", () => {
     const command = { type: "force-break", memberId: "member", reasonId: "bio" };

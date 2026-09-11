@@ -1220,6 +1220,7 @@ export interface BreakReason {
 }
 
 export interface BreakRequest {
+  /** Optional explanatory text. Omit when no explanation is needed; separate from reasonId. */
   reason?: string;
   /** The chosen `BreakReason.id`, where the provider publishes codes. */
   reasonId?: string;
@@ -1356,7 +1357,7 @@ export interface TeamListenCommandRequest {
 export type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
-  /** `reasonId` names a published `BreakReason.id`, required whenever the provider publishes reasons: the member's forced break carries it as `activeReasonId`. */
+  /** `reason` text is optional. `reasonId` selects a published `BreakReason.id`, required when reasons are published; the forced break carries it as `activeReasonId`. */
   | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationMs?: number }
   /** Clears forced metadata only; preserves the committed break until the agent explicitly resumes. */
   | { type: "end-forced-break"; memberId: UserId };

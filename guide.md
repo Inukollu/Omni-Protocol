@@ -3854,6 +3854,16 @@ required; per-provider validation does not implement the multi-provider coordina
 
 ### `requestBreak(request)`
 
+**Explanatory text is optional.** An agent may omit `BreakRequest.reason` for any break type.
+A lead may likewise omit reason text from `force-break`. Do not require a text explanation
+just because a break is agent-requested or forced. If supplied, text must be nonempty; omit
+it rather than sending an empty string. A selected `reasonId` identifies a published break
+choice and is separate from this optional text.
+
+With published choices, `{ reasonId: "lunch" }` is a valid request without explanation;
+without published choices, `{}` is valid. A lead can similarly send a `force-break` command
+with its member ID and, where required, the selected reason ID, without reason text.
+
 Requests permission to stop the agent later; it does not itself stop work. The provider continues
 offering work and reports `awaiting-decision` or `granted` through `break-state` events. If the request is denied, the
 provider reports `not-requested` directly, with `decisionReason` when one was supplied.
