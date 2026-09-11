@@ -1,3 +1,9 @@
+# Interaction terminology — PR109 — 2026-09-11
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-interaction-guide; branch docs/interaction-terminology; implementation 3c42c4d32adaa60e0ab3cdba5e5f61de828a4aac; PR https://github.com/Inukollu/Omni-Protocol/pull/109. Guide-only: interaction means agent’s part, call means caller’s whole call, task means work/workspace. All code identifiers remain unchanged. Six guide/examples/hygiene checks passed on upstream main318a0c1; diff check passed. Package/wire files unchanged; no release/live action. Existing dependency installation was reused for checks; initial pnpm automatic dependency check refused the symlink, so the existing Vitest executable was invoked directly successfully.
+
+PR108 was independently verified merged, with all three Node CI checks successful; its monitor terminated MERGED. Its worktree is retained pending clean-tree/terminal-record cleanup gates. PR109 now awaits CI/review; retain its dedicated worktree and branch. Named observer-only monitor runtime is under /private/tmp/omni-interaction-guide/.agent-memory/runtime; detailed identity and real poll follow below.
+
 # Consolidated PR108 delivery — 2026-09-11
 
 All intended source, tests and guide changes are in PR https://github.com/Inukollu/Omni-Protocol/pull/108 on fix/break-ordering-checks, worktree /private/tmp/omni-break-ordering. Verified implementation baseline 923bca9e6ca7992ac02351ff1a2cc4b3f910bc9d is on origin and the PR; no source/test/guide diff remains. Full local check:423 tests. CI Node20/22/24 passed (run34566254726); PR open/mergeable, no review decision. Pending change in this handover is notes only.
@@ -145,6 +151,11 @@ Validation: full build/typecheck plus 392 tests passed; guide-format check faile
 <!-- pr107-monitor:end -->
 
 <!-- break-monitor:begin -->
-Monitor omni-protocol-pr108-break-ordering: OPEN at 2026-09-11T05:33:51.845858+00:00. Await CI/review; monitor never merges.
+Monitor omni-protocol-pr108-break-ordering: MERGED at 2026-09-11T06:11:21.655181+00:00. Await CI/review; monitor never merges. Independently verify terminal state and cleanup gates.
 PID 66088; command python3 /private/tmp/omni-break-ordering/.agent-memory/runtime/break-monitor.py; state /private/tmp/omni-break-ordering/.agent-memory/runtime/break.state.json; log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.log; PID file /private/tmp/omni-break-ordering/.agent-memory/runtime/break.pid; process log /private/tmp/omni-break-ordering/.agent-memory/runtime/break.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-ordering, branch fix/break-ordering-checks, PR https://github.com/Inukollu/Omni-Protocol/pull/108.
 <!-- break-monitor:end -->
+
+<!-- interaction-monitor:begin -->
+Monitor omni-protocol-pr109-interaction-guide: OPEN at 2026-09-11T06:18:17.801195+00:00. Await CI/review; monitor never merges.
+PID 10809; command python3 /private/tmp/omni-interaction-guide/.agent-memory/runtime/interaction-monitor.py; state /private/tmp/omni-interaction-guide/.agent-memory/runtime/interaction.state.json; log /private/tmp/omni-interaction-guide/.agent-memory/runtime/interaction.log; PID file /private/tmp/omni-interaction-guide/.agent-memory/runtime/interaction.pid; process log /private/tmp/omni-interaction-guide/.agent-memory/runtime/interaction.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-interaction-guide, branch docs/interaction-terminology, PR https://github.com/Inukollu/Omni-Protocol/pull/109.
+<!-- interaction-monitor:end -->
