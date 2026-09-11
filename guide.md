@@ -4858,7 +4858,31 @@ with two complete break objects before applying an event. It checks shape and th
 rules above; it does not mutate either state or apply the event. Report a violation visibly,
 retain the last accepted state without claiming it remains current, and reconcile from the
 source. Continue to validate the full envelope/login and task/break consistency separately.
-The conformance `BreakStream` remains an observer of supplied events, not a production reducer.
+The conformance `BreakStream` validates its baseline, retains the last accepted state on a
+rejected delta, and sets `needsRecovery`. Transport loss also requires reseeding; an `active` transport
+notification alone does not restore a break baseline. Until a fresh validated snapshot is seeded, further
+break deltas are refused (`stream.breakState.baseline`); the first delta is never an implicit
+snapshot. `seed(snapshot)` returns violations, which callers must check. This is a conformance
+tracker, not a complete production reducer: snapshot freshness, login/connection fencing and
+full task consistency remain separately required.
+
+**Both sides must enforce the order.** The host validates immediately before dispatch; the
+provider rechecks current permission and state atomically before acting. The provider validates
+the resulting break/task state before publication and serializes those publications. The host
+validates the envelope, transition and full task consistency before replacing local state. A
+request result does not optimistically advance break state, and a delayed command cannot apply
+to a later attempt merely because its approval happens to look compatible. Keep at most one
+unresolved operation per provider/attempt; recovery must resolve uncertainty before another
+operation is dispatched. The source must fence delayed operations against its own attempt state.
+
+Normal order is `not-requested` → `awaiting-decision` → `granted` →
+`starting-after-task` → `in-effect` → `not-requested`. Auto-approval may go directly to
+`granted`; a commit with no outstanding work may go directly to `in-effect`. Denial/cancel
+returns a precommit request to `not-requested`; an authorized end/release returns a committed
+break there. Same-state restatements are allowed. An evidenced imposed break is the explicit
+exception to requesting/granting, and must carry its imposed actor/state. Neither skipped
+publication nor a host-local guess creates another exception. A later normal attempt starts
+from `not-requested`, never by regressing an active break into a request.
 
 A fresh authoritative snapshot establishes a new baseline; do not run this event-transition
 check across it. A snapshot may legitimately establish a later request or an already active

@@ -250,8 +250,8 @@ describe("assertBreakFollowsItsRequests", () => {
     // A reconnect snapshot resets where the break stands; the same state twice is nothing.
     const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { approval: "granted", mayAsk: true } } } };
     expect(rulesOf(() => assertBreakFollowsItsRequests([reconnect, state("starting-after-task"), state("starting-after-task", {}, "again")], idle))).toEqual([]);
-    // Without a beginning, the first state is taken as it comes.
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect")]))).toEqual([]);
+    // No implied baseline: a first delta cannot establish its own ordering preconditions.
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("in-effect")]))).toEqual(["stream.breakState.baseline"]);
   });
 
   it("refuses a commit's states with no grant behind them", () => {

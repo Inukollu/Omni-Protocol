@@ -536,7 +536,7 @@ export async function exerciseAdapter<C extends Channel>(
     const snapshot = await connection.snapshot() as Snapshot;
     await snapshotRead(live, snapshot, "snapshot");
     stream.seed(snapshot);
-    breaks.seed(snapshot);
+    violations.push(...breaks.seed(snapshot));
     seeded = true;
     // A snapshot supersedes what it restates and nothing else. Of the events held during the read,
     // a state-replacing kind is dropped, since the snapshot carries that state and must account for
@@ -1531,7 +1531,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       // is a place the stream's rules keep working, not one where they all stop.
       await drive.snapshotRead(second, snapshot, "drive.reload.snapshot");
       found.push(...drive.streams.stream.resync(snapshot, "drive.reload.snapshot"));
-      drive.streams.breaks.seed(snapshot);
+      found.push(...drive.streams.breaks.seed(snapshot));
       const carried = isRecord(snapshot) && Array.isArray(snapshot.tasks)
         ? snapshot.tasks.find(task => isRecord(task) && task.id === taskId) as Record<string, unknown> | undefined : undefined;
       ruleEvaluated("drive.reload.snapshot");
@@ -1923,43 +1923,46 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
 // with `imposed`. Nothing else is a move the guide describes.
 /** What a stream has said about the agent's break, and the moves it may not make. */
 export class BreakStream {
-  private approval: string | undefined;
+  private state: unknown;
+  private recovery = true;
 
-  /** Takes the break state a snapshot carries as the point the stream continues from. */
-  seed(snapshot: unknown): void {
+  /** True until a validated authoritative snapshot establishes a usable baseline. */
+  get needsRecovery(): boolean { return this.recovery; }
+
+  /** Caller establishes snapshot freshness/login scope separately; malformed state never replaces the baseline. */
+  seed(snapshot: unknown): ProtocolViolation[] {
     const state = isRecord(snapshot) ? snapshot.break : undefined;
-    this.approval = isRecord(state) && typeof state.approval === "string" ? state.approval : undefined;
+    const found = validateBreakTransition(state, state, "snapshot.break");
+    if (found.length) { this.recovery = true; return found; }
+    this.state = state;
+    this.recovery = false;
+    return [];
   }
 
-  /** Applies one envelope and returns the moves it may not make given where the break stood. */
+  /** Rejected transitions keep accepted state and require snapshot recovery before further deltas. */
   apply(envelope: unknown, path = "event"): ProtocolViolation[] {
-    const found: ProtocolViolation[] = [];
     const event = isRecord(envelope) ? envelope.event : undefined;
-    if (!isRecord(event)) return found;
-    if (event.type === "snapshot") {
-      this.seed(event.snapshot);
-      return found;
-    }
-    if (event.type !== "break-state" || !isRecord(event.break) || typeof event.break.approval !== "string") return found;
-    const from = this.approval;
-    const to = event.break.approval;
-    if (from !== undefined) {
-      found.push(...validateBreakTransition({ approval: from, mayAsk: true }, event.break, `${path}.event.break`));
-    }
-    this.approval = to;
+    if (!isRecord(event)) return [];
+    if (event.type === "transport-status" && event.status !== "active") { this.recovery = true; return []; }
+    if (event.type === "snapshot") return this.seed(event.snapshot);
+    if (event.type !== "break-state") return [];
+    if (this.recovery) return [{ rule: "stream.breakState.baseline", path: `${path}.event.break`,
+      message: "a validated authoritative snapshot is required before accepting break updates" }];
+    const found = validateBreakTransition(this.state, event.break, `${path}.event.break`);
+    if (found.length) this.recovery = true;
+    else this.state = event.break;
     return found;
   }
 }
 
 /**
- * A break follows its requests. Given a provider's stream -- optionally seeded with the snapshot
- * it began from -- every `break-state` moves the way the guide describes: a commit's states only
+ * A break follows its requests. Given a provider's stream -- seeded with its initial snapshot,
+ * either supplied separately or carried by a snapshot event -- every `break-state` moves the way the guide describes: a commit's states only
  * after a grant, never backwards, and a break placed on the agent arriving in effect with `imposed`.
  */
 export function assertBreakFollowsItsRequests(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
   const stream = new BreakStream();
-  if (snapshot !== undefined) stream.seed(snapshot);
-  const found: ProtocolViolation[] = [];
+  const found: ProtocolViolation[] = snapshot === undefined ? [] : stream.seed(snapshot);
   envelopes.forEach((envelope, index) => found.push(...stream.apply(envelope, `envelopes[${index}]`)));
   assertNoViolations(found, "A break follows its requests");
 }

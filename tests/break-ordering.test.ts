@@ -56,6 +56,44 @@ describe("runtime break ordering", () => {
     expect(stream.apply(event("awaiting-decision")).map(v => v.rule)).toContain("stream.breakState.backwards");
   });
 
+  it("requires a snapshot initially and after a rejected delta", () => {
+    const stream = new BreakStream();
+    expect(stream.needsRecovery).toBe(true);
+    expect(stream.apply(event("granted")).map(v => v.rule)).toContain("stream.breakState.baseline");
+    expect(stream.seed({ break: state("in-effect") })).toEqual([]);
+    expect(stream.apply(event("awaiting-decision"))).not.toEqual([]);
+    expect(stream.needsRecovery).toBe(true);
+    // The rejected request cannot make the following grant appear valid.
+    expect(stream.apply(event("granted")).map(v => v.rule)).toContain("stream.breakState.baseline");
+    expect(stream.seed({ break: state("not-requested") })).toEqual([]);
+    expect(stream.needsRecovery).toBe(false);
+    expect(stream.apply(event("awaiting-decision"))).toEqual([]);
+    expect(stream.apply(event("granted"))).toEqual([]);
+    expect(stream.apply(event("in-effect"))).toEqual([]);
+  });
+
+  it("requires reseeding after transport loss even when transport becomes active again", () => {
+    const stream = new BreakStream();
+    stream.seed({ break: state("granted") });
+    stream.apply({ event: { type: "transport-status", status: "connecting" } });
+    stream.apply({ event: { type: "transport-status", status: "active" } });
+    expect(stream.needsRecovery).toBe(true);
+    expect(stream.apply(event("in-effect"))).not.toEqual([]);
+    expect(stream.seed({ break: state("in-effect") })).toEqual([]);
+    expect(stream.apply(event("not-requested"))).toEqual([]);
+  });
+
+  it("refuses malformed break deltas and snapshots without advancing state", () => {
+    const stream = new BreakStream();
+    stream.seed({ break: state("granted") });
+    expect(stream.apply({ event: { type: "break-state", break: {} } })).not.toEqual([]);
+    expect(stream.seed({ break: { approval: "granted" } })).not.toEqual([]);
+    expect(stream.needsRecovery).toBe(true);
+    expect(stream.apply(event("in-effect"))).not.toEqual([]);
+    expect(stream.seed({ break: state("in-effect") })).toEqual([]);
+    expect(stream.apply(event("not-requested"))).toEqual([]);
+  });
+
   it("does not claim to detect a stale snapshot or legal-looking old event", () => {
     // No source revision/attempt identity exists: this could be a new request or a delayed old one.
     expect(validateBreakTransition(state("not-requested"), state("awaiting-decision"))).toEqual([]);
