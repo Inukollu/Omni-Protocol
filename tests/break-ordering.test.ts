@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BreakStatus, BreakState } from "../src/index.js";
-import { validateBreakTransition, validateBreakCommand, validateBreakStatus, validateTeamBreakCommand, validateResult, type BreakMethod } from "../src/validation.js";
+import { validateBreakTransition, validateBreakCommand, validateBreakStatus, validateTeamCommand, validateResult, type BreakMethod } from "../src/validation.js";
 import { BreakStream } from "../src/testing.js";
 
 const state = (status: BreakStatus): BreakState => ({ status, canRequestBreak: true });
@@ -237,88 +237,123 @@ describe("break prerequisites", () => {
     expect(validateBreakStatus(state("on-break"), [])).toEqual([]);
     expect(validateBreakStatus(state("on-break"), undefined)).not.toEqual([]);
     expect(validateBreakStatus(state("starting-after-task"), [{ id: "task" }])).toEqual([]);
-    const listening = { ...state("on-break"), activeReasonId: "training", reasons: [{ id: "training", label: "Training", kind: "training" }] };
-    expect(validateBreakStatus(listening, [{ listening: {} }])).toEqual([]);
-    expect(validateBreakStatus(state("on-break"), [{ listening: {} }])).not.toEqual([]);
+    // The one task a break in effect may hold is a call a lead took over: the provider assigns it whatever break the lead is on.
+    expect(validateBreakStatus(state("on-break"), [{ takenOver: { memberId: "A-1", since: "2026-08-21T09:00:00Z" } }])).toEqual([]);
+    expect(validateBreakStatus(state("on-break"), [{ takenOver: { memberId: "A-1", since: "2026-08-21T09:00:00Z" } }, { id: "task" }])).not.toEqual([]);
   });
 });
 
-describe("lead break prerequisites", () => {
-  const lead = { ...context, authentication: { ...context.authentication, capabilities: { team: { breakControl: true } } },
-    team: { members: [{ id: "member", availability: "ready", break: "awaiting-approval" }] },
+describe("lead commands", () => {
+  const lead = { ...context, authentication: { ...context.authentication, capabilities: { lead: true as const } },
+    team: { members: [{ id: "member", availability: "ready", break: "awaiting-approval" }], requests: [] },
     memberBreak: { ...state("not-requested"), reasons: [{ id: "bio", label: "Bio" }] },
   };
   it("requires current decision eligibility, target membership and explicit lead permission", () => {
     const request = { command: { type: "decide-break-request", memberId: "member", decision: "granted" } };
-    expect(validateTeamBreakCommand(request, lead)).toEqual([]);
-    expect(validateTeamBreakCommand({ command: { ...request.command, decision: "denied" } }, lead)).toEqual([]);
-    expect(validateTeamBreakCommand({ command: { ...request.command, type: "decide" } }, lead).map(v => v.rule)).toContain("team.break.command.type");
-    for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [] } },
-      { ...lead, team: { members: [{ id: "member", break: "granted" }] } }]) {
-      expect(validateTeamBreakCommand(request, bad)).not.toEqual([]);
+    expect(validateTeamCommand(request, lead)).toEqual([]);
+    expect(validateTeamCommand({ command: { ...request.command, decision: "denied" } }, lead)).toEqual([]);
+    expect(validateTeamCommand({ command: { ...request.command, type: "decide" } }, lead).map(v => v.rule)).toContain("team.command.type");
+    for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [], requests: [] } },
+      { ...lead, team: { members: [{ id: "member", break: "granted" }], requests: [] } }]) {
+      expect(validateTeamCommand(request, bad)).not.toEqual([]);
     }
-    expect(validateTeamBreakCommand({ command: { ...request.command, decision: "maybe" } }, lead)).not.toEqual([]);
+    expect(validateTeamCommand({ command: { ...request.command, decision: "maybe" } }, lead)).not.toEqual([]);
   });
   it("rejects the retired command and preserves force prerequisites", () => {
     const command = { type: "force-break", memberId: "member", reasonId: "bio" };
     for (const type of ["place", "force"]) {
-      expect(validateTeamBreakCommand({ command: { ...command, type } }, lead).map(v => v.rule)).toContain("team.break.command.type");
+      expect(validateTeamCommand({ command: { ...command, type } }, lead).map(v => v.rule)).toContain("team.command.type");
     }
-    for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [] } }, { ...lead, memberBreak: undefined }]) {
-      expect(validateTeamBreakCommand({ command }, bad)).not.toEqual([]);
+    for (const bad of [context, { ...lead, transport: "connecting" }, { ...lead, team: { members: [], requests: [] } }, { ...lead, memberBreak: undefined }]) {
+      expect(validateTeamCommand({ command }, bad)).not.toEqual([]);
     }
   });
   it("rejects the old team end command and preserves its permission and state gates", () => {
     const command = { type: "end-forced-break", memberId: "member" };
     const current = { ...lead, memberBreak: { ...state("on-break"), forced: { by: "another-lead" } } };
     for (const type of ["release", "end", "end-break"]) {
-      expect(validateTeamBreakCommand({ command: { ...command, type } }, current).map(v => v.rule)).toContain("team.break.command.type");
+      expect(validateTeamCommand({ command: { ...command, type } }, current).map(v => v.rule)).toContain("team.command.type");
     }
-    expect(validateTeamBreakCommand({ command }, lead).map(v => v.rule)).toContain("team.break.command.endForcedBreak");
-    for (const bad of [context, { ...current, transport: "connecting" }, { ...current, team: { members: [] } }, { ...current, memberBreak: undefined }]) {
-      expect(validateTeamBreakCommand({ command }, bad)).not.toEqual([]);
+    expect(validateTeamCommand({ command }, lead).map(v => v.rule)).toContain("team.command.endForcedBreak");
+    for (const bad of [context, { ...current, transport: "connecting" }, { ...current, team: { members: [], requests: [] } }, { ...current, memberBreak: undefined }]) {
+      expect(validateTeamCommand({ command }, bad)).not.toEqual([]);
     }
-    expect(validateTeamBreakCommand({ command }, { ...current, memberBreak: { ...current.memberBreak, status: "starting-after-task" } })).toEqual([]);
+    expect(validateTeamCommand({ command }, { ...current, memberBreak: { ...current.memberBreak, status: "starting-after-task" } })).toEqual([]);
   });
   it("allows a lead to force a break without explanatory text", () => {
-    expect(validateTeamBreakCommand({ command: { type: "force-break", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
-    expect(validateTeamBreakCommand({ command: { type: "force-break", memberId: "member" } }, {
+    expect(validateTeamCommand({ command: { type: "force-break", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
+    expect(validateTeamCommand({ command: { type: "force-break", memberId: "member" } }, {
       ...lead, memberBreak: state("not-requested"),
     })).toEqual([]);
   });
   it("accepts an optional expected duration on force-break and rejects timer controls", () => {
     const command = { type: "force-break", memberId: "member", reasonId: "bio" };
-    expect(validateTeamBreakCommand({ command: { ...command, expectedDurationMs: 600000 } }, lead)).toEqual([]);
+    expect(validateTeamCommand({ command: { ...command, expectedDurationMs: 600000 } }, lead)).toEqual([]);
     for (const expectedDurationMs of [0, -1, Infinity, NaN, "500", null]) {
-      expect(validateTeamBreakCommand({ command: { ...command, expectedDurationMs } }, lead).map(v => v.rule)).toContain("team.break.command.expectedDurationMs");
+      expect(validateTeamCommand({ command: { ...command, expectedDurationMs } }, lead).map(v => v.rule)).toContain("team.command.expectedDurationMs");
     }
-    expect(validateTeamBreakCommand({ command: { ...command, endsAutomatically: true } }, lead).map(v => v.rule)).toContain("team.break.command.field");
+    expect(validateTeamCommand({ command: { ...command, endsAutomatically: true } }, lead).map(v => v.rule)).toContain("team.command.field");
   });
   it("checks the forced-break reason and end without assuming the same lead does both", () => {
-    expect(validateTeamBreakCommand({ command: { type: "force-break", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
-    expect(validateTeamBreakCommand({ command: { type: "force-break", memberId: "member" } }, lead)).not.toEqual([]);
+    expect(validateTeamCommand({ command: { type: "force-break", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
+    expect(validateTeamCommand({ command: { type: "force-break", memberId: "member" } }, lead)).not.toEqual([]);
     const end = { command: { type: "end-forced-break", memberId: "member" } };
-    expect(validateTeamBreakCommand(end, lead)).not.toEqual([]);
-    expect(validateTeamBreakCommand(end, { ...lead, memberBreak: { ...state("on-break"), forced: { by: "another-lead" } } })).toEqual([]);
+    expect(validateTeamCommand(end, lead)).not.toEqual([]);
+    expect(validateTeamCommand(end, { ...lead, memberBreak: { ...state("on-break"), forced: { by: "another-lead" } } })).toEqual([]);
   });
   it("validates every break policy and rejects the old command name", () => {
     for (const policy of ["suspended", "requests-blocked", "auto-approve"]) {
-      expect(validateTeamBreakCommand({ command: { type: "set-break-policy", policy } }, lead).map(v => v.rule)).toContain("team.break.command.policy");
+      expect(validateTeamCommand({ command: { type: "set-break-policy", policy } }, lead).map(v => v.rule)).toContain("team.command.policy");
     }
-    expect(validateTeamBreakCommand({ command: { type: "set-break-policy", policy: "ask" } }, lead).map(v => v.rule)).toContain("team.break.command.policy");
+    expect(validateTeamCommand({ command: { type: "set-break-policy", policy: "ask" } }, lead).map(v => v.rule)).toContain("team.command.policy");
     for (const policy of ["approval-required", "automatically-approved", "requests-suspended"]) {
       const command = { type: "set-break-policy", policy };
-      expect(validateTeamBreakCommand({ command }, lead)).toEqual([]);
-      expect(validateTeamBreakCommand({ command: { ...command, type: "policy" } }, lead).map(v => v.rule)).toContain("team.break.command.type");
+      expect(validateTeamCommand({ command }, lead)).toEqual([]);
+      expect(validateTeamCommand({ command: { ...command, type: "policy" } }, lead).map(v => v.rule)).toContain("team.command.type");
       for (const bad of [context, { ...lead, transport: "connecting" }]) {
-        expect(validateTeamBreakCommand({ command }, bad)).not.toEqual([]);
+        expect(validateTeamCommand({ command }, bad)).not.toEqual([]);
       }
     }
   });
+  it("names the member on every act on a member's call, and holds each to what the team member list shows", () => {
+    const at = "2026-08-21T09:04:00Z";
+    const onCall = { ...lead, team: { members: [{ id: "member", availability: "on-task", tasks: [{ assignmentId: "alloc-7", title: "Call", channel: "voice", taskType: "Queue", phase: "in-progress" }], requests: [] },
+      { id: "listened", availability: "on-task", listening: { mode: "listen", since: at } }], requests: [{ memberId: "member", assignmentId: "alloc-7", since: at }] } };
+    for (const type of ["listen", "take-over-call", "join", "decline"]) {
+      expect(validateTeamCommand({ command: { type, memberId: "member" } }, onCall)).toEqual([]);
+      expect(validateTeamCommand({ command: { type, memberId: "member", assignmentId: "alloc-7" } }, onCall)).toEqual([]);
+      expect(validateTeamCommand({ command: { type, memberId: "member", assignmentId: "alloc-9" } }, onCall).map(v => v.rule)).toContain("team.command.assignmentId.unknown");
+      expect(validateTeamCommand({ command: { type, memberId: "nobody" } }, onCall).map(v => v.rule)).toContain("team.command.member");
+      expect(validateTeamCommand({ command: { type } }, onCall).map(v => v.rule)).toContain("team.command.member");
+    }
+    // Join and decline answer a request; the listened member has none.
+    for (const type of ["join", "decline"]) expect(validateTeamCommand({ command: { type, memberId: "listened" } }, onCall).map(v => v.rule)).toContain("team.command.request");
+    // Coach, join-call and leave need the lead on that member's call already.
+    for (const type of ["coach", "join-call", "leave"]) {
+      expect(validateTeamCommand({ command: { type, memberId: "listened" } }, onCall)).toEqual([]);
+      expect(validateTeamCommand({ command: { type, memberId: "member" } }, onCall).map(v => v.rule)).toContain("team.command.listening");
+    }
+    // The former listen and lead-assist shapes name nobody, and are refused.
+    expect(validateTeamCommand({ command: { type: "coach" } }, onCall).map(v => v.rule)).toContain("team.command.member");
+    expect(validateTeamCommand({ command: { type: "join", requestId: "req-7" } }, onCall).map(v => v.rule)).toContain("team.command.field");
+    expect(validateTeamCommand({ command: { type: "listen", memberId: "member" } }, { ...onCall, authentication: { ...onCall.authentication, capabilities: {} } }).map(v => v.rule)).toContain("team.command.capability");
+  });
+  it("switches the team feature on and off, and sets a policy, as lead commands", () => {
+    for (const enabled of [true, false]) expect(validateTeamCommand({ command: { type: "lead-features", enabled } }, lead)).toEqual([]);
+    expect(validateTeamCommand({ command: { type: "lead-features", enabled: "yes" } }, lead).map(v => v.rule)).toContain("team.command.enabled");
+    expect(validateTeamCommand({ command: { type: "lead-features" } }, lead).map(v => v.rule)).toContain("team.command.enabled");
+    expect(validateTeamCommand({ command: { type: "set-policy", capability: "hold", setting: "person" } }, lead)).toEqual([]);
+    expect(validateTeamCommand({ command: { type: "set-policy", capability: "skill:billing", setting: "off" } }, lead)).toEqual([]);
+    expect(validateTeamCommand({ command: { type: "set-policy", capability: "connectBack", setting: "person" } }, lead).map(v => v.rule)).toContain("team.command.setting.person");
+    expect(validateTeamCommand({ command: { type: "set-policy", capability: "mute", setting: "off" } }, lead).map(v => v.rule)).toContain("team.command.capability.key");
+    expect(validateTeamCommand({ command: { type: "set-policy", capability: "hold", setting: "maybe" } }, lead).map(v => v.rule)).toContain("team.command.setting");
+    // The former one-word policy command is refused.
+    expect(validateTeamCommand({ command: { type: "set", capability: "hold", setting: "on" } }, lead).map(v => v.rule)).toContain("team.command.type");
+  });
   it("rejects unsupported policy, malformed commands and extra fields", () => {
-    expect(validateTeamBreakCommand({ command: { type: "set-break-policy", policy: "requests-suspended" } }, lead)).toEqual([]);
+    expect(validateTeamCommand({ command: { type: "set-break-policy", policy: "requests-suspended" } }, lead)).toEqual([]);
     for (const command of [null, { type: "toString" }, { type: "set-break-policy", policy: "anything" }, { type: "set-break-policy", policy: "approval-required", memberId: "member" }]) {
-      expect(validateTeamBreakCommand({ command }, lead)).not.toEqual([]);
+      expect(validateTeamCommand({ command }, lead)).not.toEqual([]);
     }
   });
 });

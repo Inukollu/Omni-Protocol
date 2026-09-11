@@ -8,8 +8,6 @@ import {
   CAPABILITY_SOURCES,
   HOST_MUTES,
   MUTED_BY,
-  LISTENING_BREAK_KINDS,
-  breakKindAllowsListening,
   HISTORY_STEPS_THAT_DIAL,
   HISTORY_STEPS_WITH_A_PERSON,
   IDLE_CAPABILITIES,
@@ -202,22 +200,14 @@ describe("Omni protocol", () => {
 });
 
 describe("sameCapabilities", () => {
-  it("compares field by field, whatever the key order, and tells {} from absent", () => {
-    expect(sameCapabilities({ breaks: true, team: { breakControl: true } }, { team: { breakControl: true }, breaks: true })).toBe(true);
+  it("compares field by field, whatever the key order", () => {
+    expect(sameCapabilities({ breaks: true, lead: true }, { lead: true, breaks: true })).toBe(true);
     expect(sameCapabilities({}, {})).toBe(true);
-    expect(sameCapabilities({ team: {} }, { team: {} })).toBe(true);
-    // Each field on its own moves the answer: a lead with no controls is still a lead.
-    expect(sameCapabilities({ team: {} }, {})).toBe(false);
+    // Each field on its own moves the answer: the lead flag is one of them, so a demotion is a change.
+    expect(sameCapabilities({ lead: true }, {})).toBe(false);
     expect(sameCapabilities({ breaks: true }, {})).toBe(false);
-    expect(sameCapabilities({ team: { breakControl: true } }, { team: {} })).toBe(false);
-    expect(sameCapabilities({ team: { leadAssistControl: true } }, { team: { breakControl: true } })).toBe(false);
-    // The listen modes are a set: order is not a difference, a missing mode is.
-    expect(sameCapabilities({ team: { listeningControl: ["listen", "coach"] } }, { team: { listeningControl: ["coach", "listen"] } })).toBe(true);
-    expect(sameCapabilities({ team: { listeningControl: ["listen", "coach"] } }, { team: { listeningControl: ["listen"] } })).toBe(false);
-    expect(sameCapabilities({ team: { listeningControl: ["listen"] } }, { team: {} })).toBe(false);
-    // Every field: a lead's policy control, and the preferences the login declares, by id, label, enabled and who set or locked them.
-    expect(sameCapabilities({ team: { policyControl: true } }, { team: {} })).toBe(false);
-    expect(sameCapabilities({ team: { policyControl: true } }, { team: { policyControl: true } })).toBe(true);
+    expect(sameCapabilities({ lead: true }, { lead: true })).toBe(true);
+    // Every field: the preferences the login declares, by id, label, enabled and who set or locked them.
     const hold = { id: "hold" as const, label: "Hold", enabled: true, setBy: "team" as const };
     expect(sameCapabilities({ preferences: [hold] }, { preferences: [hold] })).toBe(true);
     expect(sameCapabilities({ preferences: [hold] }, {})).toBe(false);
@@ -279,15 +269,6 @@ describe("historyStepExpectsAPerson", () => {
       expect(historyStepExpectsAPerson(step)).toBe(true);
     }
     expect(HISTORY_STEPS_WITH_A_PERSON).toEqual(everyStep.filter(step => step !== "queued"));
-  });
-});
-
-describe("listening during a break", () => {
-  it("allows the working kinds of break and no other", () => {
-    expect(LISTENING_BREAK_KINDS).toEqual(["coaching", "administrative", "training"]);
-    for (const kind of LISTENING_BREAK_KINDS) expect(breakKindAllowsListening(kind)).toBe(true);
-    for (const kind of ["short-break", "meal", "rest", "meeting", "technical", "personal", "other"] as const) expect(breakKindAllowsListening(kind)).toBe(false);
-    expect(breakKindAllowsListening(undefined)).toBe(false);
   });
 });
 

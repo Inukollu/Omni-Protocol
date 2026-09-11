@@ -292,26 +292,6 @@ export interface AuthenticationFailure {
   field?: string;
 }
 
-/** What a lead may do with their team. Declared by presence. */
-export interface TeamCapabilities {
-  /**
-   * This lead may act on their team's breaks through `executeTeamBreak` -- force-break, end-forced-break, decide-break-request,
-   * set-break-policy -- as far as the provider supports; a command it lacks answers
-   * `omni.capability-not-enabled`. Requires `executeTeamBreak`.
-   */
-  breakControl?: true;
-  /** This lead may join a member's call on request. Requires `executeTeamLeadAssist`. */
-  leadAssistControl?: true;
-  /**
-   * This lead may listen to a member's call unasked, in these modes and no others. Coach and
-   * join-call begin with silent listening, so the list always includes `listen`. Nothing of it reaches the
-   * member's task. Requires `executeTeamListen`.
-   */
-  listeningControl?: ListeningMode[];
-  /** This lead sets the team's policy per capability -- on, off, or the agent's -- within what the queue allows. Requires `executeTeamPolicy`. */
-  policyControl?: true;
-}
-
 /**
  * How a lead listening to a member's call is heard: `listen` hears both sides in silence,
  * `coach` is heard by the agent alone, `join-call` by everyone on the call.
@@ -330,8 +310,14 @@ export interface UserCapabilities {
   breaks?: true;
   /** The choices the team left to this person, with where each stands. Omitted when there are none. Requires `setPreference`. */
   preferences?: AgentPreference[];
-  /** This login leads a team: a `TeamMembers` object is published to it on every snapshot, including `members: []`. */
-  team?: TeamCapabilities;
+  /**
+   * This login leads a team. The flag alone turns on the team feature in the agent application:
+   * the lead sees their members with their tasks and stats, and acts on them through `executeTeam`
+   * with the authority the flag carries. No per-action permission rides beside it. While the lead
+   * has the feature on, a `TeamMembers` object is published to them on every snapshot, `members: []`
+   * included; to nobody else, ever.
+   */
+  lead?: true;
 }
 
 /**
@@ -678,6 +664,7 @@ export type TaskCapabilities<C extends Channel = Channel> =
         hold?: Lockable<true>;
         /** The provider ends the caller connection and agent-added channels owned by this interaction, including inherited channels after transfer/takeover. Interaction completion remains separate. */
         endCall?: Lockable<true>;
+        terminateCall?: Lockable<true>;
         /** Connect back to the party while `completing`, whoever placed the call; the task returns to `in-progress`. */
         connectBack?: Lockable<true>;
         coldTransfer?: Lockable<DestinationDirectory>;
@@ -897,28 +884,13 @@ export type TaskLeadAssist = { note?: string; since: IsoTimestamp } & (
 );
 
 /**
- * On the lead's own task for a call they joined: which member asked, with their note. Its
- * presence is what makes `lead-assist` `take-over-call` and `leave` issuable.
+ * On a task that reached this agent by a lead's take-over: which member the call was taken from,
+ * and when. The provider moves the call from one agent to another, and the lead is the new agent,
+ * so the task is an ordinary assignment with the call's history -- offered whatever break the lead
+ * is on, counted against no capacity, provided their voice channel is free.
  */
-export interface TaskAssisting {
+export interface TaskTakenOver {
   memberId: UserId;
-  /** The member's assignment the lead joined: the lead's task has an assignment of its own. */
-  assignmentId: AssignmentId;
-  note?: string;
-  since: IsoTimestamp;
-}
-
-/**
- * On the lead's own task while they listen to a member's call: whose call, which call, and how the
- * lead is heard, restated on every change of mode. Nothing of it reaches the member's task. There
- * is no take-over here; a lead who wants the call uses lead assist. It is the lead's only task:
- * a lead listens while holding no work of their own, idle or on a break of a kind in
- * `LISTENING_BREAK_KINDS`.
- */
-export interface TaskListening {
-  memberId: UserId;
-  assignmentId: AssignmentId;
-  mode: ListeningMode;
   since: IsoTimestamp;
 }
 
@@ -1018,10 +990,10 @@ export type Task<C extends Channel = Channel> = {
   history?: TaskHistory;
 } & TaskCompletion
   // onCall is this interaction's current room, not the lifetime of the caller or whole bridge.
-  // Its room, a lead on it or listening to it, and real-time media are voice affairs; forbidden elsewhere.
+  // Its room, a lead asked onto it or taking it over, and real-time media are voice affairs; forbidden elsewhere.
   & (C extends "voice"
-    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; listening?: TaskListening; media?: TaskMediaState }
-    : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; listening?: never; media?: never });
+    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; media?: TaskMediaState }
+    : { recording?: never; onCall?: never; leadAssist?: never; takenOver?: never; media?: never });
 
 /**
  * What the provider wants of Omni's acceptance policy for one offer. On routed work, present only
@@ -1038,14 +1010,12 @@ export type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
   /** A cold transfer to a destination the agent chose: a directory item's id. */
   | { type: "transferred"; destinationId?: string }
-  /** A lead took the call over: the agent's task ends and the lead's continues. Named by the lead, since a lead is not a directory item. */
+  /** A lead took the call over and the agent has wrapped it: the outcome at the agent's own completion. Named by the lead, since a lead is not a directory item. */
   | { type: "taken-over"; leadId: UserId }
   /** Who called the work off: the agent declining, the provider withdrawing or re-routing, the party abandoning. */
   | { type: "cancelled"; by: "agent" | "provider" | "party"; reason?: string }
   /** Only the phases in which somebody is still being waited on can expire; an offer that lapses at `assignmentExpiresAt` names `pending`. */
   | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
-  /** This agent left a call that continues without them: a lead who joined and dropped. */
-  | { type: "left" }
   | { type: "failed"; failure: ProtocolFailure };
 
 // ---------------------------------------------------------------------------
@@ -1053,7 +1023,7 @@ export type TaskOutcome =
 // ---------------------------------------------------------------------------
 
 export const TASK_COMMAND_NAMES = {
-  voice: ["answer", "decline", "call", "hold", "resume", "end-call",
+  voice: ["answer", "decline", "call", "hold", "resume", "end-call", "terminate-call",
           "connect-back", "transfer", "lead-assist", "conference", "recording", "complete"],
   chat: ["accept", "decline", "pause", "resume", "complete"],
   email: ["accept", "decline", "complete"],
@@ -1074,8 +1044,10 @@ export type VoiceTaskCommand =
   | { type: "call"; dialId: DialId }
   | { type: "hold" }
   | { type: "resume" }
-  /** End the caller connection and all agent-added channels owned or inherited by this interaction. Wrap/completion remain separate. Gated by `endCall`. */
+  /** End the agent's channel and every channel the agent added; the caller continues on the provider's path. Gated by `endCall`. */
   | { type: "end-call" }
+  /** End the caller channel. Gated by `terminateCall`. */
+  | { type: "terminate-call" }
   /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
   | { type: "connect-back"; dialId: DialId }
   /** Cold: hand the customer to the directory item `destinationId` with nobody spoken to first. Gated by `coldTransfer`. */
@@ -1090,10 +1062,6 @@ export type VoiceTaskCommand =
   | { type: "lead-assist"; action: "request"; note?: string }
   /** Withdraw a standing request. Needs `Task.leadAssist` with status `requested`. */
   | { type: "lead-assist"; action: "cancel" }
-  /** The lead keeps the customer; the agent's task ends `transferred`. Needs `Task.assisting`. */
-  | { type: "lead-assist"; action: "take-over-call" }
-  /** The lead drops; the agent continues. The lead's task ends `left`. Needs `Task.assisting`. */
-  | { type: "lead-assist"; action: "leave" }
   /** Dial the directory item `destinationId` into the call. Gated by `conference`. */
   | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
   /**
@@ -1197,15 +1165,6 @@ export const BREAK_KINDS = [
  */
 export type BreakKind = (typeof BREAK_KINDS)[number];
 
-/**
- * The breaks during which a lead may listen to a member's call: work of another sort, not rest.
- * A listening task is the one task a break in effect may hold, and only on one of these.
- */
-export const LISTENING_BREAK_KINDS = ["coaching", "administrative", "training"] as const satisfies readonly BreakKind[];
-
-export const breakKindAllowsListening = (kind: BreakKind | undefined): boolean =>
-  kind !== undefined && (LISTENING_BREAK_KINDS as readonly BreakKind[]).includes(kind);
-
 export interface BreakReason {
   id: string;
   label: string;
@@ -1279,11 +1238,14 @@ export interface TeamMember {
   since?: IsoTimestamp;
   /** A request in flight or a grant not yet in effect. `not-requested` is absence, and `on-break` is `availability: "on-break"`. */
   break?: Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">;
+  /** The member's open tasks, trimmed, kept current by the provider; `[]` when they hold none, omitted only where the provider cannot see them. */
+  tasks?: MemberTask[];
+  /** Present while this lead is on the member's call, listening, coaching or joined; absent otherwise. */
+  listening?: MemberListening;
 }
 
-/** A member asking this lead to join their call. */
+/** A member asking this lead to join their call, named by the member and the assignment. */
 export interface LeadRequest {
-  id: string;
   memberId: UserId;
   assignmentId: AssignmentId;
   note?: string;
@@ -1291,14 +1253,46 @@ export interface LeadRequest {
 }
 
 /**
- * The login is the permission: published to a login that declares `capabilities.team`, on every
- * snapshot, and to nobody else. What the lead may do with it is on the login too, not here.
+ * A member's task as the lead sees it: the same task the member's desk holds, trimmed by the
+ * provider. The assignment, what the call is and where it stands, the room and the full history
+ * are always here; the workspace -- browsers, controls, completion terms -- is the member's and
+ * travels only if the provider chooses to send it.
+ */
+export type MemberTask<C extends Channel = Channel> = {
+  assignmentId: AssignmentId;
+  title: string;
+  channel: C;
+  taskType: string;
+  phase: TaskPhase;
+  party?: Contact;
+  reference?: string;
+  attributes?: TaskAttribute[];
+  history?: TaskHistory;
+  capabilities?: TaskCapabilities<C>;
+  capabilitySource?: CapabilitySource;
+  browsers?: TaskBrowser[];
+  completionMode?: CompletionMode;
+  wrapAllowance?: DurationSeconds;
+} & (C extends "voice"
+  ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; media?: TaskMediaState }
+  : { onCall?: never; leadAssist?: never; takenOver?: never; media?: never });
+
+/** The lead on this member's call, in the mode they are heard, since when. */
+export interface MemberListening {
+  mode: ListeningMode;
+  since: IsoTimestamp;
+}
+
+/**
+ * The lead's view of their team: published to a login that declares `capabilities.lead` while the
+ * lead has the team feature on, on every snapshot, and to nobody else. The provider keeps it
+ * current: when a member holds, mutes or is transferred, the list is republished whole.
  */
 export interface TeamMembers {
   members: TeamMember[];
-  /** Omitted when the login lacks `team.leadAssistControl`; `[]` when nobody is asking. */
-  requests?: LeadRequest[];
-  /** The team's policy per capability, as it stands. Present exactly when the login declares `team.policyControl`. */
+  /** Members asking a lead to join their call; `[]` when nobody is asking. */
+  requests: LeadRequest[];
+  /** The team's policy per capability, as it stands. Present where the provider offers policy control; absent where it does not. */
   policies?: TeamPolicies;
 }
 
@@ -1320,34 +1314,31 @@ export interface TeamPolicy extends Resolved {
 
 export type TeamPolicies = Partial<Record<PolicyKey, TeamPolicy>>;
 
-export type TeamPolicyCommand = { type: "set"; capability: PolicyKey; setting: TeamPolicySetting };
-
-export interface TeamPolicyCommandRequest {
-  command: TeamPolicyCommand;
-}
-
-export type TeamLeadAssistCommand =
-  | { type: "join"; requestId: string }
-  | { type: "decline"; requestId: string; reason?: string };
-
-export interface TeamLeadAssistCommandRequest {
-  command: TeamLeadAssistCommand;
-}
+export type TeamPolicyCommand = { type: "set-policy"; capability: PolicyKey; setting: TeamPolicySetting };
 
 /**
- * A lead listening to a member's call. `listen` starts one, silent, on a member from the team member list;
- * `coach` and `join-call` change how the standing one is heard; `leave` ends it. One member at a
- * time, and only the modes the login's `listeningControl` lists.
+ * The team feature on or off. The lead flag enables it; the lead switches it on the fly, and the
+ * provider needs to know: while it is on, team events scoped to the lead's team arrive and the
+ * lead may act; while it is off, the lead is an ordinary agent and nothing of the team reaches them.
  */
-export type TeamListenCommand =
-  | { type: "listen"; memberId: UserId }
-  | { type: "coach" }
-  | { type: "join-call" }
-  | { type: "leave" };
+export type TeamFeatureCommand = { type: "lead-features"; enabled: boolean };
 
-export interface TeamListenCommandRequest {
-  command: TeamListenCommand;
-}
+/**
+ * The lead's acts on a member's call, each naming the member and, where the lead has it, the
+ * member's assignment; the provider resolves the member's current assignment from the member alone.
+ * `join` answers a member's request and `decline` refuses it; `listen` starts unasked, silent,
+ * `coach` is heard by the member alone and `join-call` by everyone; `leave` takes the lead's channel
+ * off the call however it got there; `take-over-call` moves the call to the lead as its new agent,
+ * from a joined call or a listened one alike. One member's call at a time.
+ */
+export type TeamCallCommand =
+  | { type: "join"; memberId: UserId; assignmentId?: AssignmentId }
+  | { type: "decline"; memberId: UserId; assignmentId?: AssignmentId; reason?: string }
+  | { type: "listen"; memberId: UserId; assignmentId?: AssignmentId }
+  | { type: "coach"; memberId: UserId; assignmentId?: AssignmentId }
+  | { type: "join-call"; memberId: UserId; assignmentId?: AssignmentId }
+  | { type: "leave"; memberId: UserId; assignmentId?: AssignmentId }
+  | { type: "take-over-call"; memberId: UserId; assignmentId?: AssignmentId };
 
 export type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
@@ -1357,13 +1348,16 @@ export type TeamBreakCommand =
   /** Clears forced metadata only; preserves the committed break until the agent explicitly resumes. */
   | { type: "end-forced-break"; memberId: UserId };
 
+/** Every lead act, as `execute` takes a `TaskCommand`: discriminated by `type`. */
+export type TeamCommand = TeamFeatureCommand | TeamBreakCommand | TeamCallCommand | TeamPolicyCommand;
+
+export interface TeamCommandRequest {
+  command: TeamCommand;
+}
+
 export type TeamCommandResult =
   | { status: "applied" }
   | { status: "failed"; failure: ProtocolFailure };
-
-export interface TeamBreakCommandRequest {
-  command: TeamBreakCommand;
-}
 
 // ---------------------------------------------------------------------------
 // Media.
@@ -1516,6 +1510,13 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "task-updated"; task: Task<C> }
   | { type: "task-media-started"; assignmentId: AssignmentId }
   | { type: "task-media-ended"; assignmentId: AssignmentId }
+  /**
+   * The lead's channel is in a member's call -- listening, coaching or joined -- and its audio should
+   * attach: on a softphone the application opens media on the member's assignment as it does for a
+   * task. Voice, to a login that declares `lead`, never to the member.
+   */
+  | { type: "team-media-started"; memberId: UserId; assignmentId: AssignmentId }
+  | { type: "team-media-ended"; memberId: UserId; assignmentId: AssignmentId }
   | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
   /**
    * How a dial the host placed ended, once, either way -- `answered` is stated, never read off
@@ -1625,14 +1626,8 @@ export interface Connection<C extends Channel = Channel> {
   cancelBreak?(): Promise<BreakCancelResult>;
   endBreak?(): Promise<BreakEndResult>;
 
-  /** Required when the login declares `capabilities.team.breakControl`. */
-  executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
-  /** Required when the login declares `capabilities.team.leadAssistControl`. */
-  executeTeamLeadAssist?(request: TeamLeadAssistCommandRequest): Promise<TeamCommandResult>;
-  /** Required when the login declares `capabilities.team.listeningControl`. */
-  executeTeamListen?(request: TeamListenCommandRequest): Promise<TeamCommandResult>;
-  /** Required when the login declares `capabilities.team.policyControl`. */
-  executeTeamPolicy?(request: TeamPolicyCommandRequest): Promise<TeamCommandResult>;
+  /** Required when the login declares `capabilities.lead`: every lead act, on the team surface and nowhere else. */
+  executeTeam?(request: TeamCommandRequest): Promise<TeamCommandResult>;
   /** Required of a voice adapter whose manifest lists `softphone`: on one, the call's audio lands in Omni. */
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
   /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
@@ -1738,21 +1733,16 @@ export interface BrowserSessionKeyInput {
  * Whether two logins declare the same capabilities, field by field. The comparison an adapter
  * makes before republishing `authenticated`: capabilities are current, not fixed, and the natural
  * guard -- comparing the identity -- never fires on a demotion, because the thing that changed is
- * not the thing being compared. Key order does not matter, and `team: {}` is not `team` absent.
+ * not the thing being compared. Key order does not matter, and a withdrawn `lead` is a change.
  */
 export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): boolean {
-  const modes = (team: TeamCapabilities | undefined): string | undefined =>
-    team?.listeningControl === undefined ? undefined : [...team.listeningControl].sort().join(",");
   // Every field, so a capability added later cannot be missed here: `satisfies` pins the field
-  // lists to the types, and a new key is a compile error until it is compared.
-  const teamKeys = { breakControl: true, leadAssistControl: true, listeningControl: true, policyControl: true } satisfies Record<keyof TeamCapabilities, true>;
-  void ({ breaks: true, preferences: true, team: true } satisfies Record<keyof UserCapabilities, true>);
+  // list to the type, and a new key is a compile error until it is compared.
+  void ({ breaks: true, preferences: true, lead: true } satisfies Record<keyof UserCapabilities, true>);
   const preferences = (list: AgentPreference[] | undefined): string | undefined =>
     list === undefined ? undefined : list.map(p => [p.id, p.label, p.enabled, p.setBy, p.lockedBy ?? "", p.reason ?? ""].join("\u0000")).sort().join("\u0001");
   return a.breaks === b.breaks &&
-    (a.team === undefined) === (b.team === undefined) &&
-    (Object.keys(teamKeys) as (keyof TeamCapabilities)[]).every(key => key === "listeningControl" || a.team?.[key] === b.team?.[key]) &&
-    modes(a.team) === modes(b.team) &&
+    a.lead === b.lead &&
     preferences(a.preferences) === preferences(b.preferences);
 }
 

@@ -16,7 +16,6 @@ import {
   type RecordingAction,
   ALLOWED_BROWSER_URL_SCHEMES,
   BREAK_KINDS,
-  LISTENING_BREAK_KINDS,
   BROWSER_ISOLATION_SCHEMES,
   HISTORY_STEPS_THAT_DIAL,
   IDLE_CAPABILITIES,
@@ -62,7 +61,6 @@ import {
   type ProtocolViolation,
   type ProviderEvent,
   type UserCapabilities,
-  type TeamCapabilities,
   type TaskCapabilities,
   type TaskLeadAssist,
   type TaskOutcome,
@@ -146,7 +144,7 @@ const DIALLING_CAPABILITIES = ["connectBack", "coldTransfer", "warmTransfer", "c
 const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
   reconnected: true, "provider-requested": true,
 });
-const SESSION_CAPABILITIES = membersOf<keyof UserCapabilities>({ breaks: true, team: true, preferences: true });
+const SESSION_CAPABILITIES = membersOf<keyof UserCapabilities>({ breaks: true, lead: true, preferences: true });
 const MEMBER_BREAKS = membersOf<Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">>({
   "awaiting-approval": true, granted: true, "starting-after-task": true,
 });
@@ -155,7 +153,6 @@ const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
 });
 const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ calls: true, "host-calls": true, waits: true });
 const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
-const TEAM_CAPABILITIES = membersOf<keyof TeamCapabilities>({ breakControl: true, leadAssistControl: true, policyControl: true, listeningControl: true });
 const LISTENING_MODES = membersOf<ListeningMode>({ listen: true, coach: true, "join-call": true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
 const CANCELLED_BY = membersOf<Extract<TaskOutcome, { type: "cancelled" }>["by"]>({ agent: true, provider: true, party: true });
@@ -169,7 +166,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
     browsers: true, outcomes: true, custom: true, decline: true, hold: true,
-    endCall: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
+    endCall: true, terminateCall: true, connectBack: true, coldTransfer: true, warmTransfer: true, leadAssist: true, conference: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, outcomes: true, custom: true, decline: true, hold: true }),
   email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, outcomes: true, custom: true, decline: true }),
@@ -1172,32 +1169,16 @@ function validateLeadAssist(value: unknown, channel: string, path: string, into:
   into.timestamp(value.since, "task.leadAssist.since", `${path}.since`);
 }
 
-/** The lead's own task for a call they joined. Voice only. */
-function validateAssisting(value: unknown, channel: string, path: string, into: Collector): void {
+/** A call a lead took over: which member it came from, and when. Voice only. */
+function validateTakenOver(value: unknown, channel: string, path: string, into: Collector): void {
   if (value === undefined) return;
-  if (!into.require(channel === "voice", "task.assisting.channel", path, `a ${channel} task cannot be a joined call`)) return;
+  if (!into.require(channel === "voice", "task.takenOver.channel", path, `a ${channel} task has no call to take over`)) return;
   if (!isPlainObject(value)) {
-    into.add("task.assisting.shape", path, "assisting must be an object when present");
+    into.add("task.takenOver.shape", path, "takenOver must be an object when present");
     return;
   }
-  into.require(isUserId(value.memberId), "task.assisting.memberId", `${path}.memberId`, "a joined call names the member who asked");
-  into.require(isAssignmentId(value.assignmentId), "task.assisting.assignmentId", `${path}.assignmentId`, "a joined call names the member's assignment");
-  if (value.note !== undefined) into.filled(value.note, "task.assisting.note", `${path}.note`, "a note must not be empty when present");
-  into.timestamp(value.since, "task.assisting.since", `${path}.since`);
-}
-
-/** The lead's own task while they listen: whose call, which call, and how they are heard. Voice only. */
-function validateListening(value: unknown, channel: string, path: string, into: Collector): void {
-  if (value === undefined) return;
-  if (!into.require(channel === "voice", "task.listening.channel", path, `a ${channel} task has no call to listen to`)) return;
-  if (!isPlainObject(value)) {
-    into.add("task.listening.shape", path, "listening must be an object when present");
-    return;
-  }
-  into.require(isUserId(value.memberId), "task.listening.memberId", `${path}.memberId`, "a call being listened to names the member on it");
-  into.require(isAssignmentId(value.assignmentId), "task.listening.assignmentId", `${path}.assignmentId`, "a call being listened to names the member's assignment");
-  into.oneOf(value.mode, LISTENING_MODES, "task.listening.mode", `${path}.mode`);
-  into.timestamp(value.since, "task.listening.since", `${path}.since`);
+  into.require(isUserId(value.memberId), "task.takenOver.memberId", `${path}.memberId`, "a taken-over call names the member it was taken from");
+  into.timestamp(value.since, "task.takenOver.since", `${path}.since`);
 }
 
 export interface TaskValidationContext {
@@ -1215,12 +1196,18 @@ export interface TaskValidationContext {
    * carry one of these. Unknown to a host, which never sees the value, and then unchecked.
    */
   locked?: readonly string[];
+  /**
+   * A member's task on the team member list, trimmed by the provider: the workspace -- controls,
+   * their source, browsers, completion terms -- is the member's and may be absent; what is present
+   * is held to the same rules as on the member's own desk.
+   */
+  member?: true;
 }
 
-/** Whether a task is the agent's own doing: a dial the host placed on its onCall, a lead's join, a lead's listen. */
+/** Whether a task is the agent's own doing: a dial the host placed on its onCall, or a call a lead took over. */
 function originatedByTheAgent(task: Record<string, unknown>): boolean {
   if (Array.isArray(task.onCall) && task.onCall.some(entry => isPlainObject(entry) && typeof entry.dialId === "string")) return true;
-  return task.assisting !== undefined || task.listening !== undefined;
+  return task.takenOver !== undefined;
 }
 
 export function validateTask(task: unknown, context: TaskValidationContext, path = "task"): ProtocolViolation[] {
@@ -1234,8 +1221,12 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.add("task.shape", path, "a task must be an object");
     return;
   }
-  into.require(!Object.hasOwn(task, "monitoring"), "task.listening.renamed", `${path}.monitoring`,
-    "use listening; the former field is not accepted");
+  // A task carries no lead state: the lead's view is the team member list, and a lead's own call
+  // is an ordinary assignment marked takenOver.
+  for (const retired of ["assisting", "listening", "monitoring"] as const) {
+    into.require(!Object.hasOwn(task, retired), "task.leadState.retired", `${path}.${retired}`,
+      "a task carries no lead state; a call a lead took over says takenOver, and the lead's view is the team member list");
+  }
   for (const former of ["handlingHistory", "interactionHistory"] as const) {
     into.require(!Object.hasOwn(task, former), "task.history.renamed", `${path}.${former}`,
       "use history; the former field is not accepted");
@@ -1285,23 +1276,23 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
       into.add("task.acceptance.unexpected", `${path}.acceptance`, "acceptance is an offer's word; a task past pending has been accepted");
     } else if (originated) {
       into.require(task.acceptance === "automatic", "task.acceptance.originated", `${path}.acceptance`,
-        "work the agent originated -- a dial, a connect-back, a join, a listen -- was accepted by the command that created it, and says automatic whatever the provisioning");
+        "work the agent originated -- a dial, a connect-back, a call taken over -- was accepted by the command that created it, and says automatic whatever the provisioning");
     } else if (context.autoAcceptTasks === false) {
       into.add("task.acceptance.unexpected", `${path}.acceptance`,
         "autoAcceptTasks is off, so every task the queue routes requires agent acceptance and a pending task carries no acceptance");
     }
   } else if (originated) {
     into.add("task.acceptance.originated", `${path}.acceptance`,
-      "work the agent originated -- a dial, a connect-back, a join, a listen -- says acceptance: automatic whatever the provisioning: the command that created it accepted it");
+      "work the agent originated -- a dial, a connect-back, a call taken over -- says acceptance: automatic whatever the provisioning: the command that created it accepted it");
   } else if (task.phase === "pending" && context.autoAcceptTasks === true) {
     into.add("task.acceptance.required", `${path}.acceptance`, "autoAcceptTasks is on, so a pending task states how it is accepted");
   }
-  into.oneOf(task.completionMode, COMPLETION_MODES, "task.completionMode", `${path}.completionMode`);
+  if (context.member !== true || task.completionMode !== undefined) into.oneOf(task.completionMode, COMPLETION_MODES, "task.completionMode", `${path}.completionMode`);
   // The allowance is coupled to the mode: a provider that will complete the task itself is going
   // to act on the allowance, so it must state one; a provider waiting for `complete` may omit it
   // to say it imposes no deadline. Present, it is a duration either way.
   if (task.wrapAllowance === undefined) {
-    into.require(task.completionMode !== "provider-automatic", "task.wrapAllowance.required",
+    if (context.member !== true) into.require(task.completionMode !== "provider-automatic", "task.wrapAllowance.required",
       `${path}.wrapAllowance`, "provider-automatic completion needs an allowance to act on");
   } else {
     into.require(isDurationSeconds(task.wrapAllowance), "task.wrapAllowance", `${path}.wrapAllowance`,
@@ -1329,7 +1320,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
       if (task.recording.provider !== undefined) into.violations.push(...validateRecordingState(task.recording.provider, `${path}.recording.provider`));
     }
   }
-  validateBrowsers(task.browsers, `${path}.browsers`, into);
+  if (context.member !== true || task.browsers !== undefined) validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into, context.levels);
   validateHistory(task.history, `${path}.history`, into, { phase: task.phase, media: task.media });
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
@@ -1346,17 +1337,13 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   }
   validateTaskMedia(task, task.media, context.channel, task.phase, `${path}.media`, into);
   validateLeadAssist(task.leadAssist, context.channel, `${path}.leadAssist`, into);
-  validateAssisting(task.assisting, context.channel, `${path}.assisting`, into);
-  validateListening(task.listening, context.channel, `${path}.listening`, into);
-  // A lead's task is one thing: a call they joined on request, or a call they listen to unasked.
-  if (task.assisting !== undefined && task.listening !== undefined) {
-    into.add("task.listening.assisting", `${path}.listening`, "a task is a joined call or a listened one, never both");
-  }
+  validateTakenOver(task.takenOver, context.channel, `${path}.takenOver`, into);
 
   // Where the terms came from is stated with them: a host cannot tell "the platform permits
   // nothing" from "the terms could not be read" from the set alone, and the provider knows which.
-  into.oneOf(task.capabilitySource, CAPABILITY_SOURCES, "task.capabilitySource", `${path}.capabilitySource`);
+  if (context.member !== true || task.capabilitySource !== undefined) into.oneOf(task.capabilitySource, CAPABILITY_SOURCES, "task.capabilitySource", `${path}.capabilitySource`);
   const capabilities = task.capabilities;
+  if (context.member === true && capabilities === undefined && task.browsers === undefined) return;
   if (!isPlainObject(capabilities)) {
     into.add("task.capabilities.shape", `${path}.capabilities`, "a task needs a capabilities object");
     return;
@@ -1441,8 +1428,7 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
   });
   // A break in effect begins when the work ends, so it holds no task. A snapshot reporting both
   // describes a state the agent cannot be in, whichever half is stale. The one exception is a
-  // lead listening to a call during a break that is work of another sort -- coaching,
-  // administrative, training -- and on no other.
+  // call a lead took over: the provider assigns it whatever break the lead is on.
   // The converse: a committed break with nothing outstanding has begun. starting-after-task beside
   // no task is a break waiting on work that does not exist, and an empty list reading as "still
   // finishing" is the plausible nought.
@@ -1454,16 +1440,10 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
   }
   if (isPlainObject(state) && state.status === "on-break"
     && Array.isArray(tasks) && tasks.length > 0) {
-    const listening = tasks.every((task: unknown) => isPlainObject(task) && task.listening !== undefined);
-    if (!listening) {
+    const takenOver = tasks.every((task: unknown) => isPlainObject(task) && task.takenOver !== undefined);
+    if (!takenOver) {
       into.add("break.on-break.tasks", `${path}.tasks`,
-        "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task");
-    } else {
-      const reasons = Array.isArray(state.reasons) ? state.reasons : [];
-      const active = reasons.find((reason: unknown) => isPlainObject(reason) && reason.id === state.activeReasonId);
-      const kind = isPlainObject(active) ? active.kind : undefined;
-      into.require(typeof kind === "string" && (LISTENING_BREAK_KINDS as readonly string[]).includes(kind), "snapshot.listening.break", `${path}.tasks`,
-        `a lead listens during a ${LISTENING_BREAK_KINDS.join(", ")} break and no other; the active reason is ${kind === undefined ? "unstated" : describeValue(kind)}`);
+        "a break in effect holds no task: it begins when the work ends, and until then the state is starting-after-task; the one exception is a call a lead took over");
     }
   }
 
@@ -1471,62 +1451,93 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
 }
 
 /**
- * Checks lead break dispatch using current authentication, transport, team member list (`team`) and,
- * for force-break/end-forced-break, the target's full `memberBreak`. The provider must authorize the target
- * and recheck the decision atomically; a team member list is not authority to act after it has changed.
+ * Checks a lead command before dispatch, against the current authentication, transport and team
+ * member list (`team`) and, for force-break and end-forced-break, the target's full `memberBreak`.
+ * The authority is the login's `lead` flag; the provider rechecks the target and the state
+ * atomically, since a team member list is not authority to act after it has changed.
  */
-export function validateTeamBreakCommand(request: unknown, context: unknown, path = "teamBreakCommand"): ProtocolViolation[] {
+export function validateTeamCommand(request: unknown, context: unknown, path = "teamCommand"): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(context) || !isPlainObject(request) || !isPlainObject(request.command)) {
-    into.add("team.break.command.shape", path, "a command and current authentication/transport/team context are required");
+    into.add("team.command.shape", path, "a command and current authentication/transport/team context are required");
     return into.violations;
   }
   const auth = isPlainObject(context.authentication) ? context.authentication : {};
   into.violations.push(...validateAuthenticationState(auth, `${path}.authentication`));
   const caps = isPlainObject(auth.capabilities) ? auth.capabilities : {};
   into.require((auth.status === "authenticated" || auth.status === "refreshing") && context.transport === "active",
-    "team.break.command.connection", path, "lead commands require a live login and active transport");
-  into.require(isPlainObject(caps.team) && caps.team.breakControl === true, "team.break.command.capability", path,
-    "the login must declare team.breakControl");
+    "team.command.connection", path, "lead commands require a live login and active transport");
+  into.require(caps.lead === true, "team.command.capability", path, "the login must declare lead");
   const command = request.command;
+  const member = ["type", "memberId", "assignmentId"];
   const allowed: Record<string, readonly string[]> = {
+    "lead-features": ["type", "enabled"],
     "decide-break-request": ["type", "memberId", "decision", "reason"], "set-break-policy": ["type", "policy"],
     "force-break": ["type", "memberId", "reasonId", "reason", "expectedDurationMs"], "end-forced-break": ["type", "memberId"],
+    join: member, decline: [...member, "reason"], listen: member, coach: member, "join-call": member, leave: member, "take-over-call": member,
+    "set-policy": ["type", "capability", "setting"],
   };
   const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
-  if (!fields) { into.add("team.break.command.type", path, "unknown lead break command"); return into.violations; }
-  for (const key of Object.keys(request)) into.require(key === "command", "team.break.request.field", `${path}.${key}`, "only command is supported");
-  for (const key of Object.keys(command)) into.require(fields.includes(key), "team.break.command.field", `${path}.${key}`, "field is not supported for this command");
-  if (command.reason !== undefined) into.filled(command.reason, "team.break.command.reason", path, "reason must not be empty");
-  if (command.type === "set-break-policy") {
-    into.require(["approval-required", "automatically-approved", "requests-suspended"].includes(command.policy as string), "team.break.command.policy", path, "unknown break policy");
+  if (!fields) { into.add("team.command.type", path, `unknown lead command: ${describeValue(command.type)}`); return into.violations; }
+  for (const key of Object.keys(request)) into.require(key === "command", "team.request.field", `${path}.${key}`, "only command is supported");
+  for (const key of Object.keys(command)) into.require(fields.includes(key), "team.command.field", `${path}.${key}`, "field is not supported for this command");
+  if (command.reason !== undefined) into.filled(command.reason, "team.command.reason", path, "reason must not be empty");
+  if (command.type === "lead-features") {
+    into.require(typeof command.enabled === "boolean", "team.command.enabled", `${path}.enabled`, "lead-features says on or off, as a boolean");
     return into.violations;
   }
-  into.filled(command.memberId, "team.break.command.member", path, "name the target member");
+  if (command.type === "set-break-policy") {
+    into.require(["approval-required", "automatically-approved", "requests-suspended"].includes(command.policy as string), "team.command.policy", path, "unknown break policy");
+    return into.violations;
+  }
+  if (command.type === "set-policy") {
+    into.require(typeof command.capability === "string" && (POLICY_KEYS.has(command.capability) || /^skill:.+$/.test(command.capability)),
+      "team.command.capability.key", `${path}.capability`, "a policy names a task control, dial, or a skill");
+    if (into.oneOf(command.setting, POLICY_SETTINGS, "team.command.setting", `${path}.setting`)) {
+      into.require(command.setting !== "person" || (typeof command.capability === "string" && PERSON_SETTABLE.test(command.capability)),
+        "team.command.setting.person", `${path}.setting`, "only hold and skills may be left to the person");
+    }
+    return into.violations;
+  }
+  into.filled(command.memberId, "team.command.member", path, "name the target member");
   const team = isPlainObject(context.team) ? context.team : {};
   const members = Array.isArray(team.members) ? team.members : [];
-  const member = members.find((m: unknown) => isPlainObject(m) && m.id === command.memberId);
+  const target = members.find((m: unknown) => isPlainObject(m) && m.id === command.memberId);
   const self = isPlainObject(auth.identity) ? auth.identity.id : undefined;
-  into.require(isPlainObject(member) && command.memberId !== self, "team.break.command.member", path,
-    "the target must be another member of the current authorized team member list");
+  into.require(isPlainObject(target) && command.memberId !== self, "team.command.member", path,
+    "the target must be another member of the current team member list");
+  if (command.assignmentId !== undefined) {
+    into.require(isAssignmentId(command.assignmentId), "team.command.assignmentId", `${path}.assignmentId`, "an assignment id must be non-empty when present");
+    const tasks = isPlainObject(target) && Array.isArray(target.tasks) ? target.tasks : undefined;
+    if (tasks !== undefined) into.require(tasks.some((task: unknown) => isPlainObject(task) && task.assignmentId === command.assignmentId),
+      "team.command.assignmentId.unknown", `${path}.assignmentId`, "the assignment named is not one the team member list shows the member holding");
+  }
   if (command.type === "decide-break-request") {
-    into.require(command.decision === "granted" || command.decision === "denied", "team.break.command.decision", path, "decide granted or denied");
-    into.require(isPlainObject(member) && member.break === "awaiting-approval", "team.break.command.awaiting", path,
+    into.require(command.decision === "granted" || command.decision === "denied", "team.command.decision", path, "decide granted or denied");
+    into.require(isPlainObject(target) && target.break === "awaiting-approval", "team.command.awaiting", path,
       "decide only a currently awaiting-approval request");
-  } else {
+  } else if (command.type === "force-break" || command.type === "end-forced-break") {
     validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
     if (command.type === "end-forced-break") into.require(state.forced !== undefined && (state.status === "on-break" || state.status === "starting-after-task"),
-      "team.break.command.endForcedBreak", path, "lift a current forced-break restriction without resuming the agent");
+      "team.command.endForcedBreak", path, "lift a current forced-break restriction without resuming the agent");
     if (command.type === "force-break") {
       if (command.expectedDurationMs !== undefined) into.require(
         typeof command.expectedDurationMs === "number" && Number.isFinite(command.expectedDurationMs) && command.expectedDurationMs > 0,
-        "team.break.command.expectedDurationMs", `${path}.expectedDurationMs`, "expectedDurationMs must be positive finite milliseconds; it never resumes the agent");
-      if (command.reasonId !== undefined) into.filled(command.reasonId, "team.break.command.reasonId", path, "reasonId must not be empty");
+        "team.command.expectedDurationMs", `${path}.expectedDurationMs`, "expectedDurationMs must be positive finite milliseconds; it never resumes the agent");
+      if (command.reasonId !== undefined) into.filled(command.reasonId, "team.command.reasonId", path, "reasonId must not be empty");
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
       into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
-        "team.break.command.reasonId", path, "force-break uses the target's currently published reason codes");
+        "team.command.reasonId", path, "force-break uses the target's currently published reason codes");
     }
+  } else if (command.type === "join" || command.type === "decline") {
+    const requests = Array.isArray(team.requests) ? team.requests : [];
+    into.require(requests.some((r: unknown) => isPlainObject(r) && r.memberId === command.memberId
+      && (command.assignmentId === undefined || r.assignmentId === command.assignmentId)),
+      "team.command.request", path, `${command.type} answers a request the team member list carries, and this member has none`);
+  } else if (command.type === "coach" || command.type === "join-call" || command.type === "leave") {
+    into.require(isPlainObject(target) && target.listening !== undefined, "team.command.listening", path,
+      `${command.type} needs the lead on this member's call: the team member list shows listening on them`);
   }
   return into.violations;
 }
@@ -1731,6 +1742,13 @@ export interface ReaderContext {
   /** The login's `loginId`. A snapshot or event naming another belongs to a login that is gone. */
   loginId?: string;
   /**
+   * Whether the lead has the team feature on, as the application last told the provider. On by
+   * default for a lead; off, no team member list is owed or expected. Unknown to a caller without it.
+   */
+  leadFeatures?: boolean;
+  /** The provider's channel, for a member's task that states none. Filled from the manifest by `validateSnapshot` and `validateEventEnvelope`. */
+  channel?: Channel;
+  /**
    * The values the queue locked on this login's tasks, as whoever runs the validator knows them:
    * a conformance run states them, a host never has them. Where a task's party stands locked, no
    * other field of it may carry one (`task.locked.leak`). Absent, unchecked.
@@ -1751,60 +1769,37 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Re
     into.add("team.shape", path, "a team member list must be an object");
     return;
   }
-  // The login is the permission: a team member list reaches a login that declares `capabilities.team` and
-  // nobody else. Only a caller holding the login can check it.
-  if (context.capabilities !== undefined && context.capabilities.team === undefined) {
+  // The login is the permission: a team member list reaches a login that declares `capabilities.lead`
+  // and nobody else. Only a caller holding the login can check it.
+  if (context.capabilities !== undefined && context.capabilities.lead !== true) {
     into.add("team.unentitled", path,
-      "a team member list published to a login that does not declare capabilities.team: the login is the permission");
+      "a team member list published to a login that does not declare capabilities.lead: the login is the permission");
   }
-  // The team's policies travel with the team member list exactly when the login may set them.
-  if (context.capabilities !== undefined) {
-    const may = context.capabilities.team?.policyControl === true;
-    if (may && teamMembers.policies === undefined) {
-      into.add("team.policies.required", `${path}.policies`, "the login declares team.policyControl, so the team member list carries the team's policies");
-    }
-    if (!may && teamMembers.policies !== undefined) {
-      into.add("team.policies.capability", `${path}.policies`, "policies require team.policyControl on the login: a lead who may not set them has nothing to see");
-    }
-  }
+  // Policies are present where the provider offers policy control, absent where it does not.
   if (teamMembers.policies !== undefined) validateTeamPoliciesInto(teamMembers.policies, `${path}.policies`, into, context.levels);
-  if (teamMembers.requests === undefined) {
-    // `[]` says nobody is asking; omission says the lead may not be asked. A login that may be
-    // asked therefore always carries the list.
-    if (context.capabilities?.team?.leadAssistControl === true) {
-      into.add("team.requests.required", `${path}.requests`,
-        "the login declares team.leadAssistControl, so the team member list carries requests: [] when nobody is asking");
-    }
+  // Requests are what a lead acts on: always carried, `[]` when nobody is asking.
+  if (!Array.isArray(teamMembers.requests)) {
+    into.add("team.requests.shape", `${path}.requests`, "a team member list carries its requests: [] when nobody is asking");
   } else {
-    // Requests are what a lead acts on, so a lead who may not act has no business receiving them.
-    // Whether they may is on the login, so the check needs the login in hand.
-    if (context.capabilities !== undefined) {
-      into.require(context.capabilities.team?.leadAssistControl === true, "team.requests.capability", `${path}.requests`,
-        "requests require team.leadAssistControl on the login: a lead who may not join has nothing to decide");
-    }
-    if (!Array.isArray(teamMembers.requests)) {
-      into.add("team.requests.shape", `${path}.requests`, "requests must be an array when present");
-    } else {
-      const seenRequests = new Set<string>();
-      teamMembers.requests.forEach((request: unknown, index: number) => {
+    const seenRequests = new Set<string>();
+    teamMembers.requests.forEach((request: unknown, index: number) => {
         const at = `${path}.requests[${index}]`;
         if (!isPlainObject(request)) {
           into.add("team.request.shape", at, "each request must be an object");
           return;
         }
-        if (into.filled(request.id, "team.request.id", `${at}.id`, "a request needs an id")) {
-          if (seenRequests.has(request.id as string)) into.add("team.request.unique", `${at}.id`, `duplicate request id: ${request.id}`);
-          seenRequests.add(request.id as string);
-        }
         if (into.require(isUserId(request.memberId), "team.request.memberId", `${at}.memberId`, "a request names the member asking")) {
           into.require(request.memberId !== context.self, "team.request.self", `${at}.memberId`,
             "the team member list carries the reader's own ask: an agent's request for a lead goes to whoever leads them");
         }
-        into.require(isAssignmentId(request.assignmentId), "team.request.assignmentId", `${at}.assignmentId`, "a request names the member's assignment the lead would join");
+        if (into.require(isAssignmentId(request.assignmentId), "team.request.assignmentId", `${at}.assignmentId`, "a request names the member's assignment the lead would join")) {
+          const key = `${String(request.memberId)}@${String(request.assignmentId)}`;
+          if (seenRequests.has(key)) into.add("team.request.unique", at, `duplicate request: ${key}`);
+          seenRequests.add(key);
+        }
         if (request.note !== undefined) into.filled(request.note, "team.request.note", `${at}.note`, "a note must not be empty when present");
         into.timestamp(request.since, "team.request.since", `${at}.since`);
-      });
-    }
+    });
   }
   if (!Array.isArray(teamMembers.members)) {
     into.add("team.members.shape", `${path}.members`, "a team member list must carry a members array");
@@ -1833,7 +1828,37 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Re
           `${at}.break`, "a member on a break or signed out has no request outstanding");
       }
     }
+    // The member's open tasks, as the lead sees them: trimmed by the provider, held to the task rules otherwise.
+    if (member.tasks !== undefined) {
+      if (!Array.isArray(member.tasks)) {
+        into.add("team.member.tasks.shape", `${at}.tasks`, "a member's tasks are an array: [] when they hold none, omitted only where the provider cannot see them");
+      } else {
+        const held = new Set<string>();
+        member.tasks.forEach((task: unknown, index: number) => {
+          const channel = isPlainObject(task) && typeof task.channel === "string" && isChannel(task.channel) ? task.channel : context.channel ?? "voice";
+          validateTaskInto(task, { channel, levels: context.levels, member: true }, `${at}.tasks[${index}]`, into);
+          if (isPlainObject(task) && isAssignmentId(task.assignmentId)) {
+            if (held.has(task.assignmentId as string)) into.add("team.member.tasks.unique", `${at}.tasks[${index}].assignmentId`, `duplicate assignment on one member: ${task.assignmentId}`);
+            held.add(task.assignmentId as string);
+          }
+        });
+        into.require(member.availability !== "signed-out" || member.tasks.length === 0, "team.member.tasks.availability", `${at}.tasks`,
+          "a member signed out holds no task");
+      }
+    }
+    // The lead on this member's call, in the mode they are heard.
+    if (member.listening !== undefined) {
+      if (!isPlainObject(member.listening)) {
+        into.add("team.member.listening.shape", `${at}.listening`, "listening must be an object when present");
+      } else {
+        into.oneOf(member.listening.mode, LISTENING_MODES, "team.member.listening.mode", `${at}.listening.mode`);
+        into.timestamp(member.listening.since, "team.member.listening.since", `${at}.listening.since`);
+      }
+    }
   });
+  // One member's call at a time.
+  const listened = teamMembers.members.filter((member: unknown) => isPlainObject(member) && member.listening !== undefined);
+  if (listened.length > 1) into.add("team.listening.single", `${path}.members`, "a lead is on one member's call at a time");
 }
 
 export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "snapshot", context: ReaderContext = {}): ProtocolViolation[] {
@@ -1865,19 +1890,8 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     into.add("snapshot.tasks.shape", `${path}.tasks`, "a snapshot must carry a tasks array");
   } else {
     const seen = new Set<string>();
-    let assisting: number | undefined;
-    let listening: number | undefined;
     snapshot.tasks.forEach((task: unknown, index: number) => {
       validateTaskInto(task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${path}.tasks[${index}]`, into);
-      // A lead assists one call at a time, and listens to one at a time.
-      if (isPlainObject(task) && task.assisting !== undefined) {
-        if (assisting !== undefined) into.add("snapshot.assisting.single", `${path}.tasks[${index}].assisting`, "a lead assists one call at a time");
-        assisting = index;
-      }
-      if (isPlainObject(task) && task.listening !== undefined) {
-        if (listening !== undefined) into.add("snapshot.listening.single", `${path}.tasks[${index}].listening`, "a lead listens to one call at a time");
-        listening = index;
-      }
       if (isPlainObject(task) && isAssignmentId(task.assignmentId)) {
         if (seen.has(task.assignmentId as string)) into.add("task.assignmentId.unique", `${path}.tasks[${index}].assignmentId`, `duplicate assignment id: ${task.assignmentId}`);
         seen.add(task.assignmentId as string);
@@ -1885,14 +1899,6 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     });
   }
 
-  // A lead listens while holding no work of their own: a listening task is the only task.
-  if (Array.isArray(snapshot.tasks) && snapshot.tasks.length > 1) {
-    snapshot.tasks.forEach((task: unknown, index: number) => {
-      if (isPlainObject(task) && task.listening !== undefined) {
-        into.add("snapshot.listening.alone", `${path}.tasks[${index}].listening`, "a lead listens only while holding no task of their own");
-      }
-    });
-  }
   into.violations.push(...validateBreakStatus(snapshot.break, snapshot.tasks, path));
 
   // Presence is the permission, and it cuts both ways: data a provider never declared a
@@ -1937,13 +1943,17 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       into.add("snapshot.calendar.shape", `${path}.scheduledActivities`, "scheduledActivities must be an array when present");
     }
   }
-  // The login is the permission: a lead's snapshot carries a team member list, `[]` included. The other
-  // direction -- a team member list to a login that does not lead -- is the team member list's own rule.
-  if (context.capabilities?.team !== undefined && snapshot.team === undefined) {
+  // The login is the permission: a lead's snapshot carries a team member list, `members: []` included,
+  // while the team feature is on. The other direction -- a team member list to a login that does
+  // not lead, or to a lead who turned the feature off -- is the team member list's own rule.
+  if (context.capabilities?.lead === true && context.leadFeatures !== false && snapshot.team === undefined) {
     into.add("team.required", `${path}.team`,
-      "the login declares capabilities.team, so every snapshot carries a team member list: [] when nobody is in it");
+      "the login declares lead and the team feature is on, so every snapshot carries a team member list: members: [] when nobody is in it");
   }
-  if (snapshot.team !== undefined) validateTeamMembersInto(snapshot.team, `${path}.team`, { ...context, levels }, into);
+  if (context.leadFeatures === false && snapshot.team !== undefined) {
+    into.add("team.unexpected", `${path}.team`, "the lead turned the team feature off, so nothing of the team reaches them");
+  }
+  if (snapshot.team !== undefined) validateTeamMembersInto(snapshot.team, `${path}.team`, { ...context, levels, channel: isChannel(channel) ? channel : undefined }, into);
 
   return into.violations;
 }
@@ -1983,8 +1993,6 @@ function validateTaskOutcome(value: unknown, path: string, into: Collector): voi
     case "expired":
       // Only the phases in which a task is still waiting on somebody can expire.
       into.oneOf(value.phase, EXPIRABLE_PHASES, "event.taskEnded.outcome.expired", `${path}.phase`);
-      break;
-    case "left":
       break;
     case "failed":
       if (!isPlainObject(value.failure)) {
@@ -2138,7 +2146,19 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       validateQueueSummary(event.summary, `${at}.summary`, into);
       break;
     case "team-updated":
-      validateTeamMembersInto(event.team, `${at}.team`, { ...context, levels }, into);
+      into.require(context.capabilities === undefined || context.capabilities.lead === true, "event.team.capability", `${at}.team`,
+        "team-updated reaches a login that declares lead, and nobody else");
+      into.require(context.leadFeatures !== false, "event.team.features", `${at}.team`, "the lead turned the team feature off, so nothing of the team reaches them");
+      validateTeamMembersInto(event.team, `${at}.team`, { ...context, levels, channel: isChannel(channel) ? channel : undefined }, into);
+      break;
+    case "team-media-started":
+    case "team-media-ended":
+      // The lead's channel in a member's call: audio the application opens on the member's assignment.
+      into.require(channel === "voice", "event.media.channel", `${at}.type`, "only a voice provider publishes media transitions");
+      into.require(context.capabilities === undefined || context.capabilities.lead === true, "event.teamMedia.capability", `${at}.type`,
+        "team media reaches a login that declares lead, and nobody else");
+      into.require(isUserId(event.memberId), "event.teamMedia.memberId", `${at}.memberId`, "team media names the member whose call the lead is on");
+      into.require(isAssignmentId(event.assignmentId), "event.teamMedia.assignmentId", `${at}.assignmentId`, "team media names the member's assignment");
       break;
     case "contacts-updated":
       into.require(idle.contacts === true, "event.contacts.capability", `${at}.contacts`,
@@ -2447,7 +2467,7 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
 // ---------------------------------------------------------------------------
 
 const TRANSFER_ACTIONS = ["cold", "warm", "complete", "cancel"] as const;
-const LEAD_ASSIST_ACTIONS = ["request", "cancel", "take-over-call", "leave"] as const;
+const LEAD_ASSIST_ACTIONS = ["request", "cancel"] as const;
 const CONFERENCE_ACTIONS = ["add", "remove"] as const;
 
 
@@ -2635,6 +2655,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       break;
     case "hold": case "resume": case "pause": offered("hold"); interaction(); break;
     case "end-call": offered("endCall"); interaction(); break;
+    case "terminate-call": offered("terminateCall"); interaction(); break;
     case "recording": {
       if (!offered("recording")) break;
       const policy = isPlainObject(capabilities.recording) ? capabilities.recording.provider : undefined;
@@ -2661,15 +2682,10 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       break;
     case "lead-assist":
       interaction();
-      if (command.action === "request" || command.action === "cancel") {
-        offered("leadAssist");
-        if (command.action === "cancel") {
-          into.require(isPlainObject(task.leadAssist) && task.leadAssist.stage === "requested", "command.leadAssist.requested", path,
-            "cancel needs a request standing: leadAssist with stage requested");
-        }
-      } else {
-        into.require(task.assisting !== undefined, "command.leadAssist.assisting", path,
-          `${describeValue(command.action)} is the lead's own act on a call they joined: the task carries assisting`);
+      offered("leadAssist");
+      if (command.action === "cancel") {
+        into.require(isPlainObject(task.leadAssist) && task.leadAssist.stage === "requested", "command.leadAssist.requested", path,
+          "cancel needs a request standing: leadAssist with stage requested");
       }
       break;
     case "conference": {
@@ -2736,13 +2752,10 @@ export type ResultMethod =
   | "commitBreak"
   | "cancelBreak"
   | "endBreak"
-  | "executeTeamBreak"
-  | "executeTeamLeadAssist"
-  | "executeTeamListen"
+  | "executeTeam"
   | "openMedia"
   | "setPreference"
-  | "recordStep"
-  | "executeTeamPolicy";
+  | "recordStep";
 
 // Pinned to the result unions: each method's one success status, and the status that carries a
 // failure. A method added to `Connection` without a row here is a compile error at the call site.
@@ -2755,13 +2768,10 @@ const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string |
   commitBreak: { success: "committed", failure: "failed" },
   cancelBreak: { success: "cancelled", failure: "failed" },
   endBreak: { success: "ended", failure: "failed" },
-  executeTeamBreak: { success: "applied", failure: "failed" },
-  executeTeamLeadAssist: { success: "applied", failure: "failed" },
-  executeTeamListen: { success: "applied", failure: "failed" },
+  executeTeam: { success: "applied", failure: "failed" },
   openMedia: { success: "opened", failure: "unavailable" },
   setPreference: { success: "applied", failure: "failed" },
   recordStep: { success: "recorded", failure: "failed" },
-  executeTeamPolicy: { success: "applied", failure: "failed" },
 };
 
 /**
@@ -2903,47 +2913,9 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
       validatePreferencesInto(declared, `${path}.preferences`, into, levels);
       continue;
     }
-    if (name === "team") {
-      if (!isPlainObject(declared)) {
-        into.add("authentication.capability.team.shape", `${path}.team`,
-          "team names what the lead may do: an object, {} for a lead with no controls");
-        continue;
-      }
-      for (const [control, on] of Object.entries(declared)) {
-        if (on === undefined) continue;
-        if (!into.require((TEAM_CAPABILITIES as readonly string[]).includes(control), "authentication.capability.team.unknown",
-          `${path}.team.${control}`, `unsupported team capability: ${control}`)) continue;
-        if (control === "listeningControl") {
-          validateListeningControl(on, `${path}.team.listeningControl`, into);
-          continue;
-        }
-        into.require(on === true, "authentication.capability.value", `${path}.team.${control}`,
-          `${control} is declared by presence: send true or omit it`);
-      }
-      continue;
-    }
     into.require(declared === true, "authentication.capability.value", `${path}.${name}`,
       `${name} is declared by presence: send true or omit it`);
   }
-}
-
-/**
- * The modes a lead may listen in, as a list: coach and join-call begin with silent listening, so a list
- * without `listen` names modes the lead could never reach.
- */
-function validateListeningControl(value: unknown, path: string, into: Collector): void {
-  if (!Array.isArray(value) || value.length === 0) {
-    into.add("authentication.capability.team.listeningControl.shape", path,
-      "listeningControl lists the modes this lead may listen in: a non-empty array, or omitted for a lead who may not");
-    return;
-  }
-  value.forEach((mode: unknown, index: number) => {
-    if (into.oneOf(mode, LISTENING_MODES, "authentication.capability.team.listeningControl.mode", `${path}[${index}]`) && value.indexOf(mode) !== index) {
-      into.add("authentication.capability.team.listeningControl.unique", `${path}[${index}]`, `duplicate listen mode: ${describeValue(mode)}`);
-    }
-  });
-  into.require(value.includes("listen"), "authentication.capability.team.listeningControl.listen", path,
-    "coach and join-call begin with silent listening: a lead who may listen in any mode may listen");
 }
 
 /** What a login is validated against beyond its own shape. */

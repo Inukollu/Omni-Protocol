@@ -23,7 +23,7 @@ are used precisely throughout and mean nothing looser here.
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
 | **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; transfer destinations may include an agent when the provider publishes that directory item. |
-| **Lead** | An agent whose login declares `capabilities.team`. The provider publishes a `TeamMembers` object to them and to nobody else: **the login is the permission**. |
+| **Lead** | An agent whose login declares `capabilities.lead`. The flag alone turns on the team feature in the agent application: the lead sees their members with their tasks and stats, and acts on them with the authority the flag carries. While the feature is on, the provider publishes a `TeamMembers` object to them and to nobody else: **the login is the permission**. |
 | **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and local policy disagree, the stricter wins. |
 | **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. The protocol never describes the IVR or the queue; it carries the call's history and details to whichever agent holds it now. |
 | **Assignment** | The call routed to this agent, from the offer until the task ends. It is the one thing that crosses: the provider assigns, names the assignment with `assignmentId`, and that is the only name the desk ever uses back. A call that comes back is a new assignment on the same call, and a declined or lapsed offer is an assignment that became nothing more. What the platform calls its own record, and whether it reuses that name, is the adapter's business and unknown to the desk. |
@@ -41,7 +41,7 @@ are used precisely throughout and mean nothing looser here.
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, team member list. |
 | **Dial** | One outbound call the agent application asks a provider to place — from the idle dialpad, a cold or warm transfer, a conference add, or a connect-back. Identified by the agent application's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
-| **Listen** | A lead listening to a member's call unasked, from the team member list: `listen` in silence, `coach` heard by the agent alone, `join-call` heard by everyone. Nothing of it reaches the member's task, and there is no take-over in it. See **Listening to a call**. |
+| **Listen** | A lead's channel in a member's call, unasked, from the team member list: `listen` in silence, `coach` heard by the agent alone, `join-call` heard by everyone. It is a team act naming the member, never a task on the lead's desk; nothing of it reaches the member's task. A lead who wants the call takes it over. See **Listening to a call**. |
 | **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone consulted or conferenced in from the moment their dial is placed. |
 
 These fields describe state within their containing objects. Both authentication and break
@@ -252,17 +252,10 @@ type AuthenticationContext = {
 
 type ListeningMode = "listen" | "coach" | "join-call";
 
-type TeamCapabilities = {
-  breakControl?: true;
-  leadAssistControl?: true;
-  listeningControl?: ListeningMode[];
-  policyControl?: true;
-};
-
 type UserCapabilities = {
   breaks?: true;
   preferences?: AgentPreference[];
-  team?: TeamCapabilities;
+  lead?: true;
 };
 
 type AuthenticationState =
@@ -569,6 +562,7 @@ type TaskCapabilities<C extends Channel = Channel> =
         decline?: Lockable<true>;
         hold?: Lockable<true>;
         endCall?: Lockable<true>;
+        terminateCall?: Lockable<true>;
         connectBack?: Lockable<true>;
         coldTransfer?: Lockable<DestinationDirectory>;
         warmTransfer?: Lockable<DestinationDirectory>;
@@ -697,17 +691,8 @@ type TaskLeadAssist = { note?: string; since: IsoTimestamp } & (
   | { stage: "joined"; leadId: UserId }
 );
 
-type TaskAssisting = {
+type TaskTakenOver = {
   memberId: UserId;
-  assignmentId: AssignmentId;
-  note?: string;
-  since: IsoTimestamp;
-};
-
-type TaskListening = {
-  memberId: UserId;
-  assignmentId: AssignmentId;
-  mode: ListeningMode;
   since: IsoTimestamp;
 };
 
@@ -747,8 +732,8 @@ type Task<C extends Channel = Channel> = {
   history?: TaskHistory;
 } & TaskCompletion & (
   C extends "voice"
-    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; listening?: TaskListening; media?: TaskMediaState }
-    : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; listening?: never; media?: never }
+    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; media?: TaskMediaState }
+    : { recording?: never; onCall?: never; leadAssist?: never; takenOver?: never; media?: never }
 );
 
 type PreviewDeadline = "calls" | "host-calls" | "waits";
@@ -764,7 +749,6 @@ type TaskOutcome =
   | { type: "taken-over"; leadId: UserId }
   | { type: "cancelled"; by: "agent" | "provider" | "party"; reason?: string }
   | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
-  | { type: "left" }
   | { type: "failed"; failure: ProtocolFailure };
 ```
 
@@ -779,6 +763,7 @@ const TASK_COMMAND_NAMES = {
     "hold",
     "resume",
     "end-call",
+    "terminate-call",
     "connect-back",
     "transfer",
     "lead-assist",
@@ -802,6 +787,7 @@ type VoiceTaskCommand =
   | { type: "hold" }
   | { type: "resume" }
   | { type: "end-call" }
+  | { type: "terminate-call" }
   | { type: "connect-back"; dialId: DialId }
   | { type: "transfer"; action: "cold"; dialId: DialId; destinationId: string }
   | { type: "transfer"; action: "warm"; dialId: DialId; destinationId: string }
@@ -809,8 +795,6 @@ type VoiceTaskCommand =
   | { type: "transfer"; action: "cancel" }
   | { type: "lead-assist"; action: "request"; note?: string }
   | { type: "lead-assist"; action: "cancel" }
-  | { type: "lead-assist"; action: "take-over-call" }
-  | { type: "lead-assist"; action: "leave" }
   | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
   | { type: "conference"; action: "remove"; destinationId: string; party?: never }
   | { type: "conference"; action: "remove"; party: true; destinationId?: never }
@@ -901,12 +885,12 @@ pass. An agent application never has the value and never asks. A name is not loc
 controls — is content, and is never locked.
 
 **A lead sets the team's policy from their team member list.** A login that declares
-`capabilities.team.policyControl` may `executeTeamPolicy({ type: "set", capability, setting })`
+`capabilities.lead` may `executeTeam({ command: { type: "set-policy", capability, setting } })`, where the provider offers policy control and says so by publishing `policies`,
 with `on`, `off`, or `person`, for any task control, `dial`, or a skill — and only `hold`
 and skills may be `person`; connect back and new call are the team's, on or off, within what the queue
 allows. The team member list carries `policies` for such a login: every policy as it stands, who set it, and
 `lockedBy` where a level above the team made it theirs to keep, which the lead sees and cannot
-change — `executeTeamPolicy` on it answers `failed` with `omni.capability-not-enabled`.
+change — `set-policy` on it answers `failed` with `omni.capability-not-enabled`.
 
 **What the team left to the person is the person's, and the provider keeps it.** The login's
 `capabilities.preferences` lists every preference the person may hold — `hold`, a skill —
@@ -991,19 +975,44 @@ type TeamMember = {
   availability: TeamMemberAvailability;
   since?: IsoTimestamp;
   break?: Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">;
+  tasks?: MemberTask[];
+  listening?: MemberListening;
 };
 
 type LeadRequest = {
-  id: string;
   memberId: UserId;
   assignmentId: AssignmentId;
   note?: string;
   since: IsoTimestamp;
 };
 
+type MemberTask<C extends Channel = Channel> = {
+  assignmentId: AssignmentId;
+  title: string;
+  channel: C;
+  taskType: string;
+  phase: TaskPhase;
+  party?: Contact;
+  reference?: string;
+  attributes?: TaskAttribute[];
+  history?: TaskHistory;
+  capabilities?: TaskCapabilities<C>;
+  capabilitySource?: CapabilitySource;
+  browsers?: TaskBrowser[];
+  completionMode?: CompletionMode;
+  wrapAllowance?: DurationSeconds;
+} & (C extends "voice"
+  ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; media?: TaskMediaState }
+  : { onCall?: never; leadAssist?: never; takenOver?: never; media?: never });
+
+type MemberListening = {
+  mode: ListeningMode;
+  since: IsoTimestamp;
+};
+
 type TeamMembers = {
   members: TeamMember[];
-  requests?: LeadRequest[];
+  requests: LeadRequest[];
   policies?: TeamPolicies;
 };
 
@@ -1022,15 +1031,18 @@ type TeamPolicy = Resolved & {
 
 type TeamPolicies = Partial<Record<PolicyKey, TeamPolicy>>;
 
-type TeamPolicyCommand = { type: "set"; capability: PolicyKey; setting: TeamPolicySetting };
+type TeamPolicyCommand = { type: "set-policy"; capability: PolicyKey; setting: TeamPolicySetting };
 
-type TeamPolicyCommandRequest = {
-  command: TeamPolicyCommand;
-};
+type TeamFeatureCommand = { type: "lead-features"; enabled: boolean };
 
-type TeamLeadAssistCommand =
-  | { type: "join"; requestId: string }
-  | { type: "decline"; requestId: string; reason?: string };
+type TeamCallCommand =
+  | { type: "join"; memberId: UserId; assignmentId?: AssignmentId }
+  | { type: "decline"; memberId: UserId; assignmentId?: AssignmentId; reason?: string }
+  | { type: "listen"; memberId: UserId; assignmentId?: AssignmentId }
+  | { type: "coach"; memberId: UserId; assignmentId?: AssignmentId }
+  | { type: "join-call"; memberId: UserId; assignmentId?: AssignmentId }
+  | { type: "leave"; memberId: UserId; assignmentId?: AssignmentId }
+  | { type: "take-over-call"; memberId: UserId; assignmentId?: AssignmentId };
 
 type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
@@ -1038,22 +1050,10 @@ type TeamBreakCommand =
   | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationMs?: number }
   | { type: "end-forced-break"; memberId: UserId };
 
-type TeamBreakCommandRequest = {
-  command: TeamBreakCommand;
-};
+type TeamCommand = TeamFeatureCommand | TeamBreakCommand | TeamCallCommand | TeamPolicyCommand;
 
-type TeamLeadAssistCommandRequest = {
-  command: TeamLeadAssistCommand;
-};
-
-type TeamListenCommand =
-  | { type: "listen"; memberId: UserId }
-  | { type: "coach" }
-  | { type: "join-call" }
-  | { type: "leave" };
-
-type TeamListenCommandRequest = {
-  command: TeamListenCommand;
+type TeamCommandRequest = {
+  command: TeamCommand;
 };
 
 type TeamCommandResult =
@@ -1108,6 +1108,8 @@ type ProviderEvent =
   | { type: "task-updated"; task: Task }
   | { type: "task-media-started"; assignmentId: AssignmentId }
   | { type: "task-media-ended"; assignmentId: AssignmentId }
+  | { type: "team-media-started"; memberId: UserId; assignmentId: AssignmentId }
+  | { type: "team-media-ended"; memberId: UserId; assignmentId: AssignmentId }
   | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
   | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; assignmentId?: AssignmentId; destinationId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
@@ -1169,13 +1171,10 @@ type Connection<C extends Channel = Channel> = {
   cancelBreak?(): Promise<BreakCancelResult>;
   endBreak?(): Promise<BreakEndResult>;
 
-  executeTeamBreak?(request: TeamBreakCommandRequest): Promise<TeamCommandResult>;
-  executeTeamLeadAssist?(request: TeamLeadAssistCommandRequest): Promise<TeamCommandResult>;
-  executeTeamListen?(request: TeamListenCommandRequest): Promise<TeamCommandResult>;
+  executeTeam?(request: TeamCommandRequest): Promise<TeamCommandResult>;
   openMedia?(request: OpenMediaRequest): Promise<OpenMediaResult>;
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
   recordStep?(report: HistoryReport): Promise<HistoryReportResult>;
-  executeTeamPolicy?(request: TeamPolicyCommandRequest): Promise<TeamCommandResult>;
 };
 
 type Adapter<C extends Channel = Channel> = {
@@ -1611,7 +1610,7 @@ compile time.
 | `timeCheck` | Optional `true`: implements `checkTime` for fresh provider-clock samples; agent application polling is independently opt-in. |
 | `timestampAuthority` | Optional `"provider"`: provider timestamps are final; agent application instants are advisory. Omission makes no trust promise. |
 | `runningStepReports` | The provider takes running reports of an agent application-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the agent application sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The agent application records what it performs**. |
-| `completionSettleMs` | Required. How long after an applied completion -- `complete`, or a lead's `take-over-call` -- the provider's `task-ended` is owed, a positive whole number of milliseconds (`manifest.completionSettleMs`). A warm transfer's `complete` is not final task completion: the agent's wrap runs after it. Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
+| `completionSettleMs` | Required. How long after an applied `complete` the provider's `task-ended` is owed, a positive whole number of milliseconds (`manifest.completionSettleMs`). A warm transfer's `complete` is not final task completion: the agent's wrap runs after it. Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
 
 ### Authentication methods
 
@@ -1912,20 +1911,15 @@ replaces the login" describes is a new `AuthenticationSession` under a new `logi
 ### What the login may do
 
 `capabilities` declares provider actions available to this login rather than to one task: whether
-the agent may ask for a break, and whether they lead a team — and if so, whether they decide its
-breaks and whether they may join a member's call. It is declared by presence, like every capability
-in this contract, and it travels with the identity because it is part of who the agent is on this
-provider: the provider knows the roles, and says so at sign-in rather than leaving Omni to infer
-them from what arrives later.
+the agent may ask for a break, and whether they lead a team. It is declared by presence, like every
+capability in this contract, and it travels with the identity because it is part of who the agent
+is on this provider: the provider knows the roles, and says so at sign-in rather than leaving Omni
+to infer them from what arrives later.
 
 | Field | Contract |
 | --- | --- |
 | `breaks` | This login may request a break. Requires the four break methods on the connection. |
-| `team` | This login leads a team. The provider publishes a `TeamMembers` object to it on every snapshot — `members: []` when nobody is in it — and to nobody else. |
-| `team.breakControl` | This lead may act on their team's breaks through `executeTeamBreak` — force-break, end-forced-break, decide-break-request, set-break-policy — as far as the provider supports; a command it lacks answers `omni.capability-not-enabled`. Omni asks for a decision only against a member whose `break` is `awaiting-approval`, so a provider that grants on request is never asked to decide. Requires `executeTeamBreak`. |
-| `team.leadAssistControl` | This lead may join a member's call on request. Requires `executeTeamLeadAssist`. |
-| `team.listeningControl` | This lead may listen to a member's call unasked, in the listed modes and no others: `listen`, `coach`, `join-call`. The list always includes `listen`, since the other two begin from one. Requires `executeTeamListen`. See **Listening to a call**. |
-| `team.policyControl` | This lead sets the team's policy per capability — on, off, or the person's — within what the queue allows. Requires `executeTeamPolicy`; the team member list carries `policies`. |
+| `lead` | This login leads a team. The flag alone turns on the team feature in the agent application, and every lead act comes with it; there is no per-action permission beside it. While the lead has the feature on, the provider publishes a `TeamMembers` object to them on every snapshot — `members: []` when nobody is in it — and to nobody else. Requires `executeTeam`. See **Team leads**. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
 A session action is available only when both the capability and Omni local policy permit it.
@@ -2134,7 +2128,7 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
 | `scheduledActivities` | Required complete calendar contribution when the manifest declares `calendar`; `[]` clears it. Omitted only when it does not. |
-| `team` | Required `TeamMembers` when the login declares `capabilities.team`, `members: []` when nobody is in it. Forbidden otherwise — the login is the permission. |
+| `team` | Required `TeamMembers` when the login declares `capabilities.lead` and the lead has the team feature on, `members: []` when nobody is in it. Forbidden otherwise — the login is the permission, and a lead who turned the feature off gets nothing of the team. |
 
 ## Live connection
 
@@ -2157,12 +2151,9 @@ surface in one place, and what obliges an adapter to implement each one.
 | `commitBreak()` | The login declares `capabilities.breaks`. Commit and cancel are not optional halves of it. |
 | `cancelBreak()` | The login declares `capabilities.breaks`. |
 | `endBreak()` | The login declares `capabilities.breaks`. |
-| `executeTeamBreak(command)` | The login declares `capabilities.team.breakControl`. |
-| `executeTeamLeadAssist(command)` | The login declares `capabilities.team.leadAssistControl`. |
-| `executeTeamListen(command)` | The login declares `capabilities.team.listeningControl`. |
+| `executeTeam(request)` | The login declares `capabilities.lead`: every lead act, on the team surface and nowhere else. See **Lead commands**. |
 | `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
 | `recordStep(report)` | The manifest lists `softphone` among its `phones`. On a softphone the agent application mutes its own microphone on any call, and the provider's record has to have somewhere to take that leg; a desk phone's microphone is the phone's. See **The agent application records what it performs**. |
-| `executeTeamPolicy(command)` | The login declares `capabilities.team.policyControl`. |
 | `openMedia(request)` | The manifest lists `softphone` among its `phones`. On a softphone the call's audio lands in Omni, so the adapter has to open it; a platform of desk phones alone never does. |
 
 **The four break methods stand or fall together.** Declaring `capabilities.breaks` at login and then
@@ -2295,7 +2286,7 @@ An automatically accepted task still arrives through `task-offered`.
 
 **Work the agent originated is accepted by the command that created it.** A task born of the
 agent's own act — a dialpad call or a connect-back, recognisable by the agent application's `dialId` on
-`onCall`; a lead's join, carrying `assisting`; a lead's listen, carrying `listening` — arrives
+`onCall`; a call a lead took over, carrying `takenOver` — arrives
 through `task-offered` with `acceptance: "automatic"` whatever `autoAcceptTasks` says, and the
 validator holds it there under either local policy and under none (`task.acceptance.originated`):
 the desk shows no **Accept** for a call the agent placed. The local policy governs work the queue
@@ -2391,8 +2382,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `history` | The call record: `steps` — the ordered interaction history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `interactionSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **Interaction history**. |
 | `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the agent application's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where an agent application placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the agent application supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `leadAssist` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Lead assist**. |
-| `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, the member's `assignmentId`, and their note. The lead's task has an assignment of its own, so the member's is named, or the copy no longer says which call it joined. Its presence is what makes `lead-assist` `take-over-call` and `leave` issuable. See **Lead assist**. |
-| `listening` | Voice only, on the lead's own task while they listen to a member's call: whose call, which call, and the `mode` they are heard in, restated on every change. Never on the member's task, and never together with `assisting`. See **Listening to a call**. |
+| `takenOver` | Voice only, on a task that reached this agent by a lead's take-over: which member the call was taken from, and when. It is an ordinary assignment with the call's history, offered whatever break the lead is on and counted against no capacity. See **Lead assist**. |
 
 `TaskAttribute` entries carry typed detail alongside the task:
 
@@ -3196,7 +3186,8 @@ See **Which commands need a capability**.
 | --- | --- | --- |
 | `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when local policy also permits declining. |
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. |
-| `endCall` | Primary button: End call | The provider ends the caller connection and all owned/inherited agent-added channels; wrap/completion remain separate. See **Ending a call, and removing one person from it**. |
+| `endCall` | Primary button: End call | The provider ends the agent's channel and every channel the agent added; the caller continues on the provider's path. The task goes to its wrap. See **Ending a call, and removing one person from it**. |
+| `terminateCall` | Primary button: Terminate call | The provider ends the caller channel. The task goes to its wrap. See **Ending a call, and removing one person from it**. |
 | `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance completes the task at provider end. See **Connecting back during completion**. |
 | `coldTransfer` | Secondary menu item: Cold transfer | Omni may hand the customer straight to a destination, with nobody spoken to first. |
 | `warmTransfer` | Secondary menu item: Warm transfer | Omni may park the customer and call a destination first, then hand the customer over or cancel back. See **Warm transfer**. |
@@ -3291,50 +3282,41 @@ end the caller journey; a later assignment to the same agent is a new interactio
 
 #### Ending a call, and removing one person from it
 
-A call has everyone on `Task.onCall`, and two commands take people off it, both performed by the
-provider.
+A call has everyone on `Task.onCall`, and three commands take people off it, all performed by the
+provider. Two of them end the agent's part; they differ in what happens to the caller.
 
 ```ts
-{ type: "end-call" }                                             // provider ends caller and owned/inherited agent-added channels; wrap/completion are separate
+{ type: "end-call" }                                             // the agent's channel and the channels the agent added end; the caller continues
+{ type: "terminate-call" }                                       // the caller channel ends
 { type: "conference", action: "remove", party: true }            // the customer leaves; the agent stays with the colleague
 { type: "conference", action: "remove", destinationId: "tier2" } // the conferenced person leaves; ringing, this calls the dial off
 ```
 
-The agent application sends the ordinary task-scoped `execute` request with `command: { type: "end-call" }`.
-The provider knows the caller and agent-added channel bindings; no channel list or owner details
-are sent by the agent application. The task's `endCall` capability is permission, not an executor selection.
-`validateTaskCommandRequest` checks the exact interaction/assignment and delegates the command's
-policy/phase checks. The provider rechecks current ownership atomically; no client validator can
-prove that its view is fresh. The agent application does not implement agent end-call; low-level removal of individual channels is not
-this agent action. There is no agent application end-call execution API or fallback route.
+**`end-call` ends my part.** The agent's channel and every channel the agent added -- a
+conferenced colleague, a consulted destination -- end, and the caller continues on the path the
+provider decides: another IVR, a queue, a survey, or the end of the call. Gated by `endCall`.
 
-`end-call` is gated by `endCall` on the current interaction. It ends the caller connection and
-all agent-added channels owned by that interaction, including channels originally added by previous
-agents and inherited through transfer or takeover. Ownership is not inferred from who originally
-dialed, the current UI selection, or a person's label. The provider maintains that authority
-and checks the exact interaction/assignment when acting. Agent-added channels are not left behind
-merely because another agent added them.
+**`terminate-call` ends the caller channel.** The call is over for the caller. Gated by
+`terminateCall`, a separate permission, since ending a customer's call is a different thing from
+putting my own side down.
 
-On a successful transfer or takeover, ownership of those channels passes to the receiving
-interaction (lead or another agent), not just ownership of the caller leg. The outgoing interaction may
-still have its allowed wrap work, but cannot disconnect channels it no longer owns. A pending or
-unknown handover is not a confirmed ownership change: retain source reservations and reconcile.
-The provider must serialize handover and end-call so a delayed outgoing command cannot tear down
-the recipient's call. No public channel-owner field or guessed identity is introduced here;
-the source must provide authoritative ownership and command fencing before declaring permission.
+Both are commands to the provider through `execute`, and nothing happens on the desk until the
+provider reports it: the agent's media ends on `task-media-ended`, the task moves to `completing`,
+any wrap allowance runs, and the agent completes. Neither is `task-ended`, and `complete` is
+neither of them. Both capabilities are the queue's to grant and a level's to lock, and both may
+change while the task is open: the provider republishes the task at the moment a permission
+changes, and a command that arrives after its capability was withdrawn is refused, as **Task
+capabilities** sets out. The provider knows which channels are the agent's and which were added;
+the agent application sends the command and no channel list, and the provider rechecks ownership
+when it acts.
 
-The resulting end of this agent's media is published as `task-media-ended`. Any wrap remains
-until its own completion; `end-call` is not `task-ended`, and `complete` is not an implicit
-caller/channel disconnect. Other agents' independent tasks end or wrap only on their own source
-transitions. Neither completion nor transfer itself ends the continuing caller journey.
-
-`conference` `remove` remains a person-specific provider operation, gated by `conference`.
-It does not implicitly complete any other interaction. Its person/consultation prerequisites
-remain separate from the permission to disconnect the caller. A remove that would leave the
-agent alone is not a remove but an `end-call`, and the provider answers it `failed`.
-The consulted destination of a warm transfer is not removed this way:
-`transfer` `cancel` is its own step, which returns the agent to the parked customer, and a remove
-never promises that.
+`conference` `remove` takes one person off, named as the room names them, and the call goes on
+for the rest; it is gated by `conference`, since it only means something with a third person on
+the line. Removing the party leaves the agent with the colleague, a warm hand-over in reverse. A
+remove that would leave the agent alone is not a remove but an `end-call`, and a provider answers
+it `failed`. The consulted destination of a warm transfer is not removed this way: `transfer`
+`cancel` is its own step, which returns the agent to the parked customer, and a remove never
+promises that.
 
 #### Warm transfer
 
@@ -3631,7 +3613,7 @@ rendering one as the other tells an agent to wait for somebody who is never comi
 | `awaiting-approval` | A person has to decide. The agent is waiting on somebody. |
 | `granted` | A person decided yes. Omni may now tell this provider to stop the agent; until it does, work continues normally, and this says nothing about why Omni has not. |
 | `starting-after-task` | Omni has told the provider to stop; the break begins when the current task ends. No new work arrives meanwhile, and nobody needs to act. It waits on a task, so beside no task it is refused (`break.starting-after-task.tasks`): a committed break with nothing outstanding is `on-break`. |
-| `on-break` | The agent is on the break now. It holds no task: a break begins when the work ends, so a snapshot reporting `on-break` beside a task is refused as `break.on-break.tasks`. The one exception is a lead's listening task during a `coaching`, `administrative` or `training` break -- see **Listening to a call**. |
+| `on-break` | The agent is on the break now. It holds no task: a break begins when the work ends, so a snapshot reporting `on-break` beside a task is refused as `break.on-break.tasks`. The one exception is a call a lead took over, which the provider assigns whatever break the lead is on -- see **Lead assist**. |
 
 A denial is a decision, not a standing approval state. The provider transitions the request directly
 to `not-requested`; Omni returns the agent to idle and never asks again on their behalf. They saw the
@@ -3842,12 +3824,15 @@ request object only to the request method, and undefined to the other three.
 | `cancelBreak` | `awaiting-approval` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
 | `endBreak` | `on-break` or `starting-after-task` during reconciliation; the agent may explicitly end a requested or forced break. |
 
-Use `validateTeamBreakCommand(request, context)` for lead decisions, forcing a break, ending a forced break and
-policy commands. It requires the live lead capability and active transport, a current target
-team member list for member commands, and the target's complete break state for forcing/ending a break.
-Approve/deny requires an awaiting decision; forcing a break uses the target's reason codes; ending a forced break
-requires a forced committed break. The context's target state must belong to the named member;
-that association and backend authorization are provider responsibilities.
+Use `validateTeamCommand(request, context)` before every lead act: the team feature switch, break
+decisions, forcing and ending a forced break, policy, and every act on a member's call. It requires
+the live `lead` flag and active transport, a current team member list for any command naming a
+member, and the target's complete break state for forcing/ending a break. Approve/deny requires an
+awaiting decision; forcing a break uses the target's reason codes; ending a forced break requires a
+forced committed break; join and decline need the member's request on the list; coach, join-call
+and leave need the lead already on that member's call; an assignment named must be one the list
+shows the member holding. The context's target state must belong to the named member; that
+association and backend authorization are provider responsibilities.
 
 Use `validateBreakStatus(state, tasks)` on the complete retained task view after each transaction,
 as well as `validateBreakTransition` for event ordering. Snapshot validation shares the status
@@ -4115,22 +4100,23 @@ so there is nothing on it to resume.
 
 ## Team leads
 
-A lead who also takes calls sees their team on the idle dashboard. `Snapshot.team` carries a
-`TeamMembers` object, replaced whole by `team-updated`.
+The team feature is the lead's own surface, beside the agent's and never mixed with it. The
+login's `lead` flag turns it on in the agent application; the lead retrieves their members and
+sees, for each, their assignments as they stand and the full history of each, and acts on them
+with the authority the flag carries. Nothing the lead does here is a task on their desk. A lead
+who also takes calls is an agent like any other on the agent side, and a lead who does not want
+the agent role for now places themself on a break of a working kind and keeps the team feature on.
 
-Migration: TeamRoster is now `TeamMembers`, and validateTeamRoster is now
-`validateTeamMembers`. Update type imports and validator calls; no legacy export aliases exist.
-The object still contains `members` and the permitted `requests` and `policies`; it is not a
-bare array. `Snapshot.team`, the `team-updated` event and its `team` payload, login permissions,
-and `team.*` validation rules keep their names and semantics. An empty team has `members: []`;
-an absent `team` still means the login is not entitled to that contribution.
-
+`Snapshot.team` carries a `TeamMembers` object, replaced whole by `team-updated`, and the provider
+keeps it current: when a member is offered a call, answers, holds, mutes or is transferred, the
+list is republished, so the lead's screen moves when the member's does. The agent application asks
+for nothing and computes nothing.
 
 | Field | Contract |
 | --- | --- |
-| `members` | Every member of this lead's team, whatever their state. `[]` says the lead has a team with nobody in it; omitting the team member list says something else entirely — see **The login is the permission** below. |
-| `requests` | The members currently asking this lead to join a call, each with the task and the note. Required when the login declares `team.leadAssistControl`, `[]` when nobody is asking; omitted when it does not. See **Lead assist**. |
-| `policies` | The team's policy per capability as it stands — the setting, who set it, and `lockedBy` where a level above the team made it theirs to keep. Required when the login declares `team.policyControl`; omitted when it does not. See **Who decides what an agent may do**. |
+| `members` | Every member of this lead's team, whatever their state, each with their open tasks. `[]` says the lead has a team with nobody in it; omitting the team member list says something else entirely — see **The login is the permission** below. |
+| `requests` | The members currently asking a lead to join their call, each naming the member, the assignment and the note. Always carried, `[]` when nobody is asking. See **Lead assist**. |
+| `policies` | The team's policy per capability as it stands — the setting, who set it, and `lockedBy` where a level above the team made it theirs to keep. Present where the provider offers policy control; absent where it does not. See **Who decides what an agent may do**. |
 
 | `TeamMember` field | Contract |
 | --- | --- |
@@ -4138,6 +4124,8 @@ an absent `team` still means the login is not entitled to that contribution.
 | `availability` | Required. What the member is doing now. |
 | `since` | Optional. When the current `availability` began — not when they signed in, and not when the team member list was read. |
 | `break` | Present only while the member has an outstanding break request. See **A member waiting for a break**. |
+| `tasks` | The member's open tasks as `MemberTask`s: the same task the member's desk holds, trimmed by the provider. The assignment, title, task type, phase, party, room, media and the full history are what the lead reads; the workspace — controls, their source, browsers, completion terms — is the member's and travels only if the provider sends it. `[]` when the member holds none; omitted only where the provider cannot see them. |
+| `listening` | Present while this lead's channel is in this member's call — listening, coaching or joined — with the `mode` they are heard in and since when. One member's call at a time (`team.listening.single`). |
 
 Each availability value means one thing:
 
@@ -4152,7 +4140,8 @@ Each availability value means one thing:
 **Always publish the complete team member list, never a change to it.** Team presence typically reaches an
 adapter over a best-effort channel with no ordering and no delivery guarantee, so a stream of deltas
 cannot be trusted to reconstruct the truth. The adapter reconciles against its own authoritative
-read and publishes the result.
+read and publishes the result. That includes the members' tasks: a hold on a member's desk is a
+republished list on the lead's.
 
 **Omit `since` rather than inventing one.** Omni renders it as a duration, so a timestamp
 synthesised from the adapter's own clock at seed time reads as "on task for 0 seconds" for
@@ -4160,11 +4149,20 @@ everybody — worse than showing nothing, because it looks like data. Send it on
 knows when the state actually began. It times the current `availability`, so it moves every time
 that value does.
 
-**The login is the permission.** A team member list goes to a login that declares `capabilities.team`, on
-every snapshot, and to nobody else. Omni never decides who leads a team: the provider said so at
-sign-in, and the team member list agrees with it — present, `[]` included, for a lead; absent for everybody
-else, which is the correct rendering for an agent who leads nobody. What the lead may do with the
-team member list is on the login too, `team.breakControl` and `team.leadAssistControl`, never on the team member list.
+**The login is the permission.** A team member list goes to a login that declares
+`capabilities.lead`, on every snapshot while the team feature is on, and to nobody else. Omni never
+decides who leads a team: the provider said so at sign-in, and the team member list agrees with it
+— present, `members: []` included, for a lead; absent for everybody else, which is the correct
+rendering for an agent who leads nobody (`team.required`, `team.unentitled`). What the lead may do
+with it comes with the flag: there is no per-action permission on the login or on the list.
+
+**The lead switches the feature on and off, and the provider is told.** A lead may work as an
+agent alone, as agent and lead, or as lead alone, and moves between them on the fly. The
+agent application says which with `{ type: "lead-features", enabled }`: while it is on, the
+provider sends team events scoped to the lead's team and the lead may act; while it is off, the
+lead is an ordinary agent, no team member list is owed or expected (`team.unexpected`,
+`event.team.features`), and no lead act is possible, since the lead learns their members'
+assignments only from the list. It is on from sign-in for a lead until the lead turns it off.
 
 **The team member list never carries the agent it is published to — not in `members`, and not in
 `requests`.** A lead does not report to themself: their own break request and their own ask for a
@@ -4172,24 +4170,36 @@ lead go up to whoever leads them and appear on *that* person's team member list,
 only their own `BreakState` and their task's `leadAssist` move. An adapter whose platform lists the lead
 among their own members filters the signed-in identity out before publishing. **Being a lead is a
 role the provider knows, never inferred from who is listed:** it is declared at sign-in, a lead
-with nobody in their team publishes `[]`, an agent with no such role publishes nothing, and no
+with nobody in their team publishes `members: []`, an agent with no such role publishes nothing, and no
 member count can tell those two apart.
 
 ### Lead commands
 
-One method, `executeTeamBreak`, taking a discriminated command exactly as `execute` takes a
-`TaskCommand`:
+One method, `executeTeam`, taking a discriminated command exactly as `execute` takes a
+`TaskCommand`. Every act on a member's call names the member, `memberId`, and may name the
+assignment, `assignmentId`, where the lead has it; the provider resolves the member's current
+assignment from the member alone.
 
 | Command | Effect |
 | --- | --- |
-| `{ type: "decide-break-request", memberId: UserId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
+| `{ type: "lead-features", enabled }` | The team feature on or off. See **The lead switches the feature on and off** above. |
+| `{ type: "decide-break-request", memberId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
 | `{ type: "set-break-policy", policy }` | `approval-required`, `automatically-approved`, or `requests-suspended`. |
-| `{ type: "force-break", memberId: UserId, reasonId?, reason?, expectedDurationMs? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. Optional `expectedDurationMs` is advisory and is published on the resulting forced break. |
-| `{ type: "end-forced-break", memberId: UserId }` | Lifts the forced-break restriction, whoever forced it, by clearing `BreakState.forced`. The committed break continues; only the agent resumes work. |
+| `{ type: "force-break", memberId, reasonId?, reason?, expectedDurationMs? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. Optional `expectedDurationMs` is advisory and is published on the resulting forced break. |
+| `{ type: "end-forced-break", memberId }` | Lifts the forced-break restriction, whoever forced it, by clearing `BreakState.forced`. The committed break continues; only the agent resumes work. |
+| `{ type: "join", memberId, assignmentId? }` | Answers the member's request: the provider bridges the lead's channel into the call. See **Lead assist**. |
+| `{ type: "decline", memberId, assignmentId?, reason? }` | Refuses the member's request. |
+| `{ type: "listen", memberId, assignmentId? }` | The lead's channel joins the member's call unasked, in silence. See **Listening to a call**. |
+| `{ type: "coach", memberId, assignmentId? }` | The lead is heard by the member alone. Needs the lead on that member's call. |
+| `{ type: "join-call", memberId, assignmentId? }` | The lead is heard by everyone on the call. Needs the lead on that member's call. |
+| `{ type: "leave", memberId, assignmentId? }` | The lead's channel leaves the member's call, however it got there. The member's call goes on. |
+| `{ type: "take-over-call", memberId, assignmentId? }` | The provider moves the call to the lead as its new agent, from a joined call or a listened one alike. See **Lead assist**. |
+| `{ type: "set-policy", capability, setting }` | Sets the team's policy for one capability: `on`, `off`, or `person`. See **Who decides what an agent may do**. |
 
 `memberId` is this provider's own identifier for the member, as published on its team member list. It is
 never an identifier from another provider, and Omni does not translate between them; names come
-from `getUserDetails()`.
+from `getUserDetails()`. `validateTeamCommand` holds each command to the team member list as it
+stands -- see **Runtime break prerequisite checks**.
 
 `requests-suspended` means requests are **rejected outright** rather than left pending — nobody is coming to
 approve them. A provider that suspends break requests must also publish `canRequestBreak: false` to the team's
@@ -4203,71 +4213,56 @@ never expressed here.
 
 An agent on a call may ask a lead to join it -- a dispute that needs approval, a customer who
 asks for a manager, a moment the agent wants a second pair of ears. A call centre calls this
-assistance or escalation, and the name says who assists: the capability is `leadAssist` on the task; the lead's side is the team member list, which is already the lead's view of the
-team, and a second lead method beside `executeTeamBreak`:
-
-```ts
-executeTeamLeadAssist({ command: TeamLeadAssistCommand }): Promise<TeamCommandResult>
-```
-
-Required when the login declares `capabilities.team.leadAssistControl`, and gated by it exactly as
-`executeTeamBreak` is by `team.breakControl`. The flow, in order:
+assistance or escalation, and the name says who assists: the capability is `leadAssist` on the
+task; the lead's side is the team member list, which is already the lead's view of the team. The
+flow, in order:
 
 ```ts
 // 1. The agent asks, with a small note. Their task carries `leadAssist` from here on.
 execute({ assignmentId: "alloc-42", command: { type: "lead-assist", action: "request", note: "Refund dispute, needs approval" } })
 //    task.leadAssist = { stage: "requested", note: "Refund dispute, needs approval", since }
 
-// 2. Every lead entitled to it sees the request on their team member list.
-//    team-updated: requests: [{ id: "req-7", memberId: "A-1", assignmentId: "alloc-42", note, since }]
+// 2. Every lead with the team feature on sees the request on their team member list.
+//    team-updated: requests: [{ memberId: "A-1", assignmentId: "alloc-42", note, since }]
 
 // 3. A lead joins, or declines.
-executeTeamLeadAssist({ command: { type: "join", requestId: "req-7" } })
-executeTeamLeadAssist({ command: { type: "decline", requestId: "req-7", reason: "In a call" } })
+executeTeam({ command: { type: "join", memberId: "A-1", assignmentId: "alloc-42" } })
+executeTeam({ command: { type: "decline", memberId: "A-1", reason: "In a call" } })
 ```
 
-**On `join` the provider bridges three parties and the lead is on a task of their own**, an
-assignment of its own, arriving on the lead's connection as `task-offered` with `automatic`
--- the way a call an agent placed themselves arrives -- and carrying `assisting`, which names the
-member and the member's assignment. The agent's task
-moves to `leadAssist: { stage: "joined", leadId }`. A join is the lead's own act, so capacity does not
-trigger it; but from then on it is an outstanding task the provider counts against the lead's
-stated ceiling like any other, nothing more is assigned to the lead while it stands, and a
-provider whose lead is already at the ceiling answers the join `failed`.
+**On `join` the provider bridges the lead's channel into the call.** The member's task moves to
+`leadAssist: { stage: "joined", leadId }`, the member on the team member list carries
+`listening: { mode: "join-call", since }`, and the lead's audio arrives as **Listening to a call**
+describes. Nothing is a task on the lead's desk: a join is the lead's act on the team surface, not
+work assigned to them.
 
-**A lead assists one call at a time.** A `join` from a lead already on a call -- their own or one
-they joined -- is answered `failed`, whatever their ceiling; the request stands for another lead,
-or until it is withdrawn or declined.
-
-**A lead on a break does not join.** A break is a reported state in which the agent is not working,
-and a join is work. Omni offers Join to a lead only while their own `BreakState.status` is neither
-`starting-after-task` nor `on-break` -- a committed break waiting for the lead's current work to
-finish is not given more -- and a provider answers a `join` from a lead on such a break `failed`.
-The request stands for another lead, as it does when this one is already on a call.
+**A lead is on one member's call at a time.** A `join` from a lead already on a call -- their own
+or a member's -- is answered `failed`; the request stands for another lead, or until it is
+withdrawn or declined. A join is work, so Omni offers Join only to a lead whose voice channel is
+free, and a provider answers a `join` from one whose channel is not `failed`.
 
 **On `decline`, or a request the agent withdraws with `{ type: "lead-assist", action: "cancel" }`, the
 provider clears `leadAssist` from the agent's task** and drops the request from every team member list. Nothing
 else changes; the agent is still on the call.
 
-**Take over call** uses `{ type: "lead-assist", action: "take-over-call" }`.
-The lead assumes the agent’s interaction; the caller’s wider journey continues.
-Migration: replace the former take-over action literal with `take-over-call` in hosts and
-providers together. The former spelling is rejected, with no compatibility alias.
-The `taken-over` task outcome and existing completion behavior remain unchanged.
-This action is distinct from `join-call`, which lets everyone hear a lead listening to a call.
+**On `leave`, the lead's channel drops and the call goes on**: the member's task loses its
+`leadAssist`, the member loses `listening`, and the lead is free. Nothing ended for the member.
 
-The lead then has two commands on their copy, gated by `assisting` being present, and a third
-choice that is no command at all:
+**On `take-over-call`, the provider moves the call from the member to the lead**, and the lead is
+its new agent. There are two paths to it -- the agent asked and the lead joined, or the lead was
+listening unasked -- and one act at the end of either. What follows is the same on both:
 
-| The lead | The agent's task | The lead's task |
+| | The member's task | The lead's desk |
 | --- | --- | --- |
-| `{ type: "lead-assist", action: "take-over-call" }` | `task-media-ended`, then `task-ended` with `{ type: "taken-over", leadId }`: **no `completing` window**, the agent is idle at once. The audio ends first, as before every voice ending (`stream.taskEnded.mediaOpen`), and the lead is named by user id, since a lead is not a directory item | Continues alone, and ends as any call does |
-| `{ type: "lead-assist", action: "leave" }` | Continues; `leadAssist` is cleared | `task-media-ended`, then `task-ended` with `{ type: "left" }` -- the call goes on without them |
-| Stays until the customer hangs up | `task-media-ended`, `completing`, its own outcome | The same, independently: **both have the completion window** |
+| Take-over | `task-media-ended`, then `completing`: the member's interaction is over and their wrap runs, exactly as after `end-call`. The audio ends first, as before every voice ending (`stream.taskEnded.mediaOpen`). | An ordinary assignment arrives: `task-offered` with `acceptance: "automatic"`, carrying the call's history and `takenOver: { memberId, since }`. |
+| The member completes | `task-ended` with `{ type: "taken-over", leadId }`, at the member's own completion. The lead is named by user id, since a lead is not a directory item. | The lead works the call as any agent would, and ends it as any call ends. |
 
-`left` is the one outcome that ends a task without ending the call: this agent left a call that
-continues without them. It reads as neither a completion nor a cancellation, because it is
-neither.
+**The taken-over call is offered whatever break the lead is on.** A lead working as lead alone is
+on a break of a working kind, and the provider assigns the call regardless: it is the one task a
+break in effect may hold (`break.on-break.tasks` allows it, and nothing else). It is the lead's own
+act, so it counts against no capacity, like the agent's own dial; the only conditions are that the
+lead is not already on another call and their voice channel is free. A lead with the team feature
+off cannot take over, since they have no member's assignment to name.
 
 ```ts
 const leadAssistCapable = {
@@ -4276,6 +4271,13 @@ const leadAssistCapable = {
   phase: "in-progress",
   leadAssist: { stage: "joined", leadId: "L-9", note: "Refund dispute, needs approval", since: "2026-08-21T09:04:00Z" },
 } satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "leadAssist">;
+
+const takenOver = {
+  channel: "voice",
+  capabilities: { hold: true, endCall: true, outcomes: true },
+  phase: "in-progress",
+  takenOver: { memberId: "A-1", since: "2026-08-21T09:06:00Z" },
+} satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "takenOver">;
 ```
 
 Lead and member alike are `UserId`s of this provider, so an adapter publishing them implements
@@ -4283,44 +4285,10 @@ Lead and member alike are `UserId`s of this provider, so an adapter publishing t
 
 ### Listening to a call
 
-**Listen** lets the lead hear the call without being heard. The modes are `listen`, `coach`
-(agent-only lead audio), and `join-call` (lead audio heard by everyone).
-
-| Former API | Current API |
-| --- | --- |
-| MonitorMode / MONITOR_MODES | `ListeningMode` / `LISTENING_MODES` |
-| TeamMonitorCommand / TeamMonitorCommandRequest | `TeamListenCommand` / `TeamListenCommandRequest` |
-| executeTeamMonitor | `executeTeamListen` |
-| team.monitorControl | `team.listeningControl` |
-| TaskMonitoring / task.monitoring | `TaskListening` / the task’s `listening` field |
-| MONITORING_BREAK_KINDS / breakKindAllowsMonitoring | `LISTENING_BREAK_KINDS` / `breakKindAllowsListening` |
-| monitor action and mode | `listen` action and mode |
-
-Update command dispatch, allowed modes, task snapshots, imports and diagnostics together.
-The former names are not aliases. Old task and permission fields are rejected even alongside
-new fields. Validation rule segments now use `listening`, `listeningControl`, and `listen`.
-The existing login permissions, single-call limits, allowed break kinds and audio effects
-remain unchanged. Listening includes its coach/join-call modes and does not imply takeover.
-
-
-**Coach** lets the lead speak privately to the agent; the caller cannot hear the lead.
-The command and listening mode are `coach`. Migration: replace the former whisper literal
-in `TeamListenCommand`, `ListeningMode`, `team.listeningControl`, and the task’s `listening.mode`.
-`LISTENING_MODES` exports `coach`; update command producers, permissions and retained snapshots
-together. No legacy alias is accepted. The lead must already be listening and permitted to
-coach. This mode does not join the audible caller conversation or take over the task.
-
-The user-facing action is **Join call**. The command and listening mode are `join-call`.
-Migration: replace the former barge literal in `TeamListenCommand`, `ListeningMode`,
-`team.listeningControl`, and the task’s `listening.mode`. `LISTENING_MODES` exports the new literal;
-no legacy alias is accepted. Update commands, capability declarations and retained snapshots
-together. The lead must already be listening and permitted to use this mode. Everyone on the
-call hears the lead; this does not transfer ownership or invoke lead-assist takeover.
-
 A lead may listen to a member's call without being asked -- to coach, to check quality, to step in
-when it goes wrong. This is not lead assist: nobody requested it, the member's task says nothing
-about it, and there is no take-over in it. A lead who wants the call itself uses lead assist. The
-three modes determine who hears the lead:
+when it goes wrong. It is a team act naming the member, and no task on the lead's desk carries it:
+the lead's view of the call is the member's task on the team member list, with its room and its
+history. The three modes determine who hears the lead:
 
 | Mode | Who hears the lead |
 | --- | --- |
@@ -4328,60 +4296,43 @@ three modes determine who hears the lead:
 | `coach` | The agent alone. The customer hears nothing. |
 | `join-call` | Everyone on the call. |
 
-The login says which modes this lead has, as a list on `team.listeningControl`, and it always
-includes `listen`, because coach and join-call begin from one
-(`authentication.capability.team.listeningControl.listen`). A centre that lets every lead listen but
-reserves joining the call declares `["listen", "coach"]`, and Omni offers no Join call to that lead. The
-declaration requires `executeTeamListen`, gated exactly as `executeTeamLeadAssist` is by
-`team.leadAssistControl`.
+All three come with the `lead` flag; a centre reserves none of them per lead. The flow:
 
 ```ts
 // 1. The lead picks a member from the team member list and starts silent.
-executeTeamListen({ command: { type: "listen", memberId: "A-1" } })
+executeTeam({ command: { type: "listen", memberId: "A-1" } })
+//    team-updated: the member carries listening: { mode: "listen", since }
+//    team-media-started: { memberId: "A-1", assignmentId: "alloc-42" } -- the lead's audio attaches
 
-// 2. The lead's own task arrives -- task-offered with `automatic`, as a joined call does -- and
-//    carries `listening`; the assignment is the lead's own, the member's is named inside it.
-//    listening: { memberId: "A-1", assignmentId: "alloc-42", mode: "listen", since }
+// 2. The lead changes how they are heard; the provider restates the member with the new mode.
+executeTeam({ command: { type: "coach", memberId: "A-1" } })
+executeTeam({ command: { type: "join-call", memberId: "A-1" } })
 
-// 3. The lead changes how they are heard; the provider restates the task with the new mode.
-executeTeamListen({ command: { type: "coach" } })
-executeTeamListen({ command: { type: "join-call" } })
-
-// 4. The lead leaves; their task ends with `{ type: "left" }`. The member's call goes on.
-executeTeamListen({ command: { type: "leave" } })
+// 3. The lead leaves, or takes the call.
+executeTeam({ command: { type: "leave", memberId: "A-1" } })
+executeTeam({ command: { type: "take-over-call", memberId: "A-1" } })
 ```
 
-**The lead's task is what gives them audio**: Omni opens media on it as on any voice task, and the
-provider bridges the lead's leg into the member's call in the mode stated. `listening.mode` is
-the state, restated on every change, and a `coach` or `join-call` the login's list does not include
-is answered `failed`. **A lead listens to one call at a time** (`snapshot.listening.single`), and
-a task carries lead assistance or listening, never both (`task.listening.assisting`).
-The `join-call` mode still belongs to listening; it does not create `assisting`. The member's
-call ending ends the lead's task as it ends the member's, with `left`, since the lead was never
-working on it.
+**The lead's audio arrives through team media.** While the lead's channel is in a member's call
+-- listening, coaching or joined on request -- the lead's connection receives `team-media-started`
+naming the member and the member's assignment, and on a softphone the agent application opens
+`openMedia` on that assignment as it does for a task; `team-media-ended` closes it. Voice only, and
+to a login that declares `lead` (`event.teamMedia.*`). The member's own media events are the
+member's and never reach the lead.
 
-**A lead listens only while holding no work of their own.** A listening task is the lead's only
-task, and a snapshot carrying one beside any other is refused (`snapshot.listening.alone`); Omni
-offers Listen to a lead with no task. That includes a lead on a break -- unlike joining, which a
-break forbids -- but only a break that is work of another sort: `coaching`, `administrative` or
-`training`, the kinds in `LISTENING_BREAK_KINDS`, and never a meal or a rest. A break in effect
-otherwise holds no task; the listening task is its one exception, and a snapshot carrying one
-during a break whose active reason is of any other kind, or of no stated kind, is refused
-(`snapshot.listening.break`). The kind decides, not the reason's name: a centre that wants leads
-listening during a break declares that break `coaching`, `administrative` or `training`.
+**`listening` on the member is the state**, restated on every change of mode, and a lead is on
+one member's call at a time (`team.listening.single`). The member's call ending ends the lead's
+listening with it: the provider republishes the member without `listening` and sends
+`team-media-ended`.
+
+**A lead listens while holding no call of their own.** Omni offers Listen to a lead whose voice
+channel is free, and a provider answers a `listen` from one whose channel is not `failed`. That
+includes a lead on a break: a lead working as lead alone is on a break of a working kind, and
+listens through it.
 
 **Nothing reaches the member.** The member's task carries no trace of a listening lead in any
 mode: not on `onCall`, not in the record. Whether coaching is announced to the agent is the
 platform's business and travels on the audio, not on this wire.
-
-```ts
-const listeningLead = {
-  channel: "voice",
-  capabilities: {},
-  phase: "in-progress",
-  listening: { memberId: "A-1", assignmentId: "alloc-42", mode: "coach", since: "2026-08-21T09:04:00Z" },
-} satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "listening">;
-```
 
 ### A member waiting for a break
 
@@ -4410,7 +4361,7 @@ whole and replaced whole, and a provider that cannot say omits it.
 
 **An agent is not waiting on one person.** Authority is held by several, everyone who holds it
 sees the request on their own console, and **any one of them settles it**. Omni offers the
-decision to every login that declares `team.breakControl` — which is how the provider already
+decision to every login that declares `lead` and has the team feature on — which is how the provider already
 says who may decide — and does not try to work out whose turn it is.
 
 A request needing *more than one* approval is not something this contract describes. There is
@@ -4618,7 +4569,7 @@ platform is the adapter's business.
 ## Task commands
 
 Command names follow the channel's operational vocabulary, and each channel's command is a union
-discriminated by `type` — the same discriminant `executeTeamBreak` and `custom` already use. The
+discriminated by `type` — the same discriminant `executeTeam` and `custom` already use. The
 unions are declared under **Shapes**.
 
 `assignmentId` is not repeated on the command. It travels on the `TaskCommandRequest` around it.
@@ -4730,7 +4681,8 @@ declared:
 | Command | What makes it available |
 | --- | --- |
 | `answer`, `accept` | Nothing. A task that was offered can be accepted, or offering it meant nothing. |
-| `end-call` | The `endCall` capability. |
+| `end-call` | The `endCall` capability: ends my part, the caller continues. |
+| `terminate-call` | The `terminateCall` capability: ends the caller channel. |
 | `conference` with `action: "remove"` | The `conference` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
 | `decline` | The `decline` capability on any channel, **and** Omni local policy permitting it. One word for refusing an offer, whatever the channel. |
 | `call` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
@@ -4739,13 +4691,12 @@ declared:
 | `transfer` with `action: "warm"` | The `warmTransfer` capability. `action: "cold"` is gated by `coldTransfer`; the two are declared and offered separately. |
 | `transfer` with `action: "complete"` or `"cancel"` | A consultation in progress -- a `consulted` entry on `Task.onCall`. Without one there is nothing to complete or cancel, and a provider that receives either answers `failed`. |
 | `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with status `requested`. |
-| `lead-assist` with `action: "take-over-call"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |
 | `transfer` with a destination, `conference` with `action: "add"` | Its capability, and a `destinationId` the directory offered: the id Omni sends is the id the provider published (`command.destination.unknown`). |
 | `custom` | A control the task published under `capabilities.custom`, by its `id` (`command.capability.custom`), carrying a non-empty string for each `required` prompt field and strings for any optional fields supplied (`command.custom.prompt`). A toggle carries its target `on` boolean (`command.custom.on`). |
 | Everything else | Its own named capability. |
 
 **A control on the contact belongs to the interaction phases**, `in-progress` and `paused`:
-`hold`, `resume` and `pause`, `end-call`, every `transfer` and `conference` action, and
+`hold`, `resume` and `pause`, `end-call` and `terminate-call`, every `transfer` and `conference` action, and
 every `lead-assist` action. These controls act within this agent's current interaction.
 In `completing`, that interaction has ended and its wrap work remains. The caller may still be in
 an IVR, queue or another agent's interaction, and other channels may remain connected. Completion
@@ -5138,11 +5089,11 @@ Every outcome ends the task for this agent. On `task-ended`, Omni:
 - releases task-scoped resources; and
 - selects another task or returns to the idle workspace.
 
-A `left` outcome ends the task for this agent alone: the call continues without them, as it does
-when a lead who joined it leaves -- see **Lead assist**.
+A `taken-over` outcome arrives at the member's own completion, after the wrap that follows a
+take-over as it follows an `end-call` -- see **Lead assist**.
 
 A successful `complete` or `transfer` command does not clear the task. Omni waits for `task-ended`,
-and not for ever: `applied` to a completion -- `complete`, or a lead's `take-over-call` -- says the
+and not for ever: `applied` to a `complete` says the
 provider has completed the task, and its `task-ended` follows within the
 manifest's `completionSettleMs`. A provider never answers `applied` for a completion it has not yet
 performed. Past the bound the agent application calls `snapshot()`: a snapshot still carrying the task is a task
@@ -5210,7 +5161,7 @@ each connected provider.
 Replaces this provider's complete `TeamMembers`. It is emitted only for an agent the provider
 publishes a team member list to, and it carries the whole team every time — never a change to it, for the
 reason set out under **Team leads**. A lead's snapshot always carries the team member list; it goes only when
-a republished `authenticated` no longer declares `capabilities.team`.
+a republished `authenticated` no longer declares `capabilities.lead`, or the lead turns the team feature off (`event.team.features`).
 
 ### `contacts-updated`
 
@@ -5284,9 +5235,9 @@ Some rules need to know who is reading. `validateTeamMembers`, `validateSnapshot
 `AuthenticationState.identity.id` and their login's `capabilities`. Given `self`, a team member list that
 carries that agent reports `team.member.self` or `team.request.self`. Given `capabilities`, a lead's
 snapshot without a team member list reports `team.required`, a team member list published to a login that does not lead
-reports `team.unentitled`, `requests` on a team member list whose login lacks `team.leadAssistControl` reports
-`team.requests.capability`, and a team member list without them on a login that declares it reports
-`team.requests.required`. Without them those rules are not checked, because they cannot be.
+reports `team.unentitled`, and a `team-updated` to such a login reports `event.team.capability`; given
+`leadFeatures: false`, a team member list reaching a lead who turned the feature off reports
+`team.unexpected` or `event.team.features`. Without them those rules are not checked, because they cannot be.
 `exerciseAdapter` always passes both.
 
 `assertNoViolations(violations)` throws `ProtocolConformanceError` — which carries the full
@@ -5458,7 +5409,7 @@ cannot be established from TypeScript structure alone.
 
 | Helper | Contract checked |
 | --- | --- |
-| `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no team member list for a login that no longer leads, no requests for one that may no longer join. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
+| `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no team member list for a login that no longer leads. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
 | `assertTaskCapabilityWithdrawal(tasks, manifest, command)` | A capability withdrawn by a republish of the task is gone from the task: every task in the sequence is validated, all carry the offer's id, at least one capability the offer declared is absent at the end (a locked control is present, not withdrawn), and `command` is clean against the first task and refused against the last for want of a withdrawn capability and nothing else. Pair it with `assertCommandRefusedAfterWithdrawal` on the provider's answer. |
 | `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. The same assertion serves a command the provider never supported under a capability it declares. |
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
