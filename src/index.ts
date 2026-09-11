@@ -47,16 +47,15 @@ export type IsoTimestamp = string;
  */
 export type UserId = string;
 
-/** A non-empty, opaque task identifier unique within one provider. Scope it with `taskKey()`. */
-export type TaskId = string;
 /**
- * One life of a task on the wire. A platform retires a task id minutes after closing it and a
- * requeue takes seconds, so the same `TaskId` comes back for another customer while a late dial
- * outcome or a late interaction report for the first is still in flight. The allocation id is minted
- * once per offer and never reused for the life of the login, and every event, command and report
- * that names a task names its allocation too, so nothing lands on the next life of the id.
+ * The provider's name for one assignment: the call routed to this agent, from the offer until the
+ * task ends. Non-empty, opaque, unique within the provider and never reused while the provider is
+ * still speaking about it -- a lead names a member's assignment from another login, so the scope is
+ * the provider, not the login. What the platform calls its own record, and whether it reuses that
+ * name, is the adapter's business: a platform that reoffers a closed call under the same handle
+ * seconds later is why the adapter, not the desk, is held to this. Scope it with `taskKey()`.
  */
-export type AllocationId = string;
+export type AssignmentId = string;
 
 /**
  * The host's identity for one dial, minted before the command leaves and unique across the
@@ -481,8 +480,7 @@ export type RecordingCommand = {
   | { action: "pause" | "resume" | "stop" | "cancel"; recordingId: string }
 );
 export interface HostRecordingReport {
-  taskId: TaskId;
-  allocationId: AllocationId;
+  assignmentId: AssignmentId;
   state: RecordingState;
 }
 /** Host declaration in ConnectContext, not the provider-owned Manifest. */
@@ -497,8 +495,7 @@ export interface HostRecording {
 /** Recording applies or fails; it never dials. Rejection without result means unknown. */
 export type RecordingCommandResult = Exclude<TaskCommandResult, { status: "dialling" }>;
 export interface HostRecordingRequest {
-  taskId: TaskId;
-  allocationId: AllocationId;
+  assignmentId: AssignmentId;
   command: RecordingCommand & { source: "host" };
 }
 
@@ -758,7 +755,7 @@ export function isAllowedBrowserUrl(url: string): boolean {
 // ---------------------------------------------------------------------------
 
 export type TaskPhase =
-  /** Allocated to this agent and not yet accepted. */
+  /** Assigned to this agent and not yet accepted. */
   | "pending"
   /** Accepted, and not yet started. */
   | "confirmed"
@@ -795,7 +792,7 @@ export type TaskAttribute = TaskAttributeBase & (
   | { type: "timestamp"; at: IsoTimestamp }
 );
 
-export type InteractionStep =
+export type HistoryStep =
   | "queued"
   | "offered"
   | "answered"
@@ -812,8 +809,8 @@ export type InteractionStep =
  * absent when it does not; a plausible nought is the fallback the no-fallbacks rule forbids. The
  * record rides on the task and is replaced with it, so a late entry corrects the sums.
  */
-export interface TaskInteractionHistory {
-  steps: TaskInteractionStep[];
+export interface TaskHistory {
+  steps: TaskHistoryStep[];
   /** Seconds others spent working on it before this agent. */
   interactionSeconds?: DurationSeconds;
   /** Seconds the caller spent on hold at others' hands. */
@@ -824,8 +821,8 @@ export interface TaskInteractionHistory {
   transfers?: number;
 }
 
-export interface TaskInteractionStep {
-  step: InteractionStep;
+export interface TaskHistoryStep {
+  step: HistoryStep;
   at: IsoTimestamp;
   /**
    * On a step that dialled -- `transferred`, `conferenced`, `unanswered` -- the host's identity for
@@ -905,6 +902,8 @@ export type TaskLeadAssist = { note?: string; since: IsoTimestamp } & (
  */
 export interface TaskAssisting {
   memberId: UserId;
+  /** The member's assignment the lead joined: the lead's task has an assignment of its own. */
+  assignmentId: AssignmentId;
   note?: string;
   since: IsoTimestamp;
 }
@@ -918,8 +917,7 @@ export interface TaskAssisting {
  */
 export interface TaskListening {
   memberId: UserId;
-  taskId: TaskId;
-  allocationId: AllocationId;
+  assignmentId: AssignmentId;
   mode: ListeningMode;
   since: IsoTimestamp;
 }
@@ -979,9 +977,8 @@ export type CapabilitySource = "queue" | "ungoverned" | "undetermined";
 export const CAPABILITY_SOURCES = ["queue", "ungoverned", "undetermined"] as const satisfies readonly CapabilitySource[];
 
 export type Task<C extends Channel = Channel> = {
-  id: TaskId;
-  /** This life of the task: minted once per offer, never reused for the life of the login. See `AllocationId`. */
-  allocationId: AllocationId;
+  /** The assignment this task is the record of, and its one identity. See `AssignmentId`. */
+  assignmentId: AssignmentId;
   title: string;
   channel: C;
   /** The provider's own name for a category of work. Finer-grained than a channel. */
@@ -1018,7 +1015,7 @@ export type Task<C extends Channel = Channel> = {
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
   attributes?: TaskAttribute[];
-  interactionHistory?: TaskInteractionHistory;
+  history?: TaskHistory;
 } & TaskCompletion
   // onCall is this interaction's current room, not the lifetime of the caller or whole bridge.
   // Its room, a lead on it or listening to it, and real-time media are voice affairs; forbidden elsewhere.
@@ -1045,7 +1042,7 @@ export type TaskOutcome =
   | { type: "taken-over"; leadId: UserId }
   /** Who called the work off: the agent declining, the provider withdrawing or re-routing, the party abandoning. */
   | { type: "cancelled"; by: "agent" | "provider" | "party"; reason?: string }
-  /** Only the phases in which somebody is still being waited on can expire; an offer that lapses at `allocationExpiresAt` names `pending`. */
+  /** Only the phases in which somebody is still being waited on can expire; an offer that lapses at `assignmentExpiresAt` names `pending`. */
   | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
   /** This agent left a call that continues without them: a lead who joined and dropped. */
   | { type: "left" }
@@ -1133,8 +1130,7 @@ export type TaskCommand<C extends Channel = Channel> =
   | CustomTaskCommand;
 
 export interface TaskCommandRequest<C extends Channel = Channel> {
-  taskId: TaskId;
-  allocationId: AllocationId;
+  assignmentId: AssignmentId;
   command: TaskCommand<C>;
 }
 
@@ -1248,7 +1244,7 @@ export interface BreakState {
   forced?: ForcedBreak;
 }
 
-/** Capacity is a statement, not a request: it is taken, never refused. A provider that cannot carry the count allocates within what it can and says so on a `diagnostic`. */
+/** Capacity is a statement, not a request: it is taken, never refused. A provider that cannot carry the count assigns within what it can and says so on a `diagnostic`. */
 export type CapacityResult = { status: "applied" };
 
 /** Succeeding is not the outcome: `requested` says the provider holds it, not that it was granted. */
@@ -1289,8 +1285,7 @@ export interface TeamMember {
 export interface LeadRequest {
   id: string;
   memberId: UserId;
-  taskId: TaskId;
-  allocationId: AllocationId;
+  assignmentId: AssignmentId;
   note?: string;
   since: IsoTimestamp;
 }
@@ -1388,8 +1383,7 @@ export interface VoiceMediaSession {
 }
 
 export interface OpenMediaRequest {
-  taskId: TaskId;
-  allocationId: AllocationId;
+  assignmentId: AssignmentId;
   /** The agent's microphone as Omni captured it, `HostReport.audio.input.localAudio`; absent while that input is `unavailable`. */
   localAudio?: MediaStream;
 }
@@ -1450,16 +1444,16 @@ export type SetPreferenceRequest =
  * legs it performs, so `seconds` may say how long so far at any time; the end is stated, never
  * inferred from a number's presence. What the adapter forwards upstream, and how often, is its own.
  */
-export type InteractionReport = { taskId: TaskId; allocationId: AllocationId; at: IsoTimestamp } & (
+export type HistoryReport = { assignmentId: AssignmentId; at: IsoTimestamp } & (
   /** A muted leg says whose the silence was: the host's own Mute, or the station's slider or system. */
   | { step: "muted"; mutedBy: MutedBy }
-  | { step: Exclude<InteractionStep, "muted">; mutedBy?: never }
+  | { step: Exclude<HistoryStep, "muted">; mutedBy?: never }
 ) & (
   | { ended: true; seconds: DurationSeconds }
   | { ended?: never; seconds?: DurationSeconds }
 );
 
-export type InteractionReportResult =
+export type HistoryReportResult =
   | { status: "recorded"; at: IsoTimestamp }
   | { status: "failed"; failure: ProtocolFailure };
 
@@ -1481,12 +1475,12 @@ export interface Snapshot<C extends Channel = Channel> {
 }
 
 /**
- * How many tasks this provider may have allocated to the agent at once.
+ * How many tasks this provider may have assigned to the agent at once.
  *
  * An absolute ceiling standing until Omni restates it. The provider counts its own outstanding
  * tasks against it and needs no new signal when one ends. The agent is one person on several
  * providers, and the host divides their capacity among them: `0` is host-stopped -- the agent's
- * capacity is elsewhere for now, this provider allocates nothing and shows the member as
+ * capacity is elsewhere for now, this provider assigns nothing and shows the member as
  * `reserved` -- and is not a break, which is the agent not working at all. The host restates a
  * count of one or more when this provider has the agent's capacity again.
  */
@@ -1517,23 +1511,23 @@ export type ProviderEvent<C extends Channel = Channel> =
   | {
       type: "task-offered";
       task: Task<C>;
-      allocationExpiresAt?: IsoTimestamp;
+      assignmentExpiresAt?: IsoTimestamp;
     }
   | { type: "task-updated"; task: Task<C> }
-  | { type: "task-media-started"; taskId: TaskId; allocationId: AllocationId }
-  | { type: "task-media-ended"; taskId: TaskId; allocationId: AllocationId }
-  | { type: "task-ended"; taskId: TaskId; allocationId: AllocationId; outcome: TaskOutcome }
+  | { type: "task-media-started"; assignmentId: AssignmentId }
+  | { type: "task-media-ended"; assignmentId: AssignmentId }
+  | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
   /**
    * How a dial the host placed ended, once, either way -- `answered` is stated, never read off
    * somebody appearing on the call, and says what happened to the dial; who is on the call is
-   * `Task.onCall`. `taskId` is the task the dial was placed on, resolved from the dial and never
+   * `Task.onCall`. `assignmentId` is the task the dial was placed on, resolved from the dial and never
    * from what the agent is looking at, and that task may already have ended: a dial placed late
    * routinely outlives its call. `reason` is the switch's own words, shown to the agent as such.
    */
-  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; taskId?: TaskId; allocationId?: AllocationId; destinationId?: string; reason?: string }
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; assignmentId?: AssignmentId; destinationId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
-  | { type: "diagnostic"; expected: string; observed: string; taskId?: TaskId; allocationId?: AllocationId }
+  | { type: "diagnostic"; expected: string; observed: string; assignmentId?: AssignmentId }
   | { type: "team-updated"; team: TeamMembers }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; scheduledActivities: ScheduledActivity[] };
@@ -1611,7 +1605,7 @@ export interface Connection<C extends Channel = Channel> {
   subscribe(listener: (envelope: ProviderEventEnvelope<C>) => void): Unsubscribe;
   /** Told what the host refused, snapshot or event, with every rule broken. Always; a refusal is visible on both sides. */
   refused(report: Refusal): void;
-  /** Nothing may be allocated until a capacity is stated, so every connection receives it. */
+  /** Nothing may be assigned until a capacity is stated, so every connection receives it. */
   setCapacity(capacity: AgentCapacity): Promise<CapacityResult>;
   execute(request: TaskCommandRequest<C>): Promise<TaskCommandResult>;
   disconnect(): Promise<void>;
@@ -1644,7 +1638,7 @@ export interface Connection<C extends Channel = Channel> {
   /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
   /** Records an interaction leg the host performed. Required of a softphone login's connection: the host mutes its microphone on any call, and the record is the provider's. */
-  recordStep?(report: InteractionReport): Promise<InteractionReportResult>;
+  recordStep?(report: HistoryReport): Promise<HistoryReportResult>;
 }
 
 export interface Adapter<C extends Channel = Channel> {
@@ -1697,8 +1691,8 @@ export const DEFAULT_TASK_TYPE_PRESENTATION = {
  * string. Encoding before joining is what stops a provider id containing a separator from
  * forging another provider's key.
  */
-export const taskKey = (providerId: string, taskId: TaskId): string =>
-  `${encodeURIComponent(providerId)}:${encodeURIComponent(taskId)}`;
+export const taskKey = (providerId: string, assignmentId: AssignmentId): string =>
+  `${encodeURIComponent(providerId)}:${encodeURIComponent(assignmentId)}`;
 
 /**
  * The same treatment for a `UserId`, and needed for the same reason.
@@ -1710,32 +1704,31 @@ export const taskKey = (providerId: string, taskId: TaskId): string =>
 export const userKey = (providerId: string, userId: UserId): string =>
   `${encodeURIComponent(providerId)}:${encodeURIComponent(userId)}`;
 
-/** Every interaction step somebody takes part in. `queued` is the one nobody does. */
-export const INTERACTION_STEPS_WITH_A_PERSON = [
+/** Every history step somebody takes part in. `queued` is the one nobody does. */
+export const HISTORY_STEPS_WITH_A_PERSON = [
   "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered",
-] as const satisfies readonly InteractionStep[];
+] as const satisfies readonly HistoryStep[];
 
 /** The steps a dial writes, and so the only ones that carry a `dialId` and a `destinationId`. */
-export const INTERACTION_STEPS_THAT_DIAL = ["transferred", "conferenced", "unanswered"] as const satisfies readonly InteractionStep[];
+export const HISTORY_STEPS_THAT_DIAL = ["transferred", "conferenced", "unanswered"] as const satisfies readonly HistoryStep[];
 
-export const interactionStepDials = (step: InteractionStep): boolean =>
-  (INTERACTION_STEPS_THAT_DIAL as readonly InteractionStep[]).includes(step);
+export const historyStepDials = (step: HistoryStep): boolean =>
+  (HISTORY_STEPS_THAT_DIAL as readonly HistoryStep[]).includes(step);
 
-// Pinned both ways: a step added to `InteractionStep` has to be placed here, and a step listed here
+// Pinned both ways: a step added to `HistoryStep` has to be placed here, and a step listed here
 // has to exist there. `satisfies` on the list covers the second; this statement covers the first.
-true satisfies [Exclude<InteractionStep, "queued">] extends [(typeof INTERACTION_STEPS_WITH_A_PERSON)[number]] ? true : false;
+true satisfies [Exclude<HistoryStep, "queued">] extends [(typeof HISTORY_STEPS_WITH_A_PERSON)[number]] ? true : false;
 
 /** Whether an absent `by` means "could not attribute" rather than "nobody was involved". */
-export function interactionStepExpectsAPerson(step: InteractionStep): boolean {
-  return (INTERACTION_STEPS_WITH_A_PERSON as readonly InteractionStep[]).includes(step);
+export function historyStepExpectsAPerson(step: HistoryStep): boolean {
+  return (HISTORY_STEPS_WITH_A_PERSON as readonly HistoryStep[]).includes(step);
 }
 
 export interface BrowserSessionKeyInput {
   /** `Manifest.id`, never `displayName`: only the id is unique across an installation and stable. */
   providerId: string;
-  taskId: TaskId;
-  /** The task's allocation: a task-scoped session lives one life of the task, never the next customer's under a reused id. */
-  allocationId: AllocationId;
+  /** The task's assignment: a task-scoped session lives one assignment, never the next customer's. */
+  assignmentId: AssignmentId;
   /** `Task.taskType`. */
   taskType: string;
   browser: TaskBrowser;
@@ -1773,14 +1766,14 @@ export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): bool
  * cannot collide with a provider called `a` and a tab called `b`.
  */
 export function browserSessionKey(input: BrowserSessionKeyInput): string | undefined {
-  const { providerId, allocationId, taskType, browser } = input;
+  const { providerId, assignmentId, taskType, browser } = input;
   if (browser.sharedSession !== true) return undefined;
   // `encodeURIComponent` leaves `.` untouched, and `.` is the separator: a raw join would let
   // provider `Acme.Voice` with type `Support` forge the key of `Acme` with `Voice.Support`.
   const part = (value: string) => encodeURIComponent(value).replaceAll(".", "%2E");
   switch (browser.isolationScheme) {
     case BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_ID__TAB_NAME:
-      return `${part(providerId)}.${part(allocationId)}.${part(browser.name)}`;
+      return `${part(providerId)}.${part(assignmentId)}.${part(browser.name)}`;
     case BROWSER_ISOLATION_SCHEMES.TAB_NAME:
       return part(browser.name);
     case BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME:

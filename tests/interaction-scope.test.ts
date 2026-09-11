@@ -3,15 +3,15 @@ import type { Task } from "../src/index.js";
 import { validateTaskCommandRequest, validateTaskCommand, validateTask } from "../src/validation.js";
 import { TaskStream } from "../src/testing.js";
 const task: Task<"voice"> = {
-  id: "H2", allocationId: "H2", title: "Interaction", channel: "voice", taskType: "Queue",
+  assignmentId: "H2", title: "Interaction", channel: "voice", taskType: "Queue",
   phase: "in-progress", capabilitySource: "queue", capabilities: { endCall: true },
   browsers: [], completionMode: "agent-command",
 };
-const request = { taskId: "H2", allocationId: "H2", command: { type: "end-call" } };
+const request = { assignmentId: "H2", command: { type: "end-call" } };
 describe("provider interaction controls", () => {
-  it("requires the exact task and allocation rather than the caller journey or old interaction", () => {
+  it("requires the exact task and assignment rather than the caller journey or old interaction", () => {
     expect(validateTaskCommandRequest(request, task)).toEqual([]);
-    for (const ids of [{ taskId: "journey" }, { taskId: "H1" }, { allocationId: "H1" }])
+    for (const ids of [{ taskId: "journey" }, { taskId: "H1" }, { assignmentId: "H1" }])
       expect(validateTaskCommandRequest({ ...request, ...ids }, task)).not.toEqual([]);
     expect(validateTaskCommandRequest(request, undefined)).not.toEqual([]);
     expect(validateTaskCommandRequest(null, task)).not.toEqual([]);
@@ -48,20 +48,20 @@ describe("provider interaction controls", () => {
   });
   it("ends an old wrap without ending the newer interaction, and refuses the late old ending", () => {
     const stream = new TaskStream();
-    stream.resync({ tasks: [{ ...task, id: "H1", allocationId: "H1", phase: "completing" }, task] }, "snapshot");
-    const oldEnd = { event: { type: "task-ended", taskId: "H1", allocationId: "H1", outcome: { type: "completed", by: "agent" } } };
+    stream.resync({ tasks: [{ ...task, assignmentId: "H1", phase: "completing" }, task] }, "snapshot");
+    const oldEnd = { event: { type: "task-ended", assignmentId: "H1", outcome: { type: "completed", by: "agent" } } };
     expect(stream.apply(oldEnd)).toEqual([]);
     expect(stream.apply({ event: { type: "task-updated", task } })).toEqual([]);
     expect(stream.apply(oldEnd)).not.toEqual([]);
-    expect(stream.apply({ event: { type: "task-ended", taskId: "H2", allocationId: "H1", outcome: { type: "completed", by: "agent" } } })).not.toEqual([]);
+    expect(stream.apply({ event: { type: "task-ended", assignmentId: "H1", outcome: { type: "completed", by: "agent" } } })).not.toEqual([]);
     expect(stream.apply({ event: { type: "task-updated", task } })).toEqual([]);
   });
   it("requires media to end before the owned interaction ends, including inherited channels", () => {
     const active = { ...task, media: "started", onCall: [{ role: "party", since: "2026-09-11T00:00:00Z" }, { role: "agent", userId: "previous-agent", since: "2026-09-11T00:00:00Z" }] };
     const stream = new TaskStream(); stream.resync({ tasks: [active] }, "snapshot");
     expect(validateTaskCommandRequest(request, active)).toEqual([]);
-    expect(stream.apply({ event: { type: "task-media-ended", taskId: "H2", allocationId: "H2" } })).toEqual([]);
+    expect(stream.apply({ event: { type: "task-media-ended", assignmentId: "H2" } })).toEqual([]);
     expect(stream.apply({ event: { type: "task-updated", task: { ...task, phase: "completing", media: "ended", onCall: [] } } })).toEqual([]);
-    expect(stream.apply({ event: { type: "task-ended", taskId: "H2", allocationId: "H2", outcome: { type: "completed", by: "agent" } } })).toEqual([]);
+    expect(stream.apply({ event: { type: "task-ended", assignmentId: "H2", outcome: { type: "completed", by: "agent" } } })).toEqual([]);
   });
 });
