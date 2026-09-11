@@ -224,7 +224,7 @@ export const listeningEmailTask: Task<"email"> = { ...emailTask, id: "email-7", 
 export const startListen: TeamListenCommand = { type: "listen", memberId: "A-1" };
 export const coach: TeamListenCommand = { type: "coach" };
 // @ts-expect-error There is no take-over in listening; a lead who wants the call uses lead assist.
-export const listenTakeOver: TeamListenCommand = { type: "take-over" };
+export const listenTakeOver: TeamListenCommand = { type: "take-over-call" };
 export const listeningLead: TeamCapabilities = { listeningControl: ["listen", "coach"] };
 // @ts-expect-error The modes are the three call-centre words.
 export const eavesdropper: TeamCapabilities = { listeningControl: ["monitor"] };
@@ -232,7 +232,7 @@ export const eavesdropper: TeamCapabilities = { listeningControl: ["monitor"] };
 // Lead assist: the agent asks and withdraws; the lead takes over or leaves. Voice only.
 export const askLead: TaskCommand<"voice"> = { type: "lead-assist", action: "request", note: "Refund dispute" };
 export const withdrawLead: TaskCommand<"voice"> = { type: "lead-assist", action: "cancel" };
-export const leadTakesOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over" };
+export const leadTakesOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over-call" };
 export const leadLeaves: TaskCommand<"voice"> = { type: "lead-assist", action: "leave" };
 // @ts-expect-error A chat has no call for a lead to join.
 export const chatAskLead: TaskCommand<"chat"> = { type: "lead-assist", action: "request" };
@@ -427,3 +427,6 @@ import type { TeamMonitorCommand } from "../src/index.js";
 export type FormerListeningField = Task["monitoring"];
 // @ts-expect-error renamed away: use executeTeamListen
 export type FormerListenMethod = import("../src/index.js").Connection["executeTeamMonitor"];
+
+// @ts-expect-error The former lead-assist action has no compatibility alias.
+export const retiredLeadTakeOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over" };

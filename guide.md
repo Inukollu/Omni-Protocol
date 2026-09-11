@@ -809,7 +809,7 @@ type VoiceTaskCommand =
   | { type: "transfer"; action: "cancel" }
   | { type: "lead-assist"; action: "request"; note?: string }
   | { type: "lead-assist"; action: "cancel" }
-  | { type: "lead-assist"; action: "take-over" }
+  | { type: "lead-assist"; action: "take-over-call" }
   | { type: "lead-assist"; action: "leave" }
   | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
   | { type: "conference"; action: "remove"; destinationId: string; party?: never }
@@ -1613,7 +1613,7 @@ compile time.
 | `timeCheck` | Optional `true`: implements `checkTime` for fresh provider-clock samples; host polling is independently opt-in. |
 | `timestampAuthority` | Optional `"provider"`: provider timestamps are final; host instants are advisory. Omission makes no trust promise. |
 | `runningStepReports` | The provider takes running reports of a host-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the host sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The host records what it performs**. |
-| `completionSettleMs` | Required. How long after an applied completion -- `complete`, or a lead's `take-over` -- the provider's `task-ended` is owed, a positive whole number of milliseconds (`manifest.completionSettleMs`). A warm transfer's `complete` is not final task completion: the agent's wrap runs after it. Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
+| `completionSettleMs` | Required. How long after an applied completion -- `complete`, or a lead's `take-over-call` -- the provider's `task-ended` is owed, a positive whole number of milliseconds (`manifest.completionSettleMs`). A warm transfer's `complete` is not final task completion: the agent's wrap runs after it. Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
 
 ### Authentication methods
 
@@ -2394,7 +2394,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `interactionHistory` | The call record: `steps` — the ordered interaction history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `interactionSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **Interaction history**. |
 | `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the host's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `consulted` and `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where a host placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. A `consulted` entry is what makes `transfer` `complete` and `cancel` issuable. `label` names a destination -- a person, a queue -- not a phrase; the host supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
 | `leadAssist` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Lead assist**. |
-| `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead-assist` `take-over` and `leave` issuable. See **Lead assist**. |
+| `assisting` | Voice only, on the lead's own task for a call they joined: which member asked, with their note. Its presence is what makes `lead-assist` `take-over-call` and `leave` issuable. See **Lead assist**. |
 | `listening` | Voice only, on the lead's own task while they listen to a member's call: whose call, which call, and the `mode` they are heard in, restated on every change. Never on the member's task, and never together with `assisting`. See **Listening to a call**. |
 
 `TaskAttribute` entries carry typed detail alongside the task:
@@ -4158,12 +4158,19 @@ The request stands for another lead, as it does when this one is already on a ca
 provider clears `leadAssist` from the agent's task** and drops the request from every team member list. Nothing
 else changes; the agent is still on the call.
 
+**Take over call** uses `{ type: "lead-assist", action: "take-over-call" }`.
+The lead assumes the agent’s interaction; the caller’s wider journey continues.
+Migration: replace the former take-over action literal with `take-over-call` in hosts and
+providers together. The former spelling is rejected, with no compatibility alias.
+The `taken-over` task outcome and existing completion behavior remain unchanged.
+This action is distinct from `join-call`, which lets everyone hear a lead listening to a call.
+
 The lead then has two commands on their copy, gated by `assisting` being present, and a third
 choice that is no command at all:
 
 | The lead | The agent's task | The lead's task |
 | --- | --- | --- |
-| `{ type: "lead-assist", action: "take-over" }` | `task-media-ended`, then `task-ended` with `{ type: "taken-over", leadId }`: **no `completing` window**, the agent is idle at once. The audio ends first, as before every voice ending (`stream.taskEnded.mediaOpen`), and the lead is named by user id, since a lead is not a directory item | Continues alone, and ends as any call does |
+| `{ type: "lead-assist", action: "take-over-call" }` | `task-media-ended`, then `task-ended` with `{ type: "taken-over", leadId }`: **no `completing` window**, the agent is idle at once. The audio ends first, as before every voice ending (`stream.taskEnded.mediaOpen`), and the lead is named by user id, since a lead is not a directory item | Continues alone, and ends as any call does |
 | `{ type: "lead-assist", action: "leave" }` | Continues; `leadAssist` is cleared | `task-media-ended`, then `task-ended` with `{ type: "left" }` -- the call goes on without them |
 | Stays until the customer hangs up | `task-media-ended`, `completing`, its own outcome | The same, independently: **both have the completion window** |
 
@@ -4641,7 +4648,7 @@ declared:
 | `transfer` with `action: "warm"` | The `warmTransfer` capability. `action: "cold"` is gated by `coldTransfer`; the two are declared and offered separately. |
 | `transfer` with `action: "complete"` or `"cancel"` | A consultation in progress -- a `consulted` entry on `Task.onCall`. Without one there is nothing to complete or cancel, and a provider that receives either answers `failed`. |
 | `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with status `requested`. |
-| `lead-assist` with `action: "take-over"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |
+| `lead-assist` with `action: "take-over-call"` or `"leave"` | The lead's own task, on a call they joined -- `Task.assisting` present. An agent's task never has it, and a provider that receives either without it answers `failed`. |
 | `transfer` with a destination, `conference` with `action: "add"` | Its capability, and a `destinationId` the directory offered: the id Omni sends is the id the provider published (`command.destination.unknown`). |
 | `custom` | A control the task published under `capabilities.custom`, by its `id` (`command.capability.custom`), carrying a non-empty string for each `required` prompt field and strings for any optional fields supplied (`command.custom.prompt`). A toggle carries its target `on` boolean (`command.custom.on`). |
 | Everything else | Its own named capability. |
@@ -5044,7 +5051,7 @@ A `left` outcome ends the task for this agent alone: the call continues without 
 when a lead who joined it leaves -- see **Lead assist**.
 
 A successful `complete` or `transfer` command does not clear the task. Omni waits for `task-ended`,
-and not for ever: `applied` to a completion -- `complete`, or a lead's `take-over` -- says the
+and not for ever: `applied` to a completion -- `complete`, or a lead's `take-over-call` -- says the
 provider has completed the task, and its `task-ended` follows within the
 manifest's `completionSettleMs`. A provider never answers `applied` for a completion it has not yet
 performed. Past the bound the host calls `snapshot()`: a snapshot still carrying the task is a task

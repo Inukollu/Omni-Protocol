@@ -2448,7 +2448,7 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
 // ---------------------------------------------------------------------------
 
 const TRANSFER_ACTIONS = ["cold", "warm", "complete", "cancel"] as const;
-const LEAD_ASSIST_ACTIONS = ["request", "cancel", "take-over", "leave"] as const;
+const LEAD_ASSIST_ACTIONS = ["request", "cancel", "take-over-call", "leave"] as const;
 const CONFERENCE_ACTIONS = ["add", "remove"] as const;
 
 
