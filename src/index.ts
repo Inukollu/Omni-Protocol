@@ -1020,7 +1020,8 @@ export type Task<C extends Channel = Channel> = {
   attributes?: TaskAttribute[];
   handlingHistory?: TaskHandlingHistory;
 } & TaskCompletion
-  // Who is on the call, a lead on it or listening to it, and real-time media are voice affairs; the arm makes them compile errors elsewhere.
+  // onCall is this handling's current room, not the lifetime of the caller or whole bridge.
+  // Its room, a lead on it or listening to it, and real-time media are voice affairs; forbidden elsewhere.
   & (C extends "voice"
     ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; assisting?: TaskAssisting; monitoring?: TaskMonitoring; media?: TaskMediaState }
     : { recording?: never; onCall?: never; leadAssist?: never; assisting?: never; monitoring?: never; media?: never });

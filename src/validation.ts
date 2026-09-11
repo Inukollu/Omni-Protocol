@@ -1022,7 +1022,7 @@ function validateHandlingHistory(value: unknown, path: string, into: Collector, 
       }
       if (entry.step === "muted") {
         into.require(task.media !== "ended" && task.phase !== "completing", "task.handlingHistory.muted.open", `${at}.seconds`,
-          "a muted entry without seconds is a mute still running, and the call is over: the provider closes every open leg at the instant the media ends, and the duration is stated");
+          "a muted entry without seconds is still running, but this handling's media has ended: the provider closes its open leg and states the duration; other channels may continue");
       }
     }
     // A muted entry carries whose the silence was, as the host reported it; no other step has it.
