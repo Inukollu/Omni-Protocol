@@ -1,3 +1,12 @@
+# Current delivery: BreakState status field
+
+Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-break-status-field; branch refactor/break-status-field.
+Implementation 02cacfd16d3432fce329dcb4240819e1a84d2649.
+PR https://github.com/Inukollu/Omni-Protocol/pull/120.
+BreakState.status replaces approval; old/mixed fields rejected. Diagnostic names/paths updated. BreakApproval union, reasons, activeReasonId, values and prerequisites unchanged; separate BreakOnTaskStep.approval helper retained. Hosts/providers must update together; no aliases or version changes.
+Build/test typecheck, all 438 tests, guide examples, package verification (10 files/3 entrypoints), diff check passed. Log /private/tmp/break-status-field-check.log.
+Next: monitor CI/reviews and respond to failures; retain worktree/branch while open. No merge/release/cleanup performed. PR119 independently verified merged.
+
 # Current PR119 revision: Break request retry delay
 
 Repository /Users/vasu/Dev/Personal/Omni-Protocol; worktree /private/tmp/omni-set-break-policy; branch refactor/set-break-policy.
@@ -410,3 +419,8 @@ PID 66818; command python3 /private/tmp/omni-end-forced-break/.agent-memory/runt
 Monitor omni-protocol-pr119-set-break-policy: OPEN at 2026-09-11T09:40:42.810800+00:00. Await CI/review; monitor never merges.
 PID 61280; command python3 /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy-monitor.py; state /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.state.json; log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.log; PID file /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.pid; process log /private/tmp/omni-set-break-policy/.agent-memory/runtime/set-break-policy.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-set-break-policy, branch refactor/set-break-policy, PR https://github.com/Inukollu/Omni-Protocol/pull/119.
 <!-- set-break-policy-monitor:end -->
+
+<!-- break-status-field-monitor:begin -->
+Monitor omni-protocol-pr120-break-status-field: OPEN at 2026-09-11T09:58:13.776846+00:00. Await CI/review; monitor never merges.
+PID 77759; command python3 /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field-monitor.py; state /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.state.json; log /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.log; PID file /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.pid; process log /private/tmp/omni-break-status-field/.agent-memory/runtime/break-status-field.process.log. Interval 60s, timeout 24h. Terminal: MERGED/CLOSED/AUTH_FAILED/POLL_FAILED (3 consecutive)/TIMEOUT. Observation only. Worktree /private/tmp/omni-break-status-field, branch refactor/break-status-field, PR https://github.com/Inukollu/Omni-Protocol/pull/120.
+<!-- break-status-field-monitor:end -->
