@@ -3814,9 +3814,13 @@ because there is nothing to cancel: a break request on them would be the agent's
 and a lead's to refuse, and a forced break is neither. When the forcing provider ends the forced
 break and the agent resumes there, the agent application restates its capacity on the rest. A
 provider whose login is not usable is left alone, as a break attempt leaves it;
-`assertForcedBreakStopsTheRest` holds an agent application to this set. Those providers record no
-break of their own for the stop -- it was never theirs -- so their `shift.breakSeconds` do not
-count it.
+`assertForcedBreakStopsTheRest` holds an agent application to this set. **The provider keeps its
+shift totals true.** A member held elsewhere is one the provider sees -- `elsewhere` is a state it
+publishes -- and the day's `shift` is its own account of the day, so the time the agent was
+stopped for a break forced on another provider is the provider's to count, as a break of a kind
+its platform has, or introduces, for exactly this. A `breakSeconds` that leaves it out is a total
+the provider knew to be short, and **Never report a value you cannot observe** cuts the other way
+here: the provider observed it.
 
 `ForcedBreak.by` says who forced it: a lead, by user id, or `provider` where the platform itself
 did -- on its own rule, a schedule, a compliance hold. The agent sees who, and `getUserDetails()`

@@ -1323,6 +1323,7 @@ export interface MemberShift {
   signedOutAt?: IsoTimestamp;
   talkSeconds?: DurationSeconds;
   holdSeconds?: DurationSeconds;
+  /** Every break the member was on today, including time held elsewhere for a break another provider forced: the provider counts it under a break kind of its own. */
   breakSeconds?: DurationSeconds;
   tasksHandled?: number;
   events?: ShiftEvent[];
