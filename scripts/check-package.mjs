@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ try {
   // Use npm's packer because the release is published with npm. No lifecycle recursion.
   const [packed] = JSON.parse(run("npm", ["pack", "--ignore-scripts", "--json", "--cache", join(work, "npm-cache"), "--pack-destination", work], root));
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  const required = new Set(["package.json", "README.md", "guide.md", "LICENSE"]);
+  const required = new Set(["package.json", "README.md", "guide.md", "LICENSE", ...readdirSync(join(root, "guide")).map(name => `guide/${name}`)]);
   for (const entry of Object.values(manifest.exports)) {
     assert.equal(typeof entry.types, "string", "Every entry point must declare types");
     assert.equal(typeof entry.import, "string", "Every entry point must declare an ESM import");

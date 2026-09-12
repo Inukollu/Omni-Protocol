@@ -10,7 +10,9 @@ import { describe, expect, it } from "vitest";
 // one that no longer exists, which is the class that slipped through.
 
 const root = join(__dirname, "..");
-const guide = readFileSync(join(root, "guide.md"), "utf8");
+/** The guide is one file plus one per role and channel under guide/; every guard here reads all of them. */
+export const GUIDE_FILES = ["guide.md", ...readdirSync(join(root, "guide")).filter(name => name.endsWith(".md")).sort().map(name => `guide/${name}`)];
+const guide = GUIDE_FILES.map(name => readFileSync(join(root, name), "utf8")).join("\n");
 // The vocabulary is the package and its tests: an export, a field, a union member, a rule id.
 const sources = [
   ...readdirSync(join(root, "src")).filter(name => name.endsWith(".ts")).map(name => join(root, "src", name)),
@@ -104,10 +106,11 @@ describe("the guide names nothing the code lacks", () => {
     expect([...missing.entries()].map(([name, where]) => `${name}  (in \`${where}\`)`)).toEqual([]);
   });
 
-  it("every inline-code identifier in guide.md exists somewhere in src/", () => {
+  it("every inline-code identifier in the guide exists somewhere in src/", () => {
     const missing = new Map<string, string>();
     for (const span of spans) {
-      if (!identifierLike(span) || PROSE.has(span) || span.startsWith("@xema/")) continue;
+      // A file of the guide named in a cross-reference is a file, not an identifier.
+      if (!identifierLike(span) || PROSE.has(span) || span.startsWith("@xema/") || span === "guide.md" || span.startsWith("guide/")) continue;
       for (const piece of pieces(span)) if (!missing.has(piece)) missing.set(piece, span);
     }
     expect([...missing.entries()].map(([piece, span]) => `${piece}  (in \`${span}\`)`)).toEqual([]);
