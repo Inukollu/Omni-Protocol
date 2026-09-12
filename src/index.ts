@@ -196,7 +196,7 @@ export interface PhoneChannel {
  * never a softphone's, whose microphone is the host's and whose mute is the host's report.
  */
 export interface PhoneState {
-  /** The phone this login is on, as the host chose it at connect. */
+  /** The agent's phone for this provider, as the host chose it for the login at connect: which of the manifest's phones the agent hears this provider's calls on. */
   phone: Phone;
   status: PhoneStatus;
   /** The phone's own mute, on a desk phone the platform observes; absent where it does not, or on a softphone. */

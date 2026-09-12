@@ -2402,7 +2402,7 @@ function requireClockInto(value: unknown, manifest: unknown, path: string, into:
     "this publishes an instant the desk renders as a running duration -- a since, a signedInAt -- and the manifest declares no timeCheck: every screen counts such a duration from the provider's clock, so the provider states one");
 }
 
-/** The phone as the platform sees it: the device the login is on, whether it can take a call, its own mute where observed. */
+/** The phone as the platform sees it: the agent's device for this provider, whether it can take a call, its own mute where observed. */
 export function validatePhoneState(value: unknown, path = "phone", context: ReaderContext = {}): ProtocolViolation[] {
   const into = new Collector();
   validatePhoneStateInto(value, path, context, into);
@@ -2416,7 +2416,7 @@ function validatePhoneStateInto(value: unknown, path: string, context: ReaderCon
   }
   if (into.oneOf(value.phone, PHONES, "phone.phone", `${path}.phone`) && context.phone !== undefined) {
     into.require(value.phone === context.phone, "phone.phone.mismatch", `${path}.phone`,
-      `the login is on a ${context.phone} and the platform reports a ${describeValue(value.phone)}: the phone state is the login's phone`);
+      `the host chose a ${context.phone} for this login at connect and the platform reports a ${describeValue(value.phone)}: the phone state is the phone the agent hears this provider's calls on`);
   }
   into.oneOf(value.status, PHONE_STATUSES, "phone.status", `${path}.status`);
   if (value.muted !== undefined) {

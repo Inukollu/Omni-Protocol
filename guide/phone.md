@@ -307,8 +307,10 @@ the other three are the states in which nothing can land, each wanting a differe
 | `do-not-disturb` | The agent pressed it on the device. Nothing lands until they clear it; it is not a break, and the provider assigns or not as its platform does. |
 | `off-hook` | The handset is up with no call on it, and no channel is on it. |
 
-`phone` names the phone the host chose for the login at connect, and a state naming the other
-is the wrong phone (`phone.phone.mismatch`). `since` is when the status began, counted from the
+`phone` is the agent's device for this provider: the one the host chose for the login at
+connect, from the manifest's phones, as the way the agent hears this provider's calls. A state
+naming the other is the wrong phone (`phone.phone.mismatch`). The phone is the agent's; the login
+is the agent's session with the provider, and what belongs to the login is that choice. `since` is when the status began, counted from the
 provider's clock like every duration off the active call, and omitted rather than invented.
 
 **The channels.** The phone has one active audio channel and any number held
