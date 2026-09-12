@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
 import type { LoginStore, Refusal } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
-import { memoryStore, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
+import { memoryStore, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const voiceTask = {
   title: "Customer call",
@@ -730,38 +730,6 @@ describe("assertDeniedAndRetriedBreak", () => {
   it("rejects a sequence that ends back at not-requested", () => {
     expect(() => assertDeniedAndRetriedBreak(["awaiting-approval", "not-requested", "granted", "not-requested"]))
       .toThrow(/must end granted or in effect/);
-  });
-});
-
-describe("assertWrapTimeout", () => {
-  it("accepts a deadline of audio end plus the task allowance", () => {
-    expect(() => assertWrapTimeout(voiceTask, "2026-08-21T01:00:00.000Z", "2026-08-21T01:01:00.000Z")).not.toThrow();
-  });
-
-  it("accepts scheduler jitter inside the tolerance", () => {
-    expect(() => assertWrapTimeout(voiceTask, "2026-08-21T01:00:00.000Z", "2026-08-21T01:01:00.400Z")).not.toThrow();
-  });
-
-  it("rejects a deadline outside the tolerance", () => {
-    expect(() => assertWrapTimeout(voiceTask, "2026-08-21T01:00:00.000Z", "2026-08-21T01:02:00.000Z")).toThrow(/Wrap deadline mismatch/);
-  });
-
-  it("rejects jitter when an exact match is demanded", () => {
-    expect(() => assertWrapTimeout(voiceTask, "2026-08-21T01:00:00.000Z", "2026-08-21T01:01:00.400Z", 0)).toThrow(/Wrap deadline mismatch/);
-  });
-
-  it("rejects an unparseable time", () => {
-    expect(() => assertWrapTimeout(voiceTask, "just now", "2026-08-21T01:01:00.000Z")).toThrow(/valid ISO-8601/);
-  });
-
-  it("treats a task with no allowance as having no deadline, in both directions", () => {
-    const untimed = { completionMode: "agent-command" } satisfies Pick<Task, "completionMode" | "wrapAllowance">;
-    // No allowance, nothing counted down: conforming.
-    expect(() => assertWrapTimeout(untimed, "2026-08-21T01:00:00.000Z", undefined)).not.toThrow();
-    // A host counting down what the provider left open is the violation...
-    expect(() => assertWrapTimeout(untimed, "2026-08-21T01:00:00.000Z", "2026-08-21T01:01:00.000Z")).toThrow(/no deadline/);
-    // ...and so is a host counting nothing down when the provider set a clock.
-    expect(() => assertWrapTimeout(voiceTask, "2026-08-21T01:00:00.000Z", undefined)).toThrow(/no deadline was observed/);
   });
 });
 

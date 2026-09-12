@@ -49,6 +49,8 @@ const PROSE = new Set([
   "true", "false", "null", "undefined", "n", "0", "1", "[]", "{}", "enum",
   // Names from outside this contract: web APIs, OIDC, a platform's own vocabulary.
   "URLPattern", "nonce", "not-ready", "AudioContext",
+  // TypeScript's own utility types, which the examples narrow with.
+  "Pick",
   // Example values -- attribute keys, task types, categories -- chosen to read as data.
   "Lead", "Prospect", "Dept", "Department", "Billing", "Returns", "WhatsApp",
   // Placeholders in the isolation-scheme explanation.

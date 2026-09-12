@@ -23,7 +23,7 @@ are used precisely throughout and mean nothing looser here.
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
 | **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; a conference directory may include an agent when the provider publishes that directory item. |
-| **Lead** | An agent whose login declares `capabilities.lead`. The flag alone turns on the team feature in the agent application: the lead sees their members with their tasks and stats, and acts on them with the authority the flag carries. While the feature is on, the provider publishes a `TeamMembers` object to them and to nobody else: **the login is the permission**. |
+| **Lead** | An agent whose login declares `capabilities.lead`. The flag lets the agent application offer the team feature; the application switches it on with `lead-features` on every connect, and only then does the provider publish the team -- whole on `team-updated`, then one member at a time -- to that login and to nobody else: **the login is the permission**. The lead sees their members with their tasks and stats, and acts on them with the authority the flag carries. |
 | **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and local policy disagree, the stricter wins. |
 | **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. The protocol never describes the IVR or the queue; it carries the call's history and details to whichever agent holds it now. |
 | **Assignment** | The call routed to this agent, from the offer until the task ends. It is the one thing that crosses: the provider assigns, names the assignment with `assignmentId`, and that is the only name the desk ever uses back. A call that comes back is a new assignment on the same call, and a declined or lapsed offer is an assignment that became nothing more. What the platform calls its own record, and whether it reuses that name, is the adapter's business and unknown to the desk. |
@@ -41,7 +41,7 @@ are used precisely throughout and mean nothing looser here.
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, team member list. |
 | **Dial** | One outbound call the agent application asks a provider to place — from the idle dialpad, a preview's Call, a conference add, or a connect-back. Identified by the agent application's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome**. |
-| **Listen** | A lead's channel in a member's call, unasked, from the team member list: `listen` in silence, `coach` heard by the agent alone, `join-call` heard by everyone. It is a team act naming the member, never a task on the lead's desk; nothing of it reaches the member's task. A lead who wants the call takes it over. See **Listening to a call**. |
+| **Listen** | A lead's channel in a member's call, unasked, from the team member list: `listen` in silence, `coach` heard by the agent alone, `join-call` heard by everyone. It is a team act naming the member, never a task on the lead's desk; `listen` and `coach` leave no trace on the member's task, while a lead heard by everyone is on its `onCall` as an `agent`. Every lead sees every lead on the call. A lead who wants the call takes it over. See **Listening to a call**. |
 | **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone conferenced in from the moment their dial is placed. |
 
 These fields describe state within their containing objects. Both authentication and break
@@ -54,7 +54,7 @@ state use `status`; name the object when discussing them to avoid ambiguity.
 | `transport` | A connection | `connecting`, `active`, `error` |
 | `status` | An authentication session | `signed-out`, `authenticating`, `authenticated`, `refreshing`, `expired` |
 | `status` | The agent’s break lifecycle | `not-requested`, `awaiting-approval`, `granted`, `starting-after-task`, `on-break` |
-| `availability` | A team member | `ready`, `on-task`, `on-break`, `signed-out` |
+| `availability` | A team member | `ready`, `on-task`, `on-break`, `elsewhere`, `signed-out` |
 
 Migration: describeUsers is now `getUserDetails`, and validateDescribedUsers is now
 `validateUserDetails`. Related diagnostics use getUserDetails. Hosts and providers must
@@ -124,7 +124,7 @@ identifier of its own for an agent or a manager, and none crosses this boundary 
 operating-system account, not a directory identity, not a licence.
 
 So a `UserId` means nothing outside the provider that issued it. Provider A's
-`history[].by` and provider B's team member list `memberId` are unrelated strings that will
+`history[].by` and provider B's team member `id` are unrelated strings that will
 eventually collide, and one person on several providers has several identities that nothing here
 pairs. Scope every user identifier with its provider ID before storing or comparing it, exactly as
 `assignmentKey()` already does for tasks — see `userKey()` under **Utilities**.
@@ -835,7 +835,7 @@ type TaskCommandResult =
 ### Who decides what an agent may do
 
 An agent desk has two managers, not one. **The queue** — a process, a work type — is owned by a
-process manager and **allows** a set of capabilities: hold, connect back, new call, conference,
+process manager and **allows** a set of capabilities: hold, connect back, dial, conference,
 whether the number is visible, the actions it offers, the skills it needs. **The people** are
 managed through the organisation's structure — a team, a location, the organisation itself, in
 whatever combination the structure defines for a person — and **decide** per capability within
@@ -897,7 +897,7 @@ controls — is content, and is never locked.
 **A lead sets the team's policy from their team member list.** A login that declares
 `capabilities.lead` may `executeTeam({ command: { type: "set-policy", capability, setting } })`, where the provider offers policy control and says so by publishing `policies`,
 with `on`, `off`, or `person`, for any task control, `dial`, or a skill — and only `hold`
-and skills may be `person`; connect back and new call are the team's, on or off, within what the queue
+and skills may be `person`; connect back and dial are the team's, on or off, within what the queue
 allows. The team member list carries `policies` for such a login: every policy as it stands, who set it, and
 `lockedBy` where a level above the team made it theirs to keep, which the lead sees and cannot
 change — `set-policy` on it answers `failed` with `omni.capability-not-enabled`.
@@ -1399,7 +1399,7 @@ The map key is the exact `Task.taskType`. When no entry exists, Omni uses the pr
 channel's entry in `DEFAULT_TASK_TYPE_PRESENTATION`. A mixed-channel list falls back to the words
 "Task" and "Tasks" when its items do not share one label.
 
-`referenceLabel` labels `Task.reference`; it does not label the protocol `id`. Omni shows a
+`referenceLabel` labels `Task.reference`; it does not label `assignmentId`. Omni shows a
 reference only when both values are present.
 
 **So supply it whenever the task type has references.** Because an entry replaces the channel
@@ -1441,7 +1441,8 @@ only where the corresponding capability is declared; an absent capability means 
 there is no separate permission flag.
 
 The commands every task has are authorized by other fields the provider declared — a task that was
-offered can be accepted, one in `preview` can be called, one with a wrap can be completed.
+offered can be accepted, one in `preview` can be called, any task under `agent-command` and one
+with a wrap under `provider-automatic` can be completed.
 Nothing is issuable that the provider did not publish; only
 which field says so varies. See **Which commands need a capability**.
 
@@ -1484,7 +1485,7 @@ is never the provider's answer: an answer travels only as a resolved `{ status: 
 and every rejection is transport loss, whatever the last `transport-status` said and whatever the
 rejection carries.
 
-A command therefore carries no key. The provider names the assignment, the lead request and the
+A command therefore carries no key. The provider names the assignment, the member's request and the
 member, and Omni refers to them by those names; **Omni never asks a provider to remember a name
 Omni made up.**
 
@@ -1637,7 +1638,7 @@ compile time.
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `deskPhone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call**. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome**. |
-| `timeCheck` | `true`: implements `checkTime` and states `providerTime` on every snapshot. Required of a provider that publishes an instant the desk renders as a running duration -- a member's `since`, a lead's `listening.since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts from the provider's clock (`manifest.timeCheck.required`); agent application polling is independently opt-in. See **Every screen counts from the provider's clock**. |
+| `timeCheck` | `true`: implements `checkTime` and states `providerTime` on every snapshot. Required of a provider that publishes an instant the desk renders as a running duration -- a member's `since`, a `listening[].since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts from the provider's clock (`manifest.timeCheck.required`); agent application polling is independently opt-in. See **Every screen counts from the provider's clock**. |
 | `timestampAuthority` | Optional `"provider"`: provider timestamps are final; agent application instants are advisory. Omission makes no trust promise. |
 | `runningStepReports` | The provider takes running reports of an agent application-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the agent application sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The agent application records what it performs**. |
 | `settleMs` | Required. How long after `applied` the wire shows what the provider did: the `task-ended` after a `complete`, the `calendar-updated` after a `schedule`. A positive whole number of milliseconds (`manifest.settleMs`). Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
@@ -1771,8 +1772,8 @@ in the agent's view would show that it had happened.
 
 `calendar` is available to voice, chat, and email providers. It contributes a calendar to the idle
 dashboard for callbacks and other scheduled activities associated with that provider. Calendar is
-read-only in protocol v1: Omni can display activities but cannot create, reschedule, cancel, or
-complete them.
+the provider's: Omni displays activities and, where a task offers `schedule`, asks the provider to
+create one -- see **Scheduling a follow-up** -- but cannot reschedule, cancel, or complete them.
 
 ```ts
 idleCapabilities: { calendar: true }
@@ -1800,9 +1801,9 @@ matched by nobody and defined by nobody, and calendars merge across providers ex
 do, so one provider's `Callback` and another's `Call back` fragment a list that looks organised.
 Send the category as an attribute and Omni displays it.
 
-Nothing is lost by that here, because there is nothing for a category to drive. A read-only
-calendar has no action to vary by kind, and what an activity *is* already shows in what it carries:
-a callback has a `contact`, a training does not.
+Nothing is lost by that here, because there is nothing for a category to drive. Nothing on the
+calendar varies by kind -- `schedule` takes no category -- and what an activity *is* already shows
+in what it carries: a callback has a `party`, a training does not.
 
 #### Contacts (`contacts`)
 
@@ -2207,6 +2208,7 @@ Returns the provider's complete authoritative state at one point in time.
   snapshot is read is held until it lands, and what happens to it then depends on what it is. A
   snapshot restates state, so an event of a state-replacing kind -- `task-offered`, `task-updated`,
   `task-ended`, `task-audio-started`, `task-audio-ended`, `break-state`, `team-updated`,
+  `team-member-updated`, `team-member-removed`, `team-policies-updated`, `shift-updated`,
   `contacts-updated`, `calendar-updated`, `transport-status`, `snapshot` -- is dropped, because the
   snapshot accounts for it. An event that reports a transaction no snapshot carries --
   `dial-outcome`, `diagnostic`, `announcement`, `queue-summary` -- is applied after the snapshot,
@@ -2275,9 +2277,11 @@ capacity is stated, and needs no other word for it.
 
 **2. The agent becomes ready.** The agent application states the capacity when its local policy says: at once,
 or when the agent presses Ready. A successful connection, a healthy provider, or the absence of a
-break does not imply readiness. After that, the only way an agent stops taking work is a break,
-under `capabilities.breaks`; a login that declares no breaks cannot go not-ready once its capacity
-is stated, and `count: 0` is the agent application's division of capacity, not the agent's choice.
+break does not imply readiness. After that, an agent stops taking work on this provider only by a
+break under `capabilities.breaks`, or by the agent application restating `count: 0` -- which is how
+a forced break on another provider reaches this one; a login that declares no breaks has no
+not-ready of its own, and `count: 0` is the agent application's division of capacity, not the
+agent's choice.
 
 **3. Omni states their concurrent capacity.** Only now does Omni ask providers for work, saying how
 much the agent can take at once. It is a standing declaration rather than a poll: Omni restates the
@@ -2557,12 +2561,10 @@ answer at that exact instant. Scheduling/dispatch delay must remain visible, and
 prevented initiation must be reported rather than leaving a silently expired countdown.
 A source eligibility threshold that may never trigger an attempt is not this promise.
 
-The two deadline fields travel together and only in preview. The agent application uses trusted provider-domain
-time; clock estimation is allowed only under the explicit agent application-triggered preview exception below.
-Without usable provider-domain time
-it cannot safely auto-trigger and must expose the uncertainty and reconcile. No zero-duration,
-receipt-time or local-default deadline is inferred. Neither elapsed time nor submission changes
-the task phase: subsequent authoritative events state ringing, answer, audio and completion.
+The two deadline fields travel together and only in preview. The countdown is the seconds the
+publication carried, counted from its receipt: the agent application infers no deadline where none
+was stated and reads no clock against another. Neither elapsed time nor submission changes the
+task phase: subsequent authoritative events state ringing, answer, audio and completion.
 
 An agent application must serialize manual clicks and its timer under the exact provider/login/task/assignment
 scope, allowing at most one unresolved submission. Recheck the current phase, deadline owner,
@@ -2678,8 +2680,8 @@ audio:
 | Channel | Wrap allowance starts at |
 | --- | --- |
 | Voice and any channel with real-time audio | The `task-audio-ended` event |
-| Chat | The `task-updated` that moves the task to `completing`: the provider's word that the conversation is closed on its side, the allowance running from that publication's `occurredAt` |
-| Email | The `task-updated` that moves the task to `completing`: the provider's word that the platform has accepted the outgoing message, the allowance running from that publication's `occurredAt` |
+| Chat | The `task-updated` that moves the task to `completing`: the provider's word that the conversation is closed on its side; what is left arrives on that publication as `wrapEndsInSeconds` and is counted down from receipt |
+| Email | The `task-updated` that moves the task to `completing`: the provider's word that the platform has accepted the outgoing message; what is left arrives on that publication as `wrapEndsInSeconds` and is counted down from receipt |
 | Other non-audio channels | The `task-updated` that moves the task to `completing` |
 
 **Off voice, `completing` is the provider's word that interaction ended.** There is no audio event to
@@ -2793,7 +2795,7 @@ The record is the call's, not the task's: most of what it holds happened before 
 the total of earlier agents' time is `interactionSeconds` and the phase rules are
 `command.phase.interaction`. Hosts and providers adopt these names together; no legacy aliases
 are provided. The manifest's `settleMs` bounds final task completion, not entry into
-the `completing` wrap-up phase. The `recordStep` method and `complete` command keep their names.
+the `completing` wrap-up phase, and bounds an applied `schedule` the same way. The `recordStep` method and `complete` command keep their names.
 
 Migration from the earlier spellings:
 
@@ -2933,7 +2935,7 @@ correlation/conformance only; it is not an application-side timestamp reconcilia
 If two distinct entries would collide under the history's `(step, at)` key, do not invent a time
 or combine them: report the representation conflict. No ambiguous event is silently accepted.
 
-**Handle time is anchored, not restarted.** It runs from the
+**Interaction time is anchored, not restarted.** It runs from the
 `answered` step's `at` — from the task's first `in-progress` where the provider reports no
 history — until the task's audio ends, and a hold neither pauses nor resets it: the hold's own
 duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is
@@ -2945,9 +2947,9 @@ account of a period the agent could not be heard. Each `muted` entry carries `mu
 reported it: `host` for the agent's own Mute, `station` for a headset or system mute the agent application
 observed. No other step has it (`task.history.mutedBy`, `.mutedBy.unexpected`).
 
-**A step that dialled says which dial and where.** `transferred`, `conferenced` and `unanswered`
-each end a dial, so the entry carries the `destinationId` it went to and, where an agent application placed it, the
-`dialId` the agent application minted; no other step dialled, and either field on one is refused
+**A step that dialled says which dial and where.** `conferenced` and `unanswered` each end a dial,
+and `transferred` a hand-over on the platform's own routing, so the entry carries the `destinationId`
+it went to and, where an agent application placed the dial, the `dialId` the agent application minted; no other step dialled, and either field on one is refused
 (`task.history.dialId.unexpected`). This is how a dial made before a take-over is placeable
 by whoever holds the task now: a `dial-outcome` naming a `dialId` the agent application never minted is looked
 up in the record, not discarded.
@@ -2963,7 +2965,7 @@ Four rules a provider has to keep:
   conversation, and on live data that is the ordinary case rather than an edge. A zero is rejected.
 - **`by` is a bare `UserId`, and not necessarily an agent.** A lead or a manager takes part
   during an interaction too — a call taken over, a call conferenced in — so the field names whoever it was,
-  the same way `ForcedBreak.by` does. It comes from this provider's own directory, the same
+  from the same directory `ForcedBreak.by` names a lead from. It comes from this provider's own directory, the same
   namespace as `AuthenticationState.identity.id` and the team member list, so entries pair
   within a provider and never across one.
 - **A task carries no names.** Omni resolves what to display with `getUserDetails()`. Two people
@@ -3287,7 +3289,7 @@ const taskCapabilities = {
 
 A capability says the control may be offered; the task's phase says whether there is anything to use
 it on. Every control below that acts on the call or the conversation -- everything but `decline`,
-`connectBack` and `outcomes` -- is offered only while the task is `in-progress` or `paused`.
+`connectBack`, `schedule` and `outcomes` -- is offered only while the task is `in-progress` or `paused`.
 See **Which commands need a capability**.
 
 ### Voice capabilities
@@ -3582,7 +3584,7 @@ there was one, the directory item it went to where there was one, and how the di
 set: `answered`, `busy`, `no-answer`, `unreachable`, `rejected`, `cancelled`, `unexplained`.
 `answered` is stated rather than read off somebody appearing on the call, because an agent application that infers
 success cannot tell "reached" from "still ringing". `cancelled` is the dialler calling the dial off
-before anyone answered -- the agent hanging up while a consult still rings -- which is not a
+before anyone answered -- the agent hanging up while a conferenced colleague still rings -- which is not a
 `no-answer` the destination never gave. `unexplained` is the switch dropping the call with no cause among
 those named here: a statement about the switch, sent instead of the nearest cause it did not give.
 `reason` is the switch's own words, optional, and shown to the agent attributed to the switch rather
@@ -3599,8 +3601,8 @@ call it belonged to and never against the next one.
 
 The stream knows a dial from three places: `TaskStream.dialled(dialId)`, which an agent application calls when it
 places one; an entry on a task's `onCall`; and a step in its `history`. Since a dialled entry
-is listed from placement, `dialled()` is load-bearing only for a dial that never has an entry -- a
-connect-back, an idle dialpad call -- or whose entry has already left the room; an
+is listed from placement, `dialled()` is load-bearing only for a dial that never has an entry -- an
+idle dialpad call, which has no task yet -- or whose entry has already left the room; an
 outcome for a dial nobody placed and no task mentions is what `stream.dialOutcome.unknown` refuses.
 
 **`answered` says what happened to the dial; `onCall` says who is in the room.** They are two
@@ -3711,7 +3713,7 @@ rendering one as the other tells an agent to wait for somebody who is never comi
 | --- | --- |
 | `not-requested` | No request outstanding. |
 | `awaiting-approval` | A person has to decide. The agent is waiting on somebody. |
-| `granted` | A person decided yes. Omni may now tell this provider to stop the agent; until it does, work continues normally, and this says nothing about why Omni has not. |
+| `granted` | The request was granted, by a person or by an `automatically-approved` policy. Omni may now tell this provider to stop the agent; until it does, work continues normally, and this says nothing about why Omni has not. |
 | `starting-after-task` | Omni has told the provider to stop; the break begins when the current task ends. No new work arrives meanwhile, and nobody needs to act. It waits on a task, so beside no task it is refused (`break.starting-after-task.tasks`): a committed break with nothing outstanding is `on-break`. |
 | `on-break` | The agent is on the break now. It holds no task: a break begins when the work ends, so a snapshot reporting `on-break` beside a task is refused as `break.on-break.tasks`. The one exception is a call a lead took over, which the provider assigns whatever break the lead is on -- see **Lead assist**. |
 
@@ -3749,7 +3751,7 @@ The separate authentication and general failure retryAfterMs fields are unchange
 
 Migration: the former in-effect break approval value is now `on-break`. It means the
 agent is on the break, not merely granted permission. The old value is rejected without an
-alias. The task prerequisite, supported listening exceptions and ordering rules are unchanged;
+alias. The task prerequisite, the take-over exception and ordering rules are unchanged;
 the task-conflict diagnostic is `break.on-break.tasks`. Team member availability already uses
 `on-break` and is unchanged.
 
@@ -3783,7 +3785,7 @@ prerequisite are unchanged.
 The team break command formerly named place is now `force-break`. Hosts and providers must
 adopt the new command together; place and the interim force spelling are rejected without aliases.
 The team break command formerly named release is now `end-forced-break`, and its diagnostic is
-`team.break.command.endForcedBreak`. The former release command and the interim end spelling are rejected without aliases.
+`team.command.endForcedBreak`. The former release command and the interim end spelling are rejected without aliases.
 The agent’s `endBreak` now applies to forced breaks as well as requested breaks.
 
 `ForcedBreak` names who forced the break and may say how long it is expected to run yet, as
@@ -3960,15 +3962,16 @@ association and backend authorization are provider responsibilities.
 
 Use `validateBreakStatus(state, tasks)` on the complete retained task view after each transaction,
 as well as `validateBreakTransition` for event ordering. Snapshot validation shares the status
-checks. Pending and completing tasks still count as work. Only the existing listening exception
-allows tasks beside a break in effect. Validate full task shapes and the envelope separately.
+checks. Pending and completing tasks still count as work. Only a call a lead took over
+(`takenOver`) sits beside a break in effect. Validate full task shapes and the envelope separately.
 
 These validators report violations without dispatching, rewriting state or proving freshness.
 Recheck prerequisites atomically at the provider; client validation cannot prevent a race.
 Continue to use `validateResult` for each method's response vocabulary. A request acknowledgment
 is not a grant, and no method response overwrites a newer state emission. Rejected promises
 remain unknown and recover by snapshot, not automatic retry. The agent application's frozen provider set,
-durable mutually exclusive commit/cancel decision and reconciliation obligations above remain
+durable mutually exclusive commit/cancel decision and reconciliation obligations under
+**Coordinating a multi-provider break** remain
 required; per-provider validation does not implement the multi-provider coordinator.
 
 ### `requestBreak(request)`
@@ -4184,9 +4187,9 @@ won, cancel returns `omni.break-already-committed`, and Omni resumes commit reco
 returning the agent to `working`.
 
 A forced break is not rolled back by this algorithm. If one appears during either the request or
-cancellation, Omni follows the forced-break rule on the other providers and commits each grant as
-soon as it reaches `granted`; it does not wait for unanimity because the agent has already
-stopped elsewhere.
+cancellation, the attempt is abandoned: Omni cancels every grant still outstanding and states
+`setCapacity({ count: 0 })` on every other usable provider, as **Forced breaks** sets out; no grant
+is committed, because the agent has already stopped everywhere.
 
 This is two-phase coordination across vendor systems: the approval phase keeps the agent working;
 the durable commit decision and snapshot reconciliation provide convergence after partial delivery.
@@ -4343,7 +4346,7 @@ assignment from the member alone.
 | `{ type: "lead-features", enabled }` | The team feature on or off. See **The lead switches the feature on and off** above. |
 | `{ type: "decide-break-request", memberId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
 | `{ type: "set-break-policy", policy }` | `approval-required`, `automatically-approved`, or `requests-suspended`. |
-| `{ type: "force-break", memberId, reasonId?, reason?, expectedDurationMs? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. Optional `expectedDurationMs` is advisory and is published on the resulting forced break. |
+| `{ type: "force-break", memberId, reasonId?, reason?, expectedDurationMs? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. Optional `expectedDurationMs` is advisory; the resulting forced break publishes what is left of it as `expectedEndsInSeconds`, restated on every publication. |
 | `{ type: "end-forced-break", memberId }` | Asks the provider to lift a forced-break restriction a lead asked for, by clearing `BreakState.forced`; one the platform imposed is its own to lift (`team.command.endForcedBreak.provider`, `omni.break-forced-by-provider`). The committed break continues; only the agent resumes work. |
 | `{ type: "join", memberId, assignmentId? }` | Answers the member's request: the provider bridges the lead's channel into the call. See **Lead assist**. |
 | `{ type: "decline", memberId, assignmentId?, reason? }` | Refuses the member's request. |
@@ -4405,7 +4408,7 @@ provider clears `leadAssist` from the agent's task** and drops the request from 
 else changes; the agent is still on the call.
 
 **On `leave`, the lead's channel drops and the call goes on**: the member's task loses its
-`leadAssist`, the member loses `listening`, and the lead is free. Nothing ended for the member.
+`leadAssist`, the member loses this lead's entry in `listening`, and the lead is free. Nothing ended for the member.
 
 **On `take-over-call`, the provider moves the call from the member to the lead**, and the lead is
 its new agent. There are two paths to it -- the agent asked and the lead joined, or the lead was
@@ -4413,7 +4416,7 @@ listening unasked -- and one act at the end of either. What follows is the same 
 
 | | The member's task | The lead's desk |
 | --- | --- | --- |
-| Take-over | `task-audio-ended`, then `completing`: the member's interaction is over and their wrap runs, exactly as after `end-call`. The audio ends first, as before every voice ending (`stream.taskEnded.audioOpen`). The member loses `listening` on the team member list no later than the offer, and the lead's listening audio closes. | An ordinary assignment arrives: `task-offered` with `acceptance: "automatic"`, carrying the call's history and `takenOver: { memberId, since }`, within the lead's capacity. |
+| Take-over | `task-audio-ended`, then `completing`: the member's interaction is over and their wrap runs, exactly as after `end-call`. The audio ends first, as before every voice ending (`stream.taskEnded.audioOpen`). The member loses this lead's `listening` entry on the team member list no later than the offer, and the lead's listening audio closes. | An ordinary assignment arrives: `task-offered` with `acceptance: "automatic"`, carrying the call's history and `takenOver: { memberId, since }`, within the lead's capacity. |
 | The member completes | `task-ended` with `{ type: "taken-over", leadId }`, at the member's own completion. The lead is named by user id, since a lead is not a directory item. | The lead works the call as any agent would, and ends it as any call ends. |
 
 **The taken-over call is offered whatever break the lead is on, and counted like any other.** A
@@ -4486,7 +4489,7 @@ executeTeam({ command: { type: "join-call", memberId: "A-1" } })
 // 5. The lead leaves: the provider publishes the member without L-9's entry, and the task without L-9 in the room; the application closes the audio.
 executeTeam({ command: { type: "leave", memberId: "A-1" } })
 // 6. The member's call ends: the same as leave, from the provider's side.
-// 7. The lead takes the call: the member loses listening no later than the offer, the application
+// 7. The lead takes the call: the member loses this lead's listening entry no later than the offer, the application
 //    closes the listening audio, and the lead's own call arrives as an ordinary assignment marked
 //    takenOver, counted against capacity, with its audio following task-audio-started as any call's does.
 //    At capacity the take-over is refused and the lead stays listening.
@@ -4647,7 +4650,7 @@ anything to become available.
 
 **A break is not a capacity of zero, and neither is the reverse.** Capacity says how much of this
 agent this provider may carry; a break says they are not working at all. A provider told
-`count: 0` shows an agent whose capacity is elsewhere, `on-task`; a provider told a break shows
+`count: 0` shows an agent whose capacity is elsewhere, `elsewhere`; a provider told a break shows
 `on-break`. Collapsing the two would leave a provider unable to tell an agent working on another
 provider from an agent who has gone to lunch, and only one of those needs a reason, a decision and
 a return.
@@ -4873,7 +4876,7 @@ declared:
 | `complete` | A wrap to cut short: any task but a `provider-automatic` one with `wrapAllowance: 0`, under either completion mode (`command.complete.wrapAllowance`). The `outcomes` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. What travels is what the capability published: a code from its list where it has one (`command.complete.outcome.unknown`), a code at all where it requires one (`.outcome.required`), notes as it said (`.notes.required`, `.notes.unexpected`), and neither where the task declares no outcomes (`.outcome.unexpected`). |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | `schedule` | The `schedule` capability, on any channel, in `in-progress`, `paused` or `completing`: a follow-up is promised on the call and written up in wrap alike. The manifest declares `calendar` for it to land on. |
-| `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with status `requested`. |
+| `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with `stage: "requested"`. |
 | `conference` with `action: "add"` | Its capability, and a `destinationId` the directory offered: the id Omni sends is the id the provider published (`command.destination.unknown`). |
 | `custom` | A control the task published under `capabilities.custom`, by its `id` (`command.capability.custom`), carrying a non-empty string for each `required` prompt field and strings for any optional fields supplied (`command.custom.prompt`). A toggle carries its target `on` boolean (`command.custom.on`). |
 | Everything else | Its own named capability. |
@@ -4952,6 +4955,8 @@ react rather than only display the message:
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
 | `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `transport-status` is not `active`. |
 | `omni.break-already-committed` | Cancellation lost the commit/cancel race; Omni must finish commit recovery. |
+| `omni.recording-unsettled` | A recording command the provider could not settle either way: a settled `failed`, never a promise left unresolved. See **Independent task recording**. |
+| `omni.break-forced-by-provider` | A lead asked to lift a break the platform imposed; the platform lifts its own. See **Forced breaks**. |
 
 They are published as `OMNI_FAILURE_CODES`.
 
@@ -4985,7 +4990,7 @@ The current exceptions and their reasons are:
 | Case | Exception and reason |
 | --- | --- |
 | Agent application display of provider deadlines (`expiresInSeconds`, `previewEndsInSeconds`, `wrapEndsInSeconds`) | Each is seconds from the publication that carried it, counted down on the desk from receipt: the provider's own arithmetic, so no clock is compared and the transport delay is the only error. The countdown estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
-| Agent application-triggered preview deadline | A bounded clock estimate with monotonic aging may schedule the agent application's Call command because the provider owns the deadline but the agent application owns the trigger. Do not trigger before the deadline is known to have passed; invalidate on clock discontinuity and reconcile when uncertain. |
+| Agent application-triggered preview end | The desk counts `previewEndsInSeconds` down from receipt and issues `dial` when it reaches zero: the provider owns the deadline and the desk owns the trigger. It does not dial before the countdown has run out, and a reload restarts it from the next publication. |
 | Recording evidence expiry | A bounded observer-domain clock estimate with monotonic aging may assess freshness because observation and expiry belong to the recorder's clock. If time cannot be trusted, recording state is unknown; never renew evidence from receipt or replay. |
 | Unknown recording state | `observedAt` and `validUntil` are absent because there is no confirmed observation. The containing provider event still has its own `occurredAt`; that publication is not a recorder observation. |
 | Direct snapshot reads and method requests/results | These are reads/operations, not event envelopes, and their current types have no general event timestamp. A snapshot event still carries `occurredAt`; embedded source instants remain unchanged. Do not treat a method result or read completion time as an occurrence boundary. |
@@ -5128,9 +5133,9 @@ direction — the provider asking Omni to reconcile — and neither replaces the
 
 Carries a complete `Snapshot` after reconnect or when the provider explicitly requests
 reconciliation. `reason` is `reconnected` or `provider-requested`. Omni replaces the provider's
-current status, break state, tasks, contacts, scheduled activities and team member list with this
-snapshot. It carries what the login's capabilities call for — a team member list for a lead, on every
-snapshot — and nothing they do not; a capability is withdrawn by a republished `authenticated`,
+current status, break state, tasks, contacts, scheduled activities, the agent's day and the team
+member list with this snapshot. It carries what the login and its switches call for — the whole
+team for a lead with the feature on, on every snapshot — and nothing they do not; a capability is withdrawn by a republished `authenticated`,
 never by an omission from a snapshot.
 
 ### `transport-status`
@@ -5293,8 +5298,10 @@ wrapped audio has nothing left to end.
 
 ### `task-audio-ended`
 
-Signals that a task's real-time audio ended. For voice and similar channels, this starts the fixed
-completion timer. It does not remove the task, and it ends only audio that `task-audio-started` — or
+Signals that a task's real-time audio ended. For voice and similar channels, the `completing`
+publication that follows carries `wrapEndsInSeconds` where a wrap allowance is stated: under
+`provider-automatic` the provider ends the task when it runs out, under `agent-command` it is shown
+and nothing more. It does not remove the task, and it ends only audio that `task-audio-started` — or
 a task carried with `audio: "started"` — attached.
 
 ### `task-ended`
@@ -5434,7 +5441,7 @@ issued by each provider independently, so two providers will eventually issue th
 different people. Encode and join before storing or comparing.
 
 Use it for every `UserId` — `history[].by`, team members, `memberId` on a
-lead command, `ForcedBreak.by`. A bare one is only ever compared against another from the **same** provider; anything
+lead command, `ForcedBreak.by` where it names a person rather than `"provider"`. A bare one is only ever compared against another from the **same** provider; anything
 wider goes through this key.
 
 ### `sameCapabilities(a, b)`
@@ -5477,7 +5484,7 @@ once. A violation carries a stable `rule` id such as `task.browser.url.scheme`, 
 found at such as `snapshot.tasks[0].browsers[1].url`, and a `message`.
 
 Some rules need to know who is reading. `validateTeamMembers`, `validateSnapshot`, and
-`validateEventEnvelope` take an optional final `{ self, capabilities }` — the signed-in agent's
+`validateEventEnvelope` take an optional final `{ self, capabilities, leadFeatures }` — the signed-in agent's
 `AuthenticationState.identity.id` and their login's `capabilities`. Given `self`, a team member list that
 carries that agent reports `team.member.self`, on a `team-member-updated` and a `team-member-removed` as on the list. Given `capabilities`, a team member list published to a login that does not lead
 reports `team.unentitled`, and a team event to such a login reports `event.team.capability`; given
@@ -5670,7 +5677,6 @@ cannot be established from TypeScript structure alone.
 | `assertForcedBreakStopsTheRest(forcedOn, candidates, stopped)` | A forced break on one provider stops the agent everywhere else: capacity zero stated on every other usable provider holding capacity, nothing on the forcing one, nothing on a dead login. See **Forced breaks**. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `on-break` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
-| `assertWrapTimeout(task, audioEndedAt, deadline, toleranceMs?)` | The wrap deadline equals audio end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |
 | `assertBrowserSessionIsolation(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |
 | `assertNoBrowserSessionKeyCollisions(scenarios)` | No two distinct scenarios derive the same session key. Feed it adversarial names. |
 
@@ -5764,9 +5770,9 @@ Immediately before dispatch, additionally use `validateRecordingRequest` against
 task and explicit observer-domain time. For agent application commands also supply the current agent application declaration,
 full agent application report and softphone context. The same checks must run at the executing boundary;
 client validation alone is not authorization. The executor serializes operations on each recorder
-and durably correlates request identity with scope, action and outcome: an exact retry refers to the
-same operation; reuse with different contents is refused. It never silently retries an ambiguous
-operation. Implementations without reliable request correlation must refuse controls.
+and compares `observationId` and `recordingId` against its latest evidence before acting: a
+command against superseded evidence is refused, and nothing is retried on the executor's own
+account.
 
 Keep command progress in agent application UI separately from authoritative state. Applied means the requested
 recording transition and any retain/discard effect actually completed; publish the confirming task or agent application report before
@@ -5830,7 +5836,7 @@ never claim delivery or replay the notice into a different call.
 
 For a command under this guarantee, applied requires both the recording action and its announcement
 to succeed. If capture changes but announcement delivery fails, publish the actual recording state,
-report the announcement failure visibly and reject with unknown command outcome. Do not claim no
+report the announcement failure visibly and answer `failed` under `omni.recording-unsettled`. Do not claim no
 effect, automatically repeat the recording action or silently switch to an agent-only notice.
 
 `validateHostRecording` checks the declaration, including its true-or-absent guarantee. Actual audio
