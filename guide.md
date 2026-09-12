@@ -199,6 +199,24 @@ type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected
 
 type Phone = "softphone" | "deskPhone";
 
+type PhoneStatus = "ready" | "unregistered" | "do-not-disturb" | "off-hook";
+
+type PhoneChannelState = "ringing" | "active" | "held";
+
+type PhoneChannel = {
+  state: PhoneChannelState;
+  since: IsoTimestamp;
+  assignmentId?: AssignmentId;
+};
+
+type PhoneState = {
+  phone: Phone;
+  status: PhoneStatus;
+  muted?: true;
+  since?: IsoTimestamp;
+  channels: PhoneChannel[];
+};
+
 type IdleCapabilities<C extends Channel = Channel> = {
   personalBrowser?: PersonalBrowserCapability;
   calendar?: true;
@@ -219,6 +237,7 @@ type Manifest<C extends Channel = Channel> = {
   orgLevels?: LevelDeclaration[];
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   phones?: C extends "voice" ? Phone[] : never;
+  phoneStatus?: C extends "voice" ? true : never;
   runningStepReports?: true;
   settleMs: number;
 };
@@ -498,6 +517,7 @@ type Snapshot = {
   contacts?: Contact[];
   calendar?: ScheduledActivity[];
   shift?: Shift;
+  phone?: PhoneState;
   team?: TeamMembers;
 };
 
@@ -1006,6 +1026,7 @@ type TeamMember = {
   listening?: MemberListening[];
   shift?: Shift;
   request?: MemberRequest;
+  phone?: PhoneState;
 };
 
 type MemberRequest = {
@@ -1162,7 +1183,8 @@ type ProviderEvent =
   | { type: "team-policies-updated"; policies: TeamPolicies }
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; calendar: ScheduledActivity[] }
-  | { type: "shift-updated"; shift: Shift };
+  | { type: "shift-updated"; shift: Shift }
+  | { type: "phone-updated"; phone: PhoneState };
 
 type ProviderEventEnvelope = {
   id: string;
@@ -1654,6 +1676,7 @@ compile time.
 | `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `deskPhone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call** in `guide/phone.md`. |
+| `phoneStatus` | Voice only, declared by presence as `true`: the platform sees the phone itself -- its registration, its do-not-disturb, its hook, its calls -- and publishes it as `Snapshot.phone` and `phone-updated`. A platform that cannot see the phone omits it, and then publishes no phone (`manifest.phoneStatus`). See **The phone's own view** in `guide/phone.md`. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome** in `guide/voice.md`. |
 | `timeCheck` | `true`: implements `checkTime` and states `providerTime` on every snapshot. Required of a provider that publishes an instant the desk renders as a running duration -- a member's `since`, a `listening[].since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts from the provider's clock (`manifest.timeCheck.required`); agent application polling is independently opt-in. See **Every screen counts from the provider's clock**. |
 | `timestampAuthority` | Optional `"provider"`: provider timestamps are final; agent application instants are advisory. Omission makes no trust promise. |
@@ -2183,6 +2206,7 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
 | `calendar` | Required complete calendar contribution when the manifest declares `calendar`; `[]` clears it. Omitted only when it does not. |
+| `phone` | The phone as the platform sees it -- the device, whether it can take a call, its own mute where observed -- from a provider whose manifest declares `phoneStatus`; required there (`snapshot.phone.required`) and forbidden otherwise (`snapshot.phone.unexpected`). Replaced whole by `phone-updated`. See **The phone's own view** in `guide/phone.md`. |
 | `shift` | The agent's own day so far, as the provider counts it -- the same `Shift` their lead sees on the team member list, the same numbers from the same count. Replaced whole by `shift-updated`. Omitted only where the provider cannot say. See **The agent's day is on the wire**. |
 | `team` | Required `TeamMembers` when the login declares `capabilities.lead` and the lead has the team feature on, `members: []` when nobody is in it. Forbidden otherwise — the login is the permission, and a lead who turned the feature off gets nothing of the team. |
 
@@ -2742,6 +2766,14 @@ the `contacts` idle capability.
 
 Replaces this provider's complete scheduled-activity contribution. It is emitted only when the manifest
 declares the `calendar` idle capability.
+
+### `phone-updated`
+
+The phone as the platform now sees it, whole, replacing `Snapshot.phone`: a registration lost or
+back, do-not-disturb pressed or cleared, the handset lifted with no call or replaced, the desk
+phone's own mute. Emitted only by a provider whose manifest declares `phoneStatus`
+(`event.phone.capability`). The lead's member carries the same `PhoneState`, republished with the
+member. See **The phone's own view** in `guide/phone.md`.
 
 ### `shift-updated`
 

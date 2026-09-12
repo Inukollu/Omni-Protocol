@@ -765,6 +765,55 @@ describe("validateTeamMembers", () => {
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "ready" }] }))).not.toContain(rule);
   });
 
+  it("carries the phone's own view from a provider that can see it: the device, its mute, its channels, agreeing with the tasks", () => {
+    const at = "2026-08-21T09:00:00Z";
+    const seeing = manifest({ phoneStatus: true, phones: ["softphone", "deskPhone"] });
+    const read = (phone: unknown, over: Record<string, unknown> = {}) => rules(validateSnapshot(snapshot({ phone, ...over }), seeing, "snapshot", { phone: "deskPhone" }));
+    const idle = { phone: "deskPhone", status: "ready", channels: [] };
+    expect(read(idle)).toEqual([]);
+    // Owed by a provider that declared it can see the phone, and by nobody else.
+    expect(rules(validateSnapshot(snapshot(), seeing))).toEqual(["snapshot.phone.required"]);
+    expect(rules(validateSnapshot(snapshot({ phone: idle }), manifest()))).toEqual(["snapshot.phone.unexpected"]);
+    expect(rules(validateManifest(manifest({ phoneStatus: "yes" })))).toEqual(["manifest.phoneStatus"]);
+    // The device: the login's phone, one of the four states, since when.
+    expect(read({ ...idle, phone: "softphone" })).toEqual(["phone.phone.mismatch"]);
+    expect(read({ ...idle, status: "busy" })).toEqual(["phone.status"]);
+    expect(read({ ...idle, since: "now" })).toEqual(["phone.since"]);
+    expect(read({ ...idle, status: "unregistered", since: at })).toEqual([]);
+    for (const status of ["unregistered", "off-hook"]) {
+      expect(read({ ...idle, status, channels: [{ state: "active", since: at }] })).toEqual(["phone.status.channels"]);
+    }
+    // The mute is the phone's: a desk phone's button the platform observes, never a softphone's, whose mute is the host's report.
+    expect(read({ ...idle, muted: true })).toEqual([]);
+    expect(read({ ...idle, muted: false })).toEqual(["phone.muted"]);
+    expect(rules(validateSnapshot(snapshot({ phone: { ...idle, phone: "softphone", muted: true } }), seeing, "snapshot", { phone: "softphone" }))).toEqual(["phone.muted.softphone"]);
+    // The channels: one active at most, any number held; a bridge is one channel.
+    const call = (over: Record<string, unknown>) => ({ ...task({ phase: "in-progress", audio: "started", capabilities: {} }), ...over });
+    const working = call({ assignmentId: "alloc-42" });
+    const parked = call({ assignmentId: "alloc-43", phase: "paused" });
+    const both = { tasks: [working, parked] };
+    expect(read({ ...idle, channels: [{ state: "active", since: at, assignmentId: "alloc-42" }, { state: "held", since: at, assignmentId: "alloc-43" }] }, both)).toEqual([]);
+    expect(read({ ...idle, channels: [{ state: "active", since: at, assignmentId: "alloc-42" }, { state: "active", since: at, assignmentId: "alloc-43" }] }, both)).toEqual(["phone.channel.active.single", "phone.channel.task"]);
+    expect(read({ ...idle, channels: [{ state: "ringing", since: at }, { state: "held", since: at }, { state: "held", since: at }] })).toEqual([]);
+    expect(read({ ...idle, channels: [{ state: "parked", since: at }] })).toEqual(["phone.channel.state"]);
+    expect(read({ ...idle, channels: [{ state: "held" }] })).toEqual(["phone.channel.since"]);
+    expect(read({ ...idle, channels: [{ state: "held", since: at, assignmentId: "" }] })).toEqual(["phone.channel.assignmentId"]);
+    expect(read({ ...idle, channels: "none" })).toEqual(["phone.channels.shape"]);
+    // Where a channel is a task's, the two views agree; a task with audio has a channel; a channel names a task the login holds.
+    expect(read({ ...idle, channels: [{ state: "held", since: at, assignmentId: "alloc-42" }, { state: "active", since: at, assignmentId: "alloc-43" }] }, both)).toEqual(["phone.channel.task", "phone.channel.task"]);
+    // A held call is still on the phone: a paused task with audio and no channel is a call the phone forgot.
+    expect(read({ ...idle, channels: [{ state: "active", since: at, assignmentId: "alloc-42" }] }, both)).toEqual(["phone.channel.missing"]);
+    expect(read({ ...idle, channels: [] }, { tasks: [working] })).toEqual(["phone.channel.missing"]);
+    expect(read({ ...idle, channels: [{ state: "active", since: at, assignmentId: "alloc-99" }] }, { tasks: [working] })).toEqual(["phone.channel.assignment", "phone.channel.missing"]);
+    const offered = { ...task({ phase: "pending", acceptance: "consent", capabilities: {} }), assignmentId: "alloc-44" };
+    expect(read({ ...idle, channels: [{ state: "ringing", since: at, assignmentId: "alloc-44" }] }, { tasks: [offered] })).toEqual([]);
+    // On its own event, from a provider that declared it; and on the member, as the member's own desk holds it.
+    expect(rules(validateEventEnvelope(envelope({ type: "phone-updated", phone: idle }), seeing, "event", { phone: "deskPhone" }))).toEqual([]);
+    expect(rules(validateEventEnvelope(envelope({ type: "phone-updated", phone: idle }), manifest()))).toEqual(["event.phone.capability"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", phone: idle }] }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", phone: { ...idle, status: "busy" } }] }))).toEqual(["phone.status"]);
+  });
+
   it("carries the agent's own day on their snapshot and on shift-updated, in the shape their lead sees", () => {
     const at = "2026-08-21T08:58:12Z";
     const day = { signedInAt: at, talkSeconds: 4210, holdSeconds: 305, breakSeconds: 900, tasksHandled: 12, events: [{ at, kind: "signed-in" }] };

@@ -161,6 +161,52 @@ export type Phone = "softphone" | "deskPhone";
 
 export const PHONES = ["softphone", "deskPhone"] as const satisfies readonly Phone[];
 
+/**
+ * The device itself, as the platform sees it. `ready` is registered and usable, idle or busy; the
+ * other three are the states in which no call can land: the platform has lost the phone's
+ * registration, the agent pressed do-not-disturb on it, or left the handset off the hook with no
+ * call on it.
+ */
+export type PhoneStatus = "ready" | "unregistered" | "do-not-disturb" | "off-hook";
+
+export const PHONE_STATUSES = ["ready", "unregistered", "do-not-disturb", "off-hook"] as const satisfies readonly PhoneStatus[];
+
+export type PhoneChannelState = "ringing" | "active" | "held";
+
+export const PHONE_CHANNEL_STATES = ["ringing", "active", "held"] as const satisfies readonly PhoneChannelState[];
+
+/**
+ * One call on the phone, as the phone sees it: ringing, the one active, or held. A bridge is one
+ * channel, so a conference is one entry and its members are on the task's `onCall`. Where the call
+ * is a task's, `assignmentId` names it and the two views agree; absent, the call is the phone's
+ * alone -- an internal call on the extension, a lead's listening leg.
+ */
+export interface PhoneChannel {
+  state: PhoneChannelState;
+  since: IsoTimestamp;
+  assignmentId?: AssignmentId;
+}
+
+/**
+ * The phone's own view, published by a provider that declares `phoneStatus`: the device the login
+ * is on, whether it can take a call, its own mute where the platform observes it, and its channels
+ * -- one active at most, any number held. The task side says which of those calls are the agent's
+ * work and where each stands; the phone side exists whether or not a task is behind a call. `muted`
+ * is the phone's own button as the platform sees it, silencing whatever is active: a desk phone's,
+ * never a softphone's, whose microphone is the host's and whose mute is the host's report.
+ */
+export interface PhoneState {
+  /** The phone this login is on, as the host chose it at connect. */
+  phone: Phone;
+  status: PhoneStatus;
+  /** The phone's own mute, on a desk phone the platform observes; absent where it does not, or on a softphone. */
+  muted?: true;
+  /** When the status began, counted from the provider's clock. Omitted rather than invented. */
+  since?: IsoTimestamp;
+  /** The calls on the phone; `[]` when idle. None under `unregistered` or `off-hook`. */
+  channels: PhoneChannel[];
+}
+
 /** Every idle capability a provider may declare. Only voice may `dial`; the channel arm says so. */
 export const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;
 
@@ -229,6 +275,11 @@ export interface Manifest<C extends Channel = Channel> {
    * off voice, where there is no call to hear. The host picks one of these per login.
    */
   phones?: C extends "voice" ? Phone[] : never;
+  /**
+   * The platform sees the phone itself -- its registration, its do-not-disturb, its hook -- and
+   * publishes it as `Snapshot.phone` and `phone-updated`. Voice only, declared by presence.
+   */
+  phoneStatus?: C extends "voice" ? true : never;
   /**
    * The provider takes running reports of a host-performed step -- `recordStep` with `seconds`
    * so far and no `ended`. Absent, the host sends exactly two reports per leg, when it began and
@@ -1279,6 +1330,8 @@ export interface TeamMember {
   shift?: Shift;
   /** The member's standing ask for a lead on one of their calls; absent when they are not asking. */
   request?: MemberRequest;
+  /** The member's phone as the platform sees it, the same `PhoneState` the member's own snapshot carries; present where the provider declares `phoneStatus`. */
+  phone?: PhoneState;
 }
 
 /** This member asking their lead to join a call: which assignment, the note they wrote, since when. */
@@ -1543,6 +1596,8 @@ export interface Snapshot<C extends Channel = Channel> {
   calendar?: ScheduledActivity[];
   /** The agent's own day so far, as the provider counts it; replaced whole by `shift-updated`. Omitted where the provider cannot say. */
   shift?: Shift;
+  /** The phone as the platform sees it, from a provider that declares `phoneStatus`; replaced whole by `phone-updated`. */
+  phone?: PhoneState;
   team?: TeamMembers;
 }
 
@@ -1608,7 +1663,9 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; calendar: ScheduledActivity[] }
   /** The agent's own day, whole, whenever a total moves: a task ended, a break ended. */
-  | { type: "shift-updated"; shift: Shift };
+  | { type: "shift-updated"; shift: Shift }
+  /** The phone as the platform now sees it, whole: a registration lost or back, do-not-disturb pressed, the handset lifted or replaced, the phone's mute. */
+  | { type: "phone-updated"; phone: PhoneState };
 
 /**
  * The `Provider` prefix survives here for a mechanical reason rather than a naming one: `Event`

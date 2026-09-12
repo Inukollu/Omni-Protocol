@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
-import type { LoginStore, Refusal } from "../src/index.js";
+import type { LoginStore, Refusal, PhoneState } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
 import { memoryStore, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
@@ -1082,18 +1082,18 @@ describe("exerciseAdapter", () => {
       "event.snapshot", "event.transport-status", "event.break-state", "event.task-offered", "event.task-updated",
       "event.task-audio-started", "event.task-audio-ended", "event.task-ended", "event.dial-outcome", "event.announcement", "event.queue-summary",
       "event.diagnostic", "event.team-updated", "event.team-member-updated", "event.team-member-removed", "event.team-policies-updated",
-      "event.contacts-updated", "event.calendar-updated", "event.shift-updated",
+      "event.contacts-updated", "event.calendar-updated", "event.shift-updated", "event.phone-updated",
     ];
     // The rich task carries browsers, history, an outcome policy, conference destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "phone", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.history", "task.onCall", "task.leadAssist", "task.takenOver",
-      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift",
-      "shift", "contacts", "calendar", "team.policies",
+      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone",
+      "shift", "phone", "contacts", "calendar", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot, or on the team that
     // arrives once the feature is switched on.
@@ -1103,9 +1103,9 @@ describe("exerciseAdapter", () => {
     } satisfies Snapshot<"voice">;
     const asking = teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "on-task", request: { assignmentId: "alloc-42", since: "2026-08-21T09:04:00Z" } }] } });
     expect(state(await run({ capabilities: { lead: true as const }, snapshot: reached, emitOnLeadFeatures: listener => listener(asking) })))
-      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "team.tasks", "team.listening", "team.shift", "team.policies"]);
+      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "team.tasks", "team.listening", "team.shift", "team.phone", "phone", "team.policies"]);
     const withTeam = await run({ capabilities: { lead: true as const } });
-    expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.policies"]);
+    expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "phone", "team.policies"]);
     expect(events(withTeam)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
     const oneByOne = await run({ capabilities: { lead: true as const }, emitOnLeadFeatures: listener => {
       listener(teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } }));
@@ -1113,7 +1113,7 @@ describe("exerciseAdapter", () => {
       listener(teamEvent("evt-gone", { type: "team-member-removed", memberId: "A-2" }));
       listener(teamEvent("evt-policies", { type: "team-policies-updated", policies: { hold: { setting: "off", setBy: "team" } } }));
     } });
-    expect(state(oneByOne)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.request", "team.tasks", "team.listening", "team.shift"]);
+    expect(state(oneByOne)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "phone"]);
     expect(events(oneByOne)).toEqual(everyEvent.filter(subject => !subject.startsWith("event.team-")));
   });
 
@@ -1922,6 +1922,23 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const result = await exerciseAdapter(adapter, context, { collectOnly: true });
     expect(result.authenticationState).toMatchObject({ capabilities: {} });
     expect(result.login).toMatchObject({ capabilities: { breaks: true } });
+  });
+
+  it("takes the phone's own view from a provider that declares it can see the phone, held to the login's phone", async () => {
+    const seeing = { ...conformingManifest, phoneStatus: true as const } satisfies Manifest<"voice">;
+    const idle: PhoneState = { phone: "softphone", status: "ready", channels: [{ state: "active", since: "2026-08-21T09:00:00Z", assignmentId: "alloc-42" }] };
+    expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: idle } })).toEqual([]);
+    expect(await rules({ manifest: seeing })).toEqual(["snapshot.phone.required"]);
+    expect(await rules({ snapshot: { ...conformingSnapshot, phone: idle } })).toEqual(["snapshot.phone.unexpected"]);
+    // The login is on a softphone: a desk phone reported is the wrong phone, and a softphone's mute is the host's.
+    expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: { ...idle, phone: "deskPhone" } } })).toEqual(["phone.phone.mismatch"]);
+    expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: { ...idle, muted: true } } })).toEqual(["phone.muted.softphone"]);
+    // The phone carries every call the desk is on: the conforming task has its audio started.
+    expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: { ...idle, channels: [] } } })).toEqual(["phone.channel.missing"]);
+    const later = teamEvent("evt-phone", { type: "phone-updated", phone: { ...idle, status: "do-not-disturb", since: "2026-08-21T09:05:00Z" } });
+    expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: idle }, emitOnCapacity: l => l(later) })).toEqual([]);
+    expect((await exerciseAdapter(makeAdapter({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: idle } }).adapter, context, { collectOnly: true })).notExercised).not.toContain("phone");
+    expect((await exerciseAdapter(makeAdapter().adapter, context, { collectOnly: true })).notExercised).toContain("phone");
   });
 
   it("takes the agent's day from the wire, and holds a running instant to a provider with a clock", async () => {

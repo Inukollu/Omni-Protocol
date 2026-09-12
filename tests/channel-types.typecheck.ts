@@ -29,6 +29,8 @@ import {
   type ForcedBreak,
   type MemberTask,
   type Shift,
+  type PhoneState,
+  type PhoneChannel,
   type Snapshot,
   type TaskBrowser,
   type TaskCommand,
@@ -396,6 +398,14 @@ export const twoLeadsListening: TeamMembers = { members: [{ id: "A-2", availabil
 // @ts-expect-error renamed away: listening is every lead's, as an array naming each.
 export const oneLeadListening: TeamMembers = { members: [{ id: "A-2", availability: "on-task", listening: { assignmentId: "alloc-7", mode: "coach", since: "2026-08-21T09:04:00Z" } }] };
 // The agent's own day, on their snapshot and on its own event, in the shape their lead sees.
+// The phone's own view: the device, its mute, its channels; a task's call names its task, the phone's own call names none.
+export const busyPhone: PhoneState = { phone: "deskPhone", status: "ready", muted: true, channels: [{ state: "active", since: "2026-08-21T09:00:04Z", assignmentId: "alloc-42" }, { state: "held", since: "2026-08-21T09:05:20Z" }] };
+export const phoneMoved: ProviderEvent<"voice"> = { type: "phone-updated", phone: { phone: "deskPhone", status: "unregistered", channels: [] } };
+export const seesThePhone: Manifest<"voice"> = { id: "acme", displayName: "Acme", channel: "voice", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, phones: ["deskPhone"], phoneStatus: true };
+// @ts-expect-error A chat provider has no phone to see.
+export const chatSeesThePhone: Manifest<"chat"> = { id: "acme", displayName: "Acme", channel: "chat", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, phoneStatus: true };
+// @ts-expect-error A channel is one of ringing, active or held.
+export const parkedChannel: PhoneChannel = { state: "parked", since: "2026-08-21T09:00:00Z" };
 export const myDay: Snapshot<"voice"> = { transport: "active", loginId: "session-1", providerTime: "2026-08-21T09:00:00Z", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0, shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4210, tasksHandled: 12 } };
 export const dayMoved: ProviderEvent<"voice"> = { type: "shift-updated", shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4482, tasksHandled: 13 } };
 export const memberDay: Shift = { signedInAt: "2026-08-21T08:58:12Z" };
