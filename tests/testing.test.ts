@@ -1261,6 +1261,8 @@ describe("exerciseAdapter drives one call", () => {
   interface Script { skipAudioStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute";
     /** A platform shared between instances of the adapter, as a host reload shares it: which task is open, and the first client's listener. */
     platform?: { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean; secondStated?: number };
+    /** A login that leads: the fixture answers each lead-features switch with an empty team, and counts the switches it was sent. */
+    lead?: { switched: number };
     /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
     legsIn?: "memory" | "store";
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
@@ -1349,7 +1351,8 @@ describe("exerciseAdapter drives one call", () => {
       // A reloaded instance that forgot the audio was up, or that reads the task as not yet begun, serves a snapshot that lost state.
       const audio = script.reloadAs === "without-audio" ? {} : { audio: "started" };
       const phase = script.reloadAs === "gone-backwards" ? "confirmed" : "in-progress";
-      return { ...conformingSnapshot, tasks: [t({ phase, ...audio, onCall: room, history: { steps }, assignmentId: myAssignment })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
+      // A reloaded client is switched on again after its capacity, so the snapshot read after that carries the team.
+      return { ...conformingSnapshot, ...(script.lead === undefined ? {} : { team: { members: [] } }), tasks: [t({ phase, ...audio, onCall: room, history: { steps }, assignmentId: myAssignment })], taskCount: script.reloadAs === "miscounted" ? 2 : 1 };
     };
     // A provider that restates its record does so on every publication once work has begun, never only at the end.
     const t = (over: Record<string, unknown>) => {
@@ -1372,6 +1375,10 @@ describe("exerciseAdapter drives one call", () => {
       // A client that is gone hears nothing: the platform's push to it goes nowhere, as on a reload.
       onUnsubscribe: () => { listener = undefined; if (script.platform !== undefined) script.platform.firstListener = undefined; },
       onConnect: connectContext => { given = connectContext.store; },
+      ...(script.lead === undefined ? {} : { capabilities: { lead: true as const }, emitOnLeadFeatures: (l: (envelope: ProviderEventEnvelope<"voice">) => void) => {
+        script.lead!.switched += 1;
+        l({ id: `evt-team-${script.lead!.switched}`, loginId: "session-1", occurredAt: at, event: { type: "team-updated", team: { members: [] } } });
+      } }),
       connection: {
         ...(script.platform === undefined ? {} : { snapshot: reloaded }),
         // A second instance built without a method the first had: held to the connect obligations as the first was.
@@ -1604,6 +1611,22 @@ describe("exerciseAdapter drives one call", () => {
     const store = memoryStore();
     expect((await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "memory", platform: { open: false } }), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
   }, 20000);
+
+  it("tells a reloaded lead's client the team feature is on again, after its capacity: the switch is per connection", async () => {
+    // A reloaded client has been told nothing: its connect snapshot carries no team, the switch is
+    // sent again after its capacity, and the whole team is owed once more. Each client is switched once.
+    const store = memoryStore();
+    const lead = { switched: 0 };
+    const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, lead };
+    const result = await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) });
+    expect(result.violations).toEqual([]);
+    expect(lead.switched).toBe(2);
+    // The control: a login that does not lead is switched on neither client.
+    const plain = { switched: 0 };
+    const unled = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } };
+    expect((await exerciseAdapter(driveable(unled), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(unled) })).violations).toEqual([]);
+    expect(plain.switched).toBe(0);
+  });
 
   it("holds the second adapter to what the first was: the same provider, a snapshot that stands, a record that lost nothing", async () => {
     const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "without-refused") => {
