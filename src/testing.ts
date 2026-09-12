@@ -548,8 +548,12 @@ export async function exerciseAdapter<C extends Channel>(
         unsubscribeAuthentication = session.subscribe(onAuthenticationState);
         unsubscribe = second.subscribe(onEnvelope);
         clientLive = true;
+        // The second client has been told nothing: the switch is per connection, and the reader
+        // holds its connect snapshot to no team until it is sent again, after its capacity.
+        leadFeaturesOn = false;
         const restated = await second.setCapacity({ count: capacityStated ?? 1 });
         violations.push(...validateResult(restated, "setCapacity", "drive.reload.setCapacity"));
+        await switchOnLeadFeatures(second, "drive.reload");
       },
     };
 
@@ -652,37 +656,39 @@ export async function exerciseAdapter<C extends Channel>(
 
     // The provider assumes nothing of the team feature: the application says on every connect,
     // and once it has said on, the whole team is owed, once. Before that nothing of the team
-    // reaches the lead, which the reader held the connect snapshot to.
-    if (current().capabilities.lead === true && typeof live.executeTeam === "function") {
+    // reaches the lead, which the reader held the connect snapshot to. A reloaded client is a
+    // connect too: it is told again, after its capacity, and held the same way.
+    const switchOnLeadFeatures = async (on: Connection<C>, at: string): Promise<void> => {
+      if (current().capabilities.lead !== true || typeof on.executeTeam !== "function") return;
       const from = events.length;
       let switched: unknown;
       // On from the moment the application says so: the provider may answer with the team at once.
       leadFeaturesOn = true;
       try {
-        switched = await live.executeTeam({ command: { type: "lead-features", enabled: true } });
+        switched = await on.executeTeam({ command: { type: "lead-features", enabled: true } });
       } catch (error) {
         leadFeaturesOn = false;
-        violations.push({ rule: "team.switch.rejected", path: "connection.executeTeam", message: `lead-features on was rejected: ${String(error)}` });
+        violations.push({ rule: "team.switch.rejected", path: `${at}.executeTeam`, message: `lead-features on was rejected: ${String(error)}` });
       }
-      if (switched !== undefined) {
-        violations.push(...validateResult(switched, "executeTeam", "connection.executeTeam"));
-        ruleEvaluated("team.required");
-        const ms = options.driveTimeoutMs ?? 5000;
-        const isBaseline = (envelope: ProviderEventEnvelope<C>): boolean => isRecord(envelope?.event) && envelope.event.type === "team-updated";
-        const baseline = events.slice(from).some(isBaseline) || await new Promise<boolean>(resolve => {
-          const timer = setTimeout(() => { waiters.delete(waiter); resolve(false); }, ms);
-          const waiter = (envelope: ProviderEventEnvelope<C>) => {
-            if (!isBaseline(envelope)) return;
-            clearTimeout(timer);
-            waiters.delete(waiter);
-            resolve(true);
-          };
-          waiters.add(waiter);
-        });
-        if (!baseline) violations.push({ rule: "team.required", path: "event.team",
-          message: `the application switched the team feature on and no team-updated followed within ${ms}ms: the whole team is owed once it is on, members: [] when nobody is in it` });
-      }
-    }
+      if (switched === undefined) return;
+      violations.push(...validateResult(switched, "executeTeam", `${at}.executeTeam`));
+      ruleEvaluated("team.required");
+      const ms = options.driveTimeoutMs ?? 5000;
+      const isBaseline = (envelope: ProviderEventEnvelope<C>): boolean => isRecord(envelope?.event) && envelope.event.type === "team-updated";
+      const baseline = events.slice(from).some(isBaseline) || await new Promise<boolean>(resolve => {
+        const timer = setTimeout(() => { waiters.delete(waiter); resolve(false); }, ms);
+        const waiter = (envelope: ProviderEventEnvelope<C>) => {
+          if (!isBaseline(envelope)) return;
+          clearTimeout(timer);
+          waiters.delete(waiter);
+          resolve(true);
+        };
+        waiters.add(waiter);
+      });
+      if (!baseline) violations.push({ rule: "team.required", path: "event.team",
+        message: `the application switched the team feature on and no team-updated followed within ${ms}ms: the whole team is owed once it is on, members: [] when nobody is in it` });
+    };
+    await switchOnLeadFeatures(live, "connection");
 
     if (options.drive) {
       const localAudio = isRecord(first) && isRecord(first.audio) && isRecord(first.audio.input) && first.audio.input.status === "available"
