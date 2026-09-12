@@ -53,6 +53,8 @@ import {
   type OnCallStage,
   type PreviewDeadline,
   type Phone,
+  type PhoneStatus,
+  type PhoneChannelState,
   type ListeningMode,
   type OutcomeRules,
   type HistoryStep,
@@ -154,6 +156,8 @@ const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
 });
 const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ "provider-dials": true, "host-dials": true, waits: true });
 const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
+const PHONE_STATUSES = membersOf<PhoneStatus>({ ready: true, unregistered: true, "do-not-disturb": true, "off-hook": true });
+const PHONE_CHANNEL_STATES = membersOf<PhoneChannelState>({ ringing: true, active: true, held: true });
 const LISTENING_MODES = membersOf<ListeningMode>({ listen: true, coach: true, "join-call": true });
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
 const CANCELLED_BY = membersOf<Extract<TaskOutcome, { type: "cancelled" }>["by"]>({ agent: true, provider: true, party: true });
@@ -470,6 +474,10 @@ function validatePhones(manifest: Record<string, unknown>, path: string, into: C
       into.add("manifest.phone.unique", `${path}[${index}]`, `duplicate phone: ${describeValue(phone)}`);
     }
   });
+  // Seeing the phone itself is declared by presence, and only where there is a phone to see.
+  if (manifest.phoneStatus !== undefined) {
+    into.require(manifest.phoneStatus === true, "manifest.phoneStatus", `${path.replace(/phones$/, "phoneStatus")}`, "phoneStatus is declared by presence, as true; a platform that cannot see the phone omits it");
+  }
 }
 
 /**
@@ -1797,6 +1805,11 @@ export interface ReaderContext {
   /** The login's `loginId`. A snapshot or event naming another belongs to a login that is gone. */
   loginId?: string;
   /**
+   * The phone the host chose for this login at connect, `ConnectContext.phone`. A phone state
+   * naming another is the wrong phone. Unknown to a caller without the context, and then unchecked.
+   */
+  phone?: Phone;
+  /**
    * Whether the lead has the team feature on, as the application last told the provider. The
    * provider assumes nothing until told: on, a snapshot carries the team; off, nothing of the
    * team is owed or expected. Unknown to a caller without it, and then unchecked either way.
@@ -1933,6 +1946,8 @@ function validateTeamMemberInto(member: unknown, at: string, context: ReaderCont
   }
   // The member's own history for the day: about the person, not any one call.
   if (member.shift !== undefined) validateShiftInto(member.shift, `${at}.shift`, into, "team.member.shift");
+  // The member's phone as the platform sees it, the same state the member's own desk holds.
+  if (member.phone !== undefined) validatePhoneStateInto(member.phone, `${at}.phone`, {}, into);
   // The member's standing ask for a lead, on one of the calls they hold.
   if (member.request !== undefined) {
     if (!isPlainObject(member.request)) {
@@ -1970,6 +1985,38 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   requireClockInto(snapshot, manifest, path, into);
   // The agent's own day, as the provider counts it: the same numbers their lead sees.
   if (snapshot.shift !== undefined) validateShiftInto(snapshot.shift, `${path}.shift`, into, "shift");
+  // The phone as the platform sees it: owed by a provider that declares it can, and by nobody else.
+  const seesPhone = isPlainObject(manifest) && manifest.phoneStatus === true;
+  if (seesPhone && snapshot.phone === undefined) {
+    into.add("snapshot.phone.required", `${path}.phone`, "the manifest declares phoneStatus, so every snapshot carries the phone as the platform sees it");
+  } else if (!seesPhone && snapshot.phone !== undefined && isPlainObject(manifest)) {
+    into.add("snapshot.phone.unexpected", `${path}.phone`, "the manifest declares no phoneStatus: a phone the platform never said it could see is one it invented");
+  }
+  if (snapshot.phone !== undefined) {
+    validatePhoneStateInto(snapshot.phone, `${path}.phone`, context, into);
+    // The two views of one call agree: a channel that is a task's stands where the task does.
+    if (isPlainObject(snapshot.phone) && Array.isArray(snapshot.phone.channels) && Array.isArray(snapshot.tasks)) {
+      const tasks = snapshot.tasks.filter(isPlainObject);
+      snapshot.phone.channels.forEach((channel: unknown, index: number) => {
+        if (!isPlainObject(channel) || !isAssignmentId(channel.assignmentId)) return;
+        const here = `${path}.phone.channels[${index}]`;
+        const task = tasks.find(task => task.assignmentId === channel.assignmentId);
+        if (!into.require(task !== undefined, "phone.channel.assignment", `${here}.assignmentId`,
+          `${String(channel.assignmentId)} is not a task this login holds: a channel names the task its call is, or nothing`)) return;
+        const agrees = channel.state === "active" ? task!.phase === "in-progress" && task!.audio === "started"
+          : channel.state === "held" ? task!.phase === "paused"
+          : task!.phase === "pending" || (Array.isArray(task!.onCall) && task!.onCall.some((who: unknown) => isPlainObject(who) && who.role === "party" && who.stage === "ringing"));
+        into.require(agrees, "phone.channel.task", `${here}.state`,
+          `the phone says ${String(channel.state)} and the task ${String(channel.assignmentId)} says ${String(task!.phase)}${task!.audio === undefined ? "" : ` with audio ${String(task!.audio)}`}: the two views of one call agree`);
+      });
+      // And a task at work with audio has a channel: the phone carries every call the desk is on.
+      tasks.forEach((task, index) => {
+        if (task.audio === "started" && !(snapshot.phone as Record<string, unknown> & { channels: unknown[] }).channels.some(channel => isPlainObject(channel) && channel.assignmentId === task.assignmentId)) {
+          into.add("phone.channel.missing", `${path}.tasks[${index}]`, `${String(task.assignmentId)} has its audio started and the phone carries no channel for it`);
+        }
+      });
+    }
+  }
   if (into.filled(snapshot.loginId, "snapshot.loginId", `${path}.loginId`, "a snapshot needs the login id it belongs to")
     && context.loginId !== undefined) {
     into.require(snapshot.loginId === context.loginId, "snapshot.loginId.mismatch", `${path}.loginId`,
@@ -2267,6 +2314,11 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
           validateContactInto(contact, `${at}.contacts[${index}]`, into, levels));
       }
       break;
+    case "phone-updated":
+      into.require(isPlainObject(manifest) && manifest.phoneStatus === true, "event.phone.capability", `${at}.phone`,
+        "phone-updated comes from a provider whose manifest declares phoneStatus");
+      validatePhoneStateInto(event.phone, `${at}.phone`, context, into);
+      break;
     case "shift-updated":
       validateShiftInto(event.shift, `${at}.shift`, into, "shift");
       break;
@@ -2348,6 +2400,50 @@ function requireClockInto(value: unknown, manifest: unknown, path: string, into:
   if (!isPlainObject(manifest) || manifest.timeCheck === true || !carriesRunningInstant(value)) return;
   into.add("manifest.timeCheck.required", path,
     "this publishes an instant the desk renders as a running duration -- a since, a signedInAt -- and the manifest declares no timeCheck: every screen counts such a duration from the provider's clock, so the provider states one");
+}
+
+/** The phone as the platform sees it: the agent's device for this provider, whether it can take a call, its own mute where observed. */
+export function validatePhoneState(value: unknown, path = "phone", context: ReaderContext = {}): ProtocolViolation[] {
+  const into = new Collector();
+  validatePhoneStateInto(value, path, context, into);
+  return into.violations;
+}
+
+function validatePhoneStateInto(value: unknown, path: string, context: ReaderContext, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("phone.shape", path, "the phone state must be an object");
+    return;
+  }
+  if (into.oneOf(value.phone, PHONES, "phone.phone", `${path}.phone`) && context.phone !== undefined) {
+    into.require(value.phone === context.phone, "phone.phone.mismatch", `${path}.phone`,
+      `the host chose a ${context.phone} for this login at connect and the platform reports a ${describeValue(value.phone)}: the phone state is the phone the agent hears this provider's calls on`);
+  }
+  into.oneOf(value.status, PHONE_STATUSES, "phone.status", `${path}.status`);
+  if (value.muted !== undefined) {
+    into.require(value.muted === true, "phone.muted", `${path}.muted`, "the phone's mute is stated by presence: send true or omit it");
+    // The softphone's microphone is the host's, and its mute is the host's report; the platform observes a desk phone's button, or nothing.
+    into.require(value.phone !== "softphone", "phone.muted.softphone", `${path}.muted`,
+      "a softphone's microphone is the host's and its mute is the host's report; the platform echoes nothing of it");
+  }
+  if (value.since !== undefined) into.timestamp(value.since, "phone.since", `${path}.since`);
+  // The phone's own calls: one active at most, any number held, and none on a phone that cannot carry one.
+  if (!Array.isArray(value.channels)) {
+    into.add("phone.channels.shape", `${path}.channels`, "channels is the phone's calls, an array: [] when idle");
+  } else {
+    let active = 0;
+    value.channels.forEach((channel: unknown, index: number) => {
+      const here = `${path}.channels[${index}]`;
+      if (!isPlainObject(channel)) { into.add("phone.channel.shape", here, "each channel must be an object"); return; }
+      if (into.oneOf(channel.state, PHONE_CHANNEL_STATES, "phone.channel.state", `${here}.state`) && channel.state === "active") active += 1;
+      into.timestamp(channel.since, "phone.channel.since", `${here}.since`);
+      if (channel.assignmentId !== undefined) into.require(isAssignmentId(channel.assignmentId), "phone.channel.assignmentId", `${here}.assignmentId`, "assignmentId must name an assignment when present");
+      for (const key of Object.keys(channel)) into.require(["state", "since", "assignmentId"].includes(key), "phone.channel.field", `${here}.${key}`, "unsupported channel field");
+    });
+    into.require(active <= 1, "phone.channel.active.single", `${path}.channels`, `${active} channels are active: the phone has one active audio channel, and every other call on it is held`);
+    into.require(!((value.status === "unregistered" || value.status === "off-hook") && value.channels.length > 0), "phone.status.channels", `${path}.channels`,
+      `a phone that is ${String(value.status)} carries no call`);
+  }
+  for (const key of Object.keys(value)) into.require(["phone", "status", "muted", "since", "channels"].includes(key), "phone.field", `${path}.${key}`, "unsupported phone state field");
 }
 
 function validateShiftInto(value: unknown, path: string, into: Collector, rule: string): void {

@@ -272,3 +272,68 @@ call, the same line in the ready state, so an agent does not learn of it from a 
 whether work is held back is the adapter's decision from the report, as it is for every station
 fact. Where a provider's own platform holds a mute of its own -- a bridge that silences a leg --
 that is a fact about the switch, reported as the provider sees fit, and never the agent application's Mute.
+
+### The phone's own view
+
+There are two views of a call, and the contract carries both. The task side says which calls are
+the agent's work and where each stands: the phase, the audio, the room. The phone side is the
+device: whether it can take a call at all, its own mute, and the calls on it, which exist whether
+or not a task is behind them -- an internal call on the extension, a lead's listening leg, a call
+the platform put on the phone that the desk never saw as a task. The host's report covers neither:
+it says what the station has, a microphone and a speaker, and cannot say whether the phone is
+registered. The platform sees the phone, so this is the provider's to publish, as `Snapshot.phone`
+and `phone-updated`, from a manifest that declares `phoneStatus` (`snapshot.phone.required`,
+`snapshot.phone.unexpected`, `event.phone.capability`).
+
+```ts
+// a conference in progress on alloc-42 -- one channel, since the bridge mixes -- with alloc-43 parked
+const busy: PhoneState = { phone: "deskPhone", status: "ready", muted: true, channels: [
+  { state: "active", since: "2026-09-12T10:30:04Z", assignmentId: "alloc-42" },
+  { state: "held", since: "2026-09-12T10:35:20Z", assignmentId: "alloc-43" },
+] };
+// an internal call on the extension the desk never saw as a task
+const internal: PhoneState = { phone: "deskPhone", status: "ready", channels: [{ state: "active", since: "2026-09-12T11:02:00Z" }] };
+// a desk phone the platform lost
+const down: PhoneState = { phone: "deskPhone", status: "unregistered", since: "2026-09-12T10:41:00Z", channels: [] };
+```
+
+**The device.** `status` is the phone itself: `ready` is registered and usable, idle or busy, and
+the other three are the states in which nothing can land, each wanting a different fix.
+
+| `status` | Meaning |
+| --- | --- |
+| `ready` | Registered and usable, idle or busy. |
+| `unregistered` | The platform has lost the phone: no registration from the extension, no route to the handset. Nothing can land, and no channel is on it (`phone.status.channels`). |
+| `do-not-disturb` | The agent pressed it on the device. Nothing lands until they clear it; it is not a break, and the provider assigns or not as its platform does. |
+| `off-hook` | The handset is up with no call on it, and no channel is on it. |
+
+`phone` is the agent's device for this provider: the one the host chose for the login at
+connect, from the manifest's phones, as the way the agent hears this provider's calls. A state
+naming the other is the wrong phone (`phone.phone.mismatch`). The phone is the agent's; the login
+is the agent's session with the provider, and what belongs to the login is that choice. `since` is when the status began, counted from the
+provider's clock like every duration off the active call, and omitted rather than invented.
+
+**The channels.** The phone has one active audio channel and any number held
+(`phone.channel.active.single`), and a bridge is one channel: a conference is one entry, and its
+members are on the task's `onCall`, never repeated here. Each channel is `ringing`, `active` or
+`held`, since when, and names the task its call is where it is one. **Where a channel is a task's,
+the two views agree** (`phone.channel.task`): `active` with the task at work and its audio
+started, `held` with the task `paused`, `ringing` with the task `pending` or its party ringing on
+`onCall`; and a task with its audio started has a channel (`phone.channel.missing`), since the
+phone carries every call the desk is on. A channel naming no task is the phone's alone, and the
+desk shows it as a call it cannot act on.
+
+**The mute is the phone's, and it silences whatever is active.** It is one flag on the phone, not
+a property of a channel: whichever channel is active is silent while it is set, and the held
+channels are unaffected. Who owns it follows the phone. On a desk phone the mute button is the
+handset's, and the platform observes it or does not: `muted: true` where it does, absent where it
+does not, never invented. On a softphone the microphone is the host's, its mute is the host's
+report as **The station is the agent application's** sets out, and nothing the provider publishes
+moves it: `muted` on a softphone's state is the platform echoing the host, and is refused
+(`phone.muted.softphone`). The `muted` step in the record stays what it is, the account of a leg,
+never the live flag.
+
+**The lead sees the member's phone as the member does.** The member on the team member list
+carries the same `PhoneState`, republished with the member on every change, so a desk phone that
+is down, or a call on it that is no task, shows the same on both screens, and neither derives it
+from anything else.

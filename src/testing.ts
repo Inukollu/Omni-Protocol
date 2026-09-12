@@ -83,7 +83,9 @@ const STATE_SUBJECTS = [
   "team.tasks",
   "team.listening",
   "team.shift",
+  "team.phone",
   "shift",
+  "phone",
   "contacts",
   "calendar",
   "team.policies",
@@ -94,7 +96,7 @@ const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
   "task-audio-started": true, "task-audio-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
   "team-updated": true, "team-member-updated": true, "team-member-removed": true, "team-policies-updated": true,
-  "contacts-updated": true, "calendar-updated": true, "shift-updated": true,
+  "contacts-updated": true, "calendar-updated": true, "shift-updated": true, "phone-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
 const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
@@ -140,6 +142,7 @@ function observeMember(member: unknown, seen: Set<ContractSubject>): void {
   if (some(member.listening)) seen.add("team.listening");
   if (member.shift !== undefined) seen.add("team.shift");
   if (member.request !== undefined) seen.add("team.request");
+  if (member.phone !== undefined) seen.add("team.phone");
 }
 
 function observePolicies(value: unknown, seen: Set<ContractSubject>): void {
@@ -161,6 +164,7 @@ function observeSnapshot(value: unknown, seen: Set<ContractSubject>): void {
   if (some(value.contacts)) seen.add("contacts");
   if (some(value.calendar)) seen.add("calendar");
   if (value.shift !== undefined) seen.add("shift");
+  if (value.phone !== undefined) seen.add("phone");
 }
 
 function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
@@ -178,6 +182,7 @@ function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
     case "contacts-updated": if (some(event.contacts)) seen.add("contacts"); break;
     case "calendar-updated": if (some(event.calendar)) seen.add("calendar"); break;
     case "shift-updated": seen.add("shift"); break;
+    case "phone-updated": seen.add("phone"); break;
     default: break;
   }
 }
@@ -315,6 +320,7 @@ export async function exerciseAdapter<C extends Channel>(
       self: current().identity.id,
       capabilities: current().capabilities,
       leadFeatures: leadFeaturesOn,
+      phone: context.phone,
       loginId: context.loginId,
       autoAcceptTasks: context.autoAcceptTasks,
       locked: options.lockedValues,
@@ -1107,7 +1113,7 @@ const REACHABLE_PHASES: Record<string, Set<string>> = {
 export const SUPERSEDED_BY_A_SNAPSHOT: ReadonlySet<string> = new Set([
   "snapshot", "transport-status", "break-state", "task-offered", "task-updated", "task-ended",
   "task-audio-started", "task-audio-ended", "team-updated", "team-member-updated", "team-member-removed", "team-policies-updated",
-  "contacts-updated", "calendar-updated", "shift-updated",
+  "contacts-updated", "calendar-updated", "shift-updated", "phone-updated",
 ]);
 
 export class TaskStream {
