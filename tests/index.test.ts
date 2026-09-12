@@ -166,7 +166,7 @@ describe("Omni protocol", () => {
         displayName: "Test Provider",
         channel: "chat",
         supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
-        completionSettleMs: 5000,
+        settleMs: 5000,
         authenticationMethods: ["browser-sso"],
       },
       async createAuthenticationSession() {

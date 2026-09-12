@@ -230,12 +230,12 @@ export interface Manifest<C extends Channel = Channel> {
    */
   runningStepReports?: true;
   /**
-   * How long after an applied completion -- `complete`, or a lead's `take-over-call` -- the provider's
-   * `task-ended` is owed, in milliseconds. `applied` says the provider has completed the task;
-   * the ending follows within this, or the host resyncs and shows the task as unsettled. Stated
-   * per provider, since platforms settle at different speeds.
+   * How long after `applied` the wire shows what the provider did, in milliseconds: the
+   * `task-ended` after a `complete` or a lead's `take-over-call`, the `calendar-updated` after a
+   * `schedule`. Past it the host resyncs and shows the thing as unsettled. Stated per provider,
+   * since platforms settle at different speeds.
    */
-  completionSettleMs: number;
+  settleMs: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -674,8 +674,8 @@ export type TaskCapabilities<C extends Channel = Channel> =
         recording?: Lockable<TaskRecordingPolicy>;
       }
     : C extends "chat"
-      ? SharedTaskCapabilities & { decline?: Lockable<true>; hold?: Lockable<true> }
-      : SharedTaskCapabilities & { decline?: Lockable<true> };
+      ? SharedTaskCapabilities & { decline?: Lockable<true>; hold?: Lockable<true>; schedule?: Lockable<true> }
+      : SharedTaskCapabilities & { decline?: Lockable<true>; schedule?: Lockable<true> };
 
 // ---------------------------------------------------------------------------
 // Task workspace.
@@ -974,6 +974,13 @@ export type Task<C extends Channel = Channel> = {
    */
   acceptance?: AcceptanceMode;
   /**
+   * In `pending` only: how long the offer has left, in whole seconds from this publication,
+   * restated on every publication that carries it so a reconnect snapshot says what is actually
+   * left. Absent, the offer stands until the provider says otherwise. Runs out: the provider ends
+   * the offer `expired` naming `pending`.
+   */
+  expiresInSeconds?: DurationSeconds;
+  /**
    * In `preview` only, and together: how long the preparation has left, in whole seconds from
    * this publication -- restated on every publication that carries it, so a resync starts the
    * countdown afresh and no clock is compared -- and behavior when it runs out, and who acts then:
@@ -1011,8 +1018,8 @@ export type TaskOutcome =
   | { type: "taken-over"; leadId: UserId }
   /** Who called the work off: the agent declining, the provider withdrawing or re-routing, the party abandoning. */
   | { type: "cancelled"; by: "agent" | "provider" | "party"; reason?: string }
-  /** Only the phases in which somebody is still being waited on can expire; an offer whose `expiresInSeconds` runs out names `pending`. */
-  | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
+  /** Only the phases in which somebody is still being waited on can expire: an offer whose `expiresInSeconds` runs out names `pending`, accepted work the platform gave up on names `confirmed`. A preview never lapses: withdrawn, it is `cancelled` by the provider. */
+  | { type: "expired"; phase: "pending" | "confirmed" }
   | { type: "failed"; failure: ProtocolFailure };
 
 // ---------------------------------------------------------------------------
@@ -1022,8 +1029,8 @@ export type TaskOutcome =
 export const TASK_COMMAND_NAMES = {
   voice: ["answer", "decline", "dial", "hold", "resume", "end-call", "terminate-call",
           "connect-back", "lead-assist", "conference", "recording", "schedule", "complete"],
-  chat: ["accept", "decline", "pause", "resume", "complete"],
-  email: ["accept", "decline", "complete"],
+  chat: ["accept", "decline", "pause", "resume", "schedule", "complete"],
+  email: ["accept", "decline", "schedule", "complete"],
 } as const;
 
 export type TaskCommandName<C extends keyof typeof TASK_COMMAND_NAMES> =
@@ -1047,12 +1054,7 @@ export type VoiceTaskCommand =
   | { type: "terminate-call" }
   /** Issuable only in `completing`, under the `connectBack` capability. Dials the party's own number, so it names none. */
   | { type: "connect-back"; dialId: DialId }
-  /**
-   * Put a time on the calendar for this party: a follow-up promised on the call. Gated by
-   * `schedule`, issuable in `in-progress`, `paused` or `completing`; the activity arrives on
-   * `calendar-updated`, which is the provider's word that it stands.
-   */
-  | { type: "schedule"; at: IsoTimestamp; note?: string }
+  | ScheduleCommand
   /** Ask a lead to join, with a note. Gated by `leadAssist`. */
   | { type: "lead-assist"; action: "request"; note?: string }
   /** Withdraw a standing request. Needs `Task.leadAssist` with status `requested`. */
@@ -1070,16 +1072,27 @@ export type VoiceTaskCommand =
   | (RecordingCommand & { source: "provider" })
   | ({ type: "complete" } & OutcomePayload);
 
+/**
+ * Put a time on the calendar for this party: a follow-up promised on the call or in the
+ * conversation, or written up in wrap. Gated by `schedule` on any channel, issuable in
+ * `in-progress`, `paused` or `completing`, under a manifest that declares `calendar` for it to
+ * land on; `applied` says it is on the calendar, and the `calendar-updated` that shows it follows
+ * within the manifest's `settleMs`.
+ */
+export type ScheduleCommand = { type: "schedule"; at: IsoTimestamp; note?: string };
+
 export type ChatTaskCommand =
   | { type: "accept" }
   | { type: "decline" }
   | { type: "pause" }
   | { type: "resume" }
+  | ScheduleCommand
   | ({ type: "complete" } & OutcomePayload);
 
 export type EmailTaskCommand =
   | { type: "accept" }
   | { type: "decline" }
+  | ScheduleCommand
   | ({ type: "complete" } & OutcomePayload);
 
 export interface CustomTaskCommand {
@@ -1176,9 +1189,11 @@ export interface BreakRequest {
 }
 
 /**
- * A break forced on the agent; the agent must explicitly resume when ready. `by` is the lead who
- * forced it, or `provider` where the platform itself did, on its own rule or a schedule: the agent
- * sees who, and a person is named only when there is one.
+ * A break forced on the agent; the agent must explicitly resume when ready. A lead's `force-break`
+ * is a command to the provider, which forces the break: `by` names the lead who asked it to, or
+ * `provider` where the platform itself did, on its own rule or a schedule. The agent sees who, a
+ * person is named only when there is one, and a break the platform imposed is the platform's to
+ * lift: a lead's `end-forced-break` on it fails with `omni.break-forced-by-provider`.
  */
 export type ForcedBreak = {
   by: UserId | "provider";
@@ -1535,8 +1550,6 @@ export type ProviderEvent<C extends Channel = Channel> =
   | {
       type: "task-offered";
       task: Task<C>;
-      /** How long the agent has to answer, in whole seconds from this event; the offer expires when it runs out. Absent, it stands until the provider says otherwise. */
-      expiresInSeconds?: DurationSeconds;
     }
   | { type: "task-updated"; task: Task<C> }
   | { type: "task-audio-started"; assignmentId: AssignmentId }
@@ -1586,6 +1599,8 @@ export const OMNI_FAILURE_CODES = [
   "omni.break-already-committed",
   /** A recording command the provider could not settle either way: no start, stop, pause or resume it can vouch for. */
   "omni.recording-unsettled",
+  /** A lead asked to lift a break the platform itself imposed; the platform lifts its own. */
+  "omni.break-forced-by-provider",
 ] as const;
 
 export type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];

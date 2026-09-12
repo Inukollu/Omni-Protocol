@@ -275,6 +275,10 @@ describe("lead commands", () => {
       expect(validateTeamCommand({ command: { ...command, type } }, current).map(v => v.rule)).toContain("team.command.type");
     }
     expect(validateTeamCommand({ command }, lead).map(v => v.rule)).toContain("team.command.endForcedBreak");
+    // A break the platform imposed is the platform's to lift; a lead lifts one a lead asked for.
+    const byProvider = { ...lead, memberBreak: { ...state("on-break"), forced: { by: "provider" } } };
+    expect(validateTeamCommand({ command }, byProvider).map(v => v.rule)).toEqual(["team.command.endForcedBreak.provider"]);
+    expect(validateTeamCommand({ command }, current)).toEqual([]);
     for (const bad of [context, { ...current, transport: "connecting" }, { ...current, team: { members: [] } }, { ...current, memberBreak: undefined }]) {
       expect(validateTeamCommand({ command }, bad)).not.toEqual([]);
     }

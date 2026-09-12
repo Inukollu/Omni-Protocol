@@ -158,7 +158,7 @@ const LISTENING_MODES = membersOf<ListeningMode>({ listen: true, coach: true, "j
 const COMPLETED_BY = membersOf<Extract<TaskOutcome, { type: "completed" }>["by"]>({ agent: true, provider: true });
 const CANCELLED_BY = membersOf<Extract<TaskOutcome, { type: "cancelled" }>["by"]>({ agent: true, provider: true, party: true });
 const EXPIRABLE_PHASES = membersOf<Extract<TaskOutcome, { type: "expired" }>["phase"]>({
-  pending: true, confirmed: true, preview: true,
+  pending: true, confirmed: true,
 });
 
 const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATION_SCHEMES);
@@ -169,8 +169,8 @@ const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
     browsers: true, outcomes: true, custom: true, decline: true, hold: true,
     endCall: true, terminateCall: true, connectBack: true, schedule: true, leadAssist: true, conference: true, recording: true,
   }),
-  chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, outcomes: true, custom: true, decline: true, hold: true }),
-  email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, outcomes: true, custom: true, decline: true }),
+  chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, outcomes: true, custom: true, decline: true, hold: true, schedule: true }),
+  email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, outcomes: true, custom: true, decline: true, schedule: true }),
 };
 
 // The published list and the type's keys are the same set, or one of them is wrong.
@@ -497,6 +497,11 @@ function manifestDials(manifest: unknown): boolean | undefined {
   return isPlainObject(manifest) ? Array.isArray(manifest.dialOutcomes) : undefined;
 }
 
+/** Whether a manifest declares a calendar, and so may publish tasks that schedule onto it. `undefined` where there is no manifest to ask. */
+function manifestCalendar(manifest: unknown): boolean | undefined {
+  return isPlainObject(manifest) ? isPlainObject(manifest.idleCapabilities) && manifest.idleCapabilities.calendar === true : undefined;
+}
+
 /** Undefined explicitly means unavailable; a returned estimate is not a clock guarantee. */
 export function validateProviderTimeEstimate(value: unknown, scope: unknown, path = "estimate"): ProtocolViolation[] {
   const into = new Collector();
@@ -614,11 +619,12 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
     into.require(manifest.runningStepReports === true, "manifest.runningStepReports", `${path}.runningStepReports`,
       "runningStepReports is declared by presence, as true; a provider that takes begin and end only omits it");
   }
-  into.require(!Object.hasOwn(manifest, "disposalSettleMs"), "manifest.completionSettleMs.renamed", `${path}.disposalSettleMs`,
-    "use completionSettleMs; the former field is not accepted");
-  into.require(typeof manifest.completionSettleMs === "number" && Number.isInteger(manifest.completionSettleMs) && manifest.completionSettleMs > 0,
-    "manifest.completionSettleMs", `${path}.completionSettleMs`,
-    "completionSettleMs is how long after an applied completion the task-ended is owed, a positive whole number of milliseconds, stated by every provider");
+  for (const former of ["disposalSettleMs", "completionSettleMs"]) {
+    into.require(!Object.hasOwn(manifest, former), "manifest.settleMs.renamed", `${path}.${former}`, "use settleMs; the former field is not accepted");
+  }
+  into.require(typeof manifest.settleMs === "number" && Number.isInteger(manifest.settleMs) && manifest.settleMs > 0,
+    "manifest.settleMs", `${path}.settleMs`,
+    "settleMs is how long after applied the wire shows what the provider did -- the task-ended after a complete, the calendar-updated after a schedule -- a positive whole number of milliseconds, stated by every provider");
   if (manifest.orgLevels !== undefined) {
     if (!Array.isArray(manifest.orgLevels)) {
       into.add("manifest.orgLevels.shape", `${path}.orgLevels`, "orgLevels must be an array when present");
@@ -1189,6 +1195,8 @@ export interface TaskValidationContext {
   autoAcceptTasks?: boolean;
   /** Whether the manifest declares `dialOutcomes`. A task that may dial needs it to; absent, the question is not asked. */
   dialOutcomesDeclared?: boolean;
+  /** Whether the manifest declares the `calendar` idle capability. A task that may schedule needs it to; absent, the question is not asked. */
+  calendarDeclared?: boolean;
   /**
    * The values the queue locked on this login's tasks -- a party's number or email -- as whoever
    * runs the validator knows them. Where a task's party stands locked, no other field of it may
@@ -1244,6 +1252,13 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.require(context.channel === "voice", "task.phase.channel", `${path}.phase`, `a ${context.channel} task has no call to preview`);
     into.require(context.dialOutcomesDeclared !== false, "task.preview.dialOutcomes.required", `${path}.phase`,
       "a preview ends in the agent pressing Call, which dials, and the manifest declares no dialOutcomes to say how a dial ends");
+  }
+  // How long the offer has left travels on the pending task, so a reconnect snapshot restates it.
+  if (task.expiresInSeconds !== undefined) {
+    into.require(task.phase === "pending", "task.pending.expiresInSeconds.unexpected", `${path}.expiresInSeconds`,
+      "expiresInSeconds is how long an offer has left, and belongs to a pending task; accepted, there is no offer to run out");
+    into.require(isDurationSeconds(task.expiresInSeconds), "task.pending.expiresInSeconds", `${path}.expiresInSeconds`,
+      "expiresInSeconds is how long the offer has left: a whole number of seconds, zero or more, counted from this publication");
   }
   // The deadline and what happens at it travel together, and only while the record is being previewed.
   if (task.previewEndsInSeconds !== undefined || task.atDeadline !== undefined) {
@@ -1364,9 +1379,11 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.require(task.completionMode !== "provider-automatic", "task.outcomes.required.mode", `${path}.capabilities.outcomes.required`,
       "a required outcome is the agent's to give, so the task completes on the agent's command; provider-automatic completion cannot wait for it");
   }
+  // Under agent-command the allowance is the expected wrap, shown and never acted on: the agent
+  // completes whenever they are done, so there is always a wrap to collect the code in.
   if (capabilities.outcomes !== undefined) {
-    into.require(task.wrapAllowance !== 0, "task.outcomes.wrapAllowance", `${path}.capabilities.outcomes`,
-      "outcomes are collected in wrap, and wrapAllowance 0 gives none: publish a wrap or no outcomes");
+    into.require(!(task.completionMode === "provider-automatic" && task.wrapAllowance === 0), "task.outcomes.wrapAllowance", `${path}.capabilities.outcomes`,
+      "outcomes are collected in wrap, and provider-automatic with wrapAllowance 0 gives none: publish a wrap or no outcomes");
   }
   for (const [name, declared] of Object.entries(capabilities)) {
     if (declared === undefined) continue;
@@ -1382,6 +1399,11 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     if ((DIALLING_CAPABILITIES as readonly string[]).includes(name) && context.dialOutcomesDeclared === false) {
       into.add("task.capability.dialOutcomes.required", `${path}.capabilities.${name}`,
         `${name} dials, and the manifest declares no dialOutcomes to say how a dial ends`);
+    }
+    // A follow-up lands on the calendar, so the manifest has to have one for it to land on.
+    if (name === "schedule" && context.calendarDeclared === false) {
+      into.add("task.capability.calendar.required", `${path}.capabilities.schedule`,
+        "schedule puts a follow-up on the calendar, and the manifest declares no calendar for it to land on");
     }
     // A control the queue could allow may stand locked in its place, saying whose. What the
     // queue provides -- browsers, outcomes, custom controls -- is content, not a control.
@@ -1527,8 +1549,13 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
   } else if (command.type === "force-break" || command.type === "end-forced-break") {
     validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
-    if (command.type === "end-forced-break") into.require(state.forced !== undefined && (state.status === "on-break" || state.status === "starting-after-task"),
-      "team.command.endForcedBreak", path, "lift a current forced-break restriction without resuming the agent");
+    if (command.type === "end-forced-break") {
+      into.require(state.forced !== undefined && (state.status === "on-break" || state.status === "starting-after-task"),
+        "team.command.endForcedBreak", path, "lift a current forced-break restriction without resuming the agent");
+      // The platform lifts a break it imposed itself; a lead lifts one a lead asked for.
+      into.require(!(isPlainObject(state.forced) && state.forced.by === "provider"), "team.command.endForcedBreak.provider", path,
+        "the platform put this member on the break, and it lifts it: a lead ends a break a lead forced");
+    }
     if (command.type === "force-break") {
       if (command.expectedDurationMs !== undefined) into.require(
         typeof command.expectedDurationMs === "number" && Number.isFinite(command.expectedDurationMs) && command.expectedDurationMs > 0,
@@ -1911,7 +1938,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   } else {
     const seen = new Set<string>();
     snapshot.tasks.forEach((task: unknown, index: number) => {
-      validateTaskInto(task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${path}.tasks[${index}]`, into);
+      validateTaskInto(task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), calendarDeclared: manifestCalendar(manifest), locked: context.locked }, `${path}.tasks[${index}]`, into);
       if (isPlainObject(task) && isAssignmentId(task.assignmentId)) {
         if (seen.has(task.assignmentId as string)) into.add("task.assignmentId.unique", `${path}.tasks[${index}].assignmentId`, `duplicate assignment id: ${task.assignmentId}`);
         seen.add(task.assignmentId as string);
@@ -2108,17 +2135,17 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       validateBreakState(event.break, `${at}.break`, into);
       break;
     case "task-offered":
-      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${at}.task`, into);
+      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), calendarDeclared: manifestCalendar(manifest), locked: context.locked }, `${at}.task`, into);
       // An offer introduces work that is not yet under way; work in progress arrives only on a snapshot.
       if (isPlainObject(event.task) && typeof event.task.phase === "string") {
         into.require((OFFERABLE_PHASES as readonly string[]).includes(event.task.phase), "event.taskOffered.phase", `${at}.task.phase`,
           `task-offered introduces a task as ${OFFERABLE_PHASES.join(", ")}, never as ${event.task.phase}`);
       }
-      if (event.expiresInSeconds !== undefined) into.require(isDurationSeconds(event.expiresInSeconds), "event.taskOffered.expiresInSeconds", `${at}.expiresInSeconds`,
-        "expiresInSeconds is how long the offer stands: a whole number of seconds, zero or more, counted from this event");
+      into.require(event.expiresInSeconds === undefined, "event.taskOffered.expiresInSeconds.unexpected", `${at}.expiresInSeconds`,
+        "expiresInSeconds travels on the pending task, where a reconnect snapshot restates it, not on the event");
       break;
     case "task-updated":
-      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), locked: context.locked }, `${at}.task`, into);
+      validateTaskInto(event.task, { channel, levels, autoAcceptTasks: context.autoAcceptTasks, dialOutcomesDeclared: manifestDials(manifest), calendarDeclared: manifestCalendar(manifest), locked: context.locked }, `${at}.task`, into);
       break;
     case "task-audio-started":
       into.require(channel === "voice", "event.audio.channel", `${at}.type`, "only a voice provider publishes audio transitions");
@@ -2745,8 +2772,8 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     case "complete": {
       // The agent may finish early under either mode; the provider is free to end at once. With
       // no wrap at all there is no window to cut short, and nothing for the command to do.
-      into.require(task.wrapAllowance !== 0, "command.complete.wrapAllowance", path,
-        "the task has no wrap: with wrapAllowance 0 the provider ends it itself, and there is nothing to complete");
+      into.require(!(task.completionMode === "provider-automatic" && task.wrapAllowance === 0), "command.complete.wrapAllowance", path,
+        "the task has no wrap: under provider-automatic with wrapAllowance 0 the provider ends it itself, and there is nothing to complete");
       // What travels with complete is what the outcomes capability published: a code from its
       // list where it has one, a code at all where it requires one, notes as it said, nothing where it published nothing.
       const outcomes = capabilities.outcomes;

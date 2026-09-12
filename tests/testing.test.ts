@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
 import type { LoginStore, Refusal } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
-import { memoryStore, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
+import { memoryStore, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, assertWrapTimeout, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const voiceTask = {
   title: "Customer call",
@@ -73,7 +73,7 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
 describe("assertCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
-    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], completionSettleMs: 150,
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 150,
   } satisfies Manifest<"voice">;
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, lead: true as const } } satisfies AuthenticationState;
@@ -126,7 +126,7 @@ describe("assertCapabilityWithdrawal", () => {
 describe("assertTaskCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
-    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], completionSettleMs: 150,
+    supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 150,
   } satisfies Manifest<"voice">;
   const withHold = { ...voiceTask, capabilities: { hold: true, endCall: true } } satisfies Task<"voice">;
   const withoutHold = { ...voiceTask, capabilities: { endCall: true } } satisfies Task<"voice">;
@@ -637,6 +637,25 @@ describe("TaskStream places a dial outcome", () => {
   });
 });
 
+describe("assertForcedBreakStopsTheRest", () => {
+  const voice = { id: "voice", authentication: "authenticated", holdsCapacity: true } as const;
+  const chat = { id: "chat", authentication: "refreshing", holdsCapacity: true } as const;
+  const email = { id: "email", authentication: "expired", holdsCapacity: true } as const;
+  const idle = { id: "idle", authentication: "authenticated", holdsCapacity: false } as const;
+
+  it("stops every other usable provider holding capacity by capacity zero, and leaves the forcing one and a dead login alone", () => {
+    expect(() => assertForcedBreakStopsTheRest("voice", [voice, chat, email, idle], ["chat"])).not.toThrow();
+    // The gap: a provider that can still give the agent work.
+    expect(() => assertForcedBreakStopsTheRest("voice", [voice, chat, email, idle], [])).toThrow(/chat can give the agent work and must be stopped/);
+    // The forcing provider holds the agent itself; restating its capacity is not the mechanism.
+    expect(() => assertForcedBreakStopsTheRest("voice", [voice, chat, email, idle], ["voice", "chat"])).toThrow(/voice forced the break/);
+    expect(() => assertForcedBreakStopsTheRest("voice", [voice, chat, email, idle], ["chat", "email"])).toThrow(/email is expired and is not stopped/);
+    expect(() => assertForcedBreakStopsTheRest("voice", [voice, chat, email, idle], ["chat", "idle"])).toThrow(/idle holds no capacity/);
+    expect(() => assertForcedBreakStopsTheRest("ghost", [voice], [])).toThrow(/ghost is not a provider/);
+    expect(() => assertForcedBreakStopsTheRest("voice", [voice], ["ghost"])).toThrow(/ghost is not a provider/);
+  });
+});
+
 describe("assertBreakAttemptProviders", () => {
   const voice = { id: "voice", authentication: "authenticated", holdsCapacity: true } as const;
   const chat = { id: "chat", authentication: "refreshing", holdsCapacity: true } as const;
@@ -826,7 +845,7 @@ const conformingManifest = {
   channel: "voice",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
   authenticationMethods: ["browser-sso"],
-  completionSettleMs: 150,
+  settleMs: 150,
   idleCapabilities: {
     dial: { destinations: "any-number" },
     contacts: true,
@@ -1284,6 +1303,8 @@ describe("exerciseAdapter drives one call", () => {
     completesAroundAudio?: boolean;
     /** Complete is answered applied and no task-ended follows: the platform still holds the task, or has dropped it without a word. */
     neverEnds?: "held" | "dropped";
+    /** A provider that says applied to a schedule and never shows the follow-up on its calendar. */
+    neverSchedules?: boolean;
     /** A provider that ends the audio and leaves the host's still-open leg as it found it, for the host to close. */
     leavesHostLegOpen?: boolean;
     /** A provider that will not record the host's closing report once the call is over. */
@@ -1304,7 +1325,7 @@ describe("exerciseAdapter drives one call", () => {
     // Envelope ids are unique within the login, across every client of it: a reloaded adapter carries on, never restarts.
     const id = () => `drv-${drvSeq += 1}`;
     const base: Record<string, unknown> = {
-      ...conformingSnapshot.tasks[0]!, assignmentId: myAssignment, capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), outcomes: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
+      ...conformingSnapshot.tasks[0]!, assignmentId: myAssignment, capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), schedule: true, outcomes: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
       browsers: [], history: undefined, audio: undefined, party: { name: "Maya Rao", number: "+919876543210" },
     };
     let phase = "pending";
@@ -1427,6 +1448,12 @@ describe("exerciseAdapter drives one call", () => {
               // t() restates the record after it has taken the phase, so what the record says of a leg follows the phase it is published under.
               emit({ type: "task-updated", task: t({ phase: "completing", audio: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
               return { status: "applied" };
+            case "schedule": {
+              // Applied says the follow-up is on the calendar, and the calendar restated whole shows it.
+              const at = (command as unknown as { at: string }).at;
+              if (!script.neverSchedules) emit({ type: "calendar-updated", calendar: [{ id: "cb-1", title: "Follow-up", startsAt: at, endsAt: at, party: { name: "Maya Rao", number: "+919876543210" } }] });
+              return { status: "applied" };
+            }
             case "complete":
               if (script.neverEnds !== undefined) { disposed = true; return { status: "applied" }; }
               if (script.platform !== undefined) script.platform.open = false;
@@ -1749,6 +1776,13 @@ describe("exerciseAdapter drives one call", () => {
     // The control: the same adapter on a clean store, writing nothing late, is clean (the test above holds it).
     const clean = memoryStore();
     expect((await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store" }), { ...context, store: clean }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
+  });
+
+  it("holds an applied schedule to the manifest's bound: the calendar-updated carrying the follow-up follows within it", async () => {
+    // The conforming fixture shows the follow-up on its calendar (the first test is clean). This one says applied and never shows it.
+    const silent = (await drive(driveable({ neverSchedules: true }))).violations;
+    expect(silent.map(v => v.rule)).toEqual(["drive.schedule.unsettled"]);
+    expect(silent[0]!.message).toContain("applied says the follow-up is on the calendar");
   });
 
   it("holds an applied completion to the manifest's bound: the task-ended follows within it, or the resync says what the provider did", async () => {
