@@ -962,6 +962,9 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         commitBreak: async () => ({ status: "committed" }),
         cancelBreak: async () => ({ status: "cancelled" }),
         endBreak: async () => ({ status: "ended" }),
+        requestNextCall: async () => ({ status: "requested" }),
+        cancelNextCall: async () => ({ status: "cancelled" }),
+        releaseLinedUp: async () => ({ status: "released" }),
         executeTeam: async ({ command }) => {
           if (command.type === "lead-features" && command.enabled && subscribed !== undefined) {
             if (overrides.emitOnLeadFeatures !== undefined) overrides.emitOnLeadFeatures(subscribed);
@@ -1082,18 +1085,18 @@ describe("exerciseAdapter", () => {
       "event.snapshot", "event.transport-status", "event.break-state", "event.task-offered", "event.task-updated",
       "event.task-audio-started", "event.task-audio-ended", "event.task-ended", "event.dial-outcome", "event.announcement", "event.queue-summary",
       "event.diagnostic", "event.team-updated", "event.team-member-updated", "event.team-member-removed", "event.team-policies-updated",
-      "event.contacts-updated", "event.calendar-updated", "event.shift-updated", "event.phone-updated",
+      "event.contacts-updated", "event.calendar-updated", "event.shift-updated", "event.phone-updated", "event.next-call", "event.lined-up",
     ];
     // The rich task carries browsers, history, an outcome policy, conference destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "phone", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.history", "task.onCall", "task.leadAssist", "task.takenOver",
-      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone",
-      "shift", "phone", "contacts", "calendar", "team.policies",
+      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp",
+      "shift", "phone", "nextCall", "linedUp", "contacts", "calendar", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot, or on the team that
     // arrives once the feature is switched on.
@@ -1103,9 +1106,9 @@ describe("exerciseAdapter", () => {
     } satisfies Snapshot<"voice">;
     const asking = teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "on-task", request: { assignmentId: "alloc-42", since: "2026-08-21T09:04:00Z" } }] } });
     expect(state(await run({ capabilities: { lead: true as const }, snapshot: reached, emitOnLeadFeatures: listener => listener(asking) })))
-      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "team.tasks", "team.listening", "team.shift", "team.phone", "phone", "team.policies"]);
+      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "team.policies"]);
     const withTeam = await run({ capabilities: { lead: true as const } });
-    expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "phone", "team.policies"]);
+    expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "team.policies"]);
     expect(events(withTeam)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
     const oneByOne = await run({ capabilities: { lead: true as const }, emitOnLeadFeatures: listener => {
       listener(teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } }));
@@ -1113,7 +1116,7 @@ describe("exerciseAdapter", () => {
       listener(teamEvent("evt-gone", { type: "team-member-removed", memberId: "A-2" }));
       listener(teamEvent("evt-policies", { type: "team-policies-updated", policies: { hold: { setting: "off", setBy: "team" } } }));
     } });
-    expect(state(oneByOne)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "phone"]);
+    expect(state(oneByOne)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp"]);
     expect(events(oneByOne)).toEqual(everyEvent.filter(subject => !subject.startsWith("event.team-")));
   });
 
@@ -1922,6 +1925,25 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const result = await exerciseAdapter(adapter, context, { collectOnly: true });
     expect(result.authenticationState).toMatchObject({ capabilities: {} });
     expect(result.login).toMatchObject({ capabilities: { breaks: true } });
+  });
+
+  it("requires the three queue methods of a login that declares nextCall, and reaches the agent's own queue where it is published", async () => {
+    const lining = { nextCall: true as const };
+    for (const method of ["requestNextCall", "cancelNextCall", "releaseLinedUp"] as const) {
+      expect(await rules({ capabilities: lining, connection: { [method]: undefined } })).toContain(`connection.${method}.required`);
+    }
+    expect(await rules({ capabilities: lining })).toEqual([]);
+    expect(await rules({ capabilities: {}, connection: { requestNextCall: undefined } })).not.toContain("connection.requestNextCall.required");
+    // The ask on a snapshot with the conforming task at work; the lined-up call on its own event.
+    const asked = { ...conformingSnapshot, nextCall: { since: "2026-08-21T09:04:00Z" } };
+    const lined = teamEvent("evt-lined", { type: "lined-up", linedUp: { party: { name: "Priya S" }, queue: "Billing", queuedSince: "2026-08-21T09:02:00Z", since: "2026-08-21T09:04:30Z", release: true } });
+    const run = await exerciseAdapter(makeAdapter({ capabilities: lining, snapshot: asked, emitOnCapacity: l => l(lined) }).adapter, context, { collectOnly: true });
+    expect(run.violations).toEqual([]);
+    expect(run.notExercised).not.toContain("nextCall");
+    expect(run.notExercised).not.toContain("linedUp");
+    expect((await exerciseAdapter(makeAdapter().adapter, context, { collectOnly: true })).notExercised).toContain("linedUp");
+    // An ask with nothing at work is one the provider should have cleared.
+    expect(await rules({ manifest: plainManifest, capabilities: lining, snapshot: { ...minimalSnapshot, nextCall: { since: "2026-08-21T09:04:00Z" } } })).toEqual(["snapshot.nextCall.idle"]);
   });
 
   it("takes the phone's own view from a provider that declares it can see the phone, held to the login's phone", async () => {

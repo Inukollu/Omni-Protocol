@@ -84,8 +84,12 @@ const STATE_SUBJECTS = [
   "team.listening",
   "team.shift",
   "team.phone",
+  "team.nextCall",
+  "team.linedUp",
   "shift",
   "phone",
+  "nextCall",
+  "linedUp",
   "contacts",
   "calendar",
   "team.policies",
@@ -96,7 +100,7 @@ const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
   "task-audio-started": true, "task-audio-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
   "team-updated": true, "team-member-updated": true, "team-member-removed": true, "team-policies-updated": true,
-  "contacts-updated": true, "calendar-updated": true, "shift-updated": true, "phone-updated": true,
+  "contacts-updated": true, "calendar-updated": true, "shift-updated": true, "phone-updated": true, "next-call": true, "lined-up": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
 const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
@@ -143,6 +147,8 @@ function observeMember(member: unknown, seen: Set<ContractSubject>): void {
   if (member.shift !== undefined) seen.add("team.shift");
   if (member.request !== undefined) seen.add("team.request");
   if (member.phone !== undefined) seen.add("team.phone");
+  if (member.nextCall !== undefined) seen.add("team.nextCall");
+  if (member.linedUp !== undefined) seen.add("team.linedUp");
 }
 
 function observePolicies(value: unknown, seen: Set<ContractSubject>): void {
@@ -165,6 +171,8 @@ function observeSnapshot(value: unknown, seen: Set<ContractSubject>): void {
   if (some(value.calendar)) seen.add("calendar");
   if (value.shift !== undefined) seen.add("shift");
   if (value.phone !== undefined) seen.add("phone");
+  if (value.nextCall !== undefined) seen.add("nextCall");
+  if (value.linedUp !== undefined) seen.add("linedUp");
 }
 
 function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
@@ -183,6 +191,8 @@ function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
     case "calendar-updated": if (some(event.calendar)) seen.add("calendar"); break;
     case "shift-updated": seen.add("shift"); break;
     case "phone-updated": seen.add("phone"); break;
+    case "next-call": if (event.nextCall !== undefined) seen.add("nextCall"); break;
+    case "lined-up": if (event.linedUp !== undefined) seen.add("linedUp"); break;
     default: break;
   }
 }
@@ -348,6 +358,12 @@ export async function exerciseAdapter<C extends Channel>(
         }
       }
       if (capabilities.lead === true) requireMethod(on, "executeTeam", "the login declares capabilities.lead");
+      if (capabilities.nextCall === true) {
+        // The ask, its withdrawal and the release stand together: a lined-up call the agent could neither withdraw nor let go is a promise with no way out.
+        for (const method of ["requestNextCall", "cancelNextCall", "releaseLinedUp"] as const) {
+          requireMethod(on, method, "the login declares capabilities.nextCall");
+        }
+      }
       if (some(capabilities.preferences)) requireMethod(on, "setPreference", "the login declares capabilities.preferences");
     };
 
@@ -1113,7 +1129,7 @@ const REACHABLE_PHASES: Record<string, Set<string>> = {
 export const SUPERSEDED_BY_A_SNAPSHOT: ReadonlySet<string> = new Set([
   "snapshot", "transport-status", "break-state", "task-offered", "task-updated", "task-ended",
   "task-audio-started", "task-audio-ended", "team-updated", "team-member-updated", "team-member-removed", "team-policies-updated",
-  "contacts-updated", "calendar-updated", "shift-updated", "phone-updated",
+  "contacts-updated", "calendar-updated", "shift-updated", "phone-updated", "next-call", "lined-up",
 ]);
 
 export class TaskStream {
