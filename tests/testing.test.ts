@@ -846,6 +846,7 @@ const conformingManifest = {
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
   authenticationMethods: ["browser-sso"],
   settleMs: 150,
+  timeCheck: true,
   idleCapabilities: {
     dial: { destinations: "any-number" },
     contacts: true,
@@ -861,7 +862,9 @@ const conformingManifest = {
 const conformingSnapshot = {
   transport: "active",
   loginId: "session-1",
+  providerTime: "2026-08-21T09:00:00Z",
   break: { status: "not-requested", canRequestBreak: true },
+  shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4210, holdSeconds: 305, breakSeconds: 900, tasksHandled: 12 },
   tasks: [{
     title: "Customer call",
     channel: "voice",
@@ -898,6 +901,7 @@ const conformingSnapshot = {
 const minimalSnapshot = {
   transport: "active",
   loginId: "session-1",
+  providerTime: "2026-08-21T09:00:00Z",
   break: { status: "not-requested", canRequestBreak: true },
   tasks: [], taskCount: 0,
 } satisfies Snapshot<"voice">;
@@ -998,6 +1002,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
           return { status: "applied" };
         },
         setPreference: async () => ({ status: "applied" }),
+        checkTime: async ({ requestId }) => ({ requestId, loginId: "session-1", clockId: "clock-1", providerTime: "2026-08-21T09:00:00Z" }),
         recordStep: async (report: { at: string }) => ({ status: "recorded", at: report.at }),
         openAudio: async () => ({ status: "unavailable", failure: { code: "test", message: "No audio in a test", retryable: false } }),
       };
@@ -1109,7 +1114,7 @@ describe("exerciseAdapter", () => {
       "event.snapshot", "event.transport-status", "event.break-state", "event.task-offered", "event.task-updated",
       "event.task-audio-started", "event.task-audio-ended", "event.task-ended", "event.dial-outcome", "event.announcement", "event.queue-summary",
       "event.diagnostic", "event.team-updated", "event.team-member-updated", "event.team-member-removed", "event.team-policies-updated",
-      "event.contacts-updated", "event.calendar-updated",
+      "event.contacts-updated", "event.calendar-updated", "event.shift-updated",
     ];
     // The rich task carries browsers, history, an outcome policy, conference destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
@@ -1120,7 +1125,7 @@ describe("exerciseAdapter", () => {
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.history", "task.onCall", "task.leadAssist", "task.takenOver",
       "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift",
-      "contacts", "calendar", "team.policies",
+      "shift", "contacts", "calendar", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot, or on the team that
     // arrives once the feature is switched on.
@@ -1947,6 +1952,23 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const result = await exerciseAdapter(adapter, context, { collectOnly: true });
     expect(result.authenticationState).toMatchObject({ capabilities: {} });
     expect(result.login).toMatchObject({ capabilities: { breaks: true } });
+  });
+
+  it("takes the agent's day from the wire, and holds a running instant to a provider with a clock", async () => {
+    // The conforming run carries the day on the snapshot and reaches it; a shift-updated reaches it too.
+    const moved = teamEvent("evt-day", { type: "shift-updated", shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4482, tasksHandled: 13 } });
+    expect(await rules({ emitOnCapacity: l => l(moved) })).toEqual([]);
+    const withoutDay = { ...conformingSnapshot, shift: undefined };
+    expect((await exerciseAdapter(makeAdapter({ snapshot: withoutDay }).adapter, context, { collectOnly: true })).notExercised).toContain("shift");
+    expect((await exerciseAdapter(makeAdapter({ snapshot: withoutDay, emitOnCapacity: l => l(moved) }).adapter, context, { collectOnly: true })).notExercised).not.toContain("shift");
+    // A provider with no clock may publish no running instant, and no providerTime; one with a clock states it and implements checkTime.
+    const clockless = { ...plainManifest, timeCheck: undefined } satisfies Manifest<"voice">;
+    const bare = { ...minimalSnapshot, providerTime: undefined };
+    expect(await rules({ manifest: clockless, snapshot: bare, connection: { checkTime: undefined } })).toEqual([]);
+    expect(await rules({ manifest: clockless, snapshot: { ...bare, shift: { signedInAt: "2026-08-21T08:58:12Z" } } })).toEqual(["manifest.timeCheck.required"]);
+    expect(await rules({ manifest: clockless, snapshot: minimalSnapshot })).toEqual(["snapshot.providerTime.unexpected"]);
+    expect(await rules({ manifest: plainManifest, snapshot: bare })).toEqual(["snapshot.providerTime"]);
+    expect(await rules({ connection: { checkTime: undefined } })).toEqual(["connection.checkTime.required"]);
   });
 
   it("carries a member's request on the member, and nothing where nobody is asking", async () => {

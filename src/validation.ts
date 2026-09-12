@@ -1442,9 +1442,10 @@ function validateForcedBreak(value: unknown, path: string, into: Collector): voi
     into.require(!Object.hasOwn(value, field), "break.forced.manualResume", `${path}.${field}`,
       "automatic ending fields are unsupported; the agent must resume manually");
   }
-  if (value.expectedDurationMs !== undefined) into.require(
-    typeof value.expectedDurationMs === "number" && Number.isFinite(value.expectedDurationMs) && value.expectedDurationMs > 0,
-    "break.forced.expectedDurationMs", `${path}.expectedDurationMs`, "expectedDurationMs must be a positive finite number of milliseconds");
+  into.require(!Object.hasOwn(value, "expectedDurationMs"), "break.forced.expectedDurationMs.renamed", `${path}.expectedDurationMs`,
+    "the state says how long is left, as expectedEndsInSeconds; the duration asked for travels on the lead's command alone");
+  if (value.expectedEndsInSeconds !== undefined) into.require(isDurationSeconds(value.expectedEndsInSeconds),
+    "break.forced.expectedEndsInSeconds", `${path}.expectedEndsInSeconds`, "expectedEndsInSeconds is how long the break is expected to run yet: a whole number of seconds, zero or more, counted from this publication");
 
 }
 
@@ -1570,8 +1571,9 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
     into.require(asked !== undefined && (command.assignmentId === undefined || asked.assignmentId === command.assignmentId),
       "team.command.request", path, `${command.type} answers a request the team member list carries on the member, and this member has none`);
   } else if (command.type === "coach" || command.type === "join-call" || command.type === "leave") {
-    into.require(isPlainObject(target) && target.listening !== undefined, "team.command.listening", path,
-      `${command.type} needs the lead on this member's call: the team member list shows listening on them`);
+    // Every lead's entry is on the member; the one this command moves is the signed-in lead's.
+    into.require(isPlainObject(target) && Array.isArray(target.listening) && target.listening.some((entry: unknown) => isPlainObject(entry) && entry.leadId === self),
+      "team.command.listening", path, `${command.type} needs this lead on this member's call: the team member list shows listening on them naming this lead`);
   }
   return into.violations;
 }
@@ -1825,9 +1827,16 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Re
     }
     validateTeamMemberInto(member, at, context, into);
   });
-  // One member's call at a time.
-  const listened = teamMembers.members.filter((member: unknown) => isPlainObject(member) && member.listening !== undefined);
-  if (listened.length > 1) into.add("team.listening.single", `${path}.members`, "a lead is on one member's call at a time");
+  // One member's call at a time, per lead.
+  const onCalls = new Map<string, number>();
+  for (const member of teamMembers.members) {
+    if (!isPlainObject(member) || !Array.isArray(member.listening)) continue;
+    const leads = new Set(member.listening.filter(isPlainObject).map(entry => entry.leadId).filter((id): id is string => typeof id === "string"));
+    for (const leadId of leads) onCalls.set(leadId, (onCalls.get(leadId) ?? 0) + 1);
+  }
+  for (const [leadId, count] of onCalls) {
+    if (count > 1) into.add("team.listening.single", `${path}.members`, `${leadId} is on ${count} members' calls: a lead is on one member's call at a time`);
+  }
 }
 
 /** One member as the lead sees them, whole: on the list, and on `team-member-updated` alone. */
@@ -1874,23 +1883,37 @@ function validateTeamMemberInto(member: unknown, at: string, context: ReaderCont
         "a member signed out holds no task");
     }
   }
-  // The lead on this member's call, in the mode they are heard.
+  // Every lead on this member's call, in the mode they are heard, published to every lead alike.
   if (member.listening !== undefined) {
-    if (!isPlainObject(member.listening)) {
-      into.add("team.member.listening.shape", `${at}.listening`, "listening must be an object when present");
+    if (!Array.isArray(member.listening)) {
+      into.add("team.member.listening.shape", `${at}.listening`, "listening is an array of the leads on the member's call: absent while none is");
     } else {
-      const listened = member.listening;
-      if (into.require(isAssignmentId(member.listening.assignmentId), "team.member.listening.assignmentId", `${at}.listening.assignmentId`,
-        "listening names which of the member's calls the lead is on: the application opens the lead's audio on it") && Array.isArray(member.tasks)) {
-        into.require(member.tasks.some((task: unknown) => isPlainObject(task) && task.assignmentId === listened.assignmentId),
-          "team.member.listening.assignment", `${at}.listening.assignmentId`, "the call the lead is on is one the member's tasks carry");
-      }
-      into.oneOf(member.listening.mode, LISTENING_MODES, "team.member.listening.mode", `${at}.listening.mode`);
-      into.timestamp(member.listening.since, "team.member.listening.since", `${at}.listening.since`);
+      into.require(member.listening.length > 0, "team.member.listening.empty", `${at}.listening`, "nobody on the call is absence, not an empty list");
+      const leads = new Set<string>();
+      member.listening.forEach((entry: unknown, index: number) => {
+        const here = `${at}.listening[${index}]`;
+        if (!isPlainObject(entry)) { into.add("team.member.listening.entry", here, "each listening entry must be an object"); return; }
+        if (into.require(isUserId(entry.leadId), "team.member.listening.leadId", `${here}.leadId`, "a listening entry names the lead on the call, by user id")) {
+          if (leads.has(entry.leadId as string)) into.add("team.member.listening.unique", `${here}.leadId`, `${entry.leadId} is listed twice on one member: a lead is on a member's call once`);
+          leads.add(entry.leadId as string);
+        }
+        const task = Array.isArray(member.tasks) ? member.tasks.find((task: unknown) => isPlainObject(task) && task.assignmentId === entry.assignmentId) : undefined;
+        if (into.require(isAssignmentId(entry.assignmentId), "team.member.listening.assignmentId", `${here}.assignmentId`,
+          "a listening entry names which of the member's calls the lead is on: the application opens its own audio on it") && Array.isArray(member.tasks)) {
+          into.require(task !== undefined, "team.member.listening.assignment", `${here}.assignmentId`, "the call the lead is on is one the member's tasks carry");
+        }
+        if (into.oneOf(entry.mode, LISTENING_MODES, "team.member.listening.mode", `${here}.mode`) && entry.mode === "join-call"
+          && isPlainObject(task) && Array.isArray(task.onCall) && isUserId(entry.leadId)) {
+          // A lead who is heard is in the room the member sees; a silent one is not.
+          into.require(task.onCall.some((who: unknown) => isPlainObject(who) && who.role === "agent" && who.userId === entry.leadId),
+            "team.member.listening.heard", `${here}.mode`, `${entry.leadId} has joined the call and is heard, so the task's onCall carries them as an agent`);
+        }
+        into.timestamp(entry.since, "team.member.listening.since", `${here}.since`);
+      });
     }
   }
   // The member's own history for the day: about the person, not any one call.
-  if (member.shift !== undefined) validateShiftInto(member.shift, `${at}.shift`, into);
+  if (member.shift !== undefined) validateShiftInto(member.shift, `${at}.shift`, into, "team.member.shift");
   // The member's standing ask for a lead, on one of the calls they hold.
   if (member.request !== undefined) {
     if (!isPlainObject(member.request)) {
@@ -1918,6 +1941,16 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   const levels = context.levels ?? manifestLevels(manifest);
 
   into.oneOf(snapshot.transport, TRANSPORT_STATUSES, "snapshot.transport", `${path}.transport`);
+  // The provider's own instant of the read: required where the provider has a clock to state, and
+  // a clock nobody declared is not one the desk may count from.
+  if (isPlainObject(manifest) && manifest.timeCheck === true) {
+    into.timestamp(snapshot.providerTime, "snapshot.providerTime", `${path}.providerTime`);
+  } else if (snapshot.providerTime !== undefined) {
+    into.add("snapshot.providerTime.unexpected", `${path}.providerTime`, "providerTime is the clock of a provider that declares timeCheck; declare it, or send none");
+  }
+  requireClockInto(snapshot, manifest, path, into);
+  // The agent's own day, as the provider counts it: the same numbers their lead sees.
+  if (snapshot.shift !== undefined) validateShiftInto(snapshot.shift, `${path}.shift`, into, "shift");
   if (into.filled(snapshot.loginId, "snapshot.loginId", `${path}.loginId`, "a snapshot needs the login id it belongs to")
     && context.loginId !== undefined) {
     into.require(snapshot.loginId === context.loginId, "snapshot.loginId.mismatch", `${path}.loginId`,
@@ -2107,6 +2140,8 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
     return into.violations;
   }
   const at = `${path}.event`;
+  // A snapshot event is read by validateSnapshot, which asks the clock question of it there.
+  if (event.type !== "snapshot") requireClockInto(event, manifest, at, into);
   into.require(!Object.hasOwn(event, "taskId"), "event.assignmentId.renamed", `${at}.taskId`,
     "an event names a task by its assignment alone; the former field is not accepted");
 
@@ -2213,6 +2248,9 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
           validateContactInto(contact, `${at}.contacts[${index}]`, into, levels));
       }
       break;
+    case "shift-updated":
+      validateShiftInto(event.shift, `${at}.shift`, into, "shift");
+      break;
     case "calendar-updated":
       into.require(idle.calendar === true, "event.calendar.capability", `${at}.calendar`,
         "calendar-updated requires the calendar idle capability");
@@ -2267,14 +2305,40 @@ function validatePreferencesInto(value: unknown, path: string, into: Collector, 
 }
 
 /** The team's policy per capability as the lead sees it: the setting, who set it, who locked it. */
-function validateShiftInto(value: unknown, path: string, into: Collector): void {
+/** Whether a publication carries an instant the desk renders as a running duration, which the provider's clock reads. */
+function carriesRunningInstant(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  if (isPlainObject(value.shift) && value.shift.signedInAt !== undefined) return true;
+  const tasks = [
+    ...(Array.isArray(value.tasks) ? value.tasks : []),
+    ...(isPlainObject(value.task) ? [value.task] : []),
+  ];
+  if (tasks.some(task => isPlainObject(task) && Array.isArray(task.onCall) && task.onCall.some((who: unknown) => isPlainObject(who) && who.since !== undefined))) return true;
+  const members = [
+    ...(isPlainObject(value.team) && Array.isArray(value.team.members) ? value.team.members : []),
+    ...(isPlainObject(value.member) ? [value.member] : []),
+  ];
+  return members.some(member => isPlainObject(member) && (member.since !== undefined
+    || (Array.isArray(member.listening) && member.listening.some((entry: unknown) => isPlainObject(entry) && entry.since !== undefined))
+    || (isPlainObject(member.shift) && member.shift.signedInAt !== undefined)
+    || (Array.isArray(member.tasks) && member.tasks.some((task: unknown) => isPlainObject(task) && Array.isArray(task.onCall) && task.onCall.some((who: unknown) => isPlainObject(who) && who.since !== undefined)))));
+}
+
+/** A running duration is counted from the provider's clock: a provider that publishes one declares timeCheck. */
+function requireClockInto(value: unknown, manifest: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(manifest) || manifest.timeCheck === true || !carriesRunningInstant(value)) return;
+  into.add("manifest.timeCheck.required", path,
+    "this publishes an instant the desk renders as a running duration -- a since, a signedInAt -- and the manifest declares no timeCheck: every screen counts such a duration from the provider's clock, so the provider states one");
+}
+
+function validateShiftInto(value: unknown, path: string, into: Collector, rule: string): void {
   if (!isPlainObject(value)) {
-    into.add("team.member.shift.shape", path, "shift must be an object when present");
+    into.add(`${rule}.shape`, path, "shift must be an object when present");
     return;
   }
-  const signedIn = into.timestamp(value.signedInAt, "team.member.shift.signedInAt", `${path}.signedInAt`);
-  if (value.signedOutAt !== undefined && into.timestamp(value.signedOutAt, "team.member.shift.signedOutAt", `${path}.signedOutAt`) && signedIn) {
-    into.require(Date.parse(value.signedOutAt as string) >= Date.parse(value.signedInAt as string), "team.member.shift.signedOutAt.order", `${path}.signedOutAt`,
+  const signedIn = into.timestamp(value.signedInAt, `${rule}.signedInAt`, `${path}.signedInAt`);
+  if (value.signedOutAt !== undefined && into.timestamp(value.signedOutAt, `${rule}.signedOutAt`, `${path}.signedOutAt`) && signedIn) {
+    into.require(Date.parse(value.signedOutAt as string) >= Date.parse(value.signedInAt as string), `${rule}.signedOutAt.order`, `${path}.signedOutAt`,
       "a member signs out after signing in");
   }
   for (const field of ["talkSeconds", "holdSeconds", "breakSeconds"] as const) {
@@ -2282,20 +2346,20 @@ function validateShiftInto(value: unknown, path: string, into: Collector): void 
       `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
   }
   if (value.tasksHandled !== undefined) into.require(Number.isInteger(value.tasksHandled) && (value.tasksHandled as number) >= 0,
-    "team.member.shift.tasksHandled", `${path}.tasksHandled`, "tasksHandled must be a whole number, zero or more, or omitted when unknown");
+    `${rule}.tasksHandled`, `${path}.tasksHandled`, "tasksHandled must be a whole number, zero or more, or omitted when unknown");
   if (value.events !== undefined) {
     if (!Array.isArray(value.events)) {
-      into.add("team.member.shift.events.shape", `${path}.events`, "events must be an array when present");
+      into.add(`${rule}.events.shape`, `${path}.events`, "events must be an array when present");
       return;
     }
     let previous: number | undefined;
     value.events.forEach((event: unknown, index: number) => {
       const at = `${path}.events[${index}]`;
-      if (!isPlainObject(event)) { into.add("team.member.shift.event.shape", at, "each shift event must be an object"); return; }
-      into.oneOf(event.kind, SHIFT_EVENT_KINDS, "team.member.shift.event.kind", `${at}.kind`);
-      if (into.timestamp(event.at, "team.member.shift.event.at", `${at}.at`)) {
+      if (!isPlainObject(event)) { into.add(`${rule}.event.shape`, at, "each shift event must be an object"); return; }
+      into.oneOf(event.kind, SHIFT_EVENT_KINDS, `${rule}.event.kind`, `${at}.kind`);
+      if (into.timestamp(event.at, `${rule}.event.at`, `${at}.at`)) {
         const instant = Date.parse(event.at as string);
-        if (previous !== undefined && instant < previous) into.add("team.member.shift.events.order", `${at}.at`, "shift events are oldest first; this event is earlier than the one before it");
+        if (previous !== undefined && instant < previous) into.add(`${rule}.events.order`, `${at}.at`, "shift events are oldest first; this event is earlier than the one before it");
         previous = instant;
       }
     });

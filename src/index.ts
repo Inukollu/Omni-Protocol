@@ -204,6 +204,12 @@ export interface Manifest<C extends Channel = Channel> {
   authenticationMethods: AuthenticationMethod[];
   idleCapabilities?: IdleCapabilities<C>;
   /** Optional provider-clock sampling through Connection.checkTime; absent means unsupported. */
+  /**
+   * Implements `checkTime`, and states `providerTime` on every snapshot. Required of a provider
+   * that publishes an instant the desk renders as a running duration -- a member's `since`, a
+   * lead's `listening.since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts
+   * from the provider's clock and two screens differ by their delay alone.
+   */
   timeCheck?: true;
   /** Provider uses its own timestamps for final records; host timestamps are advisory. Omission makes no trust promise. */
   timestampAuthority?: "provider";
@@ -1197,8 +1203,13 @@ export interface BreakRequest {
  */
 export type ForcedBreak = {
   by: UserId | "provider";
-  /** Optional expected time on break, in milliseconds from actual start. Advisory only. */
-  expectedDurationMs?: number;
+  /**
+   * How long the break is expected to run yet, in whole seconds from this publication, restated
+   * on every publication that carries it so every screen counts down the same number from
+   * receipt. Advisory only: nothing ends the break but the agent. Absent once it has run out, or
+   * where none was expected.
+   */
+  expectedEndsInSeconds?: DurationSeconds;
 };
 
 export interface BreakState {
@@ -1253,10 +1264,10 @@ export interface TeamMember {
   break?: Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">;
   /** The member's open tasks, trimmed, kept current by the provider; `[]` when they hold none, omitted only where the provider cannot see them. */
   tasks?: MemberTask[];
-  /** Present while this lead is on the member's call, listening, coaching or joined; absent otherwise. */
-  listening?: MemberListening;
-  /** The member's own history for the day: sign-in, sign-out, breaks and productivity. Omitted where the provider cannot say. */
-  shift?: MemberShift;
+  /** Every lead on this member's call, listening, coaching or joined, published to every lead alike; absent while none is. */
+  listening?: MemberListening[];
+  /** The member's own history for the day: sign-in, sign-out, breaks and productivity, the same numbers the member's own snapshot carries. Omitted where the provider cannot say. */
+  shift?: Shift;
   /** The member's standing ask for a lead on one of their calls; absent when they are not asking. */
   request?: MemberRequest;
 }
@@ -1294,11 +1305,14 @@ export type MemberTask<C extends Channel = Channel> = {
   : { onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
 
 /**
- * The lead on this member's call: which of the member's calls, in the mode they are heard, since
- * when. Its appearance on the team member list is the provider's word that the lead's audio is up,
- * and the application opens `openAudio` on the assignment named; its disappearance closes it.
+ * A lead on this member's call: who, which of the member's calls, in the mode they are heard,
+ * since when. Every lead sees every entry; the application opens `openAudio` on the entry whose
+ * `leadId` is the signed-in lead, and closes it when that entry goes. A lead who is heard --
+ * `join-call` -- is also on the task's `onCall` as an `agent`; `listen` and `coach` leave no trace
+ * on the member's task.
  */
 export interface MemberListening {
+  leadId: UserId;
   assignmentId: AssignmentId;
   mode: ListeningMode;
   since: IsoTimestamp;
@@ -1314,11 +1328,13 @@ export interface ShiftEvent {
 }
 
 /**
- * The member's own history for the day, about the person rather than any one call: when they
+ * An agent's own history for the day, about the person rather than any one call: when they
  * signed in and out, today's totals as the provider counts them, each present only when the
- * provider knows it, and the day's sign-in, sign-out and break events, oldest first.
+ * provider knows it, and the day's sign-in, sign-out and break events, oldest first. Published
+ * to the agent on their snapshot and on `shift-updated`, and to their lead on the team member
+ * list: the same numbers from the same count.
  */
-export interface MemberShift {
+export interface Shift {
   signedInAt: IsoTimestamp;
   signedOutAt?: IsoTimestamp;
   talkSeconds?: DurationSeconds;
@@ -1504,6 +1520,12 @@ export type PreferenceResult =
 export interface Snapshot<C extends Channel = Channel> {
   transport: TransportStatus;
   loginId: string;
+  /**
+   * The provider's own instant of this read, required of a provider that declares `timeCheck`:
+   * every duration the desk renders off the active call is counted from the provider's clock, and
+   * this sample saves a `checkTime` for it. Every envelope's `occurredAt` is a sample too.
+   */
+  providerTime?: IsoTimestamp;
   break: BreakState;
   /** Every task currently owned by this agent for this provider. */
   tasks: Task<C>[];
@@ -1511,6 +1533,8 @@ export interface Snapshot<C extends Channel = Channel> {
   taskCount: number;
   contacts?: Contact[];
   calendar?: ScheduledActivity[];
+  /** The agent's own day so far, as the provider counts it; replaced whole by `shift-updated`. Omitted where the provider cannot say. */
+  shift?: Shift;
   team?: TeamMembers;
 }
 
@@ -1574,7 +1598,9 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "team-member-removed"; memberId: UserId }
   | { type: "team-policies-updated"; policies: TeamPolicies }
   | { type: "contacts-updated"; contacts: Contact[] }
-  | { type: "calendar-updated"; calendar: ScheduledActivity[] };
+  | { type: "calendar-updated"; calendar: ScheduledActivity[] }
+  /** The agent's own day, whole, whenever a total moves: a task ended, a break ended. */
+  | { type: "shift-updated"; shift: Shift };
 
 /**
  * The `Provider` prefix survives here for a mechanical reason rather than a naming one: `Event`

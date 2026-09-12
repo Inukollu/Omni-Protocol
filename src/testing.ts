@@ -84,6 +84,7 @@ const STATE_SUBJECTS = [
   "team.tasks",
   "team.listening",
   "team.shift",
+  "shift",
   "contacts",
   "calendar",
   "team.policies",
@@ -94,7 +95,7 @@ const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   snapshot: true, "transport-status": true, "break-state": true, "task-offered": true, "task-updated": true,
   "task-audio-started": true, "task-audio-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
   "team-updated": true, "team-member-updated": true, "team-member-removed": true, "team-policies-updated": true,
-  "contacts-updated": true, "calendar-updated": true,
+  "contacts-updated": true, "calendar-updated": true, "shift-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
 const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
@@ -137,7 +138,7 @@ function observeBreak(value: unknown, seen: Set<ContractSubject>): void {
 function observeMember(member: unknown, seen: Set<ContractSubject>): void {
   if (!isRecord(member)) return;
   if (some(member.tasks)) seen.add("team.tasks");
-  if (member.listening !== undefined) seen.add("team.listening");
+  if (some(member.listening)) seen.add("team.listening");
   if (member.shift !== undefined) seen.add("team.shift");
   if (member.request !== undefined) seen.add("team.request");
 }
@@ -160,6 +161,7 @@ function observeSnapshot(value: unknown, seen: Set<ContractSubject>): void {
   observeTeam(value.team, seen);
   if (some(value.contacts)) seen.add("contacts");
   if (some(value.calendar)) seen.add("calendar");
+  if (value.shift !== undefined) seen.add("shift");
 }
 
 function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
@@ -176,6 +178,7 @@ function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
     case "team-policies-updated": observePolicies(event.policies, seen); break;
     case "contacts-updated": if (some(event.contacts)) seen.add("contacts"); break;
     case "calendar-updated": if (some(event.calendar)) seen.add("calendar"); break;
+    case "shift-updated": seen.add("shift"); break;
     default: break;
   }
 }
@@ -740,7 +743,11 @@ function userIdsIn(snapshot: Snapshot | undefined): string[] {
   if (snapshot?.break?.forced?.by !== "provider") add(snapshot?.break?.forced?.by);
   const team = snapshot?.team as Record<string, unknown> | undefined;
   if (isRecord(team)) {
-    for (const member of Array.isArray(team.members) ? team.members : []) if (isRecord(member)) add(member.id);
+    for (const member of Array.isArray(team.members) ? team.members : []) {
+      if (!isRecord(member)) continue;
+      add(member.id);
+      for (const entry of Array.isArray(member.listening) ? member.listening : []) if (isRecord(entry)) add(entry.leadId);
+    }
   }
   for (const task of Array.isArray(snapshot?.tasks) ? snapshot.tasks : []) {
     const t = task as unknown as Record<string, unknown>;
@@ -1101,7 +1108,7 @@ const REACHABLE_PHASES: Record<string, Set<string>> = {
 export const SUPERSEDED_BY_A_SNAPSHOT: ReadonlySet<string> = new Set([
   "snapshot", "transport-status", "break-state", "task-offered", "task-updated", "task-ended",
   "task-audio-started", "task-audio-ended", "team-updated", "team-member-updated", "team-member-removed", "team-policies-updated",
-  "contacts-updated", "calendar-updated",
+  "contacts-updated", "calendar-updated", "shift-updated",
 ]);
 
 export class TaskStream {

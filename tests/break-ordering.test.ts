@@ -15,7 +15,7 @@ describe("runtime break ordering", () => {
 
   it("keeps a break committed when its forced marker is lifted", () => {
     for (const status of ["on-break", "starting-after-task"] as const) {
-      const forced = { ...state(status), forced: { by: "lead", expectedDurationMs: 1 } };
+      const forced = { ...state(status), forced: { by: "lead", expectedEndsInSeconds: 1 } };
       const lifted = state(status);
       expect(validateBreakTransition(forced, lifted)).toEqual([]);
       const stream = new BreakStream();
@@ -322,7 +322,8 @@ describe("lead commands", () => {
   it("names the member on every act on a member's call, and holds each to what the team member list shows", () => {
     const at = "2026-08-21T09:04:00Z";
     const onCall = { ...lead, team: { members: [{ id: "member", availability: "on-task", tasks: [{ assignmentId: "alloc-7", title: "Call", channel: "voice", taskType: "Queue", phase: "in-progress" }], request: { assignmentId: "alloc-7", since: at } },
-      { id: "listened", availability: "on-task", listening: { assignmentId: "alloc-9", mode: "listen", since: at } }] } };
+      { id: "listened", availability: "on-task", listening: [{ leadId: "agent", assignmentId: "alloc-9", mode: "listen", since: at }] },
+      { id: "elsewhere", availability: "on-task", listening: [{ leadId: "L-4", assignmentId: "alloc-11", mode: "coach", since: at }] }] } };
     for (const type of ["listen", "take-over-call", "join", "decline"]) {
       expect(validateTeamCommand({ command: { type, memberId: "member" } }, onCall)).toEqual([]);
       expect(validateTeamCommand({ command: { type, memberId: "member", assignmentId: "alloc-7" } }, onCall)).toEqual([]);
@@ -342,6 +343,8 @@ describe("lead commands", () => {
     for (const type of ["coach", "join-call", "leave"]) {
       expect(validateTeamCommand({ command: { type, memberId: "listened" } }, onCall)).toEqual([]);
       expect(validateTeamCommand({ command: { type, memberId: "member" } }, onCall).map(v => v.rule)).toContain("team.command.listening");
+      // Another lead on a member's call is not this lead: the entry that counts names the signed-in lead.
+      expect(validateTeamCommand({ command: { type, memberId: "elsewhere" } }, onCall).map(v => v.rule)).toContain("team.command.listening");
     }
     // The former listen and lead-assist shapes name nobody, and are refused.
     expect(validateTeamCommand({ command: { type: "coach" } }, onCall).map(v => v.rule)).toContain("team.command.member");

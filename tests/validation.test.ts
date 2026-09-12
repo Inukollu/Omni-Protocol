@@ -630,12 +630,16 @@ describe("break state", () => {
   it("keeps the actor and accepts only advisory forced-break duration", () => {
     const forced = (value: unknown) => check({ status: "on-break", forced: value });
     expect(forced({ by: "lead-3" })).toEqual([]);
-    expect(forced({ by: "lead-3", expectedDurationMs: 600000 })).toEqual([]);
+    // How long is left, as seconds from this publication, so every screen counts down the same number.
+    expect(forced({ by: "lead-3", expectedEndsInSeconds: 600 })).toEqual([]);
+    expect(forced({ by: "lead-3", expectedEndsInSeconds: 0 })).toEqual([]);
     expect(forced({})).toContain("break.forced.by");
     expect(forced({ by: "" })).toContain("break.forced.by");
-    for (const expectedDurationMs of [0, -1, Infinity, NaN, "500", null]) {
-      expect(forced({ by: "lead-3", expectedDurationMs })).toContain("break.forced.expectedDurationMs");
+    for (const expectedEndsInSeconds of [-1, 1.5, Infinity, NaN, "500", null]) {
+      expect(forced({ by: "lead-3", expectedEndsInSeconds })).toContain("break.forced.expectedEndsInSeconds");
     }
+    // The duration asked for travels on the lead's command; the state says what is left.
+    expect(forced({ by: "lead-3", expectedDurationMs: 600000 })).toEqual(["break.forced.expectedDurationMs.renamed"]);
     for (const fields of [{ endsAutomatically: true }, { endsAutomatically: false }, { endsAt: "2026-09-11T10:00:00Z" }]) {
       expect(forced({ by: "lead-3", ...fields })).toContain("break.forced.manualResume");
     }
@@ -704,20 +708,37 @@ describe("validateTeamMembers", () => {
     expect(withTasks([trimmed], { availability: "signed-out" })).toEqual(["team.member.tasks.availability"]);
     // A task carries no lead state, on the team member list as on the desk.
     expect(withTasks([{ ...trimmed, listening: { assignmentId: "alloc-7", mode: "listen", since: at } }])).toEqual(["task.leadState.retired"]);
-    // The lead on this member's call: which call, in the mode they are heard; one member's call at a time.
-    const listening = (over: Record<string, unknown>, tasks?: unknown[]) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", ...(tasks === undefined ? {} : { tasks }), listening: { assignmentId: "alloc-7", mode: "listen", since: at, ...over } }] }));
-    for (const mode of ["listen", "coach", "join-call"]) expect(listening({ mode })).toEqual([]);
+    // Every lead on this member's call: who, which call, in the mode they are heard; one member's call at a time, per lead.
+    const entry = (over: Record<string, unknown> = {}) => ({ leadId: "L-9", assignmentId: "alloc-7", mode: "listen", since: at, ...over });
+    const listening = (over: Record<string, unknown>, tasks?: unknown[]) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", ...(tasks === undefined ? {} : { tasks }), listening: [entry(over)] }] }));
+    for (const mode of ["listen", "coach"]) expect(listening({ mode })).toEqual([]);
     expect(listening({ mode: "monitor" })).toEqual(["team.member.listening.mode"]);
     expect(listening({ mode: "barge" })).toEqual(["team.member.listening.mode"]);
+    expect(listening({ leadId: "" })).toEqual(["team.member.listening.leadId"]);
     // The call the lead is on is named, so the application knows which audio to open, and it is one the member holds.
     expect(listening({ assignmentId: undefined })).toEqual(["team.member.listening.assignmentId"]);
     expect(listening({}, [trimmed])).toEqual([]);
     expect(listening({ assignmentId: "alloc-9" }, [trimmed])).toEqual(["team.member.listening.assignment"]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: "listen" }] }))).toEqual(["team.member.listening.shape"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: entry() }] }))).toEqual(["team.member.listening.shape"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: [] }] }))).toEqual(["team.member.listening.empty"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: ["L-9"] }] }))).toEqual(["team.member.listening.entry"]);
+    // Two leads on one member's call is ordinary; the same lead twice is not.
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: [entry(), entry({ leadId: "L-4", mode: "coach" })] }] }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: [entry(), entry({ mode: "coach" })] }] }))).toEqual(["team.member.listening.unique"]);
     expect(rules(validateTeamMembers({ members: [
-      { id: "A-2", availability: "on-task", listening: { assignmentId: "alloc-7", mode: "listen", since: at } },
-      { id: "A-3", availability: "on-task", listening: { assignmentId: "alloc-8", mode: "coach", since: at } },
+      { id: "A-2", availability: "on-task", listening: [entry()] },
+      { id: "A-3", availability: "on-task", listening: [entry({ assignmentId: "alloc-8", mode: "coach" })] },
     ] }))).toEqual(["team.listening.single"]);
+    expect(rules(validateTeamMembers({ members: [
+      { id: "A-2", availability: "on-task", listening: [entry()] },
+      { id: "A-3", availability: "on-task", listening: [entry({ leadId: "L-4", assignmentId: "alloc-8", mode: "coach" })] },
+    ] }))).toEqual([]);
+    // A lead who is heard is in the room the member sees; a silent one leaves no trace there.
+    const room = (onCall: unknown[]) => ({ ...trimmed, onCall });
+    const party = { role: "party", since: at };
+    expect(listening({ mode: "join-call" }, [room([party, { role: "agent", userId: "A-2", since: at }, { role: "agent", userId: "L-9", since: at }])])).toEqual([]);
+    expect(listening({ mode: "join-call" }, [room([party, { role: "agent", userId: "A-2", since: at }])])).toEqual(["team.member.listening.heard"]);
+    expect(listening({ mode: "listen" }, [room([party, { role: "agent", userId: "A-2", since: at }])])).toEqual([]);
   });
 
   it.each([
@@ -729,6 +750,45 @@ describe("validateTeamMembers", () => {
   ])("rejects %s", (_label, value, rule) => {
     expect(rules(validateTeamMembers(value))).toContain(rule);
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "ready" }] }))).not.toContain(rule);
+  });
+
+  it("carries the agent's own day on their snapshot and on shift-updated, in the shape their lead sees", () => {
+    const at = "2026-08-21T08:58:12Z";
+    const day = { signedInAt: at, talkSeconds: 4210, holdSeconds: 305, breakSeconds: 900, tasksHandled: 12, events: [{ at, kind: "signed-in" }] };
+    const ticking = manifest({ timeCheck: true });
+    const read = (over: Record<string, unknown>) => snapshot({ providerTime: at, ...over });
+    expect(rules(validateSnapshot(read({ shift: day }), ticking))).toEqual([]);
+    expect(rules(validateSnapshot(read({ shift: { talkSeconds: 5 } }), ticking))).toEqual(["shift.signedInAt"]);
+    expect(rules(validateSnapshot(read({ shift: "today" }), ticking))).toEqual(["shift.shape"]);
+    const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), ticking));
+    expect(check({ type: "shift-updated", shift: day })).toEqual([]);
+    expect(check({ type: "shift-updated", shift: { ...day, tasksHandled: 2.5 } })).toEqual(["shift.tasksHandled"]);
+    // The member's copy on the lead's list is the same shape under its own rule prefix.
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { ...day, tasksHandled: 2.5 } }] }))).toEqual(["team.member.shift.tasksHandled"]);
+  });
+
+  it("counts every duration off the active call from the provider's clock: timeCheck where a running instant is published, providerTime with it", () => {
+    const at = "2026-08-21T09:00:00Z";
+    const ticking = manifest({ timeCheck: true });
+    // A snapshot from a provider with a clock states it; one without a clock states none.
+    expect(rules(validateSnapshot(snapshot({ providerTime: at }), ticking))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot(), ticking))).toEqual(["snapshot.providerTime"]);
+    expect(rules(validateSnapshot(snapshot({ providerTime: "now" }), ticking))).toEqual(["snapshot.providerTime"]);
+    expect(rules(validateSnapshot(snapshot({ providerTime: at }), manifest()))).toEqual(["snapshot.providerTime.unexpected"]);
+    // A running instant -- a member's since, a lead's listening.since, a signedInAt, an onCall.since -- needs the clock it is counted by.
+    const lead = { capabilities: { lead: true as const }, leadFeatures: true };
+    const member = (over: Record<string, unknown>) => ({ members: [{ id: "A-2", availability: "on-task", ...over }] });
+    expect(rules(validateSnapshot(snapshot({ providerTime: at, team: member({ since: at }) }), ticking, "snapshot", lead))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ team: member({ since: at }) }), manifest(), "snapshot", lead))).toEqual(["manifest.timeCheck.required"]);
+    expect(rules(validateSnapshot(snapshot({ team: member({}) }), manifest(), "snapshot", lead))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ shift: { signedInAt: at } }), manifest()))).toEqual(["manifest.timeCheck.required"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ onCall: [{ role: "party", since: at }] })] }), manifest()))).toEqual(["manifest.timeCheck.required"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ onCall: [{ role: "party", since: at }] })], providerTime: at }), ticking))).toEqual([]);
+    const on = (event: unknown, m: unknown) => rules(validateEventEnvelope(envelope(event), m, "event", lead as never));
+    expect(on({ type: "team-member-updated", member: { id: "A-2", availability: "on-task", listening: [{ leadId: "L-9", assignmentId: "alloc-7", mode: "listen", since: at }] } }, manifest())).toEqual(["manifest.timeCheck.required"]);
+    expect(on({ type: "team-member-updated", member: { id: "A-2", availability: "on-task", listening: [{ leadId: "L-9", assignmentId: "alloc-7", mode: "listen", since: at }] } }, ticking)).toEqual([]);
+    expect(on({ type: "shift-updated", shift: { signedInAt: at } }, manifest())).toEqual(["manifest.timeCheck.required"]);
+    expect(rules(validateEventEnvelope(envelope({ type: "snapshot", reason: "reconnected", snapshot: snapshot({ shift: { signedInAt: at } }) }), manifest()))).toEqual(["manifest.timeCheck.required"]);
   });
 
   it("carries each member's own shift: sign-in, sign-out, the day's totals and its events", () => {
@@ -2305,7 +2365,7 @@ describe("the lead surface", () => {
     const at = "2026-08-21T09:04:00Z";
     const on = (members: unknown[]) => rules(validateTeamMembers({ members }, "team", lead));
     // The provider's word that the lead's audio is up is `listening` on the member, naming the call to open.
-    expect(on([{ id: "A-2", availability: "on-task", listening: { assignmentId: "alloc-42", mode: "listen", since: at } }])).toEqual([]);
+    expect(on([{ id: "A-2", availability: "on-task", listening: [{ leadId: "L-9", assignmentId: "alloc-42", mode: "listen", since: at }] }])).toEqual([]);
     for (const type of ["team-audio-started", "team-audio-ended", "team-media-started"]) {
       expect(rules(validateEventEnvelope(envelope({ type, memberId: "A-2", assignmentId: "alloc-42" }), manifest(), "event", lead as never))).toContain("event.type");
     }
