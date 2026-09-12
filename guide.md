@@ -2414,6 +2414,25 @@ and no count. A provider that publishes any of these instants therefore declares
 (`manifest.timeCheck.required`) and states `providerTime` on every snapshot
 (`snapshot.providerTime`). Two screens then differ by their delay and nothing else.
 
+**Seconds left are worked out at each publication.** `expiresInSeconds`, `previewEndsInSeconds`,
+`wrapEndsInSeconds` and `expectedEndsInSeconds` are each the provider's arithmetic at the instant
+of the publication that carries them, never a value copied from an earlier one. A provider that
+builds the next publication by spreading the last one forward hands a reloaded desk a countdown
+already spent -- sixty seconds shown beside a lead's screen showing twenty -- and the stream
+names it: between two publications of one countdown the value loses at least the seconds the
+provider's own clock says passed, within a second of rounding (`stream.countdown.copied`, on an
+update against the last publication, and on a snapshot from a provider with a clock against its
+`providerTime`). Under `agent-command` the wrap's value reaches `0` and stays there while the agent
+overruns; that is the true value, not a copy.
+
+**A deadline stated is a deadline kept.** The provider that says how long an offer has ends it
+`expired` when it runs out, and the drive holds it to that: where the first offer carries
+`expiresInSeconds` within the drive's timeout, the drive leaves that offer unanswered and expects
+the `expired` ending within the seconds plus `settleMs`, then drives the next offer
+(`drive.offer.expired`). A preview's deadline is held to its `atDeadline` the same way: under
+`provider-dials` the provider dials when it runs out, under `host-dials` and `waits` the preview
+stands until the desk dials (`drive.preview.deadline`).
+
 #### Optional periodic provider time checks and agent application estimates
 
 A provider may declare `Manifest.timeCheck: true` and implement `Connection.checkTime(request)`.
@@ -2976,7 +2995,10 @@ complete it with an outcome where the agent completes -- and holds every step to
 agent application holds a provider to. Each command is validated against the task as published
 (`drive.command.*`), each answer for its method, a refusal of a control the task offered is a
 violation (`drive.command.failed`), and an event the provider owes and never sends is one too
-(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). Around the drive the exercise holds
+(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). A first offer that says how long it has is left to
+lapse and expected to end `expired`, and a preview's deadline is held to its `atDeadline`
+(`drive.offer.expired`, `drive.preview.deadline`); see **Every screen counts from the provider's
+clock**. Around the drive the exercise holds
 the run to what an agent application holds a provider to between commands: an offer before the agent application stated
 capacity, or beyond the count with nothing dialled on it, is named
 (`stream.taskOffered.beforeCapacity`, `.overCapacity`); every user the snapshot names is looked up

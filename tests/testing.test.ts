@@ -590,6 +590,21 @@ describe("TaskStream places a dial outcome", () => {
     expect(rulesOf(stream().apply(outcome("dial-9")))).toEqual(["stream.dialOutcome.unknown"]);
   });
 
+  it("holds a seconds-left value to the provider's own clock: between two publications it loses at least the seconds that passed", () => {
+    const s = new TaskStream();
+    const wrap = (id: string, occurredAt: string, wrapEndsInSeconds: number): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt,
+      event: { type: "task-updated", task: { ...voiceTask, phase: "completing", audio: "ended", onCall: [], wrapAllowance: 60, wrapEndsInSeconds } } });
+    s.seed({ tasks: [{ ...voiceTask, phase: "completing", audio: "ended", onCall: [], wrapAllowance: 60, wrapEndsInSeconds: 60 }] });
+    expect(rulesOf(s.apply(wrap("w1", "2026-08-21T09:00:00Z", 60)))).toEqual([]);
+    // Forty seconds later on the provider's clock, a copied 60 is named; 20 is what is left; 21 is rounding.
+    expect(rulesOf(s.apply(wrap("w2", "2026-08-21T09:00:40Z", 60)))).toEqual(["stream.countdown.copied"]);
+    expect(rulesOf(s.apply(wrap("w3", "2026-08-21T09:00:40Z", 20)))).toEqual([]);
+    expect(rulesOf(s.apply(wrap("w4", "2026-08-21T09:01:00Z", 1)))).toEqual([]);
+    // A resync from a provider with a clock is a publication at providerTime, held the same way; one without a clock is not.
+    expect(rulesOf(s.resync({ providerTime: "2026-08-21T09:01:30Z", tasks: [{ ...voiceTask, phase: "completing", audio: "ended", onCall: [], wrapAllowance: 60, wrapEndsInSeconds: 60 }] }, "snapshot"))).toEqual(["stream.countdown.copied"]);
+    expect(rulesOf(s.resync({ tasks: [{ ...voiceTask, phase: "completing", audio: "ended", onCall: [], wrapAllowance: 60, wrapEndsInSeconds: 60 }] }, "snapshot"))).toEqual([]);
+  });
+
   it("knows a dial from the record or from who is on the call, which is how a dial made before a take-over is placed", () => {
     const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-3c9", stage: "joined", since: at }],
       history: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", destinationId: "tier3" }] } };
@@ -1263,6 +1278,10 @@ describe("exerciseAdapter drives one call", () => {
     platform?: { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean; secondStated?: number };
     /** A login that leads: the fixture answers each lead-features switch with an empty team, and counts the switches it was sent. */
     lead?: { switched: number };
+    /** A first offer with a deadline, left to lapse: honoured, the platform ends it expired at the deadline and offers the real task; not, it lets it ring; "cancelled", it ends it the wrong way. */
+    lapse?: { seconds: number; honour: "expired" | "never" | "cancelled" };
+    /** The offer is a preview with a deadline. provider-dials honoured: the platform dials at the deadline; not: never. waits or host-dials honoured: the preview stands; not: the platform moves it early. */
+    preview?: { atDeadline: "provider-dials" | "host-dials" | "waits"; seconds: number; honoured: boolean };
     /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
     legsIn?: "memory" | "store";
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
@@ -1395,7 +1414,15 @@ describe("exerciseAdapter drives one call", () => {
           if (count === 0 || offeredOnce || script.platform?.open === true) return { status: "applied" };
           offeredOnce = true;
           if (script.platform !== undefined) script.platform.open = true;
-          emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) });
+          const offer = () => emit({ type: "task-offered", task: t({ phase: "pending", acceptance: "consent" }) });
+          if (script.lapse === undefined) { offer(); return { status: "applied" }; }
+          // A first offer with a deadline, left to lapse; the real one follows where the platform kept its word.
+          emit({ type: "task-offered", task: { ...base, assignmentId: "alloc-76", phase: "pending", acceptance: "consent", expiresInSeconds: script.lapse.seconds } as unknown as Task<"voice"> });
+          setTimeout(() => {
+            if (script.lapse!.honour === "never") return;
+            emit({ type: "task-ended", assignmentId: "alloc-76", outcome: script.lapse!.honour === "expired" ? { type: "expired", phase: "pending" } : { type: "cancelled", by: "provider" } });
+            offer();
+          }, script.lapse.seconds * 1000);
           return { status: "applied" };
         },
         execute: async ({ command, assignmentId }: { command: { type: string }; assignmentId?: string }) => {
@@ -1408,9 +1435,35 @@ describe("exerciseAdapter drives one call", () => {
               // a task whose work has not begun.
               // A provider that acknowledges before it starts says so: confirmed first, then work begins.
               if (script.confirmFirst) { emit({ type: "task-updated", task: t({ phase: "confirmed" }) }); return { status: "applied" }; }
+              // An accepted preview: the record is up, with its deadline; the platform then keeps the deadline, or not, as the script says.
+              if (script.preview !== undefined) {
+                const preview = script.preview;
+                emit({ type: "task-updated", task: t({ phase: "preview", previewEndsInSeconds: preview.seconds, atDeadline: preview.atDeadline }) });
+                setTimeout(() => {
+                  if (preview.atDeadline === "provider-dials" && preview.honoured) {
+                    emit({ type: "task-updated", task: t({ phase: "preview", previewEndsInSeconds: 0, atDeadline: "provider-dials", onCall: [{ role: "party", stage: "ringing", since: at }] }) });
+                    emit({ type: "task-audio-started", assignmentId: myAssignment }); audioUp = true;
+                    emit({ type: "task-updated", task: t({ phase: "in-progress", audio: "started", onCall: room }) });
+                  }
+                  if (preview.atDeadline !== "provider-dials" && !preview.honoured) {
+                    emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
+                    emit({ type: "task-audio-started", assignmentId: myAssignment }); audioUp = true;
+                  }
+                }, 0);
+                return { status: "applied" };
+              }
               emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
               if (!script.skipAudioStart) { emit({ type: "task-audio-started", assignmentId: myAssignment }); audioUp = true; }
               return { status: "applied" };
+            case "dial": {
+              // Call from a preview: a dial, answered dialling, with the party ringing and then the call up.
+              const dialId = (command as unknown as { dialId: string }).dialId;
+              emit({ type: "task-updated", task: t({ phase: "preview", previewEndsInSeconds: 0, atDeadline: script.preview?.atDeadline ?? "waits", onCall: [{ role: "party", stage: "ringing", dialId, since: at }] }) });
+              emit({ type: "dial-outcome", dialId, outcome: "answered", assignmentId: myAssignment });
+              emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
+              emit({ type: "task-audio-started", assignmentId: myAssignment }); audioUp = true;
+              return { status: "dialling", dialId };
+            }
             case "hold":
               if (script.refuseHold) return { status: "failed", failure: { code: "provider.busy", message: "No hold today", retryable: false } };
               // A conforming adapter refuses a control on a call that is over; one that applies it is the second gate failing.
@@ -1611,6 +1664,27 @@ describe("exerciseAdapter drives one call", () => {
     const store = memoryStore();
     expect((await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "memory", platform: { open: false } }), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
   }, 20000);
+
+  it("holds a deadline stated to a deadline kept: an offer left to lapse ends expired, and a preview's deadline moves as atDeadline says", async () => {
+    // The offer with a deadline is left alone; the platform that ends it expired and offers the next is clean, and the next is driven.
+    expect((await drive(driveable({ lapse: { seconds: 0, honour: "expired" } }))).violations).toEqual([]);
+    expect((await drive(driveable({ lapse: { seconds: 0, honour: "never" } }))).violations.map(v => v.rule)).toEqual(["drive.offer.expired", "stream.taskOffered.unended"]);
+    expect((await drive(driveable({ lapse: { seconds: 0, honour: "cancelled" } }))).violations.map(v => v.rule)).toEqual(["drive.offer.expired"]);
+    // A deadline the drive would not wait for leaves the rule unreached, and the result says so.
+    const long = await drive(driveable({ lapse: { seconds: 5, honour: "never" } }));
+    expect(long.rulesEvaluated).not.toContain("drive.offer.expired");
+  }, 15_000);
+
+  it("holds a preview's deadline to its atDeadline: the provider dials under provider-dials, and the preview stands under waits and host-dials", async () => {
+    // A preview under provider-dials: the platform dials when it runs out, and one that never does is named.
+    expect((await drive(driveable({ preview: { atDeadline: "provider-dials", seconds: 0, honoured: true } }))).violations).toEqual([]);
+    expect((await drive(driveable({ preview: { atDeadline: "provider-dials", seconds: 0, honoured: false } }))).violations.map(v => v.rule)).toEqual(["drive.preview.deadline", "stream.taskOffered.unended"]);
+    // Under waits and host-dials the preview stands until the desk dials; a platform that moves it early is named.
+    for (const atDeadline of ["waits", "host-dials"] as const) {
+      expect((await drive(driveable({ preview: { atDeadline, seconds: 0, honoured: true } }))).violations, atDeadline).toEqual([]);
+      expect((await drive(driveable({ preview: { atDeadline, seconds: 0, honoured: false } }))).violations.map(v => v.rule), atDeadline).toContain("drive.preview.deadline");
+    }
+  }, 15_000);
 
   it("tells a reloaded lead's client the team feature is on again, after its capacity: the switch is per connection", async () => {
     // A reloaded client has been told nothing: its connect snapshot carries no team, the switch is
