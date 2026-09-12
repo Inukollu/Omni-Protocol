@@ -488,6 +488,16 @@ export async function exerciseAdapter<C extends Channel>(
             message: `a task was offered with ${stream.openCount()} already open against a stated capacity of ${capacityStated}` });
         }
       }
+      // The agent's own queue lives within capacity: told count 0, the provider clears the ask and
+      // lets the lined-up call go, so an entry published after that is a promise it cannot keep.
+      if (capacityStated === 0 && isRecord(envelope?.event)) {
+        if (envelope.event.type === "next-call" && envelope.event.nextCall !== undefined) {
+          violations.push({ rule: "stream.nextCall.stopped", path: "event.nextCall", message: "an ask for the next call was published after the host stated count 0: the agent's capacity is elsewhere, and the ask is cleared with it" });
+        }
+        if (envelope.event.type === "lined-up" && envelope.event.linedUp !== undefined) {
+          violations.push({ rule: "stream.linedUp.stopped", path: "event.linedUp", message: "a call was lined up after the host stated count 0: the agent's capacity is elsewhere, and the call goes back to the queue for anyone" });
+        }
+      }
       // A re-delivered envelope is harmless and applied once; the same id carrying a different
       // payload is a reused id, which no dedupe can make harmless, and is named.
       if (typeof envelope?.id === "string") {

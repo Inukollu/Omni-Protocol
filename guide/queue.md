@@ -44,6 +44,24 @@ its own when that assignment ends, when a call is lined up to meet it, and when 
 withdraws it with `cancelNextCall()`. The desk never keeps it past any of those. `requested` says
 the provider holds the ask, not that a call will come: a queue may be empty.
 
+**The queue lives within capacity, and never beside a break.** The ask and the lined-up call are
+promises to assign, and a promise the provider can no longer keep goes:
+
+- **Told `count: 0`**, host-stopped, the provider assigns nothing, so it clears the ask and lets the
+  lined-up call go back to the queue for anyone; an entry published after that is refused
+  (`stream.nextCall.stopped`, `stream.linedUp.stopped`). The queue is per provider, as the ask
+  was made on that provider's call, and the desk's division of capacity is what it was.
+- **A break wins.** An agent who has asked for a break, been granted one starting after this
+  task, or been put on one has said the opposite of "line up my next call", and the two never
+  stand together: while a break is in flight or in effect -- any status but `not-requested` --
+  `requestNextCall()` is refused with `omni.unavailable`, and a break arriving after a
+  call was lined up drops the call, the caller going back to the queue for anyone
+  (`snapshot.nextCall.break`, `snapshot.linedUp.break`). The desk shows Next call or the break
+  controls, never both.
+- **A lined-up call needs an agent at work** as the ask does: a call lined up for an agent with
+  nothing at work is an offer that has not been made, and travels as `task-offered`
+  (`snapshot.linedUp.idle`). The repeat caller for an idle agent is an ordinary offer.
+
 **The lined-up call is not a task, and rides no task event.** Until the offer there is no
 assignment and nothing to accept, so it has no phase, no capabilities and no history, and it
 rings nothing: the caller is still in the platform's queue, the phone has no channel for it, and

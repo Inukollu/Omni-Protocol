@@ -776,14 +776,27 @@ describe("validateTeamMembers", () => {
     expect(rules(validateSnapshot(snapshot({ tasks: [working], nextCall: { since: at, assignmentId: "alloc-42" } }), manifest()))).toEqual(["nextCall.field"]);
     // The lined-up call: not a task, the caller as shown to this audience, the waits, and the release by presence.
     const lined = { party: { name: "Priya S", number: { lockedBy: "org" } }, queue: "Billing", queuedSince: at, since: at, release: true };
-    expect(rules(validateSnapshot(snapshot({ linedUp: lined }), manifest()))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ linedUp: { since: at } }), manifest()))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ linedUp: { ...lined, release: false } }), manifest()))).toEqual(["linedUp.release"]);
-    expect(rules(validateSnapshot(snapshot({ linedUp: { ...lined, queue: "" } }), manifest()))).toEqual(["linedUp.queue"]);
-    expect(rules(validateSnapshot(snapshot({ linedUp: { ...lined, queuedSince: "then" } }), manifest()))).toEqual(["linedUp.queuedSince"]);
-    expect(rules(validateSnapshot(snapshot({ linedUp: { ...lined, since: undefined } }), manifest()))).toEqual(["linedUp.since"]);
-    expect(rules(validateSnapshot(snapshot({ linedUp: { ...lined, assignmentId: "alloc-57" } }), manifest()))).toEqual(["linedUp.field"]);
-    expect(rules(validateSnapshot(snapshot({ linedUp: "next" }), manifest()))).toEqual(["linedUp.shape"]);
+    const busy = (over: Record<string, unknown>) => snapshot({ tasks: [working], ...over });
+    expect(rules(validateSnapshot(busy({ linedUp: lined }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(busy({ linedUp: { since: at } }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, release: false } }), manifest()))).toEqual(["linedUp.release"]);
+    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, queue: "" } }), manifest()))).toEqual(["linedUp.queue"]);
+    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, queuedSince: "then" } }), manifest()))).toEqual(["linedUp.queuedSince"]);
+    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, since: undefined } }), manifest()))).toEqual(["linedUp.since"]);
+    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, assignmentId: "alloc-57" } }), manifest()))).toEqual(["linedUp.field"]);
+    expect(rules(validateSnapshot(busy({ linedUp: "next" }), manifest()))).toEqual(["linedUp.shape"]);
+    // A lined-up call needs an agent at work, as the ask does: idle, it is an offer that has not been made.
+    expect(rules(validateSnapshot(snapshot({ linedUp: lined }), manifest()))).toEqual(["snapshot.linedUp.idle"]);
+    // A break wins: neither the ask nor the lined-up call stands beside a break in flight or in effect.
+    const onBreak = (status: string) => ({ status, canRequestBreak: true });
+    for (const status of ["awaiting-approval", "granted", "starting-after-task"]) {
+      expect(rules(validateSnapshot(busy({ nextCall: { since: at }, break: onBreak(status) }), manifest())), status).toEqual(["snapshot.nextCall.break"]);
+      expect(rules(validateSnapshot(busy({ linedUp: lined, break: onBreak(status) }), manifest())), status).toEqual(["snapshot.linedUp.break"]);
+    }
+    // On a break in effect the task at work is itself refused; the queue rules stand beside that.
+    expect(rules(validateSnapshot(busy({ nextCall: { since: at }, break: onBreak("on-break") }), manifest()))).toContain("snapshot.nextCall.break");
+    expect(rules(validateSnapshot(busy({ linedUp: lined, break: onBreak("on-break") }), manifest()))).toContain("snapshot.linedUp.break");
+    expect(rules(validateSnapshot(busy({ nextCall: { since: at }, linedUp: lined, break: onBreak("not-requested") }), manifest()))).toEqual([]);
     // On their own events, present or cleared; and on the member, as the member's own snapshot carries them.
     const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
     expect(check({ type: "next-call", nextCall: { since: at } })).toEqual([]);

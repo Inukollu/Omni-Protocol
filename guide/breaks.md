@@ -253,4 +253,6 @@ it: the ceiling binds assignment, not the agent's own hand.
 **Capacity is not the agent's readiness.** It is the desk's division of one person across
 providers, a ceiling on assignments at once, and it says nothing about the moment. An agent who
 is about to finish a call and wants the next one lined up has a different thing to say, and says
-it as **The agent's own queue** in `guide/queue.md` sets out; the ceiling stands unchanged while they do.
+it as **The agent's own queue** in `guide/queue.md` sets out; the ceiling stands unchanged while they do,
+and the queue lives within it: `count: 0` clears the ask and lets a lined-up call go, and a break
+in flight or in effect does the same, since the break wins.
