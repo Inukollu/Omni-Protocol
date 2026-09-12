@@ -728,6 +728,7 @@ type Task<C extends Channel = Channel> = {
   expiresInSeconds?: DurationSeconds;
   previewEndsInSeconds?: DurationSeconds;
   atDeadline?: PreviewDeadline;
+  wrapEndsInSeconds?: DurationSeconds;
   reference?: string;
   attributes?: TaskAttribute[];
   history?: TaskHistory;
@@ -882,7 +883,15 @@ The adapter is the one that knows the value, so it is the one held to it: given 
 queue locked, the validator refuses any other field carrying one, digits compared as digits so no
 formatting hides them (`task.locked.leak`), and a conformance run whose tasks lock a party's number
 or email states those values in `lockedValues`, since a run that cannot ask the question is not a
-pass. An agent application never has the value and never asks. A name is not locked. What the queue provides rather than permits — browsers, outcomes, custom
+pass. An agent application never has the value and never asks. A name is not locked.
+
+**The lock is per audience.** Who sees the number is the provider's choice for each copy of the
+task: the member's, on their desk, and the leads', on the team member list. Hidden from the agent
+and shown to the lead, shown to the agent and hidden from the lead, hidden from both, shown to
+both -- any of the four, as the platform's policy says, and each copy is the provider's statement
+to that audience. Each copy keeps its own lock whole: where the lead's copy locks the number,
+nothing else on that copy carries it, exactly as on the member's (`task.locked.leak`, applied to a
+member's tasks with the same `lockedValues`). What the queue provides rather than permits — browsers, outcomes, custom
 controls — is content, and is never locked.
 
 **A lead sets the team's policy from their team member list.** A login that declares
@@ -998,11 +1007,9 @@ type MemberTask<C extends Channel = Channel> = {
   reference?: string;
   attributes?: TaskAttribute[];
   history?: TaskHistory;
-  capabilities?: TaskCapabilities<C>;
-  capabilitySource?: CapabilitySource;
-  browsers?: TaskBrowser[];
   completionMode?: CompletionMode;
   wrapAllowance?: DurationSeconds;
+  wrapEndsInSeconds?: DurationSeconds;
 } & (C extends "voice"
   ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
   : { onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
@@ -1113,7 +1120,7 @@ type QueueSummary = {
   metrics?: SummaryMetric[];
 };
 
-type TransportRecovery = "reconnect" | "reauthenticate";
+type TransportRecovery = "reconnect" | "reauthenticate" | "displaced";
 
 type ProviderEvent =
   | { type: "snapshot"; reason: "reconnected" | "provider-requested"; snapshot: Snapshot }
@@ -2073,6 +2080,12 @@ Creates one live provider connection for the signed-in agent.
 - Must resolve only when the connection can provide a meaningful snapshot.
 - May reject for authentication, configuration, or startup failure.
 - Must not create a second agent session merely because the underlying transport reconnects.
+- **One client at a time per login, and the later one wins.** A second `connect()` on a login
+  that already has a live client is the agent moving desks -- a desk left open at work, signed in
+  from home. The provider takes the new connection, and ends the first with `transport-status`
+  `error` and `recovery: "displaced"`, so the first desk stops stating capacity and reporting legs
+  and shows the agent they are signed in elsewhere. Two live clients on one login would be two
+  sources for one agent, and the lead's list would follow whichever spoke last.
 - The returned connection owns reconnect until Omni calls `disconnect()` or aborts `context.signal`.
 - May be called again on the same login after that: once per `Connection`, not once per login.
   Omni disposes a connection whose `error` named `recovery: "reconnect"` with `disconnect()` and
@@ -2413,7 +2426,8 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `atDeadline` | Voice only, in `preview`, with `previewEndsInSeconds`: what the system does when it runs out -- `provider-dials` makes the provider initiate dialing, `host-dials` makes the agent application issue Call, `waits` keeps the task in preview awaiting the agent. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one, and takes the agent's `complete` as finishing early. A required outcome is the agent's to give, so it needs `agent-command` (`task.outcomes.required.mode`). |
-| `wrapAllowance` | Fixed time allowed to complete the task after primary interaction ends. For real-time audio, it begins after `task-audio-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down. `0` is no wrap at all, so a task with it publishes no `outcomes` (`task.outcomes.wrapAllowance`). |
+| `wrapAllowance` | Fixed time allowed to complete the task after primary interaction ends. For real-time audio, it begins after `task-audio-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down; stated, it is the expected wrap, shown and never acted on. `0` under `provider-automatic` is no wrap at all, so such a task publishes no `outcomes` (`task.outcomes.wrapAllowance`). |
+| `wrapEndsInSeconds` | In `completing`, wherever `wrapAllowance` is stated: how much of the wrap is left, in whole seconds from this publication, restated on every publication that carries it (`task.completing.wrapEndsInSeconds`, `.required`, `.unexpected`). A reloaded desk and a lead's screen count down the same number. See **Completion timing**. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `history` | The call record: `steps` — the ordered interaction history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `interactionSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **Interaction history**. |
 | `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the agent application's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where an agent application placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. `label` names a destination -- a person, a queue -- not a phrase; the agent application supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome**. |
@@ -2649,6 +2663,15 @@ nothing acts on it -- the task waits for `complete` however long that takes, wit
 collected whenever the agent gives them. A provider that would end the task at a time is
 `provider-automatic`.
 
+**What is left travels with the task.** The allowance is the length; `wrapEndsInSeconds` is how
+much of it remains, stated on the `completing` task and restated on every publication that
+carries it, as `previewEndsInSeconds` is on a preview. A desk that reloads mid-wrap finds the
+number on the snapshot; a lead's screen finds it on the member; neither starts a clock of its own,
+and both count down from receipt. Under `provider-automatic` the provider ends the task when it
+reaches zero; under `agent-command` it is the expected wrap left, `0` once overrun, and nothing
+acts on it. Off voice, where `completing` is the provider's word that interaction ended, the field
+arrives with that word, so the clock starts nowhere else.
+
 `wrapAllowance` is fixed, and when it starts depends on whether the channel carries real-time
 audio:
 
@@ -2809,6 +2832,10 @@ Migration from the earlier spellings:
 | TeamMember.listening as this lead's one entry | `MemberListening[]`, every lead's, each with `leadId` (`team.member.listening.leadId`, `.unique`, `.empty`, `.entry`, `.heard`) |
 | a member's history trimmed on the lead's list | the record whole, as the member's desk holds it |
 | durations counted from the screen's clock | the provider's: `timeCheck` required of a provider publishing a running instant (`manifest.timeCheck.required`), `Snapshot.providerTime` with it (`snapshot.providerTime`, `.unexpected`) |
+| a wrap the desk timed from an event's receipt | `Task.wrapEndsInSeconds` in `completing`, restated (`task.completing.wrapEndsInSeconds`, `.required`, `.unexpected`) |
+| MemberTask.capabilities, capabilitySource, browsers | gone: the workspace never travels to a lead (`team.member.task.workspace`); the record and the completion terms do |
+| a member republished on a hold, a mute, a take-over | on every publication of the member's task to the member |
+| two clients on one login | the later wins; the first is ended with `recovery: "displaced"` |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
 History and report rule names use `history` and `historyReport`; assignment rules use
@@ -2930,7 +2957,8 @@ Four rules a provider has to keep:
 - **Report `seconds`; never expect Omni to derive it.** Omni does not subtract one timestamp from
   the next. An entry can be written while its leg is still running, so the arithmetic has no second
   operand, and a provider holding the authoritative number should not have it recomputed from
-  instants that may be rounded or clock-skewed.
+  instants that may be rounded or clock-skewed. And once stated, `seconds` is what every screen
+  shows for that leg: a count a screen kept while the leg ran is replaced by it, never kept beside it.
 - **Omit `seconds` while it is unknown. Never send `0`.** A leg still talking is not a zero-second
   conversation, and on live data that is the ordinary case rather than an edge. A zero is rejected.
 - **`by` is a bare `UserId`, and not necessarily an agent.** A lead or a manager takes part
@@ -4221,7 +4249,7 @@ computes nothing. See **`team-updated`** and its companions.
 | `availability` | Required. What the member is doing now. |
 | `since` | Optional. When the current `availability` began — not when they signed in, and not when the team member list was read. |
 | `break` | Present only while the member has an outstanding break request. See **A member waiting for a break**. |
-| `tasks` | The member's open tasks as `MemberTask`s: the same task the member's desk holds, trimmed by the provider. The assignment, title, task type, phase, party, room and audio are what the lead reads, and the task's record -- `history`, steps and totals -- travels whole, exactly as the member's desk holds it, so the lead's screen and the member's show the same record; only the workspace — controls, their source, browsers, completion terms — is the member's and travels only if the provider sends it. `[]` when the member holds none; omitted only where the provider cannot see them. |
+| `tasks` | The member's open tasks as `MemberTask`s: the same task the member's desk holds, less the workspace. The assignment, title, task type, phase, party, room, audio and completion terms -- `completionMode`, `wrapAllowance`, `wrapEndsInSeconds` -- are what the lead reads, and the task's record -- `history`, steps and totals -- travels whole, exactly as the member's desk holds it, so the lead's screen and the member's show the same record. The workspace -- `capabilities`, `capabilitySource`, `browsers` and their URLs -- is the member's desk's alone and never travels (`team.member.task.workspace`). The party's number and email are shown to leads or locked as the provider decides for leads, apart from what it decides for the member -- see **What the queue locks is locked on the whole task**. `[]` when the member holds none; omitted only where the provider cannot see them. |
 | `listening` | Every lead on this member's call — listening, coaching or joined — published to every lead alike: each entry names the lead by `leadId`, which of the member's calls by `assignmentId`, the `mode` they are heard in, and since when. The entry naming the signed-in lead is what their own audio opens on. Absent while nobody is on the call, never `[]` (`team.member.listening.*`); a lead is on one member's call at a time (`team.listening.single`), and a lead who is heard is also in the task's `onCall` (`team.member.listening.heard`). |
 | `request` | Present while the member is asking a lead to join one of their calls: which assignment, the note they wrote, since when. The call named is one their `tasks` carry (`team.member.request.assignment`). Absent when they are not asking. See **Lead assist**. |
 | `shift` | The member's own history for the day, about the person rather than any one call: `signedInAt`, `signedOutAt` once it has happened, today's totals as the provider counts them — `talkSeconds`, `holdSeconds`, `breakSeconds`, `tasksHandled`, each present only when the provider knows it — and the day's sign-in, sign-out and break `events`, oldest first. The same `Shift` the member's own snapshot carries, the same numbers from the same count. Omitted where the provider cannot say. |
@@ -4246,6 +4274,15 @@ twice changes nothing, so a redelivery is harmless, and a member the team never 
 by it, as a colleague signing in is. `team-member-removed` takes one off. Never a field of a
 member, never a task of theirs on its own: a hold on a member's desk is that member republished
 whole on the lead's, and nothing else on the lead's screen moves.
+
+**Whatever the member's desk hears of a task, every lead hears of the member.** The trigger is
+not a list of changes but the publication itself: each `task-offered`, `task-updated`,
+`task-audio-started`, `task-audio-ended` and `task-ended` the provider sends to the member is
+matched by a `team-member-updated` to every lead with the feature on, carrying the member whole
+with the task as it now stands, or without it once it has ended. A held leg closing with its
+`seconds`, a room restated, a phase moving, the wrap left ticking on a restatement: each reaches
+the lead's copy in the same round it reaches the member's, and the two copies of the record never
+part for longer than the delay between them.
 
 **The agent's day is on the wire.** The lead sees `shift` totals as the provider counts them, and
 the agent sees the same: `Snapshot.shift` and `shift-updated` carry the agent's own day in the same
@@ -4947,7 +4984,7 @@ The current exceptions and their reasons are:
 
 | Case | Exception and reason |
 | --- | --- |
-| Agent application display of provider deadlines (`expiresInSeconds`, `previewEndsInSeconds`, wrap deadline) | Each is seconds from the publication that carried it, counted down on the desk from receipt: the provider's own arithmetic, so no clock is compared and the transport delay is the only error. The countdown estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
+| Agent application display of provider deadlines (`expiresInSeconds`, `previewEndsInSeconds`, `wrapEndsInSeconds`) | Each is seconds from the publication that carried it, counted down on the desk from receipt: the provider's own arithmetic, so no clock is compared and the transport delay is the only error. The countdown estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
 | Agent application-triggered preview deadline | A bounded clock estimate with monotonic aging may schedule the agent application's Call command because the provider owns the deadline but the agent application owns the trigger. Do not trigger before the deadline is known to have passed; invalidate on clock discontinuity and reconcile when uncertain. |
 | Recording evidence expiry | A bounded observer-domain clock estimate with monotonic aging may assess freshness because observation and expiry belong to the recorder's clock. If time cannot be trusted, recording state is unknown; never renew evidence from receipt or replay. |
 | Unknown recording state | `observedAt` and `validUntil` are absent because there is no confirmed observation. The containing provider event still has its own `occurredAt`; that publication is not a recorder observation. |
@@ -4966,8 +5003,14 @@ source-measured durations where required; timestamp subtraction is not a substit
 Two screens watching the same agent -- their own desk, their lead's, a manager's on another floor
 -- must show the same numbers. Delay between them is fine; arithmetic that differs is not. So
 nothing the desk shows is its own count, with one exception: the running duration of the active
-task or call, which each screen times from the moment it saw the call begin, and which two screens
-may therefore disagree on, since their clocks differ. Everything else comes from the wire.
+task or call, which a screen times itself from the moment it saw the call begin -- the
+`task-audio-started` on a softphone, the answer it sent on a desk phone -- and which two such
+screens may therefore disagree on, since their clocks differ. That is the whole exception. A call
+a screen found already up -- on a connect or reconnect snapshot, on a lead's list, after a reload
+-- is counted from the provider's `answered` step's `at` against the provider's clock, like every
+other duration, so a reloaded desk shows 12:40 beside the lead's 12:40 and not 0:05. And a leg
+that has closed shows the provider's `seconds` on every screen, never the count a screen kept.
+Everything else comes from the wire.
 
 Durations off the active call -- how long a member has been `on-break` from their `since`, how
 long a lead has been listening, how long since `signedInAt` -- are counted from the provider's
@@ -5116,6 +5159,11 @@ died; the agent application knows how to run a login. `recovery` joins the two:
   disposes the errored connection with `disconnect()` and calls `connect()` afresh, as for
   `reconnect`, and the fresh snapshot re-establishes state. The adapter tears nothing down itself
   and expects nothing to carry on: the connection that reported `error` is finished.
+- **`displaced`** — another client connected on this login and took it: the agent moved desks.
+  Nothing revives this connection on its own -- Omni does not reconnect, or it would take the
+  login straight back from the desk the agent just sat down at -- and the desk shows the agent
+  they are signed in elsewhere, with a way to take the login back, which is a `connect()` that
+  displaces the other. See **`Adapter.connect(context)`**.
 
 **Patience is the agent application's.** An adapter in `connecting` retries for as long as it takes and never
 has to decide when to stop. Omni owns giving up: after however long it chooses to wait, it may
@@ -5340,8 +5388,8 @@ turned the feature off (`event.team.features`).
 One member, whole, as they now stand: their availability, their tasks, their listening, their
 shift, their request. It replaces the member of that `id` on the lead's list, or adds them where
 the list did not carry them, so applying it twice changes nothing. It comes only after the whole
-team has (`stream.team.baseline`), and it is what a member's hold, answer, mute or take-over
-publishes to the lead.
+team has (`stream.team.baseline`), and it is what every publication of a member's task to the
+member publishes to the lead, as **Team leads** sets out: never fewer.
 
 ### `team-member-removed`
 

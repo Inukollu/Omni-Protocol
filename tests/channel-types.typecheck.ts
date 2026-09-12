@@ -27,6 +27,7 @@ import {
   type Task,
   type TeamMembers,
   type ForcedBreak,
+  type MemberTask,
   type Shift,
   type Snapshot,
   type TaskBrowser,
@@ -398,6 +399,13 @@ export const oneLeadListening: TeamMembers = { members: [{ id: "A-2", availabili
 export const myDay: Snapshot<"voice"> = { transport: "active", loginId: "session-1", providerTime: "2026-08-21T09:00:00Z", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0, shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4210, tasksHandled: 12 } };
 export const dayMoved: ProviderEvent<"voice"> = { type: "shift-updated", shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4482, tasksHandled: 13 } };
 export const memberDay: Shift = { signedInAt: "2026-08-21T08:58:12Z" };
+// The lead's copy of a task: the record and the terms, never the workspace.
+export const leadsCopy: MemberTask<"voice"> = { assignmentId: "alloc-7", title: "Billing call", channel: "voice", taskType: "Billing", phase: "completing", completionMode: "provider-automatic", wrapAllowance: 60, wrapEndsInSeconds: 20 };
+// @ts-expect-error renamed away: browsers, controls and their source stay on the member's desk.
+export const leadsWorkspace: MemberTask<"voice"> = { ...leadsCopy, browsers: [] };
+// A displaced client: another desk took the login, and this one is finished.
+export const displaced: ProviderEvent<"voice"> = { type: "transport-status", status: "error", recovery: "displaced", message: "Signed in from another desk" };
+export const wrapping: Task<"voice"> = { ...emailTask, assignmentId: "call-15", channel: "voice", capabilities: {}, phase: "completing", completionMode: "provider-automatic", wrapAllowance: 60, wrapEndsInSeconds: 20 };
 // @ts-expect-error renamed away: the day is one shape for the agent and their lead, Shift.
 export const formerMemberDay: MemberShift = { signedInAt: "2026-08-21T08:58:12Z" };
 // @ts-expect-error Somebody forced it: a lead by user id, or the provider.

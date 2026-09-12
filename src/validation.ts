@@ -103,7 +103,7 @@ const membersOf = <U extends string>(members: Record<U, true>): readonly U[] =>
   Object.keys(members) as U[];
 
 const CHANNELS = membersOf<Channel>({ voice: true, chat: true, email: true });
-const TRANSPORT_RECOVERIES = membersOf<TransportRecovery>({ reconnect: true, reauthenticate: true });
+const TRANSPORT_RECOVERIES = membersOf<TransportRecovery>({ reconnect: true, reauthenticate: true, displaced: true });
 const TASK_PHASES = membersOf<TaskPhase>({
   pending: true, confirmed: true, preview: true, "in-progress": true, paused: true, completing: true,
 });
@@ -1313,6 +1313,19 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.require(isDurationSeconds(task.wrapAllowance), "task.wrapAllowance", `${path}.wrapAllowance`,
       "wrapAllowance must be a whole number of seconds, zero or more, or omitted under agent-command");
   }
+  // How much wrap is left travels with the completing task, restated, so every screen counts the same number.
+  if (task.phase === "completing" && task.wrapAllowance !== undefined) {
+    if (task.wrapEndsInSeconds === undefined) {
+      into.add("task.completing.wrapEndsInSeconds.required", `${path}.wrapEndsInSeconds`,
+        "a completing task with a wrap allowance says how much of it is left, so a reloaded desk and a lead's screen count down the same number");
+    } else {
+      into.require(isDurationSeconds(task.wrapEndsInSeconds), "task.completing.wrapEndsInSeconds", `${path}.wrapEndsInSeconds`,
+        "wrapEndsInSeconds is how much wrap is left: a whole number of seconds, zero or more, counted from this publication");
+    }
+  } else if (task.wrapEndsInSeconds !== undefined) {
+    into.add("task.completing.wrapEndsInSeconds.unexpected", `${path}.wrapEndsInSeconds`,
+      task.phase === "completing" ? "no wrap allowance was stated, so there is nothing to count down" : "wrapEndsInSeconds belongs to a completing task; before the wrap there is nothing to count");
+  }
 
   // The channel is fixed per provider by its manifest, so a task claiming another one is a
   // task Omni would render with the wrong controls.
@@ -1335,7 +1348,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
       if (task.recording.provider !== undefined) into.violations.push(...validateRecordingState(task.recording.provider, `${path}.recording.provider`));
     }
   }
-  if (context.member !== true || task.browsers !== undefined) validateBrowsers(task.browsers, `${path}.browsers`, into);
+  if (context.member !== true) validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into, context.levels);
   validateHistory(task.history, `${path}.history`, into, { phase: task.phase, audio: task.audio });
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
@@ -1356,9 +1369,15 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
 
   // Where the terms came from is stated with them: a host cannot tell "the platform permits
   // nothing" from "the terms could not be read" from the set alone, and the provider knows which.
-  if (context.member !== true || task.capabilitySource !== undefined) into.oneOf(task.capabilitySource, CAPABILITY_SOURCES, "task.capabilitySource", `${path}.capabilitySource`);
+  if (context.member === true) {
+    // The lead's copy is the record, the room and the terms; the workspace stays on the member's desk.
+    for (const field of ["capabilities", "capabilitySource", "browsers"] as const) {
+      if (task[field] !== undefined) into.add("team.member.task.workspace", `${path}.${field}`, `${field} is the member's workspace, and never travels to a lead`);
+    }
+    return;
+  }
+  into.oneOf(task.capabilitySource, CAPABILITY_SOURCES, "task.capabilitySource", `${path}.capabilitySource`);
   const capabilities = task.capabilities;
-  if (context.member === true && capabilities === undefined && task.browsers === undefined) return;
   if (!isPlainObject(capabilities)) {
     into.add("task.capabilities.shape", `${path}.capabilities`, "a task needs a capabilities object");
     return;
@@ -1873,7 +1892,7 @@ function validateTeamMemberInto(member: unknown, at: string, context: ReaderCont
       const held = new Set<string>();
       member.tasks.forEach((task: unknown, index: number) => {
         const channel = isPlainObject(task) && typeof task.channel === "string" && isChannel(task.channel) ? task.channel : context.channel ?? "voice";
-        validateTaskInto(task, { channel, levels: context.levels, member: true }, `${at}.tasks[${index}]`, into);
+        validateTaskInto(task, { channel, levels: context.levels, member: true, locked: context.locked }, `${at}.tasks[${index}]`, into);
         if (isPlainObject(task) && isAssignmentId(task.assignmentId)) {
           if (held.has(task.assignmentId as string)) into.add("team.member.tasks.unique", `${at}.tasks[${index}].assignmentId`, `duplicate assignment on one member: ${task.assignmentId}`);
           held.add(task.assignmentId as string);

@@ -122,6 +122,8 @@ const task = (over: Record<string, unknown> = {}) => {
     phase: "in-progress",
     completionMode: "agent-command",
     wrapAllowance: 15,
+    // A completing task with an allowance says how much is left; the fixture's wrap has just begun.
+    ...(over.phase === "completing" && (over.wrapAllowance !== undefined || !("wrapAllowance" in over)) && !("wrapEndsInSeconds" in over) ? { wrapEndsInSeconds: (over.wrapAllowance as number | undefined) ?? 15 } : {}),
     ...over,
   };
 };
@@ -697,8 +699,19 @@ describe("validateTeamMembers", () => {
     expect(withTasks([trimmed])).toEqual([]);
     expect(withTasks([])).toEqual([]);
     // What the provider sends of the workspace is held to the task rules; what it leaves out is not asked for.
-    expect(withTasks([{ ...trimmed, capabilities: { hold: true }, capabilitySource: "queue", browsers: [], completionMode: "agent-command" }])).toEqual([]);
-    expect(withTasks([{ ...trimmed, capabilities: { hold: true, mute: true } }])).toEqual(["task.capability.unknown"]);
+    // The completion terms travel; the workspace -- controls, their source, browsers -- never does.
+    expect(withTasks([{ ...trimmed, completionMode: "agent-command", wrapAllowance: 60 }])).toEqual([]);
+    expect(withTasks([{ ...trimmed, phase: "completing", completionMode: "agent-command", wrapAllowance: 60, wrapEndsInSeconds: 20 }])).toEqual([]);
+    expect(withTasks([{ ...trimmed, phase: "completing", completionMode: "agent-command", wrapAllowance: 60 }])).toEqual(["task.completing.wrapEndsInSeconds.required"]);
+    for (const field of ["capabilities", "capabilitySource", "browsers"]) {
+      expect(withTasks([{ ...trimmed, [field]: field === "browsers" ? [] : field === "capabilities" ? { hold: true } : "queue" }])).toEqual(["team.member.task.workspace"]);
+    }
+    // The lock is per audience: a copy that locks the number keeps its own lock whole.
+    const locked = { ...trimmed, party: { name: "Maya Rao", number: { lockedBy: "org" } } };
+    const leaking = { ...locked, title: "Call from +91 98765 43210" };
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [locked] }] }, "team", { locked: ["+919876543210"] }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [leaking] }] }, "team", { locked: ["+919876543210"] }))).toEqual(["task.locked.leak"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [{ ...trimmed, party: { name: "Maya Rao", number: "+919876543210" } }] }] }, "team", { locked: ["+919876543210"] }))).toEqual([]);
     expect(withTasks([{ ...trimmed, history: { steps: [{ step: "held", at, seconds: 12, by: "A-2" }] }, onCall: [{ role: "party", since: at }] }])).toEqual([]);
     expect(withTasks([{ ...trimmed, audio: "started", phase: "completing" }])).toEqual(["task.audio.completing"]);
     expect(withTasks([{ ...trimmed, phase: "ringing" }])).toEqual(["task.phase"]);
@@ -949,6 +962,8 @@ describe("validateEventEnvelope", () => {
   it("requires an error to name its recovery, and nothing else to carry one", () => {
     expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "session gone" })).toEqual([]);
     expect(check({ type: "transport-status", status: "error", recovery: "reauthenticate" })).toEqual([]);
+    // Another client took the login: this one is finished, and nothing revives it but the agent taking the login back.
+    expect(check({ type: "transport-status", status: "error", recovery: "displaced", message: "Signed in from another desk" })).toEqual([]);
     expect(check({ type: "transport-status", status: "error" })).toEqual(["event.transportStatus.recovery.required"]);
     expect(check({ type: "transport-status", status: "error", recovery: "retry" })).toEqual(["event.transportStatus.recovery"]);
     // Both directions: a status with nothing to revive carries no recovery.
@@ -2307,6 +2322,16 @@ describe("preview: the agent presses Call", () => {
 
   it("carries the deadline and what happens at it together, and only while previewing", () => {
     expect(rules(validateTask(preview({ previewEndsInSeconds: 120, atDeadline: "provider-dials" }), voice))).toEqual([]);
+    // The wrap left travels with the completing task the same way, wherever an allowance was stated.
+    const wrapping = (over: Record<string, unknown>) => rules(validateTask(task({ phase: "completing", audio: "ended", onCall: [], completionMode: "provider-automatic", wrapAllowance: 60, ...over }), voice));
+    expect(wrapping({ wrapEndsInSeconds: 20 })).toEqual([]);
+    expect(wrapping({ wrapEndsInSeconds: 0 })).toEqual([]);
+    expect(wrapping({ wrapEndsInSeconds: undefined })).toEqual(["task.completing.wrapEndsInSeconds.required"]);
+    for (const bad of ["soon", 1.5, -1]) expect(wrapping({ wrapEndsInSeconds: bad })).toEqual(["task.completing.wrapEndsInSeconds"]);
+    expect(wrapping({ completionMode: "agent-command", wrapAllowance: 120, wrapEndsInSeconds: 0 })).toEqual([]);
+    expect(wrapping({ completionMode: "agent-command", wrapAllowance: undefined })).toEqual([]);
+    expect(wrapping({ completionMode: "agent-command", wrapAllowance: undefined, wrapEndsInSeconds: 5 })).toEqual(["task.completing.wrapEndsInSeconds.unexpected"]);
+    expect(rules(validateTask(task({ phase: "in-progress", completionMode: "provider-automatic", wrapAllowance: 60, wrapEndsInSeconds: 60 }), voice))).toEqual(["task.completing.wrapEndsInSeconds.unexpected"]);
     expect(rules(validateTask(preview({ previewEndsInSeconds: 0, atDeadline: "waits" }), voice))).toEqual([]);
     expect(rules(validateTask(preview({ previewEndsInSeconds: 120 }), voice))).toEqual(["task.preview.atDeadline.required"]);
     expect(rules(validateTask(preview({ atDeadline: "provider-dials" }), voice))).toEqual(["task.preview.previewEndsInSeconds.required"]);

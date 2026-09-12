@@ -581,7 +581,8 @@ export type TransportStatus = "connecting" | "active" | "error";
  * connection and call `connect()` again -- or `reauthenticate` -- run the authentication flow
  * first. The adapter knows which; the host acts on its word.
  */
-export type TransportRecovery = "reconnect" | "reauthenticate";
+/** What revives an errored connection: `displaced` says another client took the login, and nothing revives this one until the agent takes it back. */
+export type TransportRecovery = "reconnect" | "reauthenticate" | "displaced";
 
 // ---------------------------------------------------------------------------
 // Idle contributions.
@@ -996,6 +997,14 @@ export type Task<C extends Channel = Channel> = {
    */
   previewEndsInSeconds?: DurationSeconds;
   atDeadline?: PreviewDeadline;
+  /**
+   * In `completing`, wherever `wrapAllowance` is stated: how much of the wrap is left, in whole
+   * seconds from this publication, restated on every publication that carries it, so a reloaded
+   * desk and a lead's screen count down the same number. Under `provider-automatic` the provider
+   * ends the task when it reaches zero; under `agent-command` it is the expected wrap left, `0`
+   * once overrun, and nothing acts on it.
+   */
+  wrapEndsInSeconds?: DurationSeconds;
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
   attributes?: TaskAttribute[];
@@ -1280,10 +1289,11 @@ export interface MemberRequest {
 }
 
 /**
- * A member's task as the lead sees it: the same task the member's desk holds, trimmed by the
- * provider. The assignment, what the call is and where it stands, the room and the full history
- * are always here; the workspace -- browsers, controls, completion terms -- is the member's and
- * travels only if the provider chooses to send it.
+ * A member's task as the lead sees it: the same task the member's desk holds, less the workspace.
+ * The assignment, what the call is and where it stands, the party as the provider shows it to
+ * leads, the room, the audio, the completion terms and the whole record are here; the controls,
+ * their source and the browsers are the member's desk's alone and never travel. Published to every
+ * lead whenever the member's own desk hears of the task.
  */
 export type MemberTask<C extends Channel = Channel> = {
   assignmentId: AssignmentId;
@@ -1295,11 +1305,9 @@ export type MemberTask<C extends Channel = Channel> = {
   reference?: string;
   attributes?: TaskAttribute[];
   history?: TaskHistory;
-  capabilities?: TaskCapabilities<C>;
-  capabilitySource?: CapabilitySource;
-  browsers?: TaskBrowser[];
   completionMode?: CompletionMode;
   wrapAllowance?: DurationSeconds;
+  wrapEndsInSeconds?: DurationSeconds;
 } & (C extends "voice"
   ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
   : { onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });

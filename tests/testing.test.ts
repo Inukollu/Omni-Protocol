@@ -151,7 +151,7 @@ describe("assertTaskCapabilityWithdrawal", () => {
 
   it("refuses a republish that changes more than the withdrawal", () => {
     const dials = { ...manifest, dialOutcomes: ["answered", "no-answer"] } satisfies Manifest<"voice">;
-    const wrappingUp = { ...voiceTask, phase: "completing", capabilities: { connectBack: true, endCall: true } } satisfies Task<"voice">;
+    const wrappingUp = { ...voiceTask, phase: "completing", wrapEndsInSeconds: 60, capabilities: { connectBack: true, endCall: true } } satisfies Task<"voice">;
     const backOnTheCall = { ...voiceTask, phase: "in-progress", capabilities: { endCall: true } } satisfies Task<"voice">;
     const connectBack = { type: "connect-back", dialId: "dial-1" };
     expect(() => assertTaskCapabilityWithdrawal([wrappingUp, backOnTheCall], dials, connectBack)).toThrow(/more than the withdrawal/);
@@ -298,7 +298,7 @@ describe("assertAudioFollowsTheTask", () => {
     };
     const env = (id: string, event: Record<string, unknown>) => ({ id, loginId: "session-1", occurredAt: at, event }) as unknown as ProviderEventEnvelope;
     const chatOffered = (over: Record<string, unknown> = {}) => env("c1", { type: "task-offered", task: chat({ phase: "pending", acceptance: "consent", ...over }) });
-    const chatUpdated = (phase: string, over: Record<string, unknown> = {}, id = "c2") => env(id, { type: "task-updated", task: chat({ phase, ...over }) });
+    const chatUpdated = (phase: string, over: Record<string, unknown> = {}, id = "c2") => env(id, { type: "task-updated", task: chat({ phase, ...(phase === "completing" ? { wrapEndsInSeconds: 60 } : {}), ...over }) });
     const chatEnded = (outcome: Record<string, unknown>) => env("c9", { type: "task-ended", assignmentId: "alloc-c7", outcome });
     const completed = { type: "completed", by: "provider" };
     // Completed straight from in-progress, the sixty seconds it stated were never given.
@@ -1378,7 +1378,9 @@ describe("exerciseAdapter drives one call", () => {
     const t = (over: Record<string, unknown>) => {
       if (typeof over.phase === "string") phase = over.phase;
       const begun = over.phase !== "pending" && over.phase !== "confirmed";
-      return { ...base, ...(begun && script.restateHistory !== undefined ? { history: history() } : {}), ...over } as unknown as Task<"voice">;
+      // A completing task says how much of its wrap is left; the fixture's wrap has just begun.
+      const wrap = over.phase === "completing" ? { wrapEndsInSeconds: base.wrapAllowance } : {};
+      return { ...base, ...(begun && script.restateHistory !== undefined ? { history: history() } : {}), ...wrap, ...over } as unknown as Task<"voice">;
     };
     const emit = (event: ProviderEventEnvelope<"voice">["event"]) => listener?.({ id: id(), loginId: "session-1", occurredAt: at, event });
     const room = [{ role: "party" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
