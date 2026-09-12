@@ -6,7 +6,7 @@ const request = { requestId: "q1" };
 const result: ProviderTimeCheckResult = { requestId: "q1", loginId: "login", clockId: "clock", providerTime: "2026-09-11T04:00:00.000Z" };
 describe("optional provider time", () => {
   it("declares clock sampling only through explicit support", () => {
-    const manifest = { id: "provider", displayName: "Provider", channel: "voice", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], completionSettleMs: 5000, phones: ["softphone"] };
+    const manifest = { id: "provider", displayName: "Provider", channel: "voice", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, phones: ["softphone"] };
     expect(validateManifest(manifest)).toEqual([]);
     expect(validateManifest({ ...manifest, timestampAuthority: "provider" })).toEqual([]);
     expect(validateManifest({ ...manifest, timestampAuthority: "host" }).some(v => v.rule === "manifest.timestampAuthority")).toBe(true);

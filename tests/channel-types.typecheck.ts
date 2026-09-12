@@ -13,6 +13,7 @@ import {
   type OpenAudioRequest,
   type Manifest,
   type ProviderEvent,
+  type TaskOutcome,
   type Host,
   type OutcomeRules,
   type HostAudioInput,
@@ -38,7 +39,7 @@ export const voiceManifest = {
   displayName: "Voice Provider",
   channel: "voice",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
-  completionSettleMs: 5000,
+  settleMs: 5000,
   authenticationMethods: ["browser-sso"],
   idleCapabilities: {
     dial: { destinations: "any-number" },
@@ -54,7 +55,7 @@ export const chatManifest = {
   displayName: "Chat Provider",
   channel: "chat",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
-  completionSettleMs: 5000,
+  settleMs: 5000,
   authenticationMethods: ["credentials"],
   idleCapabilities: {
     contacts: true,
@@ -166,8 +167,16 @@ export const scheduleFollowUp: TaskCommand<"voice"> = { type: "schedule", at: "2
 export const scheduleCapability: Task<"voice">["capabilities"] = { schedule: true };
 // @ts-expect-error A schedule names the time; without one there is nothing to put on the calendar.
 export const untimedSchedule: TaskCommand<"voice"> = { type: "schedule", note: "Call back" };
-// @ts-expect-error A chat has no call to schedule from.
+// A follow-up is promised in a chat or an email as on a call.
 export const chatSchedule: TaskCommand<"chat"> = { type: "schedule", at: "2026-08-22T10:00:00Z" };
+export const emailScheduleCapability: Task<"email">["capabilities"] = { schedule: true };
+// The offer's deadline rides on the pending task, as seconds left, so a snapshot restates it.
+export const expiringOffer = { ...emailTask, assignmentId: "email-9", phase: "pending", acceptance: "consent", expiresInSeconds: 30 } satisfies Task<"email">;
+// @ts-expect-error renamed away: the deadline moved onto the task; the event carries none.
+export const offerWithDeadline: ProviderEvent<"email"> = { type: "task-offered", task: emailTask, expiresInSeconds: 30 };
+// @ts-expect-error Nothing expires a preview: withdrawn, it is cancelled by the provider.
+export const expiredPreview: TaskOutcome = { type: "expired", phase: "preview" };
+export const expiredConfirmed: TaskOutcome = { type: "expired", phase: "confirmed" };
 // Who is on the call is voice-only, like the commands that bring people onto it.
 export const conferencingVoiceTask = { ...emailTask, assignmentId: "call-10", channel: "voice", capabilities: { conference: { destinations: [{ id: "tier2", label: "Tier 2" }] } }, phase: "paused", onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
 // @ts-expect-error A dialled entry says where it stands: ringing or joined.

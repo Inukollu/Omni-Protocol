@@ -203,7 +203,7 @@ type Manifest<C extends Channel = Channel> = {
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   phones?: C extends "voice" ? Phone[] : never;
   runningStepReports?: true;
-  completionSettleMs: number;
+  settleMs: number;
 };
 ```
 
@@ -569,8 +569,8 @@ type TaskCapabilities<C extends Channel = Channel> =
         recording?: Lockable<TaskRecordingPolicy>;
       }
     : C extends "chat"
-      ? SharedTaskCapabilities & { decline?: Lockable<true>; hold?: Lockable<true> }
-      : SharedTaskCapabilities & { decline?: Lockable<true> };
+      ? SharedTaskCapabilities & { decline?: Lockable<true>; hold?: Lockable<true>; schedule?: Lockable<true> }
+      : SharedTaskCapabilities & { decline?: Lockable<true>; schedule?: Lockable<true> };
 ```
 
 The channel arms are why `Task<"email">` rejects `hold` at compile time rather than at runtime.
@@ -723,6 +723,7 @@ type Task<C extends Channel = Channel> = {
   party?: Contact;
   phase: TaskPhase;
   acceptance?: AcceptanceMode;
+  expiresInSeconds?: DurationSeconds;
   previewEndsInSeconds?: DurationSeconds;
   atDeadline?: PreviewDeadline;
   reference?: string;
@@ -745,7 +746,7 @@ type TaskOutcome =
   | { type: "completed"; by: "agent" | "provider" }
   | { type: "taken-over"; leadId: UserId }
   | { type: "cancelled"; by: "agent" | "provider" | "party"; reason?: string }
-  | { type: "expired"; phase: "pending" | "confirmed" | "preview" }
+  | { type: "expired"; phase: "pending" | "confirmed" }
   | { type: "failed"; failure: ProtocolFailure };
 ```
 
@@ -768,8 +769,8 @@ const TASK_COMMAND_NAMES = {
     "schedule",
     "complete",
   ],
-  chat: ["accept", "decline", "pause", "resume", "complete"],
-  email: ["accept", "decline", "complete"],
+  chat: ["accept", "decline", "pause", "resume", "schedule", "complete"],
+  email: ["accept", "decline", "schedule", "complete"],
 } as const;
 
 type TaskCommandName<C extends keyof typeof TASK_COMMAND_NAMES> =
@@ -786,7 +787,7 @@ type VoiceTaskCommand =
   | { type: "end-call" }
   | { type: "terminate-call" }
   | { type: "connect-back"; dialId: DialId }
-  | { type: "schedule"; at: IsoTimestamp; note?: string }
+  | ScheduleCommand
   | { type: "lead-assist"; action: "request"; note?: string }
   | { type: "lead-assist"; action: "cancel" }
   | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
@@ -795,16 +796,20 @@ type VoiceTaskCommand =
   | (RecordingCommand & { source: "provider" })
   | ({ type: "complete" } & OutcomePayload);
 
+type ScheduleCommand = { type: "schedule"; at: IsoTimestamp; note?: string };
+
 type ChatTaskCommand =
   | { type: "accept" }
   | { type: "decline" }
   | { type: "pause" }
   | { type: "resume" }
+  | ScheduleCommand
   | ({ type: "complete" } & OutcomePayload);
 
 type EmailTaskCommand =
   | { type: "accept" }
   | { type: "decline" }
+  | ScheduleCommand
   | ({ type: "complete" } & OutcomePayload);
 
 type CustomTaskCommand = { type: "custom"; name: string; [key: string]: unknown };
@@ -1115,7 +1120,6 @@ type ProviderEvent =
   | {
       type: "task-offered";
       task: Task;
-      expiresInSeconds?: DurationSeconds;
     }
   | { type: "task-updated"; task: Task }
   | { type: "task-audio-started"; assignmentId: AssignmentId }
@@ -1254,6 +1258,7 @@ const OMNI_FAILURE_CODES = [
   "omni.unavailable",
   "omni.break-already-committed",
   "omni.recording-unsettled",
+  "omni.break-forced-by-provider",
 ] as const;
 type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
 ```
@@ -1586,7 +1591,7 @@ export default defineAdapter({
     channel: "voice",
     supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
     authenticationMethods: ["browser-sso"],
-    completionSettleMs: 5000,
+    settleMs: 5000,
     idleCapabilities: {
       dial: { destinations: "any-number" },
     },
@@ -1624,7 +1629,7 @@ compile time.
 | `timeCheck` | Optional `true`: implements `checkTime` for fresh provider-clock samples; agent application polling is independently opt-in. |
 | `timestampAuthority` | Optional `"provider"`: provider timestamps are final; agent application instants are advisory. Omission makes no trust promise. |
 | `runningStepReports` | The provider takes running reports of an agent application-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the agent application sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The agent application records what it performs**. |
-| `completionSettleMs` | Required. How long after an applied `complete` the provider's `task-ended` is owed, a positive whole number of milliseconds (`manifest.completionSettleMs`). Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
+| `settleMs` | Required. How long after `applied` the wire shows what the provider did: the `task-ended` after a `complete`, the `calendar-updated` after a `schedule`. A positive whole number of milliseconds (`manifest.settleMs`). Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
 
 ### Authentication methods
 
@@ -2318,8 +2323,7 @@ declare const task: Task;
 
 const assignment = {
   type: "task-offered",
-  task: { ...task, phase: "pending", acceptance: "consent" },
-  expiresInSeconds: 30,
+  task: { ...task, phase: "pending", acceptance: "consent", expiresInSeconds: 30 },
 } satisfies Extract<ProviderEvent, { type: "task-offered" }>;
 ```
 
@@ -2337,10 +2341,12 @@ on a desk phone — and is not in question per call. See **How the agent hears t
 
 Automatic acceptance still begins with `task-offered`.
 
-`expiresInSeconds` is how long the offer stands, in whole seconds from this event. Where present,
-Omni counts down from receipt and stops offering **Accept** once it runs out; the provider ends
-the lapsed offer with `task-ended` and an `expired` outcome naming `pending`, since nobody
-cancelled it. **Omit it unless the provider can observe it.** A provider that reports only elapsed
+`expiresInSeconds` is how long the offer has left, in whole seconds from the publication that
+carries it. It rides on the pending task, as `acceptance` does, so a reconnect snapshot restates
+it from what is actually left; it belongs to `pending` alone and is gone once the task is accepted
+(`task.pending.expiresInSeconds`, `.unexpected`). Where present, Omni counts down from receipt and
+stops offering **Accept** once it runs out; the provider ends the lapsed offer with `task-ended`
+and an `expired` outcome naming `pending`, since nobody cancelled it. **Omit it unless the provider can observe it.** A provider that reports only elapsed
 ring time after the fact cannot say how long an offer has left, and a computed value would have
 Omni withdraw **Accept** from a task still pending.
 
@@ -2349,7 +2355,7 @@ different clocks, and a countdown that compares one against the other is a count
 fast or slow by their skew. Seconds from the publication that carries them are the provider's own
 arithmetic, counted down on the desk from the moment they arrive, and the transport delay is the
 only error. Restated on every publication that carries them, so a snapshot after a reconnect
-starts the countdown afresh from what is actually left (`event.taskOffered.expiresInSeconds`,
+starts the countdown afresh from what is actually left (`task.pending.expiresInSeconds`,
 `task.preview.previewEndsInSeconds`: a whole number, zero or more).
 
 A preview's deadline is not on the offer. It travels on the task, as `previewEndsInSeconds` with
@@ -2396,6 +2402,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `phase` | Current canonical task phase: `pending`, `confirmed`, `preview`, `in-progress`, `paused`, or `completing`. `preview` is voice only. |
 | `audio` | Voice only. The task's real-time audio as the provider holds it: `started` while audio is attached, `ended` once it ended, omitted while none is. The provider's word — see **`task-audio-started`**. Audio names a task whose work has begun, or whose party the agent application is dialling: on a `pending`, `confirmed` or `preview` task with nobody ringing it is refused (`task.audio.beforeWork`), on a snapshot as on the event, since an agent application opens the microphone on it; with the party ringing by an agent application dial or provider-triggered preview dial, actual ring-back audio may precede answer. |
 | `acceptance` | How this offer is accepted — `no-preference`, `consent`, or `automatic` — stated on the pending task so a reconnect snapshot says it too. Required while `pending` when `autoAcceptTasks` was `true`, forbidden when it was `false`, and absent past `pending`. See **Acceptance modes**. |
+| `expiresInSeconds` | In `pending` only: how long the offer has left, in whole seconds from this publication, restated on every publication that carries it. Absent, the offer stands until the provider says otherwise. See **Pending**. |
 | `previewEndsInSeconds` | Voice only, in `preview`: how long the preparation has left, in whole seconds from this publication, restated on every publication that carries it. Absent, the agent has as long as they need without a preparation countdown. Always with `atDeadline`. See **Preview: the agent presses Call**. |
 | `atDeadline` | Voice only, in `preview`, with `previewEndsInSeconds`: what the system does when it runs out -- `provider-dials` makes the provider initiate dialing, `host-dials` makes the agent application issue Call, `waits` keeps the task in preview awaiting the agent. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
@@ -2618,18 +2625,26 @@ provider may complete the task without receiving that command.
 **The agent may finish early under either mode.** `complete` is issuable wherever there is a wrap
 to cut short: under `agent-command` it is the end, and under `provider-automatic` it says the agent
 is done before the allowance ran out, and the provider is free to end the task at once. Only a task
-with no wrap at all -- `wrapAllowance: 0` -- has nothing to complete, and the command is refused
-there (`command.complete.wrapAllowance`). An ending the agent asked for says so, `completed` with
-`by: "agent"`, whichever mode the task was under.
+with no wrap at all -- `provider-automatic` with `wrapAllowance: 0` -- has nothing to complete, and
+the command is refused there (`command.complete.wrapAllowance`). An ending the agent asked for says
+so, `completed` with `by: "agent"`, whichever mode the task was under.
 
 **A required outcome is the agent's to give.** A task whose `outcomes` says `required: true` waits
 for a code the agent chooses, so it completes on the agent's command: `provider-automatic` cannot
 wait for it, and the pair is refused (`task.outcomes.required.mode`). Optional outcomes may ride on
 a task the provider completes itself; the agent gives one if in time. And a code is given in wrap,
-so a task with `wrapAllowance: 0` publishes no `outcomes` at all (`task.outcomes.wrapAllowance`).
+so a `provider-automatic` task with `wrapAllowance: 0` publishes no `outcomes` at all
+(`task.outcomes.wrapAllowance`).
 
-`wrapAllowance` is independent of that decision. It is fixed, and when it starts depends on
-whether the channel carries real-time audio:
+**The allowance means one thing per mode.** Under `provider-automatic` it is what the provider
+acts on: the task ends when it runs out. Under `agent-command` it is the expected wrap, stated so
+the agent can see it: the desk counts it down and, past zero, shows how far over they are, and
+nothing acts on it -- the task waits for `complete` however long that takes, with its outcomes
+collected whenever the agent gives them. A provider that would end the task at a time is
+`provider-automatic`.
+
+`wrapAllowance` is fixed, and when it starts depends on whether the channel carries real-time
+audio:
 
 | Channel | Wrap allowance starts at |
 | --- | --- |
@@ -2658,9 +2673,9 @@ const emailCompletion = {
 In this example, the agent has two minutes after sending the email to add notes, select a
 outcome, and complete the task.
 
-`0` means there is no wrap: under `provider-automatic` the provider completes the task at the
-end of the interaction, and under `agent-command` it completes on the interaction's end without
-waiting for `complete`, which has nothing to cut short and is refused.
+`0` means no wrap under `provider-automatic`: the provider completes the task at the end of the
+interaction, and `complete` has nothing to cut short. Under `agent-command` it is an expected wrap
+of nothing -- the desk shows the overrun from the start -- and the task still waits for `complete`.
 
 There is no value meaning "unlimited", because a number that is not a duration would be read as
 one. A provider that imposes no deadline says so by **omitting** `wrapAllowance`, which
@@ -2748,7 +2763,7 @@ The record is the call's, not the task's: most of what it holds happened before 
 *Interaction* keeps the one meaning **Terms** gives it, the agent's time on the call, which is why
 the total of earlier agents' time is `interactionSeconds` and the phase rules are
 `command.phase.interaction`. Hosts and providers adopt these names together; no legacy aliases
-are provided. The manifest's `completionSettleMs` bounds final task completion, not entry into
+are provided. The manifest's `settleMs` bounds final task completion, not entry into
 the `completing` wrap-up phase. The `recordStep` method and `complete` command keep their names.
 
 Migration from the earlier spellings:
@@ -2765,7 +2780,7 @@ Migration from the earlier spellings:
 | Task.allocationId, AllocationId, allocationExpiresAt | `Task.assignmentId`, `AssignmentId`, `expiresInSeconds` |
 | Task.id, TaskId, and `taskId` on every event, command, report and lead request | gone: a task is named by `assignmentId` alone, and `assignmentKey(providerId, assignmentId)` scopes it |
 | taskKey, omni.task-not-found, PROVIDER_NAME__TASK_ID__TAB_NAME (ProviderName.TaskId.TabName) | `assignmentKey`, `omni.assignment-not-found`, `PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME` (`ProviderName.AssignmentId.TabName`) |
-| Manifest.disposalSettleMs | `Manifest.completionSettleMs` |
+| Manifest.disposalSettleMs, Manifest.completionSettleMs | `Manifest.settleMs` (`manifest.settleMs`, `manifest.settleMs.renamed`): the bound after `applied` for `complete` and `schedule` alike |
 | the call command, atDeadline calls and host-calls | `dial`, `"provider-dials"`, `"host-dials"` |
 | media: task-media-started/-ended, team-media-*, Task.media, TaskMediaState, openMedia, OpenMediaRequest/Result, VoiceMediaSession and its session field | audio: `task-audio-started`, `task-audio-ended`, `audio` on the task, `TaskAudioState`, `openAudio`, `OpenAudioRequest`, `OpenAudioResult`, `CallAudio` on the result's `audio`; there is no team audio, the lead's follows `listening` on the member |
 | capabilitySource values ungoverned and undetermined | `nobody`, `not-yet-read` (`capabilitySource.notYetRead`) |
@@ -2777,7 +2792,12 @@ Migration from the earlier spellings:
 | TeamMembers.requests, LeadRequest | `TeamMember.request` (`MemberRequest`): the ask rides on the member (`team.member.request.*`) |
 | team-updated on every change | `team-updated` whole once after the switch and on snapshots; `team-member-updated`, `team-member-removed`, `team-policies-updated` after (`stream.team.baseline`, `stream.teamMember.unknown`) |
 | RecordingCommand.requestId | gone: no request identity; a partial effect is a settled `failed` under `omni.recording-unsettled` |
-| command.complete.mode | `command.complete.wrapAllowance`: `complete` under either mode, refused only with no wrap |
+| command.complete.mode | `command.complete.wrapAllowance`: `complete` under either mode, refused only on `provider-automatic` with no wrap |
+| expiresInSeconds on task-offered | `Task.expiresInSeconds`, in `pending` (`task.pending.expiresInSeconds`, `.unexpected`; `event.taskOffered.expiresInSeconds.unexpected`) |
+| the expired outcome naming preview | gone: nothing expires a preview; withdrawn, it is `cancelled` by the provider |
+| schedule on voice alone | `schedule` on every channel, under a manifest that declares `calendar` (`task.capability.calendar.required`), bounded by `settleMs` (`drive.schedule.unsettled`) |
+| a forced break requesting breaks on the other providers | `setCapacity({ count: 0 })` on every other usable provider (`assertForcedBreakStopsTheRest`) |
+| end-forced-break on a break the platform imposed | refused: `team.command.endForcedBreak.provider`, `omni.break-forced-by-provider` |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
 History and report rule names use `history` and `historyReport`; assignment rules use
@@ -3377,21 +3397,31 @@ caller to somebody else.
 
 An agent on a call promises to call back on Thursday, or in wrap writes up that the customer wants
 a callback once the refund lands. The follow-up goes on the calendar, and the platform owns the
-calendar: `schedule` asks the provider to put it there.
+calendar: `schedule` asks the provider to put it there. A chat or an email agent promises a
+callback as often, so the control is on every channel.
 
 ```ts
-// From the call, or from its wrap: the time, and a note where the agent wrote one.
+// From the call or the conversation, or from its wrap: the time, and a note where the agent wrote one.
 { type: "schedule", at: "2026-08-28T10:00:00Z", note: "Call back about the refund" }
 ```
 
 `schedule` is gated by the `schedule` capability and issuable in `in-progress`, `paused` or
 `completing` (`command.phase.interaction`): a follow-up is promised on the call and written up in
-wrap alike, and the task names the party it is for. `applied` says the provider has taken it; the
-activity itself arrives on `calendar-updated`, which is the provider's word that it stands, as
-every calendar entry does. The command carries a time and a note and nothing else
+wrap alike, and the task names the party it is for. It lands on the calendar, so a task may offer
+it only under a manifest that declares the `calendar` idle capability
+(`task.capability.calendar.required`), as a control that dials needs `dialOutcomes`; a locked
+`schedule` is still a declared one. The command carries a time and a note and nothing else
 (`command.schedule.at`, `command.schedule.note`, `command.field`): what the platform makes of a
 follow-up -- a campaign record, a reminder, a scheduled dial -- is its own, and the agent sees it
 on the calendar.
+
+**`applied` says the follow-up is on the calendar**, and the `calendar-updated` that shows it
+follows within the manifest's `settleMs`, as a `task-ended` follows an applied `complete`. Past
+the bound the agent application calls `snapshot()`: a calendar carrying an activity at that instant
+clears the wait; one without it shows the follow-up as unsettled -- "Scheduled... the provider has
+not confirmed" -- naming the command. The drive schedules one follow-up where the task offers it,
+at a time it takes from the provider's own publication, and holds the provider to the same bound
+(`drive.schedule.unsettled`).
 
 ### Chat capabilities
 
@@ -3399,6 +3429,7 @@ on the calendar.
 | --- | --- | --- |
 | `decline` | Pending-task button: Decline | The provider can decline a pending chat offer. Omni shows it only when local policy also permits declining. |
 | `hold` | Primary toggle: Hold | Omni may pause and resume the agent’s interaction in the chat. |
+| `schedule` | Secondary menu item: Schedule | Omni may put a follow-up for this party on the calendar, from the conversation or from its wrap. See **Scheduling a follow-up**. |
 | `outcomes` | Primary button: Complete | Omni may request task completion with a provider outcome and notes. |
 
 ### Email capabilities
@@ -3406,6 +3437,7 @@ on the calendar.
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
 | `decline` | Pending-task button: Decline | The provider can decline a pending email offer. Omni shows it only when local policy also permits declining. |
+| `schedule` | Secondary menu item: Schedule | Omni may put a follow-up for this party on the calendar, from the message or from its wrap. See **Scheduling a follow-up**. |
 | `outcomes` | Primary button: Complete | Omni may request task completion with a provider outcome and notes. |
 
 ### Custom capabilities
@@ -3748,6 +3780,14 @@ entry into `on-break`, excluding any `starting-after-task` wait. Omission means 
 duration was supplied. Neither duration expiry nor an overdue indication authorizes the agent application
 or provider to end the break, restore availability, or route work to the agent.
 
+**A forced break is the provider's act.** A lead's `force-break` is a command to the provider,
+which forces the break on the member; `by` names the lead who asked it to. A break the platform
+imposed on its own -- a schedule, a compliance hold -- says `by: "provider"`, and is the platform's
+to lift: a lead's `end-forced-break` on it is refused before it is sent
+(`team.command.endForcedBreak.provider`), and a provider that receives one answers `failed` with
+`omni.break-forced-by-provider`. The desk offers End forced break on a member only where
+`forced.by` names a lead.
+
 **A lead lifting the restriction does not resume the agent.** On an applied
 `end-forced-break`, the provider clears `BreakState.forced` while preserving the current
 `on-break` or `starting-after-task` status and `activeReasonId`. This command cannot publish
@@ -3766,14 +3806,21 @@ An agent application may display the expected duration. A countdown requires an 
 a received snapshot, replay or reconnect is not a new start and cannot restart the duration.
 Without that evidence, show the duration without inventing a start or return time.
 
-A break applies to the **agent**, not to one provider. When a provider forces one, Omni immediately
-requests a break on every other connected provider, or they would keep routing work to somebody who
-is not there. On those providers it is the agent's own request, made through `requestBreak` like
-any other, and the provider grants or denies it as its policy says. **The agent application
-guarantees the agent cannot cancel those requests, or end the breaks they become,** while the
-forced break stands: the agent did not ask for them, and a break one provider imposed is not one
-the agent may lift on another. When the forcing provider ends the forced break, the agent
-application ends the follow-on breaks it made. Providers should expect that follow-on request.
+A break applies to the **agent**, not to one provider. When a provider forces one, Omni stops the
+agent everywhere else at once, and not by asking: it states `setCapacity({ count: 0 })` on every
+other usable provider holding capacity, which is taken and never refused, and which their team
+lists show as `elsewhere`. Nobody on those providers can deny it, and the agent cannot cancel it,
+because there is nothing to cancel: a break request on them would be the agent's own to withdraw
+and a lead's to refuse, and a forced break is neither. When the forcing provider ends the forced
+break and the agent resumes there, the agent application restates its capacity on the rest. A
+provider whose login is not usable is left alone, as a break attempt leaves it;
+`assertForcedBreakStopsTheRest` holds an agent application to this set. **The provider keeps its
+shift totals true.** A member held elsewhere is one the provider sees -- `elsewhere` is a state it
+publishes -- and the day's `shift` is its own account of the day, so the time the agent was
+stopped for a break forced on another provider is the provider's to count, as a break of a kind
+its platform has, or introduces, for exactly this. A `breakSeconds` that leaves it out is a total
+the provider knew to be short, and **Never report a value you cannot observe** cuts the other way
+here: the provider observed it.
 
 `ForcedBreak.by` says who forced it: a lead, by user id, or `provider` where the platform itself
 did -- on its own rule, a schedule, a compliance hold. The agent sees who, and `getUserDetails()`
@@ -4241,7 +4288,7 @@ assignment from the member alone.
 | `{ type: "decide-break-request", memberId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
 | `{ type: "set-break-policy", policy }` | `approval-required`, `automatically-approved`, or `requests-suspended`. |
 | `{ type: "force-break", memberId, reasonId?, reason?, expectedDurationMs? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. Optional `expectedDurationMs` is advisory and is published on the resulting forced break. |
-| `{ type: "end-forced-break", memberId }` | Lifts the forced-break restriction, whoever forced it, by clearing `BreakState.forced`. The committed break continues; only the agent resumes work. |
+| `{ type: "end-forced-break", memberId }` | Asks the provider to lift a forced-break restriction a lead asked for, by clearing `BreakState.forced`; one the platform imposed is its own to lift (`team.command.endForcedBreak.provider`, `omni.break-forced-by-provider`). The committed break continues; only the agent resumes work. |
 | `{ type: "join", memberId, assignmentId? }` | Answers the member's request: the provider bridges the lead's channel into the call. See **Lead assist**. |
 | `{ type: "decline", memberId, assignmentId?, reason? }` | Refuses the member's request. |
 | `{ type: "listen", memberId, assignmentId? }` | The lead's channel joins the member's call unasked, in silence. See **Listening to a call**. |
@@ -4756,9 +4803,9 @@ declared:
 | `conference` with `action: "remove"` | The `conference` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
 | `decline` | The `decline` capability on any channel, **and** Omni local policy permitting it. One word for refusing an offer, whatever the channel. |
 | `dial` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
-| `complete` | A wrap to cut short: any task but one with `wrapAllowance: 0`, under either completion mode (`command.complete.wrapAllowance`). The `outcomes` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. What travels is what the capability published: a code from its list where it has one (`command.complete.outcome.unknown`), a code at all where it requires one (`.outcome.required`), notes as it said (`.notes.required`, `.notes.unexpected`), and neither where the task declares no outcomes (`.outcome.unexpected`). |
+| `complete` | A wrap to cut short: any task but a `provider-automatic` one with `wrapAllowance: 0`, under either completion mode (`command.complete.wrapAllowance`). The `outcomes` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. What travels is what the capability published: a code from its list where it has one (`command.complete.outcome.unknown`), a code at all where it requires one (`.outcome.required`), notes as it said (`.notes.required`, `.notes.unexpected`), and neither where the task declares no outcomes (`.outcome.unexpected`). |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
-| `schedule` | The `schedule` capability, in `in-progress`, `paused` or `completing`: a follow-up is promised on the call and written up in wrap alike. |
+| `schedule` | The `schedule` capability, on any channel, in `in-progress`, `paused` or `completing`: a follow-up is promised on the call and written up in wrap alike. The manifest declares `calendar` for it to land on. |
 | `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with status `requested`. |
 | `conference` with `action: "add"` | Its capability, and a `destinationId` the directory offered: the id Omni sends is the id the provider published (`command.destination.unknown`). |
 | `custom` | A control the task published under `capabilities.custom`, by its `id` (`command.capability.custom`), carrying a non-empty string for each `required` prompt field and strings for any optional fields supplied (`command.custom.prompt`). A toggle carries its target `on` boolean (`command.custom.on`). |
@@ -5170,7 +5217,7 @@ take-over as it follows an `end-call` -- see **Lead assist**.
 A successful `complete` command does not clear the task. Omni waits for `task-ended`,
 and not for ever: `applied` to a `complete` says the
 provider has completed the task, and its `task-ended` follows within the
-manifest's `completionSettleMs`. A provider never answers `applied` for a completion it has not yet
+manifest's `settleMs`. A provider never answers `applied` for a completion it has not yet
 performed. Past the bound the agent application calls `snapshot()`: a snapshot still carrying the task is a task
 held open by a provider that said it was done, and the desk shows it as unsettled -- "Completing...
 the provider has not confirmed" -- naming the command; a snapshot no longer carrying it clears the
@@ -5515,6 +5562,7 @@ cannot be established from TypeScript structure alone.
 | `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a forced break arriving in effect with `forced`. The harness applies the same rules after the connect snapshot. |
 | `assertAudioFollowsTheTask(envelopes, snapshot?)` | The audio follows the task and never decides it: every task is introduced once, `task-audio-started` and `task-audio-ended` alternate on work that has begun, audio ends only where it arrived, and what follows the audio ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no audio satisfies it by never testing it — pair it with the assertion that the audio end is present. |
 | `assertBreakAttemptProviders(candidates, asked)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
+| `assertForcedBreakStopsTheRest(forcedOn, candidates, stopped)` | A forced break on one provider stops the agent everywhere else: capacity zero stated on every other usable provider holding capacity, nothing on the forcing one, nothing on a dead login. See **Forced breaks**. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `on-break` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
 | `assertWrapTimeout(task, audioEndedAt, deadline, toleranceMs?)` | The wrap deadline equals audio end plus the task allowance, within a tolerance that defaults to 1000ms; a task with no allowance has no deadline, and one observed is the violation. |

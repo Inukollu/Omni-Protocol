@@ -102,7 +102,7 @@ const manifest = (over: Record<string, unknown> = {}) => ({
   channel: "voice",
   supportedProtocolVersions: [1],
   authenticationMethods: ["credentials"],
-  completionSettleMs: 5000,
+  settleMs: 5000,
   // A voice manifest says which phones it supports; any other channel says nothing.
   ...(over.channel !== undefined && over.channel !== "voice" ? {} : { phones: ["softphone"] }),
   ...over,
@@ -284,7 +284,16 @@ describe("validateTask", () => {
     expect(caps({ schedule: true })).toEqual([]);
     expect(caps({ schedule: { lockedBy: "team" } })).toEqual([]);
     expect(caps({ schedule: { destinations: [] } })).toEqual(["task.capability.value"]);
-    expect(rules(validateTask(task({ channel: "chat", capabilities: { schedule: true } }), { channel: "chat" }))).toEqual(["task.capability.channel"]);
+    // A follow-up is promised in a chat or an email as on a call: schedule is a control on every channel.
+    expect(rules(validateTask(task({ channel: "chat", capabilities: { schedule: true } }), { channel: "chat" }))).toEqual([]);
+    expect(rules(validateTask(task({ channel: "email", capabilities: { schedule: true } }), { channel: "email" }))).toEqual([]);
+    // And lands on the calendar, so the manifest has to declare one; a locked schedule is still a declared one.
+    const scheduling = task({ capabilities: { schedule: true } });
+    expect(rules(validateSnapshot(snapshot({ tasks: [scheduling], calendar: [] }), manifest({ idleCapabilities: { calendar: true } })))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [scheduling] }), manifest()))).toEqual(["task.capability.calendar.required"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { schedule: { lockedBy: "team" } } })] }), manifest()))).toEqual(["task.capability.calendar.required"]);
+    expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: scheduling }), manifest()))).toEqual(["task.capability.calendar.required"]);
+    expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: scheduling }), manifest({ idleCapabilities: { calendar: true } })))).toEqual([]);
     // A chat task has no recording to lock; the channel rule speaks first.
     expect(rules(validateTask(task({ channel: "chat", capabilities: { recording: { lockedBy: "team" } } }), { channel: "chat" }))).toEqual(["task.capability.channel"]);
   });
@@ -954,7 +963,11 @@ describe("validateEventEnvelope", () => {
     expect(ended({ type: "cancelled" })).toEqual(["event.taskEnded.outcome.cancelled.by"]);
     // Only the phases in which somebody is still being waited on can expire.
     expect(ended({ type: "expired", phase: "pending" })).toEqual([]);
+    expect(ended({ type: "expired", phase: "confirmed" })).toEqual([]);
     expect(ended({ type: "expired", phase: "in-progress" })).toContain("event.taskEnded.outcome.expired");
+    // Nothing expires a preview: the provider dials, the desk dials, or it waits. Withdrawn, it is cancelled by the provider.
+    expect(ended({ type: "expired", phase: "preview" })).toEqual(["event.taskEnded.outcome.expired"]);
+    expect(ended({ type: "cancelled", by: "provider", reason: "Campaign closed" })).toEqual([]);
     expect(ended({ type: "failed", failure: { code: "x", message: "y", retryable: false } })).toEqual([]);
     expect(ended({ type: "failed" })).toContain("event.taskEnded.outcome.failed");
     expect(ended({ type: "vanished" })).toContain("event.taskEnded.outcome.type");
@@ -1035,10 +1048,10 @@ describe("validateHistoryReport", () => {
     expect(rules(validateManifest(manifest({ runningStepReports: true })))).toEqual([]);
     expect(rules(validateManifest(manifest({ runningStepReports: false })))).toEqual(["manifest.runningStepReports"]);
     // The completion bound is stated by every provider, as a positive whole number of milliseconds.
-    expect(rules(validateManifest(manifest({ completionSettleMs: 5000 })))).toEqual([]);
-    expect(rules(validateManifest(manifest({ completionSettleMs: 0 })))).toEqual(["manifest.completionSettleMs"]);
-    expect(rules(validateManifest(manifest({ completionSettleMs: 1.5 })))).toEqual(["manifest.completionSettleMs"]);
-    expect(rules(validateManifest({ ...manifest(), completionSettleMs: undefined }))).toEqual(["manifest.completionSettleMs"]);
+    expect(rules(validateManifest(manifest({ settleMs: 5000 })))).toEqual([]);
+    expect(rules(validateManifest(manifest({ settleMs: 0 })))).toEqual(["manifest.settleMs"]);
+    expect(rules(validateManifest(manifest({ settleMs: 1.5 })))).toEqual(["manifest.settleMs"]);
+    expect(rules(validateManifest({ ...manifest(), settleMs: undefined }))).toEqual(["manifest.settleMs"]);
     expect(rules(validateResult({ status: "recorded", at: "2026-09-11T00:00:00Z" }, "recordStep"))).toEqual([]);
     expect(rules(validateResult({ status: "recorded" }, "recordStep"))).toEqual(["result.recordStep.at"]);
     expect(rules(validateResult({ status: "applied" }, "recordStep"))).toEqual(["result.status"]);
@@ -1237,8 +1250,9 @@ describe("the other direction, everywhere", () => {
     expect(under({ completionMode: "provider-automatic", wrapAllowance: 30 })).toEqual(["task.outcomes.required.mode"]);
     // Optional outcomes may ride on a task the provider completes itself: the agent gives one if in time.
     expect(rules(validateTask(task({ capabilities: { outcomes: { codes } }, completionMode: "provider-automatic", wrapAllowance: 30 }), voice))).toEqual([]);
-    // No wrap, nowhere to take a code: outcomes and wrapAllowance 0 do not go together, whatever the policy.
-    expect(under({ completionMode: "agent-command", wrapAllowance: 0 })).toEqual(["task.outcomes.wrapAllowance"]);
+    // No wrap, nowhere to take a code: provider-automatic with wrapAllowance 0 publishes no outcomes, whatever the policy.
+    // Under agent-command the allowance is the expected wrap, shown and never acted on: the agent completes when done, code and all.
+    expect(under({ completionMode: "agent-command", wrapAllowance: 0 })).toEqual([]);
     expect(rules(validateTask(task({ capabilities: { outcomes: true }, completionMode: "provider-automatic", wrapAllowance: 0 }), voice))).toEqual(["task.outcomes.wrapAllowance"]);
     expect(rules(validateTask(task({ capabilities: { hold: true }, completionMode: "provider-automatic", wrapAllowance: 0 }), voice))).toEqual([]);
     expect(rules(validateTask(task({ capabilities: { outcomes: true }, completionMode: "provider-automatic", wrapAllowance: 30 }), voice))).toEqual([]);
@@ -1463,11 +1477,14 @@ describe("rules that had no test", () => {
 
   it("event timestamps, outcomes, and status messages", () => {
     const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
-    const offer = { type: "task-offered", task: task({ phase: "pending", acceptance: "consent" }) };
-    // How long the offer stands is stated as seconds from the event, never as an instant to compare clocks against.
-    expect(check({ ...offer, expiresInSeconds: 30 })).toEqual([]);
-    expect(check({ ...offer, expiresInSeconds: 0 })).toEqual([]);
-    for (const bad of ["soon", "2026-08-21T09:01:00Z", 1.5, -1]) expect(check({ ...offer, expiresInSeconds: bad })).toEqual(["event.taskOffered.expiresInSeconds"]);
+    const offer = (over: Record<string, unknown> = {}) => ({ type: "task-offered", task: task({ phase: "pending", acceptance: "consent", ...over }) });
+    // How long the offer has left rides on the pending task, as seconds from the publication, so a reconnect snapshot restates it.
+    expect(check(offer({ expiresInSeconds: 30 }))).toEqual([]);
+    expect(check(offer({ expiresInSeconds: 0 }))).toEqual([]);
+    for (const bad of ["soon", "2026-08-21T09:01:00Z", 1.5, -1]) expect(check(offer({ expiresInSeconds: bad }))).toEqual(["task.pending.expiresInSeconds"]);
+    expect(check({ ...offer(), expiresInSeconds: 30 })).toEqual(["event.taskOffered.expiresInSeconds.unexpected"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ phase: "pending", acceptance: "consent", expiresInSeconds: 18 })] }), manifest()))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "confirmed", expiresInSeconds: 18 }), { channel: "voice" }))).toEqual(["task.pending.expiresInSeconds.unexpected"]);
     const ended = (outcome: unknown) => check({ type: "task-ended", assignmentId: "alloc-42", outcome });
     expect(ended({ type: "cancelled", by: "party" })).toEqual([]);
     // A take-over names the lead who took the call, by user id: a lead is not a directory item.
@@ -1917,6 +1934,8 @@ describe("validateTaskCommand", () => {
     expect(rules(validateTaskCommand({ type: "schedule", at: "tomorrow" }))).toEqual(["command.schedule.at"]);
     expect(rules(validateTaskCommand({ type: "schedule", at: since, note: "" }))).toEqual(["command.schedule.note"]);
     expect(rules(validateTaskCommand({ type: "schedule", at: since, dialId: "dial-2" }))).toEqual(["command.field"]);
+    expect(rules(validateTaskCommand({ type: "schedule", at: since }, task({ channel: "chat", capabilities: { schedule: true } })))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "schedule", at: since }, task({ channel: "email", capabilities: { schedule: true }, phase: "completing" })))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "conference", action: "add", destinationId: "tier2" }))).toEqual(["command.conference.dialId"]);
     expect(rules(validateTaskCommand({ type: "conference", action: "remove", party: true }))).toEqual([]);
@@ -2077,7 +2096,8 @@ describe("validateTaskCommand", () => {
     // The agent may finish early under either mode; only a task with no wrap at all has nothing to complete.
     expect(cmd({ type: "complete" }, task({ completionMode: "provider-automatic", wrapAllowance: 10 }))).toEqual([]);
     expect(cmd({ type: "complete" }, task({ completionMode: "provider-automatic", wrapAllowance: 0 }))).toEqual(["command.complete.wrapAllowance"]);
-    expect(cmd({ type: "complete" }, task({ completionMode: "agent-command", wrapAllowance: 0 }))).toEqual(["command.complete.wrapAllowance"]);
+    // Under agent-command the allowance is the expected wrap: the task waits for complete however long it takes.
+    expect(cmd({ type: "complete" }, task({ completionMode: "agent-command", wrapAllowance: 0 }))).toEqual([]);
     expect(cmd({ type: "complete" }, task({ completionMode: "agent-command", wrapAllowance: 10 }))).toEqual([]);
   });
 
@@ -2355,10 +2375,11 @@ describe("history and assignment API migration", () => {
 
   it("requires the new completion bound and rejects mixed old/new manifests", () => {
     expect(validateManifest(manifest())).toEqual([]);
-    expect(rules(validateManifest(manifest({ completionSettleMs: undefined, disposalSettleMs: 5000 }))))
-      .toContain("manifest.completionSettleMs");
+    expect(rules(validateManifest(manifest({ settleMs: undefined, disposalSettleMs: 5000 }))))
+      .toContain("manifest.settleMs");
+    expect(rules(validateManifest(manifest({ completionSettleMs: 5000 })))).toEqual(["manifest.settleMs.renamed"]);
     expect(rules(validateManifest(manifest({ disposalSettleMs: 5000 }))))
-      .toContain("manifest.completionSettleMs.renamed");
+      .toContain("manifest.settleMs.renamed");
   });
 });
 

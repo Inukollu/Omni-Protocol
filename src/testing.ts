@@ -1704,6 +1704,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     const own = validateTaskCommand(command, latestTask(), `drive.command.${String(command.type)}`, {
       levels: effectiveLevels(drive.manifest.orgLevels).map(level => level.id),
       dialOutcomesDeclared: drive.manifest.dialOutcomes !== undefined,
+      calendarDeclared: drive.manifest.idleCapabilities?.calendar === true,
       autoAcceptTasks: drive.context.autoAcceptTasks,
     });
     found.push(...own);
@@ -1858,6 +1859,34 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       }
     }
   }
+  // 4a. Schedule a follow-up, where the task offers it: applied says it is on the calendar, and the
+  // calendar-updated that shows it is owed within the manifest's bound. The time is the provider's
+  // own: a day after the instant it published the offer, so no clock of the runner's is read.
+  if (latestTask().phase === "in-progress" && offers("schedule")) {
+    const publishedAt = drive.events.slice(0, cursor).reverse().find(envelope => {
+      const event = envelope.event as Record<string, unknown>;
+      return (event.type === "task-offered" || event.type === "task-updated") && isTask(event.task) && event.task.assignmentId === taskId;
+    })?.occurredAt;
+    const at = new Date(Date.parse(String(publishedAt ?? "2026-01-01T00:00:00Z")) + 24 * 60 * 60 * 1000).toISOString();
+    if (await send({ type: "schedule", at, note: "Follow-up promised on the call" }) !== undefined) {
+      ruleEvaluated("drive.schedule.unsettled");
+      const settle = Number(drive.manifest.settleMs);
+      const carries = (calendar: unknown): boolean => Array.isArray(calendar) && calendar.some(activity => isRecord(activity) && activity.startsAt === at);
+      let unsettled = false;
+      const shown = await waitFor("a calendar-updated carrying the follow-up", envelope => {
+        const event = envelope.event as Record<string, unknown>;
+        return event.type === "calendar-updated" && carries(event.calendar) ? event : undefined;
+      }, cursor, { ms: settle, onExpiry: () => { unsettled = true; } });
+      if (shown === undefined && unsettled) {
+        let resync: unknown;
+        try { resync = await drive.connection.snapshot(); } catch (error) { refuse("drive.command.rejected", "drive.schedule", `snapshot() after an unsettled schedule rejected: ${String(error)}`); }
+        if (!(isRecord(resync) && carries(resync.calendar))) {
+          refuse("drive.schedule.unsettled", "drive.schedule",
+            `schedule was applied and ${settle}ms later no calendar-updated carries a follow-up at ${at}, and a snapshot does not either: applied says the follow-up is on the calendar, and it is not`);
+        }
+      }
+    }
+  }
   // 5. End the call, where the agent may -- with the microphone muted, as agents do. The leg left
   // open at audio end is the provider's to close, since the provider knows the instant the audio
   // ended; the host's own closing report can only follow what it hears, is answered recorded, and
@@ -1905,7 +1934,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // provider. A conversation has no audio to end and no completing phase to wait for: a chat or an
   // email, and a voice task offering no end-call, is completed from where it stands.
   const completable = latestTask().phase === "completing" || latestTask().phase === "in-progress" || latestTask().phase === "paused";
-  if (latestTask().wrapAllowance !== 0 && completable) {
+  if (!(latestTask().completionMode === "provider-automatic" && latestTask().wrapAllowance === 0) && completable) {
     const command: Record<string, unknown> = { type: "complete" };
     const outcomes = isRecord(latestTask().capabilities) ? (latestTask().capabilities as Record<string, unknown>).outcomes : undefined;
     if (isRecord(outcomes) && outcomes.required === true && Array.isArray(outcomes.codes) && isRecord(outcomes.codes[0])) {
@@ -1916,7 +1945,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       // the manifest stated. Past it the host resyncs: a snapshot still carrying the task is a task
       // held open by a provider that said it was done, and the desk shows it as unsettled.
       ruleEvaluated("drive.completion.unsettled");
-      const settle = Number(drive.manifest.completionSettleMs);
+      const settle = Number(drive.manifest.settleMs);
       let unsettled = false;
       const end = await ended({ ms: settle, onExpiry: () => { unsettled = true; } });
       if (end !== undefined) await storeReleased();
@@ -2134,6 +2163,32 @@ export interface BreakCandidate {
 
 const usableLogin = (status: AuthenticationState["status"]): boolean =>
   status === "authenticated" || status === "refreshing";
+
+/**
+ * A break one provider forces stops the agent everywhere: the host states a capacity of zero on
+ * every other usable provider holding capacity -- taken, never refused, and nothing the agent can
+ * cancel -- and on the forcing provider states nothing, since the break itself holds the agent
+ * there. A provider whose login is not usable is left alone, as a break attempt leaves it.
+ */
+export function assertForcedBreakStopsTheRest(forcedOn: string, candidates: readonly BreakCandidate[], stopped: readonly string[]): void {
+  if (!candidates.some(candidate => candidate.id === forcedOn)) throw new Error(`${forcedOn} is not a provider the host knows`);
+  const chosen = new Set(stopped);
+  for (const id of stopped) {
+    if (!candidates.some(candidate => candidate.id === id)) throw new Error(`${id} is not a provider the host knows`);
+  }
+  if (chosen.has(forcedOn)) throw new Error(`${forcedOn} forced the break and holds the agent itself: its capacity is not restated`);
+  for (const candidate of candidates) {
+    if (candidate.id === forcedOn) continue;
+    const expected = usableLogin(candidate.authentication) && candidate.holdsCapacity;
+    if (expected && !chosen.has(candidate.id)) {
+      throw new Error(`${candidate.id} can give the agent work and must be stopped: capacity 0 stated`);
+    }
+    if (!expected && chosen.has(candidate.id)) {
+      const why = usableLogin(candidate.authentication) ? "holds no capacity" : `is ${candidate.authentication}`;
+      throw new Error(`${candidate.id} ${why} and is not stopped: there is nothing to stop`);
+    }
+  }
+}
 
 /**
  * A break attempt asks every connected provider from which the agent can currently receive work.
