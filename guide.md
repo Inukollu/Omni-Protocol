@@ -474,11 +474,13 @@ type PreferenceResult =
 type Snapshot = {
   transport: TransportStatus;
   loginId: string;
+  providerTime?: IsoTimestamp;
   break: BreakState;
   tasks: Task[];
   taskCount: number;
   contacts?: Contact[];
   calendar?: ScheduledActivity[];
+  shift?: Shift;
   team?: TeamMembers;
 };
 
@@ -933,7 +935,7 @@ type BreakRequest = {
 
 type ForcedBreak = {
   by: UserId | "provider";
-  expectedDurationMs?: number;
+  expectedEndsInSeconds?: DurationSeconds;
 };
 
 type BreakState = {
@@ -975,8 +977,8 @@ type TeamMember = {
   since?: IsoTimestamp;
   break?: Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">;
   tasks?: MemberTask[];
-  listening?: MemberListening;
-  shift?: MemberShift;
+  listening?: MemberListening[];
+  shift?: Shift;
   request?: MemberRequest;
 };
 
@@ -1006,6 +1008,7 @@ type MemberTask<C extends Channel = Channel> = {
   : { onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
 
 type MemberListening = {
+  leadId: UserId;
   assignmentId: AssignmentId;
   mode: ListeningMode;
   since: IsoTimestamp;
@@ -1018,7 +1021,7 @@ type ShiftEvent = {
   kind: ShiftEventKind;
 };
 
-type MemberShift = {
+type Shift = {
   signedInAt: IsoTimestamp;
   signedOutAt?: IsoTimestamp;
   talkSeconds?: DurationSeconds;
@@ -1134,7 +1137,8 @@ type ProviderEvent =
   | { type: "team-member-removed"; memberId: UserId }
   | { type: "team-policies-updated"; policies: TeamPolicies }
   | { type: "contacts-updated"; contacts: Contact[] }
-  | { type: "calendar-updated"; calendar: ScheduledActivity[] };
+  | { type: "calendar-updated"; calendar: ScheduledActivity[] }
+  | { type: "shift-updated"; shift: Shift };
 
 type ProviderEventEnvelope = {
   id: string;
@@ -1626,7 +1630,7 @@ compile time.
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `deskPhone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call**. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome**. |
-| `timeCheck` | Optional `true`: implements `checkTime` for fresh provider-clock samples; agent application polling is independently opt-in. |
+| `timeCheck` | `true`: implements `checkTime` and states `providerTime` on every snapshot. Required of a provider that publishes an instant the desk renders as a running duration -- a member's `since`, a lead's `listening.since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts from the provider's clock (`manifest.timeCheck.required`); agent application polling is independently opt-in. See **Every screen counts from the provider's clock**. |
 | `timestampAuthority` | Optional `"provider"`: provider timestamps are final; agent application instants are advisory. Omission makes no trust promise. |
 | `runningStepReports` | The provider takes running reports of an agent application-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the agent application sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The agent application records what it performs**. |
 | `settleMs` | Required. How long after `applied` the wire shows what the provider did: the `task-ended` after a `complete`, the `calendar-updated` after a `schedule`. A positive whole number of milliseconds (`manifest.settleMs`). Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
@@ -2142,11 +2146,13 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | --- | --- |
 | `transport` | Current `TransportStatus` — whether this provider's transport can serve the login. Defined under **`transport-status`**. |
 | `loginId` | Identity of this login. It must match the connection context. |
+| `providerTime` | The provider's own instant of this read. Required of a provider that declares `timeCheck` (`snapshot.providerTime`), forbidden of one that does not (`snapshot.providerTime.unexpected`): a clock sample the desk counts durations from, saving it a `checkTime`. |
 | `break` | Complete break state, including status, whether the agent may ask, reasons, retry details, and any forced break. |
 | `tasks` | Complete set of tasks currently offered to or owned by this agent. |
 | `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
 | `calendar` | Required complete calendar contribution when the manifest declares `calendar`; `[]` clears it. Omitted only when it does not. |
+| `shift` | The agent's own day so far, as the provider counts it -- the same `Shift` their lead sees on the team member list, the same numbers from the same count. Replaced whole by `shift-updated`. Omitted only where the provider cannot say. See **The agent's day is on the wire**. |
 | `team` | Required `TeamMembers` when the login declares `capabilities.lead` and the lead has the team feature on, `members: []` when nobody is in it. Forbidden otherwise — the login is the permission, and a lead who turned the feature off gets nothing of the team. |
 
 ## Live connection
@@ -2798,6 +2804,11 @@ Migration from the earlier spellings:
 | schedule on voice alone | `schedule` on every channel, under a manifest that declares `calendar` (`task.capability.calendar.required`), bounded by `settleMs` (`drive.schedule.unsettled`) |
 | a forced break requesting breaks on the other providers | `setCapacity({ count: 0 })` on every other usable provider (`assertForcedBreakStopsTheRest`) |
 | end-forced-break on a break the platform imposed | refused: `team.command.endForcedBreak.provider`, `omni.break-forced-by-provider` |
+| ForcedBreak.expectedDurationMs | `expectedEndsInSeconds`: seconds left, restated (`break.forced.expectedEndsInSeconds`, `.expectedDurationMs.renamed`); the command keeps `expectedDurationMs` |
+| MemberShift; the day on the lead's list alone | `Shift`, on `Snapshot.shift` and `shift-updated` for the agent, on `TeamMember.shift` for the lead |
+| TeamMember.listening as this lead's one entry | `MemberListening[]`, every lead's, each with `leadId` (`team.member.listening.leadId`, `.unique`, `.empty`, `.entry`, `.heard`) |
+| a member's history trimmed on the lead's list | the record whole, as the member's desk holds it |
+| durations counted from the screen's clock | the provider's: `timeCheck` required of a provider publishing a running instant (`manifest.timeCheck.required`), `Snapshot.providerTime` with it (`snapshot.providerTime`, `.unexpected`) |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
 History and report rule names use `history` and `historyReport`; assignment rules use
@@ -3747,14 +3758,14 @@ The team break command formerly named release is now `end-forced-break`, and its
 `team.break.command.endForcedBreak`. The former release command and the interim end spelling are rejected without aliases.
 The agent’s `endBreak` now applies to forced breaks as well as requested breaks.
 
-`ForcedBreak` names who forced the break and may include an advisory `expectedDurationMs`.
-The agent must explicitly resume when ready. The retired endsAutomatically and endsAt fields
-are rejected, including when an expected duration is also provided.
-
-**Every forced break has a person behind it.** A lead or a manager forced it; there is no such
-thing as a break the platform forced on its own. Where a platform applies one automatically, it is
-executing a preference somebody configured, and that person is the owner of the action — `by` names
-them, not the machinery that carried it out.
+`ForcedBreak` names who forced the break and may say how long it is expected to run yet, as
+`expectedEndsInSeconds`: whole seconds from the publication that carries it, restated on every
+publication, so every screen -- the agent's, reloaded or not, and every lead's -- counts down the
+same number from receipt (`break.forced.expectedEndsInSeconds`). The duration the lead asked for
+travels on the `force-break` command alone; the state says what is left, and drops the field once
+it has run out. The agent must explicitly resume when ready. The retired endsAutomatically and
+endsAt fields are rejected, including when an expectation is also provided. Who forced it is
+`by`, as **A forced break is the provider's act** below sets out.
 
 Omni resolves the name to show with `getUserDetails()`, so a provider sends the identifier and never
 a display name.
@@ -3769,16 +3780,16 @@ For example:
 ```ts
 forced: {
   by: "manager-1042",
-  expectedDurationMs: 600000
+  expectedEndsInSeconds: 600
 }
 ```
 
 The agent application keeps **Resume** available for an agent on a forced break. The agent explicitly chooses
 Resume; the agent application sends `endBreak()` and follows the provider-confirmed state before resuming
-work. An expected duration is a positive finite number of milliseconds, measured from actual
-entry into `on-break`, excluding any `starting-after-task` wait. Omission means no expected
-duration was supplied. Neither duration expiry nor an overdue indication authorizes the agent application
-or provider to end the break, restore availability, or route work to the agent.
+work. The expectation is whole seconds still to run, restated on every publication; omission
+means none was stated, or it has run out. Neither its reaching zero nor an overdue indication
+authorizes the agent application or provider to end the break, restore availability, or route
+work to the agent.
 
 **A forced break is the provider's act.** A lead's `force-break` is a command to the provider,
 which forces the break on the member; `by` names the lead who asked it to. A break the platform
@@ -3802,9 +3813,9 @@ must correlate resumption to the authenticated agent's action; a state-only orde
 cannot establish the cause of a transition. The usual multi-provider end/reconciliation flow
 still applies, and work resumes only on confirmed provider state.
 
-An agent application may display the expected duration. A countdown requires an evidenced actual start;
-a received snapshot, replay or reconnect is not a new start and cannot restart the duration.
-Without that evidence, show the duration without inventing a start or return time.
+An agent application counts `expectedEndsInSeconds` down from receipt, on every publication that
+carries it, and shows nothing of it where the provider sends none. It invents no start and no
+return time, and nothing acts on the number reaching zero.
 
 A break applies to the **agent**, not to one provider. When a provider forces one, Omni stops the
 agent everywhere else at once, and not by asking: it states `setCapacity({ count: 0 })` on every
@@ -4210,10 +4221,10 @@ computes nothing. See **`team-updated`** and its companions.
 | `availability` | Required. What the member is doing now. |
 | `since` | Optional. When the current `availability` began — not when they signed in, and not when the team member list was read. |
 | `break` | Present only while the member has an outstanding break request. See **A member waiting for a break**. |
-| `tasks` | The member's open tasks as `MemberTask`s: the same task the member's desk holds, trimmed by the provider. The assignment, title, task type, phase, party, room and audio are what the lead reads; the task's history is carried in the same shape as on the member's desk, as much of it as the provider chooses to send; the workspace — controls, their source, browsers, completion terms — is the member's and travels only if the provider sends it. `[]` when the member holds none; omitted only where the provider cannot see them. |
-| `listening` | Present while this lead's channel is in this member's call — listening, coaching or joined — naming which of the member's calls by `assignmentId`, the `mode` they are heard in, and since when. Its appearance is what the lead's audio opens on. One member's call at a time (`team.listening.single`). |
+| `tasks` | The member's open tasks as `MemberTask`s: the same task the member's desk holds, trimmed by the provider. The assignment, title, task type, phase, party, room and audio are what the lead reads, and the task's record -- `history`, steps and totals -- travels whole, exactly as the member's desk holds it, so the lead's screen and the member's show the same record; only the workspace — controls, their source, browsers, completion terms — is the member's and travels only if the provider sends it. `[]` when the member holds none; omitted only where the provider cannot see them. |
+| `listening` | Every lead on this member's call — listening, coaching or joined — published to every lead alike: each entry names the lead by `leadId`, which of the member's calls by `assignmentId`, the `mode` they are heard in, and since when. The entry naming the signed-in lead is what their own audio opens on. Absent while nobody is on the call, never `[]` (`team.member.listening.*`); a lead is on one member's call at a time (`team.listening.single`), and a lead who is heard is also in the task's `onCall` (`team.member.listening.heard`). |
 | `request` | Present while the member is asking a lead to join one of their calls: which assignment, the note they wrote, since when. The call named is one their `tasks` carry (`team.member.request.assignment`). Absent when they are not asking. See **Lead assist**. |
-| `shift` | The member's own history for the day, about the person rather than any one call: `signedInAt`, `signedOutAt` once it has happened, today's totals as the provider counts them — `talkSeconds`, `holdSeconds`, `breakSeconds`, `tasksHandled`, each present only when the provider knows it — and the day's sign-in, sign-out and break `events`, oldest first. Omitted where the provider cannot say. |
+| `shift` | The member's own history for the day, about the person rather than any one call: `signedInAt`, `signedOutAt` once it has happened, today's totals as the provider counts them — `talkSeconds`, `holdSeconds`, `breakSeconds`, `tasksHandled`, each present only when the provider knows it — and the day's sign-in, sign-out and break `events`, oldest first. The same `Shift` the member's own snapshot carries, the same numbers from the same count. Omitted where the provider cannot say. |
 
 Each availability value means one thing:
 
@@ -4236,11 +4247,19 @@ by it, as a colleague signing in is. `team-member-removed` takes one off. Never 
 member, never a task of theirs on its own: a hold on a member's desk is that member republished
 whole on the lead's, and nothing else on the lead's screen moves.
 
+**The agent's day is on the wire.** The lead sees `shift` totals as the provider counts them, and
+the agent sees the same: `Snapshot.shift` and `shift-updated` carry the agent's own day in the same
+shape, from the same count, so "calls today: 12" is one number on both screens. The desk computes
+nothing of the day; `tasksHandled` moves when a task ends and `talkSeconds` when a leg closes, and
+the active call's running time is the screen's own until then, as **Every screen counts from the
+provider's clock** sets out.
+
 **Omit `since` rather than inventing one.** Omni renders it as a duration, so a timestamp
 synthesised from the adapter's own clock at seed time reads as "on task for 0 seconds" for
 everybody — worse than showing nothing, because it looks like data. Send it only when the provider
 knows when the state actually began. It times the current `availability`, so it moves every time
-that value does.
+that value does. And it is counted from the provider's clock, never the screen's, so a provider
+that publishes it declares `timeCheck` -- see **Every screen counts from the provider's clock**.
 
 **The login is the permission.** A team member list goes to a login that declares
 `capabilities.lead`, once the team feature is on, and to nobody else. Omni never decides who
@@ -4333,9 +4352,10 @@ executeTeam({ command: { type: "decline", memberId: "A-1", reason: "In a call" }
 ```
 
 **On `join` the provider bridges the lead's channel into the call.** The member's task moves to
-`leadAssist: { stage: "joined", leadId }`, the member on the team member list carries
-`listening: { assignmentId, mode: "join-call", since }`, and the lead's audio opens on it as
-**Listening to a call** describes. Nothing is a task on the lead's desk: a join is the lead's act on the team surface, not
+`leadAssist: { stage: "joined", leadId }` and its `onCall` gains the lead as an `agent`, since a
+lead who is heard is in the room; the member on the team member list carries
+`listening: [{ leadId, assignmentId, mode: "join-call", since }]`, and the lead's audio opens on
+it as **Listening to a call** describes. Nothing is a task on the lead's desk: a join is the lead's act on the team surface, not
 work assigned to them.
 
 **A lead is on one member's call at a time.** A `join` from a lead already on a call -- their own
@@ -4403,10 +4423,11 @@ history. The three modes determine who hears the lead:
 All three come with the `lead` flag; a centre reserves none of them per lead.
 
 **There is no team audio.** Audio is the agent's or the lead's, and the lead's audio while
-listening follows the provider's published state exactly as a task's does: `listening` on the
-member is the provider's word that the lead's channel is in the call. When it appears, the
-application opens `openAudio({ assignmentId })` on the lead's connection for the call it names,
-and plays the `CallAudio` returned; when it goes, the application closes it. Nothing else says
+listening follows the provider's published state exactly as a task's does: the entry naming this
+lead in `listening` on the member is the provider's word that the lead's channel is in the call.
+When it appears, the application opens `openAudio({ assignmentId })` on the lead's connection for
+the call it names, and plays the `CallAudio` returned; when it goes, the application closes it.
+Another lead's entry opens nothing: it is shown, and that is all. Nothing else says
 when the lead's audio is up, and a reload reopens it from the snapshot's team member list as a task
 carried with `audio: "started"` is reopened.
 
@@ -4417,13 +4438,15 @@ The flow, end to end:
 // 2. The lead's channel joins it in silence. Conditions: the lead's voice channel is free --
 //    not on a call, not listening elsewhere. Capacity is not involved: nothing is assigned.
 executeTeam({ command: { type: "listen", memberId: "A-1", assignmentId: "alloc-42" } })
-// 3. The provider publishes the member whole on team-member-updated; the member carries
-//    listening: { assignmentId: "alloc-42", mode: "listen", since }
-//    -- the application opens openAudio({ assignmentId: "alloc-42" }) on the lead's connection.
-// 4. The lead changes how they are heard; the member is published again with the new listening.mode. The audio stays open.
+// 3. The provider publishes the member whole on team-member-updated, to every lead; the member carries
+//    listening: [{ leadId: "L-9", assignmentId: "alloc-42", mode: "listen", since }]
+//    -- L-9's application opens openAudio({ assignmentId: "alloc-42" }) on its own connection; every
+//    other lead's shows L-9 on the call and opens nothing.
+// 4. The lead changes how they are heard; the member is published again with the entry's new mode. The audio stays open.
+//    join-call is heard by everyone, so the member's task is also republished with L-9 on onCall as an agent.
 executeTeam({ command: { type: "coach", memberId: "A-1" } })
 executeTeam({ command: { type: "join-call", memberId: "A-1" } })
-// 5. The lead leaves: the provider publishes the member without listening; the application closes the audio.
+// 5. The lead leaves: the provider publishes the member without L-9's entry, and the task without L-9 in the room; the application closes the audio.
 executeTeam({ command: { type: "leave", memberId: "A-1" } })
 // 6. The member's call ends: the same as leave, from the provider's side.
 // 7. The lead takes the call: the member loses listening no later than the offer, the application
@@ -4434,22 +4457,29 @@ executeTeam({ command: { type: "take-over-call", memberId: "A-1" } })
 // 8. A join on the member's request is the same flow entered at step 3 with mode: "join-call",
 //    and the member's task shows leadAssist: joined.
 // 9. A reload of the lead's application: the switch is sent again, the team-updated that follows
-//    still carries listening on the member, so the audio is reopened.
+//    still carries this lead's entry in listening on the member, so the audio is reopened.
 ```
 
-**`listening` on the member is the state**, restated on every change of mode, naming the call so
-the application knows which audio to open (`team.member.listening.assignmentId`, and one the
-member's tasks carry, `team.member.listening.assignment`), and a lead is on one member's call at a
-time (`team.listening.single`).
+**`listening` on the member is the state**, one entry per lead on the call, restated on every
+change of mode, naming the lead (`team.member.listening.leadId`, once per member,
+`team.member.listening.unique`) and the call, so the application knows which audio is its own to
+open (`team.member.listening.assignmentId`, and one the member's tasks carry,
+`team.member.listening.assignment`). Every lead sees every entry: a silent lead is hidden from
+the agent, never from the other leads and managers watching the same member on other screens.
+A lead is on one member's call at a time (`team.listening.single`).
 
 **A lead listens while holding no call of their own.** Omni offers Listen to a lead whose voice
 channel is free, and a provider answers a `listen` from one whose channel is not `failed`. That
 includes a lead on a break: a lead working as lead alone is on a break of a working kind, and
 listens through it.
 
-**Nothing reaches the member.** The member's task carries no trace of a listening lead in any
-mode: not on `onCall`, not in the record. Whether coaching is announced to the agent is the
-platform's business and travels on the audio, not on this wire.
+**A silent lead reaches nobody but the leads.** In `listen` and `coach` the member's task carries
+no trace of the lead: not on `onCall`, not in the record. Whether coaching is announced to the
+agent is the platform's business and travels on the audio, not on this wire. In `join-call`, and
+on a `join` answering a request, the lead is heard by everyone and is in the room: the task's
+`onCall` carries them as an `agent` by user id, on the member's desk and on every lead's copy of
+the task alike, and `leave` takes the entry off as it takes the channel off
+(`team.member.listening.heard`).
 
 ### A member waiting for a break
 
@@ -4931,6 +4961,24 @@ must specify their uncertainty and validity; elapsed time should use monotonic a
 jump invalidates the estimate. The optional check below samples provider time without changing event timestamps. Report
 source-measured durations where required; timestamp subtraction is not a substitute.
 
+#### Every screen counts from the provider's clock
+
+Two screens watching the same agent -- their own desk, their lead's, a manager's on another floor
+-- must show the same numbers. Delay between them is fine; arithmetic that differs is not. So
+nothing the desk shows is its own count, with one exception: the running duration of the active
+task or call, which each screen times from the moment it saw the call begin, and which two screens
+may therefore disagree on, since their clocks differ. Everything else comes from the wire.
+
+Durations off the active call -- how long a member has been `on-break` from their `since`, how
+long a lead has been listening, how long since `signedInAt` -- are counted from the provider's
+clock, never the screen's. The desk keeps the latest provider instant it has received -- a
+snapshot's `providerTime`, an envelope's `occurredAt`, a `checkTime` result -- with the monotonic
+elapsed time since receipt, and renders every such duration from that; a sample older than
+`maxSampleAgeMs` is refreshed with `checkTime`. Without a usable sample the desk shows the instant
+and no count. A provider that publishes any of these instants therefore declares `timeCheck`
+(`manifest.timeCheck.required`) and states `providerTime` on every snapshot
+(`snapshot.providerTime`). Two screens then differ by their delay and nothing else.
+
 #### Optional periodic provider time checks and agent application estimates
 
 A provider may declare `Manifest.timeCheck: true` and implement `Connection.checkTime(request)`.
@@ -5316,6 +5364,13 @@ the `contacts` idle capability.
 Replaces this provider's complete scheduled-activity contribution. It is emitted only when the manifest
 declares the `calendar` idle capability.
 
+### `shift-updated`
+
+The agent's own day, whole, replacing `Snapshot.shift`: emitted whenever a total moves -- a task
+ended, a break ended, a sign-out -- and never to say nothing changed. It carries the same `Shift`
+the agent's lead sees for them on the team member list, so the two screens show one day. See
+**The agent's day is on the wire**.
+
 ## Utilities
 
 ### `assignmentKey(providerId, assignmentId)`
@@ -5380,7 +5435,9 @@ carries that agent reports `team.member.self`, on a `team-member-updated` and a 
 reports `team.unentitled`, and a team event to such a login reports `event.team.capability`; given
 `leadFeatures: true`, a snapshot without a team reports `team.required`, and given `leadFeatures: false`,
 anything of the team reaching the lead reports `team.unexpected` or `event.team.features`. Without them those rules are not checked, because they cannot be.
-`exerciseAdapter` passes all three, holding the switch off until it has sent it.
+`exerciseAdapter` passes all three, holding the switch off until it has sent it. Given the manifest, a
+snapshot or event that carries an instant the desk renders as a running duration under a manifest
+without `timeCheck` reports `manifest.timeCheck.required`.
 
 `assertNoViolations(violations)` throws `ProtocolConformanceError` — which carries the full
 `violations` array — when the list is non-empty.

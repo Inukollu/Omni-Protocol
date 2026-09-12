@@ -24,10 +24,11 @@ import {
   type AgentPreference,
   type SetPreferenceRequest,
   type TeamPolicy,
-  type Snapshot,
   type Task,
   type TeamMembers,
   type ForcedBreak,
+  type Shift,
+  type Snapshot,
   type TaskBrowser,
   type TaskCommand,
   type OnCall,
@@ -386,7 +387,19 @@ export const askingMember: TeamMembers = { members: [{ id: "A-2", availability: 
 export const requestList: TeamMembers = { members: [], requests: [] };
 // A break the platform forced itself names no person: `provider` says so.
 export const providerForcedBreak: ForcedBreak = { by: "provider" };
-export const leadForcedBreak: ForcedBreak = { by: "L-9", expectedDurationMs: 600000 };
+export const leadForcedBreak: ForcedBreak = { by: "L-9", expectedEndsInSeconds: 600 };
+// @ts-expect-error renamed away: the state says how long is left; the duration asked for is on the lead's command.
+export const durationForcedBreak: ForcedBreak = { by: "L-9", expectedDurationMs: 600000 };
+// Every lead on a member's call, each by user id; the application opens its own audio on its own entry.
+export const twoLeadsListening: TeamMembers = { members: [{ id: "A-2", availability: "on-task", listening: [{ leadId: "L-9", assignmentId: "alloc-7", mode: "coach", since: "2026-08-21T09:04:00Z" }, { leadId: "L-4", assignmentId: "alloc-7", mode: "listen", since: "2026-08-21T09:05:00Z" }] }] };
+// @ts-expect-error renamed away: listening is every lead's, as an array naming each.
+export const oneLeadListening: TeamMembers = { members: [{ id: "A-2", availability: "on-task", listening: { assignmentId: "alloc-7", mode: "coach", since: "2026-08-21T09:04:00Z" } }] };
+// The agent's own day, on their snapshot and on its own event, in the shape their lead sees.
+export const myDay: Snapshot<"voice"> = { transport: "active", loginId: "session-1", providerTime: "2026-08-21T09:00:00Z", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0, shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4210, tasksHandled: 12 } };
+export const dayMoved: ProviderEvent<"voice"> = { type: "shift-updated", shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4482, tasksHandled: 13 } };
+export const memberDay: Shift = { signedInAt: "2026-08-21T08:58:12Z" };
+// @ts-expect-error renamed away: the day is one shape for the agent and their lead, Shift.
+export const formerMemberDay: MemberShift = { signedInAt: "2026-08-21T08:58:12Z" };
 // @ts-expect-error Somebody forced it: a lead by user id, or the provider.
 export const anonymousForcedBreak: ForcedBreak = {};
 // @ts-expect-error What the lead may do is on the login, not the team member list.
@@ -527,7 +540,7 @@ export const retiredBreakStatusField: import("../src/index.js").BreakState = { s
 // @ts-expect-error BreakApproval was renamed to BreakStatus without an alias.
 import type { BreakApproval } from "../src/index.js";
 
-export const advisoryForcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", expectedDurationMs: 600000 };
+export const advisoryForcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", expectedEndsInSeconds: 600 };
 // @ts-expect-error Forced breaks cannot declare automatic endings.
 export const automaticForcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAutomatically: true };
 // @ts-expect-error A fixed end timestamp cannot resume an agent.
