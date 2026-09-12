@@ -243,7 +243,7 @@ Capacity supersedes rather than accumulates: the latest value is the ceiling, an
 ordinary as an increase. A provider whose ceiling can only rise -- one that keeps the highest count
 it was ever told, or returns early on a small one -- cannot be told to take less work, and an agent application
 taking capacity away is answered `applied` while the work keeps coming. The harness moves the axis
-both ways after the drive, two then one then nought, and an offer after a lower count is caught
+both ways after the test, two then one then nought, and an offer after a lower count is caught
 against it (`stream.taskOffered.overCapacity`).
 
 **Capacity gates what the provider assigns, not what the agent starts.** A call placed from the

@@ -234,7 +234,7 @@ would otherwise find the next customer under a reused handle and act on them. A 
 of the task the adapter keeps, not a field held in memory beside it: it lives in the login's
 `store` with the task, or is derived from a platform handle that itself never reuses, so a rebuilt
 adapter comes back with the same assignment on the same task, or every late event it was minted to
-catch mismatches and the second adapter's snapshot no longer carries the task (`drive.reload.snapshot`).
+catch mismatches and the second adapter's snapshot no longer carries the task (`test.reload.snapshot`).
 
 Assignment, acceptance, and progress are distinct. Acceptance follows `autoAcceptTasks` and the
 task's `acceptance`, moving the task from `pending` to `confirmed`. The provider reports
@@ -369,7 +369,7 @@ Migration from the earlier spellings:
 | command.complete.mode | `command.complete.wrapAllowance`: `complete` under either mode, refused only on `provider-automatic` with no wrap |
 | expiresInSeconds on task-offered | `Task.expiresInSeconds`, in `pending` (`task.pending.expiresInSeconds`, `.unexpected`; `event.taskOffered.expiresInSeconds.unexpected`) |
 | the expired outcome naming preview | gone: nothing expires a preview; withdrawn, it is `cancelled` by the provider |
-| schedule on voice alone | `schedule` on every channel, under a manifest that declares `calendar` (`task.capability.calendar.required`), bounded by `settleMs` (`drive.schedule.unsettled`) |
+| schedule on voice alone | `schedule` on every channel, under a manifest that declares `calendar` (`task.capability.calendar.required`), bounded by `settleMs` (`test.schedule.unsettled`) |
 | a forced break requesting breaks on the other providers | `setCapacity({ count: 0 })` on every other usable provider (`assertForcedBreakStopsTheRest`) |
 | end-forced-break on a break the platform imposed | refused: `team.command.endForcedBreak.provider`, `omni.break-forced-by-provider` |
 | ForcedBreak.expectedDurationMs | `expectedEndsInSeconds`: seconds left, restated (`break.forced.expectedEndsInSeconds`, `.expectedDurationMs.renamed`); the command keeps `expectedDurationMs` |
@@ -383,6 +383,7 @@ Migration from the earlier spellings:
 | two clients on one login | the later wins; the first is ended with `recovery: "displaced"` |
 | the phone unspoken | `PhoneState` -- the device, its mute, its channels -- on `Snapshot.phone`, `phone-updated` and `TeamMember.phone`, from a manifest declaring `phoneStatus` (`snapshot.phone.required`, `.unexpected`, `phone.*`, `phone.channel.*`, `event.phone.capability`) |
 | the agent's readiness for the next call read into setCapacity | the agent's own queue: `capabilities.nextCall`, `requestNextCall`/`cancelNextCall`/`releaseLinedUp`, `Snapshot.nextCall` and `linedUp`, the `next-call` and `lined-up` events (`snapshot.nextCall.idle`, `nextCall.*`, `linedUp.*`) |
+| a harness that exercised an adapter, drove a call and evaluated rules | the harness reads as a test: `testAdapter`, `withCall`, `timeoutMs`, `notTested`, `rulesTested`, rules `test.*` (`test.timeout`, `test.offer.expired`, `test.preview.deadline`, ...) |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
 History and report rule names use `history` and `historyReport`; assignment rules use
@@ -592,7 +593,7 @@ duration with a later report. A later agent mute is a new leg, never a reopening
 leg, on its own clock, written when the provider takes the leg into its record, never an echo of
 the `at` the host reported: the host keeps the answer as the leg's identity from then on and names
 it on the closing report, and a provider that echoes the host's instant has assigned nothing
-(`drive.recordStep.identity`). Correlate the provider-published `muted` entry using that
+(`test.recordStep.identity`). Correlate the provider-published `muted` entry using that
 provider-selected `at` acknowledged for the current report key; a final `seconds` closes that leg
 under the history contract.
 This is identity matching, not reconciliation between clocks. An old closed entry, an unrelated
@@ -818,10 +819,10 @@ words are close in English and far apart on the desk: `nobody` is silence, `not-
 standing notice.
 
 One consequence for whoever builds the agent application: because a conformance run fails on `not-yet-read`, a
-conformant adapter never shows an agent application `not-yet-read` under test, and a clean `exerciseAdapter`
+conformant adapter never shows an agent application `not-yet-read` under test, and a clean `testAdapter`
 result says nothing about how the agent application renders it. That rendering is tested against a fixture --
 a task published under `not-yet-read` shows the notice, the same task under `queue` shows none --
-and never against an adapter, even in principle. `exerciseAdapter` treats a
+and never against an adapter, even in principle. `testAdapter` treats a
 task published under `not-yet-read` as a violation (`capabilitySource.notYetRead`), as it treats
 a diagnostic: a conformance run against a platform that cannot say what it permits fails loudly
 rather than passing with a note.
@@ -919,9 +920,9 @@ on the calendar.
 follows within the manifest's `settleMs`, as a `task-ended` follows an applied `complete`. Past
 the bound the agent application calls `snapshot()`: a calendar carrying an activity at that instant
 clears the wait; one without it shows the follow-up as unsettled -- "Scheduled... the provider has
-not confirmed" -- naming the command. The drive schedules one follow-up where the task offers it,
+not confirmed" -- naming the command. The test schedules one follow-up where the task offers it,
 at a time it takes from the provider's own publication, and holds the provider to the same bound
-(`drive.schedule.unsettled`).
+(`test.schedule.unsettled`).
 
 ### Custom capabilities
 

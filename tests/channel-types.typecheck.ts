@@ -585,3 +585,14 @@ import { validateDescribedUsers } from "../src/validation.js";
 
 // @ts-expect-error renamed away: LeadRequest went with the requests list; a member carries MemberRequest
 import type { LeadRequest } from "../src/index.js";
+
+// The harness reads as a test: testAdapter, its options withCall and timeoutMs, and a result's notTested and rulesTested.
+import { testAdapter, type TestAdapterOptions } from "../src/testing.js";
+export const testOptions: TestAdapterOptions = { withCall: true, timeoutMs: 5000 };
+export const testEntry: typeof testAdapter = testAdapter;
+// @ts-expect-error renamed away: the harness is testAdapter; nothing is exercised.
+import { exerciseAdapter } from "../src/testing.js";
+// @ts-expect-error renamed away: the option is withCall; the run is a test, not a drive.
+export const driveOption: TestAdapterOptions = { drive: true };
+// @ts-expect-error renamed away: the limit is timeoutMs.
+export const driveTimeout: TestAdapterOptions = { withCall: true, driveTimeoutMs: 5000 };
