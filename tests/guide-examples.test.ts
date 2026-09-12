@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import ts from "typescript";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -20,7 +20,7 @@ import { describe, expect, it } from "vitest";
 const PLACEHOLDERS = new Set(["adapter", "context", "createAcmeAuthentication", "createConnection", "execute", "executeTeam", "expect"]);
 
 const root = join(__dirname, "..");
-const guide = readFileSync(join(root, "guide.md"), "utf8");
+const GUIDE_FILES = ["guide.md", ...readdirSync(join(root, "guide")).filter(name => name.endsWith(".md")).sort().map(name => `guide/${name}`)];
 const work = join(root, "node_modules", ".cache", "guide-examples");
 const modules = { index: "index.ts", validation: "validation.ts", testing: "testing.ts" } as const;
 
@@ -30,9 +30,12 @@ const exported = (file: string): string[] =>
 const exports = Object.fromEntries(Object.entries(modules).map(([key, file]) => [key, exported(file)])) as Record<keyof typeof modules, string[]>;
 const source = (file: string) => `../../../src/${file.replace(/\.ts$/, ".js")}`;
 
-interface Block { line: number; body: string; declared: Set<string>; types: { name: string; generic: boolean; defaulted: boolean }[] }
+interface Block { file: string; line: number; body: string; declared: Set<string>; types: { name: string; generic: boolean; defaulted: boolean }[] }
+/** The compiled file's basename for a block, and the guide place it came from. */
+const nameOf = (block: Pick<Block, "file" | "line">): string => `${block.file.replace(/\.md$/, "").replace(/[^A-Za-z0-9]/g, "_")}_L${block.line}`;
+const placeOf = new Map<string, string>();
 
-const blocks: Block[] = [...guide.matchAll(/^```ts\n([\s\S]*?)^```/gm)].map(match => {
+const blocks: Block[] = GUIDE_FILES.flatMap(file => { const guide = readFileSync(join(root, file), "utf8"); return [...guide.matchAll(/^```ts\n([\s\S]*?)^```/gm)].map(match => {
   const body = match[1] as string;
   const declared = new Set<string>();
   const types: Block["types"] = [];
@@ -45,8 +48,10 @@ const blocks: Block[] = [...guide.matchAll(/^```ts\n([\s\S]*?)^```/gm)].map(matc
   for (const imported of body.matchAll(/^import (?:type )?\{([^}]*)\} from "@xema\/omni-protocol(?:\/[a-z]+)?";/gm)) {
     for (const name of (imported[1] as string).split(",")) declared.add(name.trim().replace(/^type /, "").split(" as ").pop() as string);
   }
-  return { line: guide.slice(0, match.index).split("\n").length + 1, body, declared, types };
-});
+  const block = { file, line: guide.slice(0, match.index).split("\n").length + 1, body, declared, types };
+  placeOf.set(nameOf(block), `${file}:${block.line}`);
+  return block;
+}); });
 
 /** The file compiled for one block: its own imports pointed at the source, the rest supplied, and the mirror checked. */
 function fileFor(block: Block, placeholders: readonly string[]): string {
@@ -87,7 +92,7 @@ const diagnostics = (output: string, status: number | null): Map<string, { code:
   if (status === null) throw new Error(`The guide compiler was terminated:\n${output}`);
   const errors = new Map<string, { code: string; text: string; line: number }[]>();
   for (const line of output.split("\n")) {
-    const match = /^(?:.*[\\/])?(L\d+)\.ts\((\d+),\d+\): error (TS\d+): (.*)$/.exec(line);
+    const match = /^(?:.*[\\/])?([A-Za-z0-9_]+_L\d+)\.ts\((\d+),\d+\): error (TS\d+): (.*)$/.exec(line);
     if (match) errors.set(match[1] as string, [...(errors.get(match[1] as string) ?? []), { code: match[3] as string, text: match[4] as string, line: Number(match[2]) }]);
     else if (line.trim() !== "") throw new Error(`Unexpected guide compiler output:\n${line}`);
   }
@@ -104,7 +109,7 @@ const compile = (): Map<string, { code: string; text: string; line: number }[]> 
 describe("the guide's examples compile", () => {
   it("reports compiler failures outside an example instead of accepting an empty error list", () => {
     expect(diagnostics("", 0).size).toBe(0);
-    expect(diagnostics("L12.ts(2,3): error TS2304: Cannot find name 'missing'.", 2).get("L12")).toHaveLength(1);
+    expect(diagnostics("guide_L12.ts(2,3): error TS2304: Cannot find name 'missing'.", 2).get("guide_L12")).toHaveLength(1);
     expect(() => diagnostics("error TS5058: The specified path does not exist.", 1)).toThrow("Unexpected guide compiler output");
     expect(() => diagnostics("", 1)).toThrow("exit code 1");
     expect(() => diagnostics("", null)).toThrow("terminated");
@@ -120,7 +125,7 @@ describe("the guide's examples compile", () => {
       include: ["*.ts"],
     }));
     const write = (placeholders: Map<string, string[]>) => {
-      for (const block of blocks) writeFileSync(join(work, `L${block.line}.ts`), fileFor(block, placeholders.get(`L${block.line}`) ?? []));
+      for (const block of blocks) writeFileSync(join(work, `${nameOf(block)}.ts`), fileFor(block, placeholders.get(nameOf(block)) ?? []));
     };
 
     // A fragment is a block that does not parse, and that is decided by the parser alone -- not
@@ -129,7 +134,7 @@ describe("the guide's examples compile", () => {
     // are taken out before the complete examples are checked.
     const fragments = new Set(blocks
       .filter(block => (ts.transpileModule(block.body, { reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.ES2022 } }).diagnostics ?? []).length > 0)
-      .map(block => `L${block.line}`));
+      .map(block => nameOf(block)));
     write(new Map());
     for (const name of fragments) rmSync(join(work, `${name}.ts`));
 
@@ -142,19 +147,19 @@ describe("the guide's examples compile", () => {
       if (missing.length > 0) placeholders.set(name, [...new Set(missing)]);
     }
     // A placeholder is a name the guide chose, not one the code dropped: every one is on the list.
-    const strangers = [...placeholders.entries()].flatMap(([name, names]) => names.filter(n => !PLACEHOLDERS.has(n)).map(n => `${n} (guide.md:${name.slice(1)})`));
+    const strangers = [...placeholders.entries()].flatMap(([name, names]) => names.filter(n => !PLACEHOLDERS.has(n)).map(n => `${n} (${placeOf.get(name) ?? name})`));
     expect(strangers).toEqual([]);
     for (const block of blocks) {
-      const name = `L${block.line}`;
+      const name = nameOf(block);
       if (!fragments.has(name) && placeholders.has(name)) writeFileSync(join(work, `${name}.ts`), fileFor(block, placeholders.get(name) ?? []));
     }
     const third = compile();
-    const wrong = [...third.entries()].map(([name, found]) => `guide.md:${name.slice(1)} — ${found.map(error => `${error.code} ${error.text} (line ${error.line})`).join("; ")}`);
+    const wrong = [...third.entries()].map(([name, found]) => `${placeOf.get(name) ?? name} — ${found.map(error => `${error.code} ${error.text} (line ${error.line})`).join("; ")}`);
     expect(wrong).toEqual([]);
 
     // The test is only as good as what it reaches: most blocks are complete examples and the
     // Shapes section declares dozens of mirrored types, and it says so.
-    const complete = blocks.filter(block => !fragments.has(`L${block.line}`));
+    const complete = blocks.filter(block => !fragments.has(nameOf(block)));
     // And the mirror is whole: every type the package exports is declared under Shapes, so a
     // type added to the code without a place in the guide is a failing build, not a gap found later.
     const declared = new Set(blocks.flatMap(block => block.types.map(type => type.name)));

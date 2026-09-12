@@ -9,6 +9,7 @@
     "dist",
     "README.md",
     "guide.md",
+    "guide",
     "LICENSE"
   ],
   "main": "./dist/index.js",
