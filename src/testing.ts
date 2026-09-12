@@ -8,7 +8,6 @@ import {
   type Connection,
   type Snapshot,
   type Task,
-  type TaskCompletion,
   type BreakStatus,
   type BrowserSessionKeyInput,
   type Channel,
@@ -2252,39 +2251,6 @@ export function assertBreakBeginsAfterTask(steps: readonly BreakOnTaskStep[]): v
   }
 }
 
-/**
- * Validates the deadline derived from audio end and the task's fixed wrap allowance.
- *
- * A task with no allowance has no deadline, so `observedDeadline` must then be `undefined`: a
- * host counting down what the provider left open is the violation, and so is a host counting
- * nothing down when the provider set a clock. `toleranceMs` absorbs scheduler jitter in a real
- * implementation; pass 0 to demand an exact match.
- */
-export function assertWrapTimeout(
-  task: Pick<TaskCompletion, "completionMode" | "wrapAllowance">,
-  audioEndedAt: string,
-  observedDeadline: string | undefined,
-  toleranceMs = 1_000,
-): void {
-  if (task.wrapAllowance === undefined) {
-    if (observedDeadline !== undefined) {
-      throw new Error(`Wrap deadline mismatch: the task states no allowance, so there is no deadline, received ${observedDeadline}`);
-    }
-    return;
-  }
-  if (observedDeadline === undefined) {
-    throw new Error(`Wrap deadline mismatch: the task allows ${task.wrapAllowance}s, but no deadline was observed`);
-  }
-  const ended = Date.parse(audioEndedAt);
-  const deadline = Date.parse(observedDeadline);
-  if (Number.isNaN(ended) || Number.isNaN(deadline)) throw new Error("Wrap scenario requires valid ISO-8601 times");
-  const expected = ended + task.wrapAllowance * 1_000;
-  if (Math.abs(deadline - expected) > toleranceMs) {
-    throw new Error(
-      `Wrap deadline mismatch: expected ${new Date(expected).toISOString()} within ${toleranceMs}ms, received ${observedDeadline}`,
-    );
-  }
-}
 
 /** One browser in one task of one provider. `providerId` is `Manifest.id`, never `displayName`. */
 export type BrowserIsolationScenario = BrowserSessionKeyInput;
