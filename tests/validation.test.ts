@@ -2214,7 +2214,8 @@ describe("validateTaskCommand", () => {
     for (const [command, state] of controls) {
       const on = (phase: string) => task({ ...voice, ...state, phase, ...(phase === "completing" ? { onCall: [] } : {}) });
       expect(cmd(command, on("in-progress")), `${JSON.stringify(command)} in-progress`).toEqual([]);
-      expect(cmd(command, on("paused")), `${JSON.stringify(command)} paused`).toEqual([]);
+      // Ending my part from hold would leave the caller in the hold with nobody coming back: end-call alone waits for resume.
+      expect(cmd(command, on("paused")), `${JSON.stringify(command)} paused`).toEqual((command as { type: string }).type === "end-call" ? ["command.endCall.held"] : []);
       // Once the call is over, the room is gone too: the phase names the gap first.
       for (const phase of ["pending", "confirmed", "preview", "completing"]) {
         expect(cmd(command, on(phase)), `${JSON.stringify(command)} ${phase}`).toContain("command.phase.interaction");

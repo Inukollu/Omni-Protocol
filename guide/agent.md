@@ -384,6 +384,7 @@ Migration from the earlier spellings:
 | the phone unspoken | `PhoneState` -- the device, its mute, its channels -- on `Snapshot.phone`, `phone-updated` and `TeamMember.phone`, from a manifest declaring `phoneStatus` (`snapshot.phone.required`, `.unexpected`, `phone.*`, `phone.channel.*`, `event.phone.capability`) |
 | the agent's readiness for the next call read into setCapacity | the agent's own queue: `capabilities.nextCall`, `requestNextCall`/`cancelNextCall`/`releaseLinedUp`, `Snapshot.nextCall` and `linedUp`, the `next-call` and `lined-up` events (`snapshot.nextCall.idle`, `nextCall.*`, `linedUp.*`) |
 | a harness that exercised an adapter, drove a call and evaluated rules | the harness reads as a test: `testAdapter`, `withCall`, `timeoutMs`, `notTested`, `rulesTested`, rules `test.*` (`test.timeout`, `test.offer.expired`, `test.preview.deadline`, ...) |
+| an `end-call` while the caller was on hold | refused: a `paused` task is resumed first (`command.endCall.held`), the desk shows End call disabled on hold, the provider answers `failed`, and the test names an adapter that ends from hold (`test.command.held`); `terminate-call` is not gated, it ends the caller's channel too |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
 History and report rule names use `history` and `historyReport`; assignment rules use
@@ -1005,7 +1006,7 @@ declared:
 | Command | What makes it available |
 | --- | --- |
 | `answer`, `accept` | Nothing. A task that was offered can be accepted, or offering it meant nothing. |
-| `end-call` | The `endCall` capability: ends my part, the caller continues. |
+| `end-call` | The `endCall` capability: ends my part, the caller continues. Never from hold: a `paused` task is resumed first (`command.endCall.held`), or the caller is left in the hold. |
 | `terminate-call` | The `terminateCall` capability: ends the whole call, every channel on it. |
 | `conference` with `action: "remove"` | The `conference` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
 | `decline` | The `decline` capability on any channel, **and** Omni local policy permitting it. One word for refusing an offer, whatever the channel. |
@@ -1020,7 +1021,8 @@ declared:
 
 **A control on the contact belongs to the interaction phases**, `in-progress` and `paused`:
 `hold`, `resume` and `pause`, `end-call` and `terminate-call`, every `conference` action, and
-every `lead-assist` action; `schedule` alone reaches into `completing`. These controls act within this agent's current interaction.
+every `lead-assist` action; `schedule` alone reaches into `completing`, and `end-call` alone stops
+short of `paused` (`command.endCall.held`), since ending my part from hold leaves the caller in it. These controls act within this agent's current interaction.
 In `completing`, that interaction has ended and its wrap work remains. The caller may still be in
 an IVR, queue or another agent's interaction, and other channels may remain connected. Completion
 of this interaction does not establish that the caller or bridge ended. The capability stays

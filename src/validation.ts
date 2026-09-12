@@ -2958,7 +2958,11 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       inPhase("command.phase.preview", "preview");
       break;
     case "hold": case "resume": case "pause": offered("hold"); interaction(); break;
-    case "end-call": offered("endCall"); interaction(); break;
+    case "end-call":
+      offered("endCall"); interaction();
+      // Ending my part with the caller on hold leaves them in the hold, with nobody coming back to them.
+      into.require(task.phase !== "paused", "command.endCall.held", path, "the caller is on hold: resume before ending your part");
+      break;
     case "terminate-call": offered("terminateCall"); interaction(); break;
     case "recording": {
       if (!offered("recording")) break;

@@ -1120,7 +1120,10 @@ export type VoiceTaskCommand =
   | { type: "dial"; dialId: DialId }
   | { type: "hold" }
   | { type: "resume" }
-  /** End the agent's channel and every channel the agent added; the caller continues on the provider's path. Gated by `endCall`. */
+  /**
+   * End the agent's channel and every channel the agent added; the caller continues on the provider's
+   * path. Gated by `endCall`, and never from hold: a `paused` task is resumed first (`command.endCall.held`).
+   */
   | { type: "end-call" }
   /** End the whole call at the provider: every channel on it, the agent's, the caller's and anyone else's. Gated by `terminateCall`. */
   | { type: "terminate-call" }

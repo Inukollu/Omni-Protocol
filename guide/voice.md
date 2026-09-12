@@ -258,6 +258,13 @@ provider. Two of them end the agent's part; they differ in what happens to the c
 conferenced colleague, a lead who joined -- end, and the caller continues on the path the
 provider decides: another IVR, a queue, a survey, or the end of the call. Gated by `endCall`.
 
+**Never from hold.** An `end-call` while the task is `paused` would leave the caller in the hold
+with nobody coming back to them, and the provider's path for a caller who continues never begins.
+So the caller is taken off hold first: the desk holds the command back while the task is `paused`
+(`command.endCall.held`) and shows End call disabled on hold, and a provider that receives it
+anyway answers `failed`. Resume, then end. `terminate-call` needs no such gate: it ends the
+caller's channel with the rest, held or not, and nobody is left waiting.
+
 **`terminate-call` ends the whole call.** Every channel on it ends at the provider: the agent's,
 the caller's, any colleague the agent added, and anyone else on the call. Nobody is left on the
 line. Gated by `terminateCall`, a separate permission, since ending a customer's call is a

@@ -1300,6 +1300,7 @@ describe("testAdapter tests one call", () => {
     writesLate?: boolean;
     /** A provider that writes the hold into its record and never closes it on resume. */
     leavesHoldOpen?: boolean;
+    endsFromHold?: boolean;
     /** A provider that restates the host's muted leg without its duration after the call is over. */
     leavesMuteOpen?: boolean;
     /** End-call moves the task to completing and publishes no task-audio-ended: the audio stays up through the wrap-up. */
@@ -1483,6 +1484,8 @@ describe("testAdapter tests one call", () => {
               if (held !== undefined && !script.leavesHoldOpen) held = { ...held, seconds: 5 };
               emit({ type: "task-updated", task: t({ phase: "in-progress", audio: "started", onCall: room }) }); return { status: "applied" };
             case "end-call":
+              // A conforming adapter refuses to end the agent's part with the caller on hold; one that applies it is the second gate failing.
+              if (phase === "paused" && !script.endsFromHold) return { status: "failed", failure: { code: "provider.on-hold", message: "Resume before ending", retryable: false } };
               if (script.completesAroundAudio) {
                 emit({ type: "task-updated", task: t({ phase: "completing", audio: "started", onCall: room }) });
                 return { status: "applied" };
@@ -1874,6 +1877,14 @@ describe("testAdapter tests one call", () => {
     const dropped = (await viaCall(testable({ neverEnds: "dropped" }))).violations;
     expect(dropped.map(v => v.rule)).toEqual(["test.completion.unsettled", "stream.taskOffered.unended"]);
     expect(dropped[0]!.message).toContain("a snapshot no longer carries alloc-77");
+  });
+
+  it("sends end-call while the caller is on hold, past the validator, and names an adapter that ends the agent's part from there", async () => {
+    // The conforming fixture refuses it, resumes and ends from in-progress, and the run is clean: the control in the same run.
+    expect((await viaCall(testable({}))).violations).toEqual([]);
+    // This one ends from hold: the caller is left in the hold, the test names it and goes on from completing.
+    const rules = (await viaCall(testable({ endsFromHold: true }))).violations.map(v => v.rule);
+    expect(rules).toEqual(["test.command.held"]);
   });
 
   it("sends hold once more after the call has ended, past the validator, and names an adapter that applies it", async () => {
