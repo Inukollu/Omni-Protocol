@@ -25,6 +25,7 @@ every cross-reference names the file it points into.
 | `guide/phone.md` | **The phone.** How the agent hears the call: softphone and desk phone, the station and its headset, opening the audio, the microphone and the record. |
 | `guide/chat.md` | **Chat.** What is true of a chat and of nothing else. |
 | `guide/email.md` | **Email.** What is true of an email and of nothing else. |
+| `guide/queue.md` | **The agent's own queue.** The next call, lined up for this agent while they finish the one they are on: the ask, the lined-up call, and the release. |
 | `guide/breaks.md` | **Breaks.** Asking for a break, a break forced on the agent, capacity, and one break across several providers. |
 | `guide/lead.md` | **Team leads.** The lead's own surface: the team member list, the lead's commands, lead assist, listening to a call. |
 
@@ -292,6 +293,7 @@ type UserCapabilities = {
   breaks?: true;
   preferences?: AgentPreference[];
   lead?: true;
+  nextCall?: true;
 };
 
 type AuthenticationState =
@@ -518,6 +520,8 @@ type Snapshot = {
   calendar?: ScheduledActivity[];
   shift?: Shift;
   phone?: PhoneState;
+  nextCall?: NextCallRequest;
+  linedUp?: LinedUpCall;
   team?: TeamMembers;
 };
 
@@ -1010,6 +1014,30 @@ type BreakCancelResult =
 type BreakEndResult =
   | { status: "ended" }
   | { status: "failed"; failure: ProtocolFailure };
+
+type NextCallRequest = {
+  since: IsoTimestamp;
+};
+
+type LinedUpCall = {
+  party?: Contact;
+  queue?: string;
+  queuedSince?: IsoTimestamp;
+  since: IsoTimestamp;
+  release?: true;
+};
+
+type NextCallResult =
+  | { status: "requested" }
+  | { status: "failed"; failure: ProtocolFailure };
+
+type NextCallCancelResult =
+  | { status: "cancelled" }
+  | { status: "failed"; failure: ProtocolFailure };
+
+type LinedUpReleaseResult =
+  | { status: "released" }
+  | { status: "failed"; failure: ProtocolFailure };
 ```
 
 ### Team
@@ -1027,6 +1055,8 @@ type TeamMember = {
   shift?: Shift;
   request?: MemberRequest;
   phone?: PhoneState;
+  nextCall?: NextCallRequest;
+  linedUp?: LinedUpCall;
 };
 
 type MemberRequest = {
@@ -1184,7 +1214,9 @@ type ProviderEvent =
   | { type: "contacts-updated"; contacts: Contact[] }
   | { type: "calendar-updated"; calendar: ScheduledActivity[] }
   | { type: "shift-updated"; shift: Shift }
-  | { type: "phone-updated"; phone: PhoneState };
+  | { type: "phone-updated"; phone: PhoneState }
+  | { type: "next-call"; nextCall?: NextCallRequest }
+  | { type: "lined-up"; linedUp?: LinedUpCall };
 
 type ProviderEventEnvelope = {
   id: string;
@@ -1237,6 +1269,9 @@ type Connection<C extends Channel = Channel> = {
   commitBreak?(): Promise<BreakCommitResult>;
   cancelBreak?(): Promise<BreakCancelResult>;
   endBreak?(): Promise<BreakEndResult>;
+  requestNextCall?(): Promise<NextCallResult>;
+  cancelNextCall?(): Promise<NextCallCancelResult>;
+  releaseLinedUp?(): Promise<LinedUpReleaseResult>;
 
   executeTeam?(request: TeamCommandRequest): Promise<TeamCommandResult>;
   openAudio?(request: OpenAudioRequest): Promise<OpenAudioResult>;
@@ -1990,6 +2025,7 @@ to infer them from what arrives later.
 | Field | Contract |
 | --- | --- |
 | `breaks` | This login may request a break. Requires the four break methods on the connection. |
+| `nextCall` | The platform lines calls up for this agent: pressing Next call while on a call puts the next queued call in the agent's own queue, to start when their wrap ends unless somebody else takes it first. Requires `requestNextCall`, `cancelNextCall` and `releaseLinedUp` on the connection. See **The agent's own queue** in `guide/queue.md`. |
 | `lead` | This login leads a team. The flag alone turns on the team feature in the agent application, and every lead act comes with it; there is no per-action permission beside it. While the lead has the feature on, the provider publishes a `TeamMembers` object to them on every snapshot — `members: []` when nobody is in it — and to nobody else. Requires `executeTeam`. See **Team leads** in `guide/lead.md`. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
@@ -2207,6 +2243,8 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
 | `calendar` | Required complete calendar contribution when the manifest declares `calendar`; `[]` clears it. Omitted only when it does not. |
 | `phone` | The phone as the platform sees it -- the device, whether it can take a call, its own mute where observed -- from a provider whose manifest declares `phoneStatus`; required there (`snapshot.phone.required`) and forbidden otherwise (`snapshot.phone.unexpected`). Replaced whole by `phone-updated`. See **The phone's own view** in `guide/phone.md`. |
+| `nextCall` | The agent's standing ask for the next call, while it stands: `since`. It needs an assignment at work to be next after (`snapshot.nextCall.idle`) and the provider clears it when that assignment ends, when a call is lined up, and when the agent withdraws it. Replaced whole by `next-call`. See **The agent's own queue** in `guide/queue.md`. |
+| `linedUp` | The call waiting in the agent's own queue, while one is: the caller as shown to this audience, the queue, the caller's wait, when it was lined up, and `release` where the provider lets the agent let it go. Not a task yet. Replaced whole by `lined-up`. See **The agent's own queue** in `guide/queue.md`. |
 | `shift` | The agent's own day so far, as the provider counts it -- the same `Shift` their lead sees on the team member list, the same numbers from the same count. Replaced whole by `shift-updated`. Omitted only where the provider cannot say. See **The agent's day is on the wire**. |
 | `team` | Required `TeamMembers` when the login declares `capabilities.lead` and the lead has the team feature on, `members: []` when nobody is in it. Forbidden otherwise — the login is the permission, and a lead who turned the feature off gets nothing of the team. |
 
@@ -2231,6 +2269,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `commitBreak()` | The login declares `capabilities.breaks`. Commit and cancel are not optional halves of it. |
 | `cancelBreak()` | The login declares `capabilities.breaks`. |
 | `endBreak()` | The login declares `capabilities.breaks`. |
+| `requestNextCall()`, `cancelNextCall()`, `releaseLinedUp()` | The login declares `capabilities.nextCall`. The three stand together: a lined-up call the agent could neither withdraw nor let go is a promise with no way out. See **The agent's own queue** in `guide/queue.md`. |
 | `executeTeam(request)` | The login declares `capabilities.lead`: every lead act, on the team surface and nowhere else. See **Lead commands** in `guide/lead.md`. |
 | `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
 | `recordStep(report)` | The manifest lists `softphone` among its `phones`. On a softphone the agent application mutes its own microphone on any call, and the provider's record has to have somewhere to take that leg; a desk phone's microphone is the phone's. See **The agent application records what it performs** in `guide/agent.md`. |
@@ -2766,6 +2805,19 @@ the `contacts` idle capability.
 
 Replaces this provider's complete scheduled-activity contribution. It is emitted only when the manifest
 declares the `calendar` idle capability.
+
+### `next-call`
+
+The agent's ask for the next call as it now stands, replacing `Snapshot.nextCall`: present while
+the ask stands, absent once it was met by a lined-up call, withdrawn by the agent, or outlived by
+the assignment it was pressed on. See **The agent's own queue** in `guide/queue.md`.
+
+### `lined-up`
+
+The agent's own queue as it now stands, replacing `Snapshot.linedUp`: the call lined up for them,
+or nothing. It clears when the call becomes a task, on the ordinary `task-offered`, and when the
+queue gave the call to somebody else, the caller gave up, or the agent let it go. See **The
+agent's own queue** in `guide/queue.md`.
 
 ### `phone-updated`
 

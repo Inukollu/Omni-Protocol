@@ -765,6 +765,45 @@ describe("validateTeamMembers", () => {
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "ready" }] }))).not.toContain(rule);
   });
 
+  it("carries the agent's own queue: the ask while an assignment is at work, the lined-up call, and the release the provider grants", () => {
+    const at = "2026-08-21T09:00:00Z";
+    const working = task({ phase: "in-progress", audio: "started", capabilities: {} });
+    // The ask needs an assignment at work to be next after; idle, there is nothing to press.
+    expect(rules(validateSnapshot(snapshot({ tasks: [working], nextCall: { since: at } }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [{ ...working, phase: "completing", audio: "ended", onCall: [], wrapAllowance: 60, wrapEndsInSeconds: 60 }], nextCall: { since: at } }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ nextCall: { since: at } }), manifest()))).toEqual(["snapshot.nextCall.idle"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [working], nextCall: { since: "now" } }), manifest()))).toEqual(["nextCall.since"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [working], nextCall: { since: at, assignmentId: "alloc-42" } }), manifest()))).toEqual(["nextCall.field"]);
+    // The lined-up call: not a task, the caller as shown to this audience, the waits, and the release by presence.
+    const lined = { party: { name: "Priya S", number: { lockedBy: "org" } }, queue: "Billing", queuedSince: at, since: at, release: true };
+    expect(rules(validateSnapshot(snapshot({ linedUp: lined }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ linedUp: { since: at } }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ linedUp: { ...lined, release: false } }), manifest()))).toEqual(["linedUp.release"]);
+    expect(rules(validateSnapshot(snapshot({ linedUp: { ...lined, queue: "" } }), manifest()))).toEqual(["linedUp.queue"]);
+    expect(rules(validateSnapshot(snapshot({ linedUp: { ...lined, queuedSince: "then" } }), manifest()))).toEqual(["linedUp.queuedSince"]);
+    expect(rules(validateSnapshot(snapshot({ linedUp: { ...lined, since: undefined } }), manifest()))).toEqual(["linedUp.since"]);
+    expect(rules(validateSnapshot(snapshot({ linedUp: { ...lined, assignmentId: "alloc-57" } }), manifest()))).toEqual(["linedUp.field"]);
+    expect(rules(validateSnapshot(snapshot({ linedUp: "next" }), manifest()))).toEqual(["linedUp.shape"]);
+    // On their own events, present or cleared; and on the member, as the member's own snapshot carries them.
+    const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
+    expect(check({ type: "next-call", nextCall: { since: at } })).toEqual([]);
+    expect(check({ type: "next-call" })).toEqual([]);
+    expect(check({ type: "next-call", nextCall: { since: "now" } })).toEqual(["nextCall.since"]);
+    expect(check({ type: "lined-up", linedUp: lined })).toEqual([]);
+    expect(check({ type: "lined-up" })).toEqual([]);
+    expect(check({ type: "lined-up", linedUp: { ...lined, release: "yes" } })).toEqual(["linedUp.release"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", nextCall: { since: at }, linedUp: lined }] }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", linedUp: { since: "then" } }] }))).toEqual(["linedUp.since"]);
+    // The login declares it as it declares breaks, and the three results answer as every provider method answers.
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: { nextCall: true } }))).toEqual([]);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: { nextCall: "yes" } }))).toEqual(["authentication.capability.value"]);
+    expect(rules(validateResult({ status: "requested" }, "requestNextCall"))).toEqual([]);
+    expect(rules(validateResult({ status: "applied" }, "requestNextCall"))).toEqual(["result.status"]);
+    expect(rules(validateResult({ status: "cancelled" }, "cancelNextCall"))).toEqual([]);
+    expect(rules(validateResult({ status: "released" }, "releaseLinedUp"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure: { code: "omni.capability-not-enabled", message: "Not yours to let go", retryable: false } }, "releaseLinedUp"))).toEqual([]);
+  });
+
   it("carries the phone's own view from a provider that can see it: the device, its mute, its channels, agreeing with the tasks", () => {
     const at = "2026-08-21T09:00:00Z";
     const seeing = manifest({ phoneStatus: true, phones: ["softphone", "deskPhone"] });

@@ -364,6 +364,12 @@ export const LISTENING_MODES = ["listen", "coach", "join-call"] as const satisfi
 export interface UserCapabilities {
   /** This login may request a break. Requires the four break methods. */
   breaks?: true;
+  /**
+   * The platform lines calls up for this agent: the agent may press Next call while on one to
+   * have the next queued call put in their own queue, to start when their wrap ends unless
+   * somebody else takes it first. Requires `requestNextCall`, `cancelNextCall` and `releaseLinedUp`.
+   */
+  nextCall?: true;
   /** The choices the team left to this person, with where each stands. Omitted when there are none. Requires `setPreference`. */
   preferences?: AgentPreference[];
   /**
@@ -1309,6 +1315,53 @@ export type BreakEndResult =
   | { status: "failed"; failure: ProtocolFailure };
 
 // ---------------------------------------------------------------------------
+// The agent's own queue.
+// ---------------------------------------------------------------------------
+
+/**
+ * The agent's standing ask for the next call, made by pressing Next call while an assignment is
+ * at work. It lives only as long as its purpose: the provider clears it when a call is lined up,
+ * when the agent withdraws it, and when the assignment it was pressed on ends.
+ */
+export interface NextCallRequest {
+  since: IsoTimestamp;
+}
+
+/**
+ * A call waiting for this agent in their own queue: still in the platform's queue, not yet a task,
+ * ringing nothing. It starts when the agent's wrap ends, as an ordinary `task-offered` with
+ * `acceptance: "automatic"`, unless somebody else answered first or the caller gave up, and then
+ * the entry goes and no task ever was. One at a time: the phone only ever takes the next one.
+ * Lined up on the agent's ask, or on the platform's own routing -- a repeat caller put in front
+ * of the agent they spoke to last.
+ */
+export interface LinedUpCall {
+  /** The caller, as the provider shows them to this audience. */
+  party?: Contact;
+  /** The queue the call is in, by the platform's label. */
+  queue?: string;
+  /** When the caller entered the queue: their wait, counted from the provider's clock. */
+  queuedSince?: IsoTimestamp;
+  /** When the call was lined up for this agent. */
+  since: IsoTimestamp;
+  /** The agent may let this call go back to the queue for anyone: the provider's say, per call, by presence. */
+  release?: true;
+}
+
+/** `requested` says the provider holds the ask, not that anything is lined up. */
+export type NextCallResult =
+  | { status: "requested" }
+  | { status: "failed"; failure: ProtocolFailure };
+
+export type NextCallCancelResult =
+  | { status: "cancelled" }
+  | { status: "failed"; failure: ProtocolFailure };
+
+export type LinedUpReleaseResult =
+  | { status: "released" }
+  | { status: "failed"; failure: ProtocolFailure };
+
+// ---------------------------------------------------------------------------
 // Team.
 // ---------------------------------------------------------------------------
 
@@ -1332,6 +1385,10 @@ export interface TeamMember {
   request?: MemberRequest;
   /** The member's phone as the platform sees it, the same `PhoneState` the member's own snapshot carries; present where the provider declares `phoneStatus`. */
   phone?: PhoneState;
+  /** The member's standing ask for the next call, as their own snapshot carries it. */
+  nextCall?: NextCallRequest;
+  /** The call lined up in the member's own queue, as their own snapshot carries it. */
+  linedUp?: LinedUpCall;
 }
 
 /** This member asking their lead to join a call: which assignment, the note they wrote, since when. */
@@ -1598,6 +1655,10 @@ export interface Snapshot<C extends Channel = Channel> {
   shift?: Shift;
   /** The phone as the platform sees it, from a provider that declares `phoneStatus`; replaced whole by `phone-updated`. */
   phone?: PhoneState;
+  /** The agent's standing ask for the next call, while it stands; replaced whole by `next-call`. */
+  nextCall?: NextCallRequest;
+  /** The call waiting in the agent's own queue, while one is; replaced whole by `lined-up`. */
+  linedUp?: LinedUpCall;
   team?: TeamMembers;
 }
 
@@ -1665,7 +1726,11 @@ export type ProviderEvent<C extends Channel = Channel> =
   /** The agent's own day, whole, whenever a total moves: a task ended, a break ended. */
   | { type: "shift-updated"; shift: Shift }
   /** The phone as the platform now sees it, whole: a registration lost or back, do-not-disturb pressed, the handset lifted or replaced, the phone's mute. */
-  | { type: "phone-updated"; phone: PhoneState };
+  | { type: "phone-updated"; phone: PhoneState }
+  /** The agent's ask for the next call as it now stands: present while it stands, absent once met, withdrawn or outlived. */
+  | { type: "next-call"; nextCall?: NextCallRequest }
+  /** The agent's own queue as it now stands: the call lined up for them, or nothing. */
+  | { type: "lined-up"; linedUp?: LinedUpCall };
 
 /**
  * The `Provider` prefix survives here for a mechanical reason rather than a naming one: `Event`
@@ -1763,6 +1828,15 @@ export interface Connection<C extends Channel = Channel> {
   commitBreak?(): Promise<BreakCommitResult>;
   cancelBreak?(): Promise<BreakCancelResult>;
   endBreak?(): Promise<BreakEndResult>;
+
+  /**
+   * The three stand together with `capabilities.nextCall`. Next call asks for the next queued
+   * call to be lined up in the agent's own queue; cancel withdraws the ask before it is met;
+   * release lets a lined-up call go back to the queue for anyone, where the entry grants it.
+   */
+  requestNextCall?(): Promise<NextCallResult>;
+  cancelNextCall?(): Promise<NextCallCancelResult>;
+  releaseLinedUp?(): Promise<LinedUpReleaseResult>;
 
   /** Required when the login declares `capabilities.lead`: every lead act, on the team surface and nowhere else. */
   executeTeam?(request: TeamCommandRequest): Promise<TeamCommandResult>;
@@ -1876,11 +1950,12 @@ export interface BrowserSessionKeyInput {
 export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): boolean {
   // Every field, so a capability added later cannot be missed here: `satisfies` pins the field
   // list to the type, and a new key is a compile error until it is compared.
-  void ({ breaks: true, preferences: true, lead: true } satisfies Record<keyof UserCapabilities, true>);
+  void ({ breaks: true, preferences: true, lead: true, nextCall: true } satisfies Record<keyof UserCapabilities, true>);
   const preferences = (list: AgentPreference[] | undefined): string | undefined =>
     list === undefined ? undefined : list.map(p => [p.id, p.label, p.enabled, p.setBy, p.lockedBy ?? "", p.reason ?? ""].join("\u0000")).sort().join("\u0001");
   return a.breaks === b.breaks &&
     a.lead === b.lead &&
+    a.nextCall === b.nextCall &&
     preferences(a.preferences) === preferences(b.preferences);
 }
 

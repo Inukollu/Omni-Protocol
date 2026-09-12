@@ -31,6 +31,7 @@ import {
   type Shift,
   type PhoneState,
   type PhoneChannel,
+  type LinedUpCall,
   type Snapshot,
   type TaskBrowser,
   type TaskCommand,
@@ -399,6 +400,15 @@ export const twoLeadsListening: TeamMembers = { members: [{ id: "A-2", availabil
 export const oneLeadListening: TeamMembers = { members: [{ id: "A-2", availability: "on-task", listening: { assignmentId: "alloc-7", mode: "coach", since: "2026-08-21T09:04:00Z" } }] };
 // The agent's own day, on their snapshot and on its own event, in the shape their lead sees.
 // The phone's own view: the device, its mute, its channels; a task's call names its task, the phone's own call names none.
+// The agent's own queue: the ask while on a call, the call lined up for them, the release the provider grants.
+export const lining: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { nextCall: true } };
+export const askedForNext: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0, nextCall: { since: "2026-08-21T09:04:00Z" } };
+export const nextLinedUp: ProviderEvent<"voice"> = { type: "lined-up", linedUp: { party: { name: "Priya S" }, queue: "Billing", queuedSince: "2026-08-21T09:02:00Z", since: "2026-08-21T09:04:30Z", release: true } };
+export const queueEmptied: ProviderEvent<"voice"> = { type: "lined-up" };
+// @ts-expect-error A lined-up call is not a task: it has no assignment until the offer.
+export const linedUpTask: LinedUpCall = { since: "2026-08-21T09:04:30Z", assignmentId: "alloc-57" };
+// @ts-expect-error Letting go is granted by presence, never refused by a flag.
+export const heldFast: LinedUpCall = { since: "2026-08-21T09:04:30Z", release: false };
 export const busyPhone: PhoneState = { phone: "deskPhone", status: "ready", muted: true, channels: [{ state: "active", since: "2026-08-21T09:00:04Z", assignmentId: "alloc-42" }, { state: "held", since: "2026-08-21T09:05:20Z" }] };
 export const phoneMoved: ProviderEvent<"voice"> = { type: "phone-updated", phone: { phone: "deskPhone", status: "unregistered", channels: [] } };
 export const seesThePhone: Manifest<"voice"> = { id: "acme", displayName: "Acme", channel: "voice", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, phones: ["deskPhone"], phoneStatus: true };

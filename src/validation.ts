@@ -147,7 +147,7 @@ const DIALLING_CAPABILITIES = ["connectBack", "conference"] as const;
 const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
   reconnected: true, "provider-requested": true,
 });
-const SESSION_CAPABILITIES = membersOf<keyof UserCapabilities>({ breaks: true, lead: true, preferences: true });
+const SESSION_CAPABILITIES = membersOf<keyof UserCapabilities>({ breaks: true, lead: true, preferences: true, nextCall: true });
 const MEMBER_BREAKS = membersOf<Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">>({
   "awaiting-approval": true, granted: true, "starting-after-task": true,
 });
@@ -1948,6 +1948,9 @@ function validateTeamMemberInto(member: unknown, at: string, context: ReaderCont
   if (member.shift !== undefined) validateShiftInto(member.shift, `${at}.shift`, into, "team.member.shift");
   // The member's phone as the platform sees it, the same state the member's own desk holds.
   if (member.phone !== undefined) validatePhoneStateInto(member.phone, `${at}.phone`, {}, into);
+  // The member's own queue, as their own snapshot carries it.
+  if (member.nextCall !== undefined) validateNextCallInto(member.nextCall, `${at}.nextCall`, into);
+  if (member.linedUp !== undefined) validateLinedUpInto(member.linedUp, `${at}.linedUp`, into, context.levels);
   // The member's standing ask for a lead, on one of the calls they hold.
   if (member.request !== undefined) {
     if (!isPlainObject(member.request)) {
@@ -1987,6 +1990,14 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   if (snapshot.shift !== undefined) validateShiftInto(snapshot.shift, `${path}.shift`, into, "shift");
   // The phone as the platform sees it: owed by a provider that declares it can, and by nobody else.
   const seesPhone = isPlainObject(manifest) && manifest.phoneStatus === true;
+  // The agent's own queue: an ask needs an assignment at work to be next after, and one call at most waits.
+  if (snapshot.nextCall !== undefined) {
+    validateNextCallInto(snapshot.nextCall, `${path}.nextCall`, into);
+    const atWork = Array.isArray(snapshot.tasks) && snapshot.tasks.some((task: unknown) => isPlainObject(task) && (task.phase === "in-progress" || task.phase === "paused" || task.phase === "completing"));
+    into.require(atWork, "snapshot.nextCall.idle", `${path}.nextCall`,
+      "an ask for the next call stands only while an assignment is at work to be next after: the provider clears it when that assignment ends");
+  }
+  if (snapshot.linedUp !== undefined) validateLinedUpInto(snapshot.linedUp, `${path}.linedUp`, into, levels);
   if (seesPhone && snapshot.phone === undefined) {
     into.add("snapshot.phone.required", `${path}.phone`, "the manifest declares phoneStatus, so every snapshot carries the phone as the platform sees it");
   } else if (!seesPhone && snapshot.phone !== undefined && isPlainObject(manifest)) {
@@ -2314,6 +2325,12 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
           validateContactInto(contact, `${at}.contacts[${index}]`, into, levels));
       }
       break;
+    case "next-call":
+      if (event.nextCall !== undefined) validateNextCallInto(event.nextCall, `${at}.nextCall`, into);
+      break;
+    case "lined-up":
+      if (event.linedUp !== undefined) validateLinedUpInto(event.linedUp, `${at}.linedUp`, into, levels);
+      break;
     case "phone-updated":
       into.require(isPlainObject(manifest) && manifest.phoneStatus === true, "event.phone.capability", `${at}.phone`,
         "phone-updated comes from a provider whose manifest declares phoneStatus");
@@ -2400,6 +2417,36 @@ function requireClockInto(value: unknown, manifest: unknown, path: string, into:
   if (!isPlainObject(manifest) || manifest.timeCheck === true || !carriesRunningInstant(value)) return;
   into.add("manifest.timeCheck.required", path,
     "this publishes an instant the desk renders as a running duration -- a since, a signedInAt -- and the manifest declares no timeCheck: every screen counts such a duration from the provider's clock, so the provider states one");
+}
+
+/** The agent's standing ask for the next call: since when. */
+export function validateNextCall(value: unknown, path = "nextCall"): ProtocolViolation[] {
+  const into = new Collector();
+  validateNextCallInto(value, path, into);
+  return into.violations;
+}
+
+function validateNextCallInto(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) { into.add("nextCall.shape", path, "the ask must be an object"); return; }
+  into.timestamp(value.since, "nextCall.since", `${path}.since`);
+  for (const key of Object.keys(value)) into.require(key === "since", "nextCall.field", `${path}.${key}`, "unsupported field on the ask");
+}
+
+/** A call waiting in the agent's own queue: the caller as shown to this audience, the queue, the waits, and whether the agent may let it go. */
+export function validateLinedUp(value: unknown, path = "linedUp", levels?: readonly string[]): ProtocolViolation[] {
+  const into = new Collector();
+  validateLinedUpInto(value, path, into, levels);
+  return into.violations;
+}
+
+function validateLinedUpInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
+  if (!isPlainObject(value)) { into.add("linedUp.shape", path, "a lined-up call must be an object"); return; }
+  if (value.party !== undefined) validateContactInto(value.party, `${path}.party`, into, levels);
+  if (value.queue !== undefined) into.filled(value.queue, "linedUp.queue", `${path}.queue`, "the queue's label must not be empty when present");
+  if (value.queuedSince !== undefined) into.timestamp(value.queuedSince, "linedUp.queuedSince", `${path}.queuedSince`);
+  into.timestamp(value.since, "linedUp.since", `${path}.since`);
+  if (value.release !== undefined) into.require(value.release === true, "linedUp.release", `${path}.release`, "letting the call go is granted by presence: send true or omit it");
+  for (const key of Object.keys(value)) into.require(["party", "queue", "queuedSince", "since", "release"].includes(key), "linedUp.field", `${path}.${key}`, "unsupported field on a lined-up call");
 }
 
 /** The phone as the platform sees it: the agent's device for this provider, whether it can take a call, its own mute where observed. */
@@ -2996,6 +3043,9 @@ export type ResultMethod =
   | "commitBreak"
   | "cancelBreak"
   | "endBreak"
+  | "requestNextCall"
+  | "cancelNextCall"
+  | "releaseLinedUp"
   | "executeTeam"
   | "openAudio"
   | "setPreference"
@@ -3012,6 +3062,9 @@ const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string |
   commitBreak: { success: "committed", failure: "failed" },
   cancelBreak: { success: "cancelled", failure: "failed" },
   endBreak: { success: "ended", failure: "failed" },
+  requestNextCall: { success: "requested", failure: "failed" },
+  cancelNextCall: { success: "cancelled", failure: "failed" },
+  releaseLinedUp: { success: "released", failure: "failed" },
   executeTeam: { success: "applied", failure: "failed" },
   openAudio: { success: "opened", failure: "unavailable" },
   setPreference: { success: "applied", failure: "failed" },

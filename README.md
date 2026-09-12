@@ -12,7 +12,7 @@ system.
 | Path | |
 | --- | --- |
 | `guide.md` | **The protocol.** The terms, the shapes, the rules, and how an adapter is declared, connected and held to them. |
-| `guide/` | One file per role and channel: `agent.md`, `lead.md`, `breaks.md`, `phone.md`, `voice.md`, `chat.md`, `email.md`. Each points back into `guide.md` for what it relies on. |
+| `guide/` | One file per role and channel: `agent.md`, `lead.md`, `queue.md`, `breaks.md`, `phone.md`, `voice.md`, `chat.md`, `email.md`. Each points back into `guide.md` for what it relies on. |
 | `src/index.ts` | The TypeScript declarations. |
 | `src/validation.ts` | Runtime validators Omni applies to adapter output. |
 | `src/testing.ts` | Conformance helpers an adapter runs against its own test state. |
