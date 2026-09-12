@@ -2902,7 +2902,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
 | `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
 | `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
-| `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a conference's item, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.conference.remove.alone`). An agent application validates before sending and an adapter before acting. |
+| `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a conference's item, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.conference.remove.alone`), the caller off hold before the agent's part ends (`command.endCall.held`). An agent application validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
 
@@ -3050,7 +3050,9 @@ interaction phases with `hold` still declared -- in
 `confirmed`, where the provider publishes it, and in `completing` once this agent's interaction has ended -- the
 test sends `hold` past the validator that would hold it back, and expects `failed`: the adapter
 is the second gate on a control on the contact, and one that applies it outside this task's
-current interaction is named (`test.command.interaction`). The test cannot put a task into a phase the provider
+current interaction is named (`test.command.interaction`). With the task on hold, the test sends `end-call` past the
+validator the same way and expects `failed`, naming an adapter that ends the agent's part with the caller in the
+hold (`test.command.held`). The test cannot put a task into a phase the provider
 never publishes, so a provider that goes straight from `pending` to `in-progress` is checked in
 `completing` alone. A task the agent completes is
 completed from wherever it stands once the test has nothing left to do on it -- from `completing`

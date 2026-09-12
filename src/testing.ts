@@ -1988,11 +1988,32 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       if (!call.handOver.isLive()) return found;
     }
   }
+  // Ending my part from hold would leave the caller in the hold with nobody coming back to them: a
+  // host holds it back (command.endCall.held), and an adapter that receives it anyway must refuse
+  // it -- so the test sends it past the validator and expects failed.
+  const endCallRefusedOnHold = async (): Promise<void> => {
+    ruleTested("test.command.rejected", "test.command.held");
+    let answer: unknown;
+    try {
+      answer = await call.connection.execute({ assignmentId: taskId, command: { type: "end-call" } } as never);
+    } catch (error) {
+      refuse("test.command.rejected", "test.command.end-call", `execute rejected rather than answered: ${String(error)}`);
+      return;
+    }
+    if (isRecord(answer) && answer.status !== "failed") {
+      refuse("test.command.held", "test.command.end-call",
+        "the provider ended the agent's part with the caller on hold: end-call waits for resume, and the adapter is the second gate");
+      // Applied, the task leaves paused; the run reads where the adapter put it rather than resuming a call it ended.
+      await updated(t => t.phase !== "paused", "the task after an end-call applied from hold");
+    }
+  };
   // 4. Hold and resume, where offered.
   if (latestTask().phase === "in-progress" && offers("hold")) {
     if (await send({ type: call.channel === "chat" ? "pause" : "hold" }) !== undefined) {
       if (await updated(t => t.phase === "paused", "the task pausing after hold") !== undefined) {
-        if (await send({ type: "resume" }) !== undefined) {
+        if (call.channel === "voice" && offers("endCall")) await endCallRefusedOnHold();
+        // An adapter that ended the agent's part from hold has nothing left to resume; the run goes on from where it put the task.
+        if (latestTask().phase === "paused" && await send({ type: "resume" }) !== undefined) {
           await updated(t => t.phase === "in-progress", "the task resuming after resume");
         }
       }
