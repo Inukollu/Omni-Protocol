@@ -26,7 +26,8 @@ describe("a public repo says less", () => {
       "type: \"reject\"", "reject?:", "reject: true", "\"accept\", \"reject\"",
       "blindTransfer", "consultTransfer", "action: \"consult\"", "action?: never", "Consult transfer", "Blind transfer",
       "preparing", "start-call", "preparationEndsAt", "\"Preparing\"", "\"Reviewing\"", "kind: \"agent\"", "\"queue\" | \"agent\"", "allowManualEntry", "task.destination.address", "task.destination.kind", "kind: \"external\"",
-      "agentDisconnect", "type: \"disconnect\"", "`disconnect`"];
+      "agentDisconnect", "type: \"disconnect\"", "`disconnect`",
+      "exerciseAdapter", "driveTimeoutMs", "notExercised", "rulesEvaluated", "drive: true", "driveOneCall"];
     // A line under @ts-expect-error, or under a "renamed away" note, is a refusal kept on purpose, not vocabulary.
     const marked = (line: string) => line.includes("@ts-expect-error") || line.includes("renamed away:");
     const refusals = (text: string) => { const lines = text.split("\n"); return lines.filter((_, index) => !marked(lines[index - 1] ?? "")).join("\n"); };

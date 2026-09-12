@@ -33,7 +33,7 @@ import {
   validateHostReport,
   validateUserDetails,
   observeRules,
-  ruleEvaluated,
+  ruleTested,
   validateHostMute,
   validateHostRecording,
   validateLoginStore,
@@ -214,33 +214,33 @@ export interface AdapterContractResult {
    * tasks exercises no task rule, and an adapter's own test asserts that the subjects it meant to
    * reach are absent from this list.
    */
-  notExercised: readonly ContractSubject[];
+  notTested: readonly ContractSubject[];
   /** Every violation observed. Non-empty only when `collectOnly` suppressed the throw. */
   violations: readonly ProtocolViolation[];
   /**
    * Every rule the run evaluated, pass or fail: the validators' as each was applied, the stream's
-   * and the drive's as each case was considered. A rule absent here was never looked at, which a
+   * and the test's as each case was considered. A rule absent here was never looked at, which a
    * clean `violations` says nothing about; a test that needs a rule to have run asserts it here.
    */
-  rulesEvaluated: ReadonlySet<string>;
+  rulesTested: ReadonlySet<string>;
 }
 
-export interface ExerciseAdapterOptions {
+export interface TestAdapterOptions {
   /** Return violations in the result instead of throwing. Defaults to `false`. */
   collectOnly?: boolean;
   /**
-   * Drive one ordinary lifecycle on the first task the provider offers -- accept it, open its
+   * Test one ordinary lifecycle on the first task the provider offers -- accept it, open its
    * audio on a softphone, hold and resume where offered, end the call where offered, complete it
    * where the agent completes -- so the rules about a live call are reached rather than listed
-   * under `notExercised`. Off by default, since it issues commands against whatever platform the
+   * under `notTested`. Off by default, since it issues commands against whatever platform the
    * adapter is connected to: turn it on against a test backend.
    */
-  drive?: boolean;
-  /** How long the drive waits for each thing the provider owes it. Defaults to 5000. */
-  driveTimeoutMs?: number;
+  withCall?: boolean;
+  /** How long the test waits for each thing the provider owes it. Defaults to 5000. */
+  timeoutMs?: number;
   /**
    * Builds the adapter again, as a host reload does: a new object with no memory, for the same
-   * login. Given it, the drive -- once the host's muted leg is recorded -- connects a second adapter
+   * login. Given it, the test -- once the host's muted leg is recorded -- connects a second adapter
    * with the same context and the same store and expects its snapshot to carry the task with that
    * leg. A platform that holds the record hands it back; an adapter that composed the record in
    * memory has nothing, and is named. Without it the store is required and never read.
@@ -267,13 +267,13 @@ export interface ExerciseAdapterOptions {
  * for a synchronous emitter, and is swallowed as an unhandled rejection for an
  * asynchronous one — which would let a non-conforming async adapter pass.
  */
-export async function exerciseAdapter<C extends Channel>(
+export async function testAdapter<C extends Channel>(
   adapter: Adapter<C>,
   context: ConnectContext,
-  options: ExerciseAdapterOptions = {},
+  options: TestAdapterOptions = {},
 ): Promise<AdapterContractResult> {
-  const rulesEvaluated = new Set<string>();
-  const stopObserving = observeRules(rule => { rulesEvaluated.add(rule); });
+  const rulesTested = new Set<string>();
+  const stopObserving = observeRules(rule => { rulesTested.add(rule); });
   const violations: ProtocolViolation[] = [...validateManifest(adapter.manifest)];
   const events: ProviderEventEnvelope<C>[] = [];
   const seen = new Set<ContractSubject>();
@@ -445,7 +445,7 @@ export async function exerciseAdapter<C extends Channel>(
     connectObligations(live);
     const tellRefused = (report: Refusal): void => {
       if (typeof live.refused !== "function") return;
-      ruleEvaluated("connection.refused.rejected");
+      ruleTested("connection.refused.rejected");
       try {
         live.refused(report);
       } catch (error) {
@@ -455,7 +455,7 @@ export async function exerciseAdapter<C extends Channel>(
 
     const eventPayloads = new Map<string, string>();
     let capacityStated: number | undefined;
-    // The drive waits on events: each waiter is offered every envelope as it lands.
+    // The test waits on events: each waiter is offered every envelope as it lands.
     const waiters = new Set<(envelope: ProviderEventEnvelope<C>) => void>();
     const onEnvelope = (envelope: ProviderEventEnvelope<C>): void => {
       observeEvent(envelope, seen);
@@ -464,10 +464,10 @@ export async function exerciseAdapter<C extends Channel>(
       if (broken.length > 0) tellRefused({ artefact: "event", envelopeId: typeof envelope?.id === "string" ? envelope.id : undefined, violations: broken });
       // A diagnostic is informational to a host and a failure to a conformance run: the platform
       // under test broke a rule the adapter relies on, and a green result must not paper over it.
-      // A reload in life has no first connection: the page is gone. The drive keeps its first
+      // A reload in life has no first connection: the page is gone. The test keeps its first
       // connection up while the second reads, so a platform that pushes the open task to the new
       // client pushes it to the old one too, and an adapter that calls a re-offer of answered work a
-      // defect is right to. That diagnostic is the drive's own artefact, and is not counted while the
+      // defect is right to. That diagnostic is the test's own artefact, and is not counted while the
       // second adapter is up; every other moment it is.
       if (isRecord(envelope?.event) && envelope.event.type === "diagnostic") {
         violations.push({ rule: "diagnostic.raised", path: "event.diagnostic",
@@ -520,7 +520,7 @@ export async function exerciseAdapter<C extends Channel>(
       for (const waiter of waiters) waiter(envelope);
     };
     unsubscribe = connection.subscribe(onEnvelope);
-    // A host reload is the first client dying and a second coming up in its place. The drive hands
+    // A host reload is the first client dying and a second coming up in its place. The test hands
     // the run over: the first connection is unsubscribed, disconnected and its session closed before
     // the second connects, and the run continues on the second -- so there is no first client for a
     // platform to push the open task back to, and nothing to exempt.
@@ -552,8 +552,8 @@ export async function exerciseAdapter<C extends Channel>(
         // holds its connect snapshot to no team until it is sent again, after its capacity.
         leadFeaturesOn = false;
         const restated = await second.setCapacity({ count: capacityStated ?? 1 });
-        violations.push(...validateResult(restated, "setCapacity", "drive.reload.setCapacity"));
-        await switchOnLeadFeatures(second, "drive.reload");
+        violations.push(...validateResult(restated, "setCapacity", "test.reload.setCapacity"));
+        await switchOnLeadFeatures(second, "test.reload");
       },
     };
 
@@ -609,7 +609,7 @@ export async function exerciseAdapter<C extends Channel>(
         continue;
       }
       // Evaluated where a superseded event was held: with none, the question was never asked.
-      ruleEvaluated("snapshot.accounts.task", "snapshot.accounts.ended");
+      ruleTested("snapshot.accounts.task", "snapshot.accounts.ended");
       if ((event.type === "task-offered" || event.type === "task-updated") && isRecord(event.task) && typeof event.task.assignmentId === "string" && !carried.has(event.task.assignmentId)) {
         violations.push({ rule: "snapshot.accounts.task", path: "snapshot.tasks",
           message: `${String(event.task.assignmentId)} (${event.task.assignmentId}) was published while the snapshot was read and the snapshot does not carry it: a snapshot accounts for everything the adapter emitted before it resolved` });
@@ -628,7 +628,7 @@ export async function exerciseAdapter<C extends Channel>(
     // ready, and on every change. An adapter that never asked cannot have.
     // The obligation has two halves: read the report before declaring the agent ready, and hear of
     // every change after. An adapter that did one and not the other consulted the host once, or never.
-    ruleEvaluated("connection.host.consulted", "connection.host.subscribed");
+    ruleTested("connection.host.consulted", "connection.host.subscribed");
     if (adapter.manifest.channel === "voice" && !consulted.report) {
       violations.push({ rule: "connection.host.consulted", path: "connection.host",
         message: "a voice adapter reads the host's report before it declares the agent ready to its platform, and this one never asked" });
@@ -672,8 +672,8 @@ export async function exerciseAdapter<C extends Channel>(
       }
       if (switched === undefined) return;
       violations.push(...validateResult(switched, "executeTeam", `${at}.executeTeam`));
-      ruleEvaluated("team.required");
-      const ms = options.driveTimeoutMs ?? 5000;
+      ruleTested("team.required");
+      const ms = options.timeoutMs ?? 5000;
       const isBaseline = (envelope: ProviderEventEnvelope<C>): boolean => isRecord(envelope?.event) && envelope.event.type === "team-updated";
       const baseline = events.slice(from).some(isBaseline) || await new Promise<boolean>(resolve => {
         const timer = setTimeout(() => { waiters.delete(waiter); resolve(false); }, ms);
@@ -690,19 +690,19 @@ export async function exerciseAdapter<C extends Channel>(
     };
     await switchOnLeadFeatures(live, "connection");
 
-    if (options.drive) {
+    if (options.withCall) {
       const localAudio = isRecord(first) && isRecord(first.audio) && isRecord(first.audio.input) && first.audio.input.status === "available"
         ? first.audio.input.localAudio as MediaStream : undefined;
-      violations.push(...await driveOneCall({
+      violations.push(...await testOneCall({
         connection: live, manifest: adapter.manifest, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
         everHeldForTask: (taskId: string) => [...watched.everHeld].some(key => namesTask(key, taskId)), snapshotRead,
-        timeoutMs: options.driveTimeoutMs ?? 5000,
+        timeoutMs: options.timeoutMs ?? 5000,
         context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held, handOver,
         streams: { stream, breaks, team },
       }));
-      // Every offer is owed an ending. The drive ends the call it drove; anything else the
+      // Every offer is owed an ending. The test ends the call it drove; anything else the
       // provider offered and left open is an assignment whose ending never came.
-      ruleEvaluated("stream.taskOffered.unended");
+      ruleTested("stream.taskOffered.unended");
       for (const id of stream.unended()) {
         violations.push({ rule: "stream.taskOffered.unended", path: "event.task-ended",
           message: `${id} was offered and never ended: every offer is owed a task-ended, whatever became of the call` });
@@ -754,10 +754,10 @@ export async function exerciseAdapter<C extends Channel>(
     events: events as ProviderEventEnvelope[],
     authenticationState: authenticationState as AuthenticationState,
     login: (login ?? authenticationState) as AuthenticationState,
-    notExercised: CONTRACT_SUBJECTS.filter(subject => !seen.has(subject)),
+    notTested: CONTRACT_SUBJECTS.filter(subject => !seen.has(subject)),
     disconnectWasClean,
     violations,
-    rulesEvaluated,
+    rulesTested,
   };
 }
 
@@ -1045,7 +1045,7 @@ export function assertTaskCapabilityWithdrawal(
  * so a fixture that never produced a team member list cannot pass a test that meant to check one.
  */
 export function assertReached(result: AdapterContractResult, subjects: readonly ContractSubject[]): void {
-  const missed = subjects.filter(subject => result.notExercised.includes(subject));
+  const missed = subjects.filter(subject => result.notTested.includes(subject));
   if (missed.length > 0) {
     throw new Error(`The exercise never reached ${missed.join(", ")}: its clean result says nothing about them`);
   }
@@ -1174,7 +1174,7 @@ export class TaskStream {
       if (typeof value !== "number") { known.delete(field); continue; }
       const before = known.get(field);
       if (before !== undefined) {
-        ruleEvaluated("stream.countdown.copied");
+        ruleTested("stream.countdown.copied");
         const elapsed = Math.floor((atMs - before.atMs) / 1000);
         if (elapsed > 0 && value > before.value - elapsed + 1) {
           refuse("stream.countdown.copied", `${at}.${field}`,
@@ -1283,7 +1283,7 @@ export class TaskStream {
   resync(snapshot: unknown, at: string): ProtocolViolation[] {
     const found: ProtocolViolation[] = [];
     const refuse = (rule: string, where: string, message: string) => found.push({ rule, path: where, message });
-    ruleEvaluated("stream.snapshot.capabilitySource", "stream.snapshot.history", "stream.snapshot.phase", "stream.snapshot.audio");
+    ruleTested("stream.snapshot.capabilitySource", "stream.snapshot.history", "stream.snapshot.phase", "stream.snapshot.audio");
     if (isRecord(snapshot) && Array.isArray(snapshot.tasks)) {
       snapshot.tasks.forEach((task, index) => {
         if (!isRecord(task) || typeof task.assignmentId !== "string") return;
@@ -1348,7 +1348,7 @@ export class TaskStream {
         found.push(...this.resync(event.snapshot, `${at}.snapshot`));
         break;
       case "task-offered": {
-        ruleEvaluated("stream.taskOffered.duplicate");
+        ruleTested("stream.taskOffered.duplicate");
         if (id === undefined) break;
         // An assignment is introduced once: not while it is open, and never again once it has ended,
         // whatever the platform did with its own handle.
@@ -1365,14 +1365,14 @@ export class TaskStream {
       }
       case "task-updated":
         if (id === undefined) break;
-        ruleEvaluated("stream.taskUpdated.unknown");
+        ruleTested("stream.taskUpdated.unknown");
         if (known === undefined) {
           refuse("stream.taskUpdated.unknown", `${at}.task.assignmentId`, `${id} was never offered or carried on a snapshot`);
           break;
         }
         // The rules about a known task are evaluated only once there is one.
         this.holdCountdowns(id, event.task, isRecord(envelope) ? envelope.occurredAt : undefined, `${at}.task`, refuse);
-        ruleEvaluated("stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.audioOpen",
+        ruleTested("stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.audioOpen",
           "stream.taskUpdated.history", "stream.taskAudioEnded.follow", "stream.taskUpdated.audio", "stream.taskUpdated.stage", "stream.taskUpdated.stage.lingering");
         // Terms once read stay read. A re-read that fails is not a new fact about the task, so the
         // last statement stands and the failure is a diagnostic; not-yet-read is a place a task
@@ -1408,7 +1408,7 @@ export class TaskStream {
         }
         // A task completes after its audio ends, never around it: an update that moves a task to
         // completing while the stream holds its audio as started is a call whose audio never ended,
-        // whoever caused the ending -- the drive's end-call, a take-over, the provider's own hand.
+        // whoever caused the ending -- the test's end-call, a take-over, the provider's own hand.
         {
           const to = isRecord(event.task) ? String(event.task.phase) : "";
           if (to === "completing" && known.audio === "started" && known.phase !== "completing") {
@@ -1453,7 +1453,7 @@ export class TaskStream {
         this.noteDials(event.task);
         break;
       case "task-audio-started":
-        ruleEvaluated("stream.taskAudioStarted.beforeWork", "stream.taskAudioStarted.duplicate", "stream.taskAudio.channel", "stream.assignment.ended", "stream.assignment.unknown");
+        ruleTested("stream.taskAudioStarted.beforeWork", "stream.taskAudioStarted.duplicate", "stream.taskAudio.channel", "stream.assignment.ended", "stream.assignment.unknown");
         if (id === undefined) break;
         if (known === undefined) {
           this.notOpen(event, id, at, refuse);
@@ -1475,7 +1475,7 @@ export class TaskStream {
         known.audio = "started";
         break;
       case "task-audio-ended":
-        ruleEvaluated("stream.taskAudioEnded.beforeWork", "stream.taskAudioEnded.silent", "stream.taskAudio.channel", "stream.assignment.ended", "stream.assignment.unknown");
+        ruleTested("stream.taskAudioEnded.beforeWork", "stream.taskAudioEnded.silent", "stream.taskAudio.channel", "stream.assignment.ended", "stream.assignment.unknown");
         if (id === undefined) break;
         if (known === undefined) {
           this.notOpen(event, id, at, refuse);
@@ -1496,7 +1496,7 @@ export class TaskStream {
         known.audio = "ended";
         break;
       case "task-ended":
-        ruleEvaluated("stream.assignment.ended", "stream.assignment.unknown");
+        ruleTested("stream.assignment.ended", "stream.assignment.unknown");
         if (id === undefined) break;
         if (known === undefined) {
           this.notOpen(event, id, at, refuse);
@@ -1505,7 +1505,7 @@ export class TaskStream {
         // A voice task ends after its audio ends, never around it, whatever the outcome: a take-over
         // and a lead leaving included. An ending with the audio still up leaves the host holding an
         // open audio session and an open leg on a task that no longer exists.
-        ruleEvaluated("stream.taskEnded.audioOpen");
+        ruleTested("stream.taskEnded.audioOpen");
         if (known.audio === "started") {
           refuse("stream.taskEnded.audioOpen", `${at}.assignmentId`,
             `${id} ended with its audio still started: the audio ends first, on task-audio-ended, whatever the outcome`);
@@ -1514,7 +1514,7 @@ export class TaskStream {
         // provider's word that interaction ended and the moment the wrap allowance starts. A provider
         // that completes the task itself with an allowance to run has to have started the clock:
         // completed from in-progress, the allowance it stated was never given.
-        ruleEvaluated("stream.taskEnded.unwrapped");
+        ruleTested("stream.taskEnded.unwrapped");
         // An agent's own complete cuts the wrap short from wherever the task stands, so that ending says by agent and is not this.
         if (known.channel !== "voice" && known.completionMode === "provider-automatic" && known.wrapAllowance !== undefined && known.wrapAllowance > 0
           && known.phase !== "completing" && isRecord(event.outcome) && event.outcome.type === "completed" && event.outcome.by === "provider") {
@@ -1528,7 +1528,7 @@ export class TaskStream {
         // An outcome ends a dial somebody placed, once. The task it names may already have ended;
         // a dial placed late routinely outlives its call, which is why the dial has its own identity,
         // and why the outcome names the assignment: the host routes it to that life, ended or not.
-        ruleEvaluated("stream.assignment.unknown");
+        ruleTested("stream.assignment.unknown");
         if (typeof event.assignmentId === "string" && !this.assignments.has(event.assignmentId)) {
           refuse("stream.assignment.unknown", `${at}.assignmentId`, `${event.assignmentId} is not an assignment this stream has seen`);
         }
@@ -1554,7 +1554,7 @@ export class TaskStream {
 // Driving one call.
 // ---------------------------------------------------------------------------
 
-interface Drive<C extends Channel> {
+interface CallTest<C extends Channel> {
   connection: Connection<C>;
   manifest: Manifest<C>;
   context: ConnectContext;
@@ -1563,7 +1563,7 @@ interface Drive<C extends Channel> {
   rebuild: (() => Adapter<Channel>) | undefined;
   /** Every key the watched store currently holds. */
   held: ReadonlySet<string>;
-  /** Whether the store was ever seen to hold a key naming the task, which is what makes drive.store.retained evaluable. */
+  /** Whether the store was ever seen to hold a key naming the task, which is what makes call.store.retained evaluable. */
   everHeldForTask: (taskId: string) => boolean;
   /** Takes the first client down and brings the second up in its place: what a host reload is. Coming up holds the second to everything the first was on connect. */
   handOver: { isLive: () => boolean; down: () => Promise<boolean>; up: (session: Awaited<ReturnType<Adapter<C>["createAuthenticationSession"]>>, second: Connection<C>) => Promise<void> };
@@ -1585,24 +1585,24 @@ interface Drive<C extends Channel> {
  * One ordinary lifecycle on the first task offered, each step held to the rules a host holds a
  * provider to: the command validated against the task as published, the result validated for the
  * method, and the event the provider owes in return awaited -- a step that never arrives is a
- * violation naming what was owed. The drive stops where the task offers no way on (no `endCall`,
+ * violation naming what was owed. The test stops where the task offers no way on (no `endCall`,
  * a provider that completes for itself) and says nothing about what it could not reach.
  */
-async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<ProtocolViolation[]> {
+async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<ProtocolViolation[]> {
   const found: ProtocolViolation[] = [];
   const refuse = (rule: string, path: string, message: string) => found.push({ rule, path, message });
   const isTask = (value: unknown): value is Record<string, unknown> => isRecord(value) && typeof value.assignmentId === "string";
 
   // Wait for an envelope that satisfies `matches`, looking first at what already arrived.
   const waitFor = <T>(what: string, matches: (envelope: ProviderEventEnvelope<C>) => T | undefined, from: number,
-    within: { ms: number; onExpiry: () => void } = { ms: drive.timeoutMs, onExpiry: () => refuse("drive.timeout", "drive", `the provider owed ${what} within ${drive.timeoutMs}ms and it never arrived`) }): Promise<{ found: T; at: number } | undefined> =>
+    within: { ms: number; onExpiry: () => void } = { ms: call.timeoutMs, onExpiry: () => refuse("test.timeout", "test", `the provider owed ${what} within ${call.timeoutMs}ms and it never arrived`) }): Promise<{ found: T; at: number } | undefined> =>
     new Promise(resolve => {
-      for (let index = from; index < drive.events.length; index += 1) {
-        const hit = matches(drive.events[index]!);
+      for (let index = from; index < call.events.length; index += 1) {
+        const hit = matches(call.events[index]!);
         if (hit !== undefined) { resolve({ found: hit, at: index + 1 }); return; }
       }
       const timer = setTimeout(() => {
-        drive.waiters.delete(waiter);
+        call.waiters.delete(waiter);
         within.onExpiry();
         resolve(undefined);
       }, within.ms);
@@ -1610,73 +1610,73 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         const hit = matches(envelope);
         if (hit === undefined) return;
         clearTimeout(timer);
-        drive.waiters.delete(waiter);
-        resolve({ found: hit, at: drive.events.length });
+        call.waiters.delete(waiter);
+        resolve({ found: hit, at: call.events.length });
       };
-      drive.waiters.add(waiter);
+      call.waiters.add(waiter);
     });
 
   // The call's audio session, opened on the first client and opened again on a reloaded second.
   let session: Record<string, unknown> | undefined;
   const recordSurvivesReload = async (at: string): Promise<void> => {
     // Each reload rule is marked where it is decided, never up front: a rebuild that throws has looked at nothing else.
-    ruleEvaluated("drive.reload.rejected");
+    ruleTested("test.reload.rejected");
     let again: Adapter<C>;
     try {
-      again = drive.rebuild!() as Adapter<C>;
+      again = call.rebuild!() as Adapter<C>;
     } catch (error) {
-      refuse("drive.reload.rejected", "drive.reload", `building the adapter again threw: ${String(error)}`);
+      refuse("test.reload.rejected", "test.reload", `building the adapter again threw: ${String(error)}`);
       return;
     }
     // The same provider, built again: a different manifest is a different adapter, and proves nothing about this one.
-    ruleEvaluated("drive.reload.manifest");
-    if (again.manifest.id !== drive.manifest.id) {
-      refuse("drive.reload.manifest", "drive.reload.manifest",
-        `rebuild returned an adapter for ${String(again.manifest.id)}; the reload is of ${String(drive.manifest.id)}`);
+    ruleTested("test.reload.manifest");
+    if (again.manifest.id !== call.manifest.id) {
+      refuse("test.reload.manifest", "test.reload.manifest",
+        `rebuild returned an adapter for ${String(again.manifest.id)}; the reload is of ${String(call.manifest.id)}`);
       return;
     }
     // The first client dies first, as it does on a reload: from here the run has no connection until the second stands.
-    ruleEvaluated("drive.reload.handover");
-    if (!await drive.handOver.down()) {
-      refuse("drive.reload.handover", "drive.reload", "taking the first client down threw: an unsubscribe, disconnect() or close() failed");
+    ruleTested("test.reload.handover");
+    if (!await call.handOver.down()) {
+      refuse("test.reload.handover", "test.reload", "taking the first client down threw: an unsubscribe, disconnect() or close() failed");
     }
     try {
-      const restoredSession = await again.createAuthenticationSession({ ...drive.context, secrets: drive.secrets });
+      const restoredSession = await again.createAuthenticationSession({ ...call.context, secrets: call.secrets });
       // The reload is a restore before it is anything else: the second session stands authenticated
       // as the same person, from the secrets alone, or nothing it reads afterwards is this login's.
       const restored = await (restoredSession as unknown as { state(): Promise<unknown> }).state();
-      found.push(...validateAuthenticationState(restored, "drive.reload.login"));
-      ruleEvaluated("drive.reload.login");
-      const same = isRecord(restored) && restored.status === "authenticated" && isRecord(restored.identity) && restored.identity.id === drive.reader().self;
+      found.push(...validateAuthenticationState(restored, "test.reload.login"));
+      ruleTested("test.reload.login");
+      const same = isRecord(restored) && restored.status === "authenticated" && isRecord(restored.identity) && restored.identity.id === call.reader().self;
       if (!same) {
-        refuse("drive.reload.login", "drive.reload.login",
-          `a second adapter built from the same login and secrets did not restore it: the session says ${String(isRecord(restored) ? restored.status : restored)}${isRecord(restored) && isRecord(restored.identity) ? ` as ${String(restored.identity.id)}` : ""}, and the login is ${String(drive.reader().self)}`);
+        refuse("test.reload.login", "test.reload.login",
+          `a second adapter built from the same login and secrets did not restore it: the session says ${String(isRecord(restored) ? restored.status : restored)}${isRecord(restored) && isRecord(restored.identity) ? ` as ${String(restored.identity.id)}` : ""}, and the login is ${String(call.reader().self)}`);
         // A reload that cannot restore the login is a sign-in screen, not a connection: the run ends here.
         try { await restoredSession.close(); } catch { /* the session that would not restore is closed as far as it can be */ }
         return;
       }
-      const second = await again.connect(drive.context);
+      const second = await again.connect(call.context);
       // From here the second client is the run's connection, held to everything the first was on
       // connect: what it publishes is validated as before.
-      await drive.handOver.up(restoredSession, second);
-      drive.connection = second;
+      await call.handOver.up(restoredSession, second);
+      call.connection = second;
       const snapshot = await second.snapshot() as unknown;
       // The second adapter's snapshot is read as the connect snapshot was, and the streams take it
       // as the state now the way they take any resync: held to what they knew, then replaced. A reload
       // is a place the stream's rules keep working, not one where they all stop.
-      await drive.snapshotRead(second, snapshot, "drive.reload.snapshot");
-      found.push(...drive.streams.stream.resync(snapshot, "drive.reload.snapshot"));
-      found.push(...drive.streams.breaks.seed(snapshot));
-      drive.streams.team.seed(snapshot);
+      await call.snapshotRead(second, snapshot, "test.reload.snapshot");
+      found.push(...call.streams.stream.resync(snapshot, "test.reload.snapshot"));
+      found.push(...call.streams.breaks.seed(snapshot));
+      call.streams.team.seed(snapshot);
       const carried = isRecord(snapshot) && Array.isArray(snapshot.tasks)
         ? snapshot.tasks.find(task => isRecord(task) && task.assignmentId === taskId) as Record<string, unknown> | undefined : undefined;
-      ruleEvaluated("drive.reload.snapshot");
+      ruleTested("test.reload.snapshot");
       if (carried === undefined) {
-        refuse("drive.reload.snapshot", "drive.reload.snapshot",
+        refuse("test.reload.snapshot", "test.reload.snapshot",
           `a second adapter built from the same login does not carry ${taskId} on its snapshot, and the task is still open`);
         return;
       }
-      ruleEvaluated("drive.reload.history");
+      ruleTested("test.reload.history");
       const history = carried.history;
       const steps: unknown[] = isRecord(history) && Array.isArray(history.steps) ? history.steps : [];
       // A record once read is not unread across a reload either: every entry the first adapter published is here.
@@ -1685,36 +1685,36 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       const lost = wasRead.filter(entry => !steps.some(now => isRecord(now) && now.step === entry.step && now.at === entry.at))
         .map(entry => `${String(entry.step)}@${String(entry.at)}`);
       if (lost.length > 0) {
-        refuse("drive.reload.history", "drive.reload.history",
+        refuse("test.reload.history", "test.reload.history",
           `a second adapter built from the same login carries ${taskId} without ${lost.join(", ")}, which the first had published: a record once read is not unread`);
       }
       const leg = steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined;
       if (leg === undefined) {
-        refuse("drive.reload.history", "drive.reload.history",
+        refuse("test.reload.history", "test.reload.history",
           `a second adapter built from the same login carries ${taskId} without the muted leg at ${at}: the record was composed in memory and died with the adapter; the login's store is where it lives`);
       } else if (leg.mutedBy !== "host") {
-        refuse("drive.reload.history", "drive.reload.history",
+        refuse("test.reload.history", "test.reload.history",
           `the reloaded record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host`);
       }
-      // The drive goes on with the task as the reloaded client holds it. The first client's audio
+      // The test goes on with the task as the reloaded client holds it. The first client's audio
       // session died with it: a host opens audio on a task arriving with audio started on a
-      // snapshot, so the drive opens it again on the second and holds the answer as it held the first.
+      // snapshot, so the test opens it again on the second and holds the answer as it held the first.
       task = carried;
-      if (drive.softphone && carried.audio === "started") {
+      if (call.softphone && carried.audio === "started") {
         if (session !== undefined && typeof session.close === "function") {
-          try { (session.close as () => void)(); } catch { refuse("drive.openAudio.close", "drive.openAudio", "the first client's audio session threw on close"); }
+          try { (session.close as () => void)(); } catch { refuse("test.openAudio.close", "test.openAudio", "the first client's audio session threw on close"); }
         }
         session = undefined;
-        ruleEvaluated("drive.reload.openAudio");
-        const reopened = await second.openAudio?.({ assignmentId: taskId, localAudio: drive.localAudio });
-        const malformed = validateResult(reopened, "openAudio", "drive.reload.openAudio");
+        ruleTested("test.reload.openAudio");
+        const reopened = await second.openAudio?.({ assignmentId: taskId, localAudio: call.localAudio });
+        const malformed = validateResult(reopened, "openAudio", "test.reload.openAudio");
         found.push(...malformed);
         if (malformed.length === 0 && isRecord(reopened) && reopened.status === "opened") session = reopened.audio as unknown as Record<string, unknown>;
-        else if (malformed.length === 0) refuse("drive.reload.openAudio", "drive.reload.openAudio",
+        else if (malformed.length === 0) refuse("test.reload.openAudio", "test.reload.openAudio",
           `a second adapter built from the same login could not open the audio of ${taskId}, which its own snapshot carries with audio started`);
       }
     } catch (error) {
-      refuse("drive.reload.rejected", "drive.reload", `the second adapter rejected rather than answered: ${String(error)}`);
+      refuse("test.reload.rejected", "test.reload", `the second adapter rejected rather than answered: ${String(error)}`);
     }
   };
 
@@ -1727,22 +1727,22 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     // A task's key names the task delimited, not as a run of characters inside another id, and the
     // rule is evaluated only where the store was ever seen to hold such a key: an adapter whose keys
     // name nothing the harness can see leaves the rule unasked, which the result says.
-    const retained = [...drive.held].filter(key => namesTask(key, taskId));
+    const retained = [...call.held].filter(key => namesTask(key, taskId));
     retainedAtEnd = new Set(retained);
-    if (drive.everHeldForTask(taskId)) ruleEvaluated("drive.store.retained");
+    if (call.everHeldForTask(taskId)) ruleTested("test.store.retained");
     if (retained.length > 0) {
-      refuse("drive.store.retained", "drive.store",
+      refuse("test.store.retained", "test.store",
         `${taskId} has ended and the login's store still holds ${retained.join(", ")}: a task's keys go with the task, or the next offer of the same id inherits them`);
     }
   };
   // A key written about the task after its end -- a persist hung off a timer, a late command -- is the
-  // same hazard arriving later, so the store is read once more when the drive is done.
+  // same hazard arriving later, so the store is read once more when the test is done.
   const nothingLate = (): void => {
     if (retainedAtEnd === undefined) return;
-    ruleEvaluated("drive.store.late");
-    const late = [...drive.held].filter(key => namesTask(key, taskId) && !retainedAtEnd!.has(key));
+    ruleTested("test.store.late");
+    const late = [...call.held].filter(key => namesTask(key, taskId) && !retainedAtEnd!.has(key));
     if (late.length > 0) {
-      refuse("drive.store.late", "drive.store",
+      refuse("test.store.late", "test.store",
         `${taskId} had ended with its keys gone, and the login's store now holds ${late.join(", ")}: something wrote about the task after its end`);
     }
   };
@@ -1750,7 +1750,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // The task, as first seen: on the snapshot, or on the first offer.
   let cursor = 0;
   let task: Record<string, unknown> | undefined =
-    isRecord(drive.snapshot) && Array.isArray(drive.snapshot.tasks) ? drive.snapshot.tasks.find(isTask) : undefined;
+    isRecord(call.snapshot) && Array.isArray(call.snapshot.tasks) ? call.snapshot.tasks.find(isTask) : undefined;
   if (task === undefined) {
     const offered = await waitFor("a task-offered", envelope => {
       const event = envelope.event as Record<string, unknown>;
@@ -1770,34 +1770,34 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       }
       return undefined;
     }, cursor, within).then(hit => { if (hit) cursor = hit.at; return hit; });
-  const ended = (within?: { ms: number; onExpiry: () => void }) => waitFor("a task-ended for the driven task", envelope => {
+  const ended = (within?: { ms: number; onExpiry: () => void }) => waitFor("a task-ended for the tested task", envelope => {
     const event = envelope.event as Record<string, unknown>;
     return event.type === "task-ended" && event.assignmentId === taskId ? event : undefined;
   }, cursor, within);
 
-  // Every command the drive sends is validated against the task as published, and its answer for its method.
-  ruleEvaluated("drive.timeout");
+  // Every command the test sends is validated against the task as published, and its answer for its method.
+  ruleTested("test.timeout");
   const send = async (command: Record<string, unknown>, dialId?: string): Promise<Record<string, unknown> | undefined> => {
-    const own = validateTaskCommand(command, latestTask(), `drive.command.${String(command.type)}`, {
-      levels: effectiveLevels(drive.manifest.orgLevels).map(level => level.id),
-      dialOutcomesDeclared: drive.manifest.dialOutcomes !== undefined,
-      calendarDeclared: drive.manifest.idleCapabilities?.calendar === true,
-      autoAcceptTasks: drive.context.autoAcceptTasks,
+    const own = validateTaskCommand(command, latestTask(), `test.command.${String(command.type)}`, {
+      levels: effectiveLevels(call.manifest.orgLevels).map(level => level.id),
+      dialOutcomesDeclared: call.manifest.dialOutcomes !== undefined,
+      calendarDeclared: call.manifest.idleCapabilities?.calendar === true,
+      autoAcceptTasks: call.context.autoAcceptTasks,
     });
     found.push(...own);
     if (own.length > 0) return undefined;
-    ruleEvaluated("drive.command.rejected");
+    ruleTested("test.command.rejected");
     let result: unknown;
     try {
-      result = await drive.connection.execute({ assignmentId: taskId, command } as never);
+      result = await call.connection.execute({ assignmentId: taskId, command } as never);
     } catch (error) {
-      refuse("drive.command.rejected", `drive.command.${String(command.type)}`, `execute rejected rather than answered: ${String(error)}`);
+      refuse("test.command.rejected", `test.command.${String(command.type)}`, `execute rejected rather than answered: ${String(error)}`);
       return undefined;
     }
-    ruleEvaluated("drive.command.failed");
-    found.push(...validateResult(result, "execute", `drive.command.${String(command.type)}.result`, dialId));
+    ruleTested("test.command.failed");
+    found.push(...validateResult(result, "execute", `test.command.${String(command.type)}.result`, dialId));
     if (isRecord(result) && result.status === "failed") {
-      refuse("drive.command.failed", `drive.command.${String(command.type)}`,
+      refuse("test.command.failed", `test.command.${String(command.type)}`,
         `the provider refused ${String(command.type)} on a task that offered it: ${String(isRecord(result.failure) ? result.failure.code : result.failure)}`);
       return undefined;
     }
@@ -1811,15 +1811,15 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
 
   // Audio may arrive any time after the accept, before or after the task's own update says
   // in-progress: the event is the provider's word that the audio should attach, never a reply to
-  // openAudio, so the drive looks for it from the accept rather than from the last update it read.
+  // openAudio, so the test looks for it from the accept rather than from the last update it read.
   // 0. A deadline stated is a deadline kept. Where the first offer says how long it has, within
-  // what the drive will wait, the drive leaves it alone and expects the provider to end it expired
-  // when it runs out; the next offer is the one driven. Offers with no deadline, or a longer one,
+  // what the test will wait, the test leaves it alone and expects the provider to end it expired
+  // when it runs out; the next offer is the one tested. Offers with no deadline, or a longer one,
   // leave this rule unreached, and the result says so.
-  const settleMs = Number(drive.manifest.settleMs);
+  const settleMs = Number(call.manifest.settleMs);
   const lapse = latestTask().phase === "pending" ? latestTask().expiresInSeconds : undefined;
-  if (typeof lapse === "number" && lapse * 1000 <= drive.timeoutMs) {
-    ruleEvaluated("drive.offer.expired");
+  if (typeof lapse === "number" && lapse * 1000 <= call.timeoutMs) {
+    ruleTested("test.offer.expired");
     const lapsedId = taskId;
     let missed = false;
     const ending = await waitFor(`the expired ending of ${lapsedId}`, envelope => {
@@ -1827,14 +1827,14 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       return event.type === "task-ended" && event.assignmentId === lapsedId ? event : undefined;
     }, cursor, { ms: lapse * 1000 + settleMs, onExpiry: () => { missed = true; } });
     if (ending === undefined) {
-      if (missed) refuse("drive.offer.expired", "drive.offer", `${lapsedId} was offered with ${lapse}s to answer and ${lapse * 1000 + settleMs}ms later it has not ended: a deadline stated is a deadline kept, and the offer ends expired naming pending`);
+      if (missed) refuse("test.offer.expired", "test.offer", `${lapsedId} was offered with ${lapse}s to answer and ${lapse * 1000 + settleMs}ms later it has not ended: a deadline stated is a deadline kept, and the offer ends expired naming pending`);
       return found;
     }
     const outcome = isRecord(ending.found.outcome) ? ending.found.outcome : {};
     if (!(outcome.type === "expired" && outcome.phase === "pending")) {
-      refuse("drive.offer.expired", "drive.offer", `${lapsedId} lapsed unanswered and ended ${String(outcome.type)}: an offer nobody answered before its deadline ends expired naming pending`);
+      refuse("test.offer.expired", "test.offer", `${lapsedId} lapsed unanswered and ended ${String(outcome.type)}: an offer nobody answered before its deadline ends expired naming pending`);
     }
-    // The next offer is the one driven; a provider with nothing more to offer ends the drive here.
+    // The next offer is the one tested; a provider with nothing more to offer ends the test here.
     const next = await waitFor("a task-offered after the lapsed one", envelope => {
       const event = envelope.event as Record<string, unknown>;
       return event.type === "task-offered" && isTask(event.task) && event.task.assignmentId !== lapsedId ? event.task : undefined;
@@ -1842,23 +1842,23 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (next === undefined) return found;
     task = next.found; cursor = next.at; taskId = task.assignmentId as string;
   }
-  const acceptedAt = drive.events.length;
+  const acceptedAt = call.events.length;
   // 1. Accept the offer, if it is one.
   if (latestTask().phase === "pending") {
-    if (await send({ type: drive.channel === "voice" ? "answer" : "accept" }) === undefined) return found;
+    if (await send({ type: call.channel === "voice" ? "answer" : "accept" }) === undefined) return found;
     if (await updated(t => t.phase !== "pending", "the task leaving pending after it was accepted") === undefined) return found;
   }
   // 2. A preview: press Call, which is a dial. Where the preview says how long it has, within what
-  // the drive will wait, the deadline is kept to its atDeadline first: under provider-dials the
-  // provider dials when it runs out and the drive presses nothing; under host-dials and waits the
-  // preview stands until then, and the drive presses Call at zero as the desk would.
+  // the test will wait, the deadline is kept to its atDeadline first: under provider-dials the
+  // provider dials when it runs out and the test presses nothing; under host-dials and waits the
+  // preview stands until then, and the test presses Call at zero as the desk would.
   if (latestTask().phase === "preview") {
     const left = latestTask().previewEndsInSeconds;
     const atDeadline = latestTask().atDeadline;
     // Under provider-dials the provider places the call, and the desk presses nothing.
     let pressCall = true;
-    if (typeof left === "number" && left * 1000 <= drive.timeoutMs && typeof atDeadline === "string") {
-      ruleEvaluated("drive.preview.deadline");
+    if (typeof left === "number" && left * 1000 <= call.timeoutMs && typeof atDeadline === "string") {
+      ruleTested("test.preview.deadline");
       const ringing = (t: Record<string, unknown>): boolean => t.phase !== "preview"
         || (Array.isArray(t.onCall) && t.onCall.some(who => isRecord(who) && who.role === "party" && who.stage === "ringing"));
       if (atDeadline === "provider-dials") {
@@ -1866,41 +1866,41 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         const dialled = await updated(ringing, "the provider dialling at the preview's deadline", { ms: left * 1000 + settleMs, onExpiry: () => { missed = true; } });
         if (dialled === undefined) {
           if (!missed) return found;
-          refuse("drive.preview.deadline", "drive.preview", `${taskId} is a preview under provider-dials with ${left}s left, and the provider did not dial when it ran out: the party rings on onCall, or the task leaves preview`);
+          refuse("test.preview.deadline", "test.preview", `${taskId} is a preview under provider-dials with ${left}s left, and the provider did not dial when it ran out: the party rings on onCall, or the task leaves preview`);
           return found;
         }
         pressCall = false;
       } else {
-        // Nothing may move the preview before its deadline under host-dials or waits: the drive
+        // Nothing may move the preview before its deadline under host-dials or waits: the test
         // waits the seconds out and expects the task where it left it.
         const moved = await updated(t => t.phase !== "preview", "nothing", { ms: left * 1000, onExpiry: () => undefined });
         if (moved !== undefined) {
-          refuse("drive.preview.deadline", "drive.preview", `${taskId} is a preview under ${atDeadline} with ${left}s left, and the provider moved it to ${String(moved.found.phase)} before the deadline: under ${atDeadline} the preview stands until the desk dials, or for as long as the agent needs`);
+          refuse("test.preview.deadline", "test.preview", `${taskId} is a preview under ${atDeadline} with ${left}s left, and the provider moved it to ${String(moved.found.phase)} before the deadline: under ${atDeadline} the preview stands until the desk dials, or for as long as the agent needs`);
           return found;
         }
       }
     }
     if (pressCall && latestTask().phase === "preview") {
-      const dialId = `drive-${taskId}`;
-      drive.stream.dialled(dialId);
+      const dialId = `test-${taskId}`;
+      call.stream.dialled(dialId);
       if (await send({ type: "dial", dialId }, dialId) === undefined) return found;
     }
     if (latestTask().phase === "preview" && await updated(t => t.phase === "in-progress" || t.phase === "completing", pressCall ? "the task leaving preview after Call" : "the task leaving preview after the provider's dial") === undefined) return found;
   }
   // The other direction of step 4, wherever the task stands outside the interaction phases with the
   // control still declared: a host holds it back (command.phase.interaction), and an adapter that
-  // receives it anyway must refuse it -- so the drive sends it past the validator and expects failed.
+  // receives it anyway must refuse it -- so the test sends it past the validator and expects failed.
   const holdRefusedOutsideInteraction = async (): Promise<void> => {
-    ruleEvaluated("drive.command.rejected", "drive.command.interaction");
+    ruleTested("test.command.rejected", "test.command.interaction");
     const phase = String(latestTask().phase);
     let answer: unknown;
     try {
-      answer = await drive.connection.execute({ assignmentId: taskId, command: { type: "hold" } } as never);
+      answer = await call.connection.execute({ assignmentId: taskId, command: { type: "hold" } } as never);
     } catch (error) {
-      refuse("drive.command.rejected", "drive.command.hold", `execute rejected rather than answered: ${String(error)}`);
+      refuse("test.command.rejected", "test.command.hold", `execute rejected rather than answered: ${String(error)}`);
     }
     if (isRecord(answer) && answer.status !== "failed") {
-      refuse("drive.command.interaction", "drive.command.hold",
+      refuse("test.command.interaction", "test.command.hold",
         `the provider applied hold on a ${phase} task: a control on the contact belongs to in-progress or paused, and the adapter is the second gate`);
     }
   };
@@ -1909,22 +1909,22 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (await updated(t => t.phase !== "confirmed", "the task leaving confirmed") === undefined) return found;
   }
   // 3. On a softphone, the audio arrives and the host opens it.
-  if (drive.softphone && latestTask().phase === "in-progress") {
+  if (call.softphone && latestTask().phase === "in-progress") {
     if (latestTask().audio !== "started") {
-      const started = await waitFor("task-audio-started for the driven task", envelope => {
+      const started = await waitFor("task-audio-started for the tested task", envelope => {
         const event = envelope.event as Record<string, unknown>;
         return event.type === "task-audio-started" && event.assignmentId === taskId ? event : undefined;
       }, acceptedAt);
       if (started === undefined) return found;
       cursor = Math.max(cursor, started.at);
     }
-    const opened = await drive.connection.openAudio?.({ assignmentId: taskId, localAudio: drive.localAudio });
-    const malformed = validateResult(opened, "openAudio", "drive.openAudio");
+    const opened = await call.connection.openAudio?.({ assignmentId: taskId, localAudio: call.localAudio });
+    const malformed = validateResult(opened, "openAudio", "test.openAudio");
     found.push(...malformed);
     if (malformed.length === 0 && isRecord(opened) && opened.status === "opened") session = opened.audio as unknown as Record<string, unknown>;
-    else if (malformed.length === 0 && isRecord(opened)) refuse("drive.openAudio.unavailable", "drive.openAudio", "a softphone login's adapter could not open the call's audio");
+    else if (malformed.length === 0 && isRecord(opened)) refuse("test.openAudio.unavailable", "test.openAudio", "a softphone login's adapter could not open the call's audio");
   }
-  // 3b. The microphone is the host's. With the audio open, the drive mutes it for a moment and
+  // 3b. The microphone is the host's. With the audio open, the test mutes it for a moment and
   // reports the leg the provider's record would otherwise miss -- begun, then ended -- and
   // expects each report recorded. If the provider restates the task's record afterwards, the leg is in it.
   const canonicalTimes = new Map<string, string>();
@@ -1936,30 +1936,30 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       ? history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === canonicalTimes.get(at)) as Record<string, unknown> | undefined : undefined;
     return typeof leg?.seconds === "number" ? leg.seconds : undefined;
   };
-  const canRecordMute = session !== undefined && typeof session.setMuted === "function" && typeof drive.connection.recordStep === "function";
+  const canRecordMute = session !== undefined && typeof session.setMuted === "function" && typeof call.connection.recordStep === "function";
   const report = async (body: Record<string, unknown>): Promise<void> => {
-      ruleEvaluated("drive.recordStep.rejected", "drive.recordStep.failed");
-      // The drive holds its own report to the contract before it crosses, as a host must.
+      ruleTested("test.recordStep.rejected", "test.recordStep.failed");
+      // The test holds its own report to the contract before it crosses, as a host must.
       const leg = { assignmentId: taskId, step: "muted", mutedBy: "host", ...body };
-      const own = validateHistoryReport(leg, "drive.recordStep.report", drive.manifest);
+      const own = validateHistoryReport(leg, "test.recordStep.report", call.manifest);
       found.push(...own);
       if (own.length > 0) return;
       let answer: unknown;
       try {
-        answer = await drive.connection.recordStep!(leg as never);
+        answer = await call.connection.recordStep!(leg as never);
       } catch (error) {
-        refuse("drive.recordStep.rejected", "drive.recordStep", `recordStep rejected rather than answered: ${String(error)}`);
+        refuse("test.recordStep.rejected", "test.recordStep", `recordStep rejected rather than answered: ${String(error)}`);
         return;
       }
-      const resultErrors = validateResult(answer, "recordStep", "drive.recordStep.result");
+      const resultErrors = validateResult(answer, "recordStep", "test.recordStep.result");
       found.push(...resultErrors);
       if (!resultErrors.length && isRecord(answer) && answer.status === "recorded" && typeof answer.at === "string" && typeof body.at === "string") {
         const prior = canonicalTimes.get(body.at);
-        if (prior !== undefined && prior !== answer.at) refuse("drive.recordStep.identity", "drive.recordStep.result.at", "one reported leg must retain its provider-assigned history instant");
+        if (prior !== undefined && prior !== answer.at) refuse("test.recordStep.identity", "test.recordStep.result.at", "one reported leg must retain its provider-assigned history instant");
         else canonicalTimes.set(body.at, answer.at);
       }
       if (isRecord(answer) && answer.status === "failed") {
-        refuse("drive.recordStep.failed", "drive.recordStep",
+        refuse("test.recordStep.failed", "test.recordStep",
           `the provider refused to record the host's muted leg: ${String(isRecord(answer.failure) ? answer.failure.code : answer.failure)}`);
       }
     };
@@ -1967,7 +1967,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       // No session, nothing to mute: a reload whose second client could not open the audio has been named already.
       if (session === undefined) return;
       try { (session.setMuted as (muted: boolean) => void)(muted); }
-      catch { refuse("drive.openAudio.setMuted", "drive.openAudio", `the audio session threw on setMuted(${String(muted)})`); }
+      catch { refuse("test.openAudio.setMuted", "test.openAudio", `the audio session threw on setMuted(${String(muted)})`); }
     };
   if (canRecordMute) {
     const at = new Date().toISOString();
@@ -1982,15 +1982,15 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     // 3c. A host reload destroys the adapter object and keeps the login's store. Built again from
     // the same login, a second adapter carries the task and the leg -- from its platform, or from
     // the store -- or it composed the record in memory and the record died with it.
-    if (drive.rebuild !== undefined && canonicalTimes.has(at)) {
+    if (call.rebuild !== undefined && canonicalTimes.has(at)) {
       await recordSurvivesReload(canonicalTimes.get(at)!);
-      // A reload that stood no client ends the run: there is nothing left to drive.
-      if (!drive.handOver.isLive()) return found;
+      // A reload that stood no client ends the run: there is nothing left to call.
+      if (!call.handOver.isLive()) return found;
     }
   }
   // 4. Hold and resume, where offered.
   if (latestTask().phase === "in-progress" && offers("hold")) {
-    if (await send({ type: drive.channel === "chat" ? "pause" : "hold" }) !== undefined) {
+    if (await send({ type: call.channel === "chat" ? "pause" : "hold" }) !== undefined) {
       if (await updated(t => t.phase === "paused", "the task pausing after hold") !== undefined) {
         if (await send({ type: "resume" }) !== undefined) {
           await updated(t => t.phase === "in-progress", "the task resuming after resume");
@@ -2002,14 +2002,14 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // calendar-updated that shows it is owed within the manifest's bound. The time is the provider's
   // own: a day after the instant it published the offer, so no clock of the runner's is read.
   if (latestTask().phase === "in-progress" && offers("schedule")) {
-    const publishedAt = drive.events.slice(0, cursor).reverse().find(envelope => {
+    const publishedAt = call.events.slice(0, cursor).reverse().find(envelope => {
       const event = envelope.event as Record<string, unknown>;
       return (event.type === "task-offered" || event.type === "task-updated") && isTask(event.task) && event.task.assignmentId === taskId;
     })?.occurredAt;
     const at = new Date(Date.parse(String(publishedAt ?? "2026-01-01T00:00:00Z")) + 24 * 60 * 60 * 1000).toISOString();
     if (await send({ type: "schedule", at, note: "Follow-up promised on the call" }) !== undefined) {
-      ruleEvaluated("drive.schedule.unsettled");
-      const settle = Number(drive.manifest.settleMs);
+      ruleTested("test.schedule.unsettled");
+      const settle = Number(call.manifest.settleMs);
       const carries = (calendar: unknown): boolean => Array.isArray(calendar) && calendar.some(activity => isRecord(activity) && activity.startsAt === at);
       let unsettled = false;
       const shown = await waitFor("a calendar-updated carrying the follow-up", envelope => {
@@ -2018,9 +2018,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       }, cursor, { ms: settle, onExpiry: () => { unsettled = true; } });
       if (shown === undefined && unsettled) {
         let resync: unknown;
-        try { resync = await drive.connection.snapshot(); } catch (error) { refuse("drive.command.rejected", "drive.schedule", `snapshot() after an unsettled schedule rejected: ${String(error)}`); }
+        try { resync = await call.connection.snapshot(); } catch (error) { refuse("test.command.rejected", "test.schedule", `snapshot() after an unsettled schedule rejected: ${String(error)}`); }
         if (!(isRecord(resync) && carries(resync.calendar))) {
-          refuse("drive.schedule.unsettled", "drive.schedule",
+          refuse("test.schedule.unsettled", "test.schedule",
             `schedule was applied and ${settle}ms later no calendar-updated carries a follow-up at ${at}, and a snapshot does not either: applied says the follow-up is on the calendar, and it is not`);
         }
       }
@@ -2029,9 +2029,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // 5. End the call, where the agent may -- with the microphone muted, as agents do. The leg left
   // open at audio end is the provider's to close, since the provider knows the instant the audio
   // ended; the host's own closing report can only follow what it hears, is answered recorded, and
-  // changes nothing. So the drive mutes, does not report the end before end-call, and reports it
+  // changes nothing. So the test mutes, does not report the end before end-call, and reports it
   // after the audio has ended.
-  if (drive.channel === "voice" && latestTask().phase === "in-progress" && offers("endCall")) {
+  if (call.channel === "voice" && latestTask().phase === "in-progress" && offers("endCall")) {
     let openLeg: { at: string; began: number; task: Record<string, unknown> } | undefined;
     if (canRecordMute && session !== undefined) {
       // The task as published before the call ends: the completing publication that follows is the restatement held to carrying this leg.
@@ -2041,7 +2041,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     }
     if (await send({ type: "end-call" }) !== undefined) {
       // A task that completes with its audio still up is refused by the stream as it passes
-      // (stream.taskUpdated.audioOpen); the drive does not also wait out the clock for an ending
+      // (stream.taskUpdated.audioOpen); the test does not also wait out the clock for an ending
       // that is not coming, so the run reads by the rule and not by its timeout.
       const audioEnded = await waitFor("task-audio-ended after end-call", envelope => {
         const event = envelope.event as Record<string, unknown>;
@@ -2066,10 +2066,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     }
   }
   if (typeof (session as { close?: unknown } | undefined)?.close === "function") {
-    try { (session as { close: () => void }).close(); } catch { refuse("drive.openAudio.close", "drive.openAudio", "the audio session threw on close"); }
+    try { (session as { close: () => void }).close(); } catch { refuse("test.openAudio.close", "test.openAudio", "the audio session threw on close"); }
   }
   // 6. Complete, under either mode: the agent may finish early and the provider is free to end at
-  // once. Only a task with no wrap at all has nothing to complete, and there the drive waits for the
+  // once. Only a task with no wrap at all has nothing to complete, and there the test waits for the
   // provider. A conversation has no audio to end and no completing phase to wait for: a chat or an
   // email, and a voice task offering no end-call, is completed from where it stands.
   const completable = latestTask().phase === "completing" || latestTask().phase === "in-progress" || latestTask().phase === "paused";
@@ -2083,16 +2083,16 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       // applied says the provider has completed the task, and its ending follows within the bound
       // the manifest stated. Past it the host resyncs: a snapshot still carrying the task is a task
       // held open by a provider that said it was done, and the desk shows it as unsettled.
-      ruleEvaluated("drive.completion.unsettled");
-      const settle = Number(drive.manifest.settleMs);
+      ruleTested("test.completion.unsettled");
+      const settle = Number(call.manifest.settleMs);
       let unsettled = false;
       const end = await ended({ ms: settle, onExpiry: () => { unsettled = true; } });
       if (end !== undefined) await storeReleased();
       else if (unsettled) {
         let resync: unknown;
-        try { resync = await drive.connection.snapshot(); } catch (error) { refuse("drive.command.rejected", "drive.completion", `snapshot() after an unsettled completion rejected: ${String(error)}`); }
+        try { resync = await call.connection.snapshot(); } catch (error) { refuse("test.command.rejected", "test.completion", `snapshot() after an unsettled completion rejected: ${String(error)}`); }
         const still = isRecord(resync) && Array.isArray(resync.tasks) && resync.tasks.some(t => isRecord(t) && t.assignmentId === taskId);
-        refuse("drive.completion.unsettled", "drive.completion",
+        refuse("test.completion.unsettled", "test.completion",
           still
             ? `complete was applied and ${settle}ms later the task-ended has not come and a snapshot still carries ${taskId}: applied says the provider completed the task, and it has not`
             : `complete was applied and ${settle}ms later the task-ended has not come; a snapshot no longer carries ${taskId}, so the ending was owed and never sent`);
@@ -2102,10 +2102,10 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (await ended() !== undefined) await storeReleased();
   }
   // The record kept by the provider has every leg the host reported, wherever the provider restated it:
-  // the last publication of the task is read, whether or not the drive was waiting on it.
+  // the last publication of the task is read, whether or not the test was waiting on it.
   const lastPublished = (): Record<string, unknown> => {
-    for (let index = drive.events.length - 1; index >= 0; index -= 1) {
-      const event = drive.events[index]!.event as Record<string, unknown>;
+    for (let index = call.events.length - 1; index >= 0; index -= 1) {
+      const event = call.events[index]!.event as Record<string, unknown>;
       if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.assignmentId === taskId) return event.task;
     }
     return latestTask();
@@ -2119,15 +2119,15 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
       const { at } = reported;
       const leg = history.steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined;
       if (leg === undefined) {
-        refuse("drive.recordStep.history", "drive.recordStep",
+        refuse("test.recordStep.history", "test.recordStep",
           `the provider restated the task's record after the host reported a muted leg at ${at}, and the leg is not in it`);
       } else if (leg.mutedBy !== "host") {
-        refuse("drive.recordStep.history", "drive.recordStep",
+        refuse("test.recordStep.history", "test.recordStep",
           `the record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host, and the record keeps the host's word`);
       } else if (reported.closedAs !== undefined) {
-        ruleEvaluated("drive.recordStep.overwritten");
+        ruleTested("test.recordStep.overwritten");
         if (leg.seconds !== reported.closedAs) {
-          refuse("drive.recordStep.overwritten", "drive.recordStep",
+          refuse("test.recordStep.overwritten", "test.recordStep",
             `the provider closed the leg at ${at} with ${reported.closedAs}s at audio end and the record now says ${String(leg.seconds)}s: the host's closing report changes nothing`);
         }
       }
@@ -2174,7 +2174,7 @@ export class TeamStream {
       case "snapshot": this.seed(event.snapshot); return [];
       case "team-updated": this.members = TeamStream.ids(event.team); return [];
       case "team-member-updated": case "team-member-removed": case "team-policies-updated": {
-        ruleEvaluated("stream.team.baseline");
+        ruleTested("stream.team.baseline");
         if (this.members === undefined) {
           return [{ rule: "stream.team.baseline", path: `${at}.type`,
             message: `${event.type} arrived before the team: team-updated carries the whole team first, and it changes one member at a time after that` }];
@@ -2184,7 +2184,7 @@ export class TeamStream {
           return [];
         }
         if (event.type === "team-member-removed") {
-          ruleEvaluated("stream.teamMember.unknown");
+          ruleTested("stream.teamMember.unknown");
           const id = String(event.memberId);
           if (!this.members.has(id)) {
             return [{ rule: "stream.teamMember.unknown", path: `${at}.memberId`, message: `${id} is not a member the team carried: a removal takes off somebody the lead was given` }];
@@ -2272,7 +2272,7 @@ function watchStore(store: LoginStore): { store: LoginStore; held: Set<string>; 
   };
 }
 
-/** A login store that lives in memory for the test: what most adapter tests hand `exerciseAdapter` as `context.store`. */
+/** A login store that lives in memory for the test: what most adapter tests hand `testAdapter` as `context.store`. */
 export function memoryStore(): LoginStore {
   const kept = new Map<string, string>();
   return {
@@ -2283,7 +2283,7 @@ export function memoryStore(): LoginStore {
 }
 
 /**
- * A host that reports one thing and never changes: what most adapter tests hand `exerciseAdapter`.
+ * A host that reports one thing and never changes: what most adapter tests hand `testAdapter`.
  * A softphone host states what its Mute does; a desk-phone or conversation host has no microphone and states nothing.
  */
 export function stillHost(report: HostReport, guarantees: HostGuarantees, mute: HostMute): Host & { mute: HostMute };

@@ -15,7 +15,7 @@ system.
 | `guide/` | One file per role and channel: `agent.md`, `lead.md`, `queue.md`, `breaks.md`, `phone.md`, `voice.md`, `chat.md`, `email.md`. Each points back into `guide.md` for what it relies on. |
 | `src/index.ts` | The TypeScript declarations. |
 | `src/validation.ts` | Runtime validators Omni applies to adapter output. |
-| `src/testing.ts` | Conformance helpers an adapter runs against its own test state. |
+| `src/testing.ts` | Testing an adapter an adapter runs against its own test state. |
 | `tests/` | One test file per source module, plus the guards over the guide and the repository's own text. |
 
 ## Entry points
@@ -23,7 +23,7 @@ system.
 ```ts
 import { defineAdapter } from "@xema/omni-protocol";
 import { validateSnapshot, assertNoViolations } from "@xema/omni-protocol/validation";
-import { exerciseAdapter } from "@xema/omni-protocol/testing";
+import { testAdapter } from "@xema/omni-protocol/testing";
 ```
 
 ## Validation is not only for tests
@@ -49,7 +49,7 @@ is reading, or what their login declares, from the snapshot alone. `validateTeam
 `validateSnapshot`, and `validateEventEnvelope` each take an optional final `{ self, capabilities }`
 from the `authenticated` state; given them, they report `team.member.self`, `team.request.self`,
 `team.required`, `team.unentitled`, `team.requests.capability`, and `team.requests.required`.
-Without them those rules are not checked. `exerciseAdapter` always passes both.
+Without them those rules are not checked. `testAdapter` always passes both.
 
 ```ts
 const { identity, capabilities } = authenticated;
@@ -58,17 +58,17 @@ validateSnapshot(snapshot, manifest, "snapshot", { self: identity.id, capabiliti
 
 ## Conformance
 
-`exerciseAdapter` validates the manifest, opens an authenticated session, connects, checks
+`testAdapter` validates the manifest, opens an authenticated session, connects, checks
 required capability methods, subscribes, validates the snapshot, every delivered event, and every
 authentication state published during the run — against the latest login — states a capacity,
-then unsubscribes and disconnects. `result.notExercised` names what the run never reached — each
+then unsubscribes and disconnects. `result.notTested` names what the run never reached — each
 optional part of a task, of the break state and team member list, each contribution, each event type — so a
 clean result is read for what it covers and not for the whole contract; `assertReached(result,
 subjects)` is the paired assertion.
 
 ```ts
 const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", host: stillHost(report) };
-const result = await exerciseAdapter(adapter, context, { collectOnly: true });
+const result = await testAdapter(adapter, context, { collectOnly: true });
 expect(result.violations).toEqual([]);
 expect(result.disconnectWasClean).toBe(true);
 ```

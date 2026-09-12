@@ -250,8 +250,8 @@ export function observeRules(listener: (rule: string) => void): () => void {
   return () => { ruleListeners.delete(listener); };
 }
 
-/** Says a rule was evaluated, for code that decides outside a collector: the stream, the drive. */
-export function ruleEvaluated(...rules: readonly string[]): void {
+/** Says a rule was evaluated, for code that decides outside a collector: the stream, the test. */
+export function ruleTested(...rules: readonly string[]): void {
   for (const rule of rules) for (const listener of ruleListeners) listener(rule);
 }
 
@@ -259,12 +259,12 @@ class Collector {
   readonly violations: ProtocolViolation[] = [];
 
   add(rule: string, path: string, message: string): void {
-    ruleEvaluated(rule);
+    ruleTested(rule);
     this.violations.push({ rule, path, message });
   }
 
   require(condition: unknown, rule: string, path: string, message: string): boolean {
-    ruleEvaluated(rule);
+    ruleTested(rule);
     if (!condition) this.violations.push({ rule, path, message });
     return Boolean(condition);
   }
@@ -816,7 +816,7 @@ const levelIds = (levels: readonly string[] | undefined): readonly string[] => l
  * formatting hides it; anything else by its text, case aside.
  */
 function validateNothingLeaksInto(task: Record<string, unknown>, locked: readonly string[], path: string, into: Collector): void {
-  ruleEvaluated("task.locked.leak");
+  ruleTested("task.locked.leak");
   const carries = (text: unknown, value: string): boolean => {
     if (typeof text !== "string") return false;
     const digits = value.replace(/[\s+().-]/g, "");
@@ -1292,7 +1292,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   // that created it, and says so whatever the provisioning: the desk shows no Accept for a call
   // the agent placed. The provisioning governs work the queue routes, and nothing else.
   const originated = task.phase === "pending" && originatedByTheAgent(task);
-  ruleEvaluated("task.acceptance.originated");
+  ruleTested("task.acceptance.originated");
   if (task.acceptance !== undefined) {
     into.oneOf(task.acceptance, ACCEPTANCE_MODES, "task.acceptance", `${path}.acceptance`);
     if (task.phase !== "pending") {
@@ -1490,7 +1490,7 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
   // The converse: a committed break with nothing outstanding has begun. starting-after-task beside
   // no task is a break waiting on work that does not exist, and an empty list reading as "still
   // finishing" is the plausible nought.
-  ruleEvaluated("break.starting-after-task.tasks");
+  ruleTested("break.starting-after-task.tasks");
   if (isPlainObject(state) && state.status === "starting-after-task"
     && Array.isArray(tasks) && tasks.length === 0) {
     into.add("break.starting-after-task.tasks", `${path}.break.status`,
@@ -1778,7 +1778,7 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
   // A break in effect, or about to be, on a provider that publishes reasons is on one of them: an
   // forced one included, since the lead's force-break command named it. A break of no kind is a break whose
   // rules -- who may listen through it, whether it counts -- nobody can apply.
-  ruleEvaluated("break.activeReasonId.required");
+  ruleTested("break.activeReasonId.required");
   if (seen.size > 0 && (value.status === "on-break" || value.status === "starting-after-task")) {
     into.require(typeof value.activeReasonId === "string" && value.activeReasonId.length > 0, "break.activeReasonId.required", `${path}.activeReasonId`,
       `a break ${describeValue(value.status)} on a provider that publishes reasons names the one it is on`);
@@ -3374,7 +3374,7 @@ const filled = (v: unknown): v is string => typeof v === "string" && v.trim().le
 function collector() {
   const violations: ProtocolViolation[] = [];
   const check = (ok: unknown, rule: string, path: string, message: string) => {
-    ruleEvaluated(`recording.${rule}`);
+    ruleTested(`recording.${rule}`);
     if (!ok) violations.push({ rule: `recording.${rule}`, path, message });
     return Boolean(ok);
   };

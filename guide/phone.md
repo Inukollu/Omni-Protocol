@@ -62,7 +62,7 @@ report is a task fact or a capacity fact; it is what the station can do, and the
 is the one that knows whether an agent without a microphone, or without a speaker, can work.
 
 The agent application's own obligations here — asking at connect, never publishing `not-asked` when it does,
-publishing a state and not a flicker — are Omni's tests' to hold. `exerciseAdapter` holds the
+publishing a state and not a flicker — are Omni's tests' to hold. `testAdapter` holds the
 other side: it validates the shape of whatever agent application a test hands the adapter, requires `audio` on
 a softphone login and none elsewhere -- not on a desk phone, not off voice
 (`context.host.audio.required` / `.unexpected`), holds `host.mute` to the same line (`host.mute.required`

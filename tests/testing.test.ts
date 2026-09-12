@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
 import type { LoginStore, Refusal, PhoneState } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
-import { memoryStore, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, exerciseAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
+import { memoryStore, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, testAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const voiceTask = {
   title: "Customer call",
@@ -814,7 +814,7 @@ describe("browser isolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// exerciseAdapter: the conformance harness.
+// testAdapter: the conformance harness.
 // ---------------------------------------------------------------------------
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
@@ -1009,17 +1009,17 @@ const contextFor = (manifest: unknown): ConnectContext =>
   (manifest as { channel?: string } | undefined)?.channel === "voice"
     ? { ...context, phone: "softphone", host: stillHost(speaking, {}, "stream") }
     : { ...context, phone: undefined, host: stillHost({ online: true }) };
-const rules = async (overrides: AdapterOverrides, options: { driveTimeoutMs?: number } = {}) =>
-  (await exerciseAdapter(makeAdapter(overrides).adapter, contextFor(overrides.manifest ?? conformingManifest), { collectOnly: true, ...options })).violations.map(violation => violation.rule);
+const rules = async (overrides: AdapterOverrides, options: { timeoutMs?: number } = {}) =>
+  (await testAdapter(makeAdapter(overrides).adapter, contextFor(overrides.manifest ?? conformingManifest), { collectOnly: true, ...options })).violations.map(violation => violation.rule);
 const teamEvent = (id: string, event: ProviderEventEnvelope<"voice">["event"]): ProviderEventEnvelope<"voice"> =>
   ({ id, loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z", event });
 
 const badEnvelope = { id: "", loginId: "session-1", occurredAt: "not-a-time", event: { type: "transport-status", status: "active" } } as unknown as ProviderEventEnvelope<"voice">;
 
-describe("exerciseAdapter", () => {
+describe("testAdapter", () => {
   it("accepts a rich conforming adapter and releases its resources", async () => {
     const { adapter, disconnect, close, unsubscribe, unsubscribeAuthentication } = makeAdapter();
-    const result = await exerciseAdapter(adapter, context);
+    const result = await testAdapter(adapter, context);
     expect(result.violations).toEqual([]);
     expect(result.disconnectWasClean).toBe(true);
     expect(result.authenticationState.status).toBe("authenticated");
@@ -1031,7 +1031,7 @@ describe("exerciseAdapter", () => {
 
   it("holds the host's phone to the manifest, and lets a desk phone own no audio", async () => {
     const on = async (phone: unknown, overrides: AdapterOverrides = {}, host: Host = stillHost(speaking, {}, "stream")) =>
-      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...context, phone: phone as "softphone", host } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule);
+      (await testAdapter(makeAdapter(overrides).adapter, { ...context, phone: phone as "softphone", host } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule);
     // A softphone login: the host reports audio and the adapter opens audio.
     expect(await on("softphone")).toEqual([]);
     expect(await on("softphone", { connection: { openAudio: undefined } })).toContain("connection.openAudio.required");
@@ -1068,12 +1068,12 @@ describe("exerciseAdapter", () => {
   it("requires the host to state a time zone, and the provider to keep it on the identity", async () => {
     // Both directions: the host's word is validated, and the provider is held to storing it.
     expect(await rules({})).toEqual([]);
-    const without = await exerciseAdapter(makeAdapter({}).adapter, { ...context, timeZone: undefined as unknown as string }, { collectOnly: true });
+    const without = await testAdapter(makeAdapter({}).adapter, { ...context, timeZone: undefined as unknown as string }, { collectOnly: true });
     expect(without.violations.map(v => v.rule)).toContain("context.timeZone");
-    const offset = await exerciseAdapter(makeAdapter({}).adapter, { ...context, timeZone: "+05:30" }, { collectOnly: true });
+    const offset = await testAdapter(makeAdapter({}).adapter, { ...context, timeZone: "+05:30" }, { collectOnly: true });
     expect(offset.violations.map(v => v.rule)).toContain("context.timeZone");
     // A zone is judged by what it denotes: the host says Asia/Kolkata, the provider keeps Asia/Calcutta, one zone.
-    const alias = await exerciseAdapter(makeAdapter({ identityTimeZone: "Asia/Calcutta" }).adapter, { ...context, timeZone: "Asia/Kolkata" }, { collectOnly: true });
+    const alias = await testAdapter(makeAdapter({ identityTimeZone: "Asia/Calcutta" }).adapter, { ...context, timeZone: "Asia/Kolkata" }, { collectOnly: true });
     expect(alias.violations.map(v => v.rule)).toEqual([]);
     // An identity without a zone is not an identity on this wire; one with somebody else's day is told so.
     expect(await rules({ identityTimeZone: false })).toContain("authentication.identity.timeZone");
@@ -1099,7 +1099,7 @@ describe("exerciseAdapter", () => {
     // The rich fixture carries a task, a contact and an activity but no team member list, no break reasons,
     // no forced break, and delivers no event; the bare fixture reaches nothing at all.
     const run = async (overrides: AdapterOverrides) =>
-      (await exerciseAdapter(makeAdapter(overrides).adapter, context, { collectOnly: true })).notExercised;
+      (await testAdapter(makeAdapter(overrides).adapter, context, { collectOnly: true })).notTested;
     const state = (subjects: readonly ContractSubject[]) => subjects.filter(subject => !subject.startsWith("event."));
     const events = (subjects: readonly ContractSubject[]) => subjects.filter(subject => subject.startsWith("event."));
     const everyEvent: ContractSubject[] = [
@@ -1142,7 +1142,7 @@ describe("exerciseAdapter", () => {
   });
 
   it("assertReached names every subject a run never met, and passes those it did", async () => {
-    const result = await exerciseAdapter(makeAdapter().adapter, context, { collectOnly: true });
+    const result = await testAdapter(makeAdapter().adapter, context, { collectOnly: true });
     expect(() => assertReached(result, ["tasks", "task.browsers", "contacts"])).not.toThrow();
     expect(() => assertReached(result, ["tasks", "team.members", "event.task-ended"])).toThrow(/never reached team\.members, event\.task-ended/);
   });
@@ -1187,7 +1187,7 @@ describe("exerciseAdapter", () => {
     const leaking = { ...conformingSnapshot, tasks: [{ ...lockedTask, title: "Call from +91 98765 43210" }] };
     const kept = { ...conformingSnapshot, tasks: [lockedTask] };
     const run = (snapshot: unknown, lockedValues?: readonly string[]) =>
-      exerciseAdapter(makeAdapter({ snapshot }).adapter, context, { collectOnly: true, lockedValues });
+      testAdapter(makeAdapter({ snapshot }).adapter, context, { collectOnly: true, lockedValues });
     expect((await run(leaking, ["+919876543210"])).violations.map(v => v.rule)).toEqual(["task.locked.leak"]);
     expect((await run(kept, ["+919876543210"])).violations).toEqual([]);
     // A run that cannot ask the question does not pass: it says what it was not told.
@@ -1199,13 +1199,13 @@ describe("exerciseAdapter", () => {
   it("collects delivered events and deduplicates repeated ids", async () => {
     const good = { id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } } as ProviderEventEnvelope<"voice">;
     const { adapter } = makeAdapter({ emit: listener => { listener(good); listener(good); } });
-    const result = await exerciseAdapter(adapter, context);
+    const result = await testAdapter(adapter, context);
     expect(result.events).toEqual([good]);
   });
 
   it("reports a non-conforming adapter as a ProtocolConformanceError", async () => {
     const { adapter } = makeAdapter({ manifest: { ...conformingManifest, id: "" } });
-    await expect(exerciseAdapter(adapter, context)).rejects.toBeInstanceOf(ProtocolConformanceError);
+    await expect(testAdapter(adapter, context)).rejects.toBeInstanceOf(ProtocolConformanceError);
   });
 
   it("returns violations instead of throwing under collectOnly", async () => {
@@ -1214,14 +1214,14 @@ describe("exerciseAdapter", () => {
 
   it("still releases resources when the adapter does not conform", async () => {
     const { adapter, disconnect, close } = makeAdapter({ manifest: { ...conformingManifest, id: "" } });
-    await expect(exerciseAdapter(adapter, context)).rejects.toThrow();
+    await expect(testAdapter(adapter, context)).rejects.toThrow();
     expect(disconnect).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
   });
 
   it("still releases resources when authentication is not usable", async () => {
     const { adapter, close } = makeAdapter({ authenticated: false });
-    await expect(exerciseAdapter(adapter, context)).rejects.toThrow(/requires authenticated test state/);
+    await expect(testAdapter(adapter, context)).rejects.toThrow(/requires authenticated test state/);
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -1232,7 +1232,7 @@ describe("exerciseAdapter", () => {
       listener({ id: "event-2", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
     });
     const { adapter } = makeAdapter({ emit });
-    const result = await exerciseAdapter(adapter, context, { collectOnly: true });
+    const result = await testAdapter(adapter, context, { collectOnly: true });
     const found = result.violations.map(violation => violation.rule);
     expect(found).toContain("event.id");
     expect(found).toContain("event.occurredAt");
@@ -1243,13 +1243,13 @@ describe("exerciseAdapter", () => {
     // The regression that matters: a listener that throws here would surface as an
     // unhandled rejection and the exercise would resolve as though the adapter conformed.
     const { adapter } = makeAdapter({ emit: listener => { queueMicrotask(() => listener(badEnvelope)); } });
-    const result = await exerciseAdapter(adapter, context, { collectOnly: true });
+    const result = await testAdapter(adapter, context, { collectOnly: true });
     expect(result.violations.map(violation => violation.rule)).toContain("event.occurredAt");
   });
 
   it("reports an unclean shutdown rather than hiding it", async () => {
     const { adapter } = makeAdapter({ disconnect: async () => { throw new Error("socket already gone"); } });
-    const result = await exerciseAdapter(adapter, context, { collectOnly: true });
+    const result = await testAdapter(adapter, context, { collectOnly: true });
     expect(result.disconnectWasClean).toBe(false);
     expect(result.violations.map(violation => violation.rule)).toContain("connection.disconnect.clean");
   });
@@ -1270,7 +1270,7 @@ describe("exerciseAdapter", () => {
   });
 });
 
-describe("exerciseAdapter drives one call", () => {
+describe("testAdapter tests one call", () => {
   const at = "2026-08-21T09:00:00Z";
   type Listener = (envelope: ProviderEventEnvelope<"voice">) => void;
   interface Script { skipAudioStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute";
@@ -1312,12 +1312,12 @@ describe("exerciseAdapter drives one call", () => {
     leavesHostLegOpen?: boolean;
     /** A provider that will not record the host's closing report once the call is over. */
     refusesLateClose?: boolean;
-    /** Where the adapter throws instead of answering, so each catch in the drive is seen to name it. */
+    /** Where the adapter throws instead of answering, so each catch in the test is seen to name it. */
     providerTime?: boolean;
     throwsOn?: "execute" | "recordStep" | "setMuted" | "close" | "rebuild" }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   let drvSeq = 0;
-  const driveable = (script: Script = {}) => {
+  const testable = (script: Script = {}) => {
     let listener: Listener | undefined;
     // Whether this instance is the reloaded second: built while the platform already holds the open task.
     const isSecond = script.platform?.open === true;
@@ -1471,7 +1471,7 @@ describe("exerciseAdapter drives one call", () => {
                 return script.holdAfterEnd ? { status: "applied" } : { status: "failed", failure: { code: "provider.call-ended", message: "Nothing to hold", retryable: false } };
               }
               if (phase === "confirmed") {
-                // Work begins once the probe has been answered: the drive is still in confirmed when it sends.
+                // Work begins once the probe has been answered: the test is still in confirmed when it sends.
                 const answer = script.holdBeforeStart ? { status: "applied" as const } : { status: "failed" as const, failure: { code: "provider.not-started", message: "Nothing to hold yet", retryable: false } };
                 emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
                 emit({ type: "task-audio-started", assignmentId: myAssignment }); audioUp = true;
@@ -1545,20 +1545,20 @@ describe("exerciseAdapter drives one call", () => {
     });
     return adapter;
   };
-  const drive = async (adapter: Adapter<"voice">) => exerciseAdapter(adapter, context, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+  const viaCall = async (adapter: Adapter<"voice">) => testAdapter(adapter, context, { collectOnly: true, withCall: true, timeoutMs: 200 });
 
   it("refuses malformed audio sessions before invoking their controls", async () => {
     const setMuted = vi.fn();
     const close = vi.fn();
     for (const session of [null, { setMuted, close }]) {
-      const adapter = driveable();
+      const adapter = testable();
       const connect = adapter.connect.bind(adapter);
       adapter.connect = async given => {
         const connection = await connect(given);
         connection.openAudio = async () => ({ status: "opened", audio: session } as unknown as Awaited<ReturnType<NonNullable<Connection<"voice">["openAudio"]>>>);
         return connection;
       };
-      const result = await drive(adapter);
+      const result = await viaCall(adapter);
       expect(result.violations.map(violation => violation.rule)).toEqual([session === null ? "result.audio" : "result.audio.remoteAudio"]);
     }
     expect(setMuted).not.toHaveBeenCalled();
@@ -1566,85 +1566,85 @@ describe("exerciseAdapter drives one call", () => {
   });
 
   it("takes the first offer through answer, audio, hold, resume, end-call and complete, reaching what a static run never does", async () => {
-    const result = await drive(driveable());
+    const result = await viaCall(testable());
     expect(result.violations).toEqual([]);
-    // The subjects a run without a drive lists as never reached are now reached.
+    // The subjects a run without a test lists as never reached are now reached.
     for (const subject of ["tasks", "task.onCall", "task.audio", "task.acceptance", "task.outcomes", "event.task-offered", "event.task-updated", "event.task-audio-started", "event.task-audio-ended", "event.task-ended"] as const) {
-      expect(result.notExercised).not.toContain(subject);
+      expect(result.notTested).not.toContain(subject);
     }
-    // The control: without the drive the same adapter reaches none of the call.
-    const still = await exerciseAdapter(driveable(), context, { collectOnly: true });
+    // The control: without the test the same adapter reaches none of the call.
+    const still = await testAdapter(testable(), context, { collectOnly: true });
     expect(still.violations).toEqual([]);
-    expect(still.notExercised).toContain("task.audio");
+    expect(still.notTested).toContain("task.audio");
   });
 
   it("names what the provider owed and never sent, and a refusal of a control the task offered", async () => {
-    // An offer the drive could not see through is still an offer owed its ending, and the run says so beside the timeout.
-    expect((await drive(driveable({ skipAudioStart: true }))).violations.map(v => v.rule)).toEqual(["drive.timeout", "stream.taskOffered.unended"]);
-    expect((await drive(driveable({ refuseHold: true }))).violations.map(v => v.rule)).toEqual(["drive.command.failed"]);
+    // An offer the test could not see through is still an offer owed its ending, and the run says so beside the timeout.
+    expect((await viaCall(testable({ skipAudioStart: true }))).violations.map(v => v.rule)).toEqual(["test.timeout", "stream.taskOffered.unended"]);
+    expect((await viaCall(testable({ refuseHold: true }))).violations.map(v => v.rule)).toEqual(["test.command.failed"]);
     // A command is never sent against a task that does not stand: the malformed offer is named, and so is the command held to it.
-    const bad = (await drive(driveable({ badCapability: true }))).violations.map(v => v.rule);
+    const bad = (await viaCall(testable({ badCapability: true }))).violations.map(v => v.rule);
     expect(bad).toContain("task.capability.value");
     expect(bad).toContain("command.task");
   });
 
   it("reaches the rules about a live call: a room left full after end-call is refused at the boundary", async () => {
-    expect((await drive(driveable({ keepRoomOnEnd: true }))).violations.map(v => v.rule)).toContain("task.onCall.ended");
+    expect((await viaCall(testable({ keepRoomOnEnd: true }))).violations.map(v => v.rule)).toContain("task.onCall.ended");
   });
 
   it("accepts provider-selected history instants instead of host report timestamps", async () => {
-    expect((await drive(driveable({ restateHistory: "with-mute", providerTime: true }))).violations).toEqual([]);
+    expect((await viaCall(testable({ restateHistory: "with-mute", providerTime: true }))).violations).toEqual([]);
   });
 
   it("mutes the open audio for a moment and reports the leg, expecting it recorded and, where the record is restated, present", async () => {
     // The conforming fixture records it and the run is clean (the first test). The provider may
     // restate the record afterwards; when it does, the host's leg is in it or the hole is named.
-    // The drive reports two legs, each begun and ended: the mid-call one it closes itself, and the one it leaves open into end-call.
-    expect((await drive(driveable({ refuseRecordStep: true }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.failed", "drive.recordStep.failed", "drive.recordStep.failed", "drive.recordStep.failed"]);
-    expect((await drive(driveable({ restateHistory: "with-mute" }))).violations).toEqual([]);
-    expect((await drive(driveable({ restateHistory: "without-mute" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.history", "drive.recordStep.history"]);
+    // The test reports two legs, each begun and ended: the mid-call one it closes itself, and the one it leaves open into end-call.
+    expect((await viaCall(testable({ refuseRecordStep: true }))).violations.map(v => v.rule)).toEqual(["test.recordStep.failed", "test.recordStep.failed", "test.recordStep.failed", "test.recordStep.failed"]);
+    expect((await viaCall(testable({ restateHistory: "with-mute" }))).violations).toEqual([]);
+    expect((await viaCall(testable({ restateHistory: "without-mute" }))).violations.map(v => v.rule)).toEqual(["test.recordStep.history", "test.recordStep.history"]);
     // The record keeps the host's word on whose the silence was.
-    expect((await drive(driveable({ restateHistory: "with-mute-by-station" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.history"]);
+    expect((await viaCall(testable({ restateHistory: "with-mute-by-station" }))).violations.map(v => v.rule)).toEqual(["test.recordStep.history"]);
   });
 
   it("ends the call with the microphone muted, and holds the provider to closing that leg at audio end and taking the late report", async () => {
     // The conforming fixture closes the leg when the audio ends and answers the host's later report recorded (the first test).
     // One that leaves the leg as it found it publishes a completing task with a mute still running; one that will not take the
     // late report refuses a report the contract says changes nothing.
-    const open = (await drive(driveable({ restateHistory: "with-mute", leavesHostLegOpen: true }))).violations.map(v => v.rule);
+    const open = (await viaCall(testable({ restateHistory: "with-mute", leavesHostLegOpen: true }))).violations.map(v => v.rule);
     expect(open).toEqual(["task.history.muted.open", "command.task", "stream.taskOffered.unended"]);
-    const refused = (await drive(driveable({ refusesLateClose: true }))).violations.map(v => v.rule);
-    expect(refused).toEqual(["drive.recordStep.failed"]);
+    const refused = (await viaCall(testable({ refusesLateClose: true }))).violations.map(v => v.rule);
+    expect(refused).toEqual(["test.recordStep.failed"]);
   });
 
   it("names a provider that overwrites the leg it closed at audio end with the host's late report", async () => {
     // The conforming fixture answers the late report recorded and changes nothing (the first test); this one takes the host's
     // word over its own and restates the record.
-    expect((await drive(driveable({ restateHistory: "with-mute", overwritesLateClose: true }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.overwritten"]);
+    expect((await viaCall(testable({ restateHistory: "with-mute", overwritesLateClose: true }))).violations.map(v => v.rule)).toEqual(["test.recordStep.overwritten"]);
   });
 
   it("evaluates the store rule only where the store was seen to hold a key naming the task, and says so otherwise", async () => {
     // Keys that name the task, left behind, are named (the leavesKeys test). Keys the harness cannot tell are the task's are a
-    // gap the result states: the rule is absent from rulesEvaluated, and nothing passes for want of a look.
+    // gap the result states: the rule is absent from rulesTested, and nothing passes for want of a look.
     const store = memoryStore();
-    const unseen = await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store", leavesKeys: true, keyShape: "unrelated" }), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+    const unseen = await testAdapter(testable({ restateHistory: "with-mute", legsIn: "store", leavesKeys: true, keyShape: "unrelated" }), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200 });
     expect(unseen.violations).toEqual([]);
-    expect(unseen.rulesEvaluated).not.toContain("drive.store.retained");
+    expect(unseen.rulesTested).not.toContain("test.store.retained");
     // A key naming the task only as a run of characters inside another id is not the task's key either.
-    const runOn = await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store", leavesKeys: true, keyShape: "run-on" }), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+    const runOn = await testAdapter(testable({ restateHistory: "with-mute", legsIn: "store", leavesKeys: true, keyShape: "run-on" }), { ...context, store: memoryStore() }, { collectOnly: true, withCall: true, timeoutMs: 200 });
     expect(runOn.violations).toEqual([]);
-    expect(runOn.rulesEvaluated).not.toContain("drive.store.retained");
-    const seen = await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store" }), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+    expect(runOn.rulesTested).not.toContain("test.store.retained");
+    const seen = await testAdapter(testable({ restateHistory: "with-mute", legsIn: "store" }), { ...context, store: memoryStore() }, { collectOnly: true, withCall: true, timeoutMs: 200 });
     expect(seen.violations).toEqual([]);
-    expect(seen.rulesEvaluated).toContain("drive.store.retained");
+    expect(seen.rulesTested).toContain("test.store.retained");
   });
 
   it("marks a rule evaluated only where its predicate ran: a rebuild that throws has looked at nothing after it", async () => {
-    const thrown = await exerciseAdapter(driveable({ restateHistory: "with-mute" }), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => { throw new Error("no second"); } });
-    expect(thrown.violations.map(v => v.rule)).toEqual(["drive.reload.rejected"]);
-    expect(thrown.rulesEvaluated).toContain("drive.reload.rejected");
-    expect(thrown.rulesEvaluated).not.toContain("drive.reload.history");
-    expect(thrown.rulesEvaluated).not.toContain("drive.reload.login");
+    const thrown = await testAdapter(testable({ restateHistory: "with-mute" }), { ...context, store: memoryStore() }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => { throw new Error("no second"); } });
+    expect(thrown.violations.map(v => v.rule)).toEqual(["test.reload.rejected"]);
+    expect(thrown.rulesTested).toContain("test.reload.rejected");
+    expect(thrown.rulesTested).not.toContain("test.reload.history");
+    expect(thrown.rulesTested).not.toContain("test.reload.login");
   });
 
   it("builds the adapter again as a host reload does, and names one whose record died with it", async () => {
@@ -1652,37 +1652,37 @@ describe("exerciseAdapter drives one call", () => {
     const run = async (legsIn: "memory" | "store", sharesPlatform = true) => {
       const store = memoryStore();
       const script = { restateHistory: "with-mute" as const, legsIn, platform: sharesPlatform ? { open: false } : undefined };
-      return (await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations.map(v => v.rule);
+      return (await testAdapter(testable(script), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(script) })).violations.map(v => v.rule);
     };
     expect(await run("store")).toEqual([]);
     // Composed in memory, the leg is gone on the reload and gone again when the reloaded client restates the record at the end.
-    expect(await run("memory")).toEqual(["drive.reload.history", "drive.recordStep.history"]);
+    expect(await run("memory")).toEqual(["test.reload.history", "test.recordStep.history"]);
     // A second instance that does not carry the open task at all is named for that first.
     // Without a platform behind it a second instance carries nothing, and is named for that first; what its fresh state does afterwards is the fixture's, not the rule's.
-    expect(await run("store", false)).toContain("drive.reload.snapshot");
+    expect(await run("store", false)).toContain("test.reload.snapshot");
     // The control: the same adapters without a rebuild pass either way, which is what the rebuild exists to end.
     const store = memoryStore();
-    expect((await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "memory", platform: { open: false } }), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
+    expect((await testAdapter(testable({ restateHistory: "with-mute", legsIn: "memory", platform: { open: false } }), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200 })).violations).toEqual([]);
   }, 20000);
 
   it("holds a deadline stated to a deadline kept: an offer left to lapse ends expired, and a preview's deadline moves as atDeadline says", async () => {
-    // The offer with a deadline is left alone; the platform that ends it expired and offers the next is clean, and the next is driven.
-    expect((await drive(driveable({ lapse: { seconds: 0, honour: "expired" } }))).violations).toEqual([]);
-    expect((await drive(driveable({ lapse: { seconds: 0, honour: "never" } }))).violations.map(v => v.rule)).toEqual(["drive.offer.expired", "stream.taskOffered.unended"]);
-    expect((await drive(driveable({ lapse: { seconds: 0, honour: "cancelled" } }))).violations.map(v => v.rule)).toEqual(["drive.offer.expired"]);
-    // A deadline the drive would not wait for leaves the rule unreached, and the result says so.
-    const long = await drive(driveable({ lapse: { seconds: 5, honour: "never" } }));
-    expect(long.rulesEvaluated).not.toContain("drive.offer.expired");
+    // The offer with a deadline is left alone; the platform that ends it expired and offers the next is clean, and the next is tested.
+    expect((await viaCall(testable({ lapse: { seconds: 0, honour: "expired" } }))).violations).toEqual([]);
+    expect((await viaCall(testable({ lapse: { seconds: 0, honour: "never" } }))).violations.map(v => v.rule)).toEqual(["test.offer.expired", "stream.taskOffered.unended"]);
+    expect((await viaCall(testable({ lapse: { seconds: 0, honour: "cancelled" } }))).violations.map(v => v.rule)).toEqual(["test.offer.expired"]);
+    // A deadline the test would not wait for leaves the rule unreached, and the result says so.
+    const long = await viaCall(testable({ lapse: { seconds: 5, honour: "never" } }));
+    expect(long.rulesTested).not.toContain("test.offer.expired");
   }, 15_000);
 
   it("holds a preview's deadline to its atDeadline: the provider dials under provider-dials, and the preview stands under waits and host-dials", async () => {
     // A preview under provider-dials: the platform dials when it runs out, and one that never does is named.
-    expect((await drive(driveable({ preview: { atDeadline: "provider-dials", seconds: 0, honoured: true } }))).violations).toEqual([]);
-    expect((await drive(driveable({ preview: { atDeadline: "provider-dials", seconds: 0, honoured: false } }))).violations.map(v => v.rule)).toEqual(["drive.preview.deadline", "stream.taskOffered.unended"]);
+    expect((await viaCall(testable({ preview: { atDeadline: "provider-dials", seconds: 0, honoured: true } }))).violations).toEqual([]);
+    expect((await viaCall(testable({ preview: { atDeadline: "provider-dials", seconds: 0, honoured: false } }))).violations.map(v => v.rule)).toEqual(["test.preview.deadline", "stream.taskOffered.unended"]);
     // Under waits and host-dials the preview stands until the desk dials; a platform that moves it early is named.
     for (const atDeadline of ["waits", "host-dials"] as const) {
-      expect((await drive(driveable({ preview: { atDeadline, seconds: 0, honoured: true } }))).violations, atDeadline).toEqual([]);
-      expect((await drive(driveable({ preview: { atDeadline, seconds: 0, honoured: false } }))).violations.map(v => v.rule), atDeadline).toContain("drive.preview.deadline");
+      expect((await viaCall(testable({ preview: { atDeadline, seconds: 0, honoured: true } }))).violations, atDeadline).toEqual([]);
+      expect((await viaCall(testable({ preview: { atDeadline, seconds: 0, honoured: false } }))).violations.map(v => v.rule), atDeadline).toContain("test.preview.deadline");
     }
   }, 15_000);
 
@@ -1692,13 +1692,13 @@ describe("exerciseAdapter drives one call", () => {
     const store = memoryStore();
     const lead = { switched: 0 };
     const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, lead };
-    const result = await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) });
+    const result = await testAdapter(testable(script), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(script) });
     expect(result.violations).toEqual([]);
     expect(lead.switched).toBe(2);
     // The control: a login that does not lead is switched on neither client.
     const plain = { switched: 0 };
     const unled = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } };
-    expect((await exerciseAdapter(driveable(unled), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(unled) })).violations).toEqual([]);
+    expect((await testAdapter(testable(unled), { ...context, store: memoryStore() }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(unled) })).violations).toEqual([]);
     expect(plain.switched).toBe(0);
   });
 
@@ -1706,51 +1706,51 @@ describe("exerciseAdapter drives one call", () => {
     const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "without-refused") => {
       const store = memoryStore();
       const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, reloadAs };
-      return (await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations.map(v => v.rule);
+      return (await testAdapter(testable(script), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(script) })).violations.map(v => v.rule);
     };
-    expect(await misbehaving("another-provider")).toEqual(["drive.reload.manifest"]);
-    // A record that shrank across the reload is named by the stream, as on any resync, and by the drive's check of the leg's word.
-    expect(await misbehaving("without-answered")).toEqual(["stream.snapshot.history", "drive.reload.history"]);
+    expect(await misbehaving("another-provider")).toEqual(["test.reload.manifest"]);
+    // A record that shrank across the reload is named by the stream, as on any resync, and by the test's check of the leg's word.
+    expect(await misbehaving("without-answered")).toEqual(["stream.snapshot.history", "test.reload.history"]);
     expect(await misbehaving("miscounted")).toEqual(["snapshot.taskCount.mismatch"]);
     // The reload is a restore before it is anything else: a second adapter that does not come up signed in as this login is named first.
-    expect(await misbehaving("signed-out")).toEqual(["drive.reload.login", "stream.taskOffered.unended"]);
-    // The assignment is the task's one name: a rebuilt adapter that mints a new one no longer carries the task, and nothing after that can be driven.
-    expect((await misbehaving("reminted")).slice(0, 1)).toEqual(["drive.reload.snapshot"]);
+    expect(await misbehaving("signed-out")).toEqual(["test.reload.login", "stream.taskOffered.unended"]);
+    // The assignment is the task's one name: a rebuilt adapter that mints a new one no longer carries the task, and nothing after that can be tested.
+    expect((await misbehaving("reminted")).slice(0, 1)).toEqual(["test.reload.snapshot"]);
     // The stream's rules keep working across the reload: the second snapshot may not forget the audio the first held up,
     // nor read the task as not yet begun. Named by the stream, as any resync is, not by a reload twin.
     expect(await misbehaving("without-audio")).toContain("stream.snapshot.audio");
     expect(await misbehaving("gone-backwards")).toContain("stream.snapshot.phase");
     // The first client's audio session died with it: the second opens the audio again on a task its snapshot carries
     // started, and one that cannot is named; the conforming reload above reopens it and is clean.
-    expect(await misbehaving("audio-unavailable")).toEqual(["drive.reload.openAudio"]);
+    expect(await misbehaving("audio-unavailable")).toEqual(["test.reload.openAudio"]);
     // And to the connect obligations every connection owes: a second built without refused is named as the first would be.
     expect(await misbehaving("without-refused")).toEqual(["connection.refused.required"]);
     // The second is told the capacity in force, as a host tells every connection on connect.
     const platform = { open: false } as { open: boolean; secondStated?: number };
     const stating = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform };
-    expect((await exerciseAdapter(driveable(stating), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(stating) })).violations).toEqual([]);
+    expect((await testAdapter(testable(stating), { ...context, store: memoryStore() }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(stating) })).violations).toEqual([]);
     expect(platform.secondStated).toBe(1);
     // A reload is the first client dying: the platform's push to it goes nowhere, so a re-offer it would have shouted about never reaches a client. Nothing is exempted; there is nobody to hear it.
     const store = memoryStore();
     const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } as { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean }, reofferOnReload: true };
-    expect((await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(script) })).violations).toEqual([]);
+    expect((await testAdapter(testable(script), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(script) })).violations).toEqual([]);
     // The control: a shout from the client that stands, the reloaded one, is a diagnostic and counted.
     const loud = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, shoutsAfterReload: true };
-    expect((await exerciseAdapter(driveable(loud), { ...context, store: memoryStore() }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => driveable(loud) })).violations.map(v => v.rule)).toEqual(["diagnostic.raised"]);
+    expect((await testAdapter(testable(loud), { ...context, store: memoryStore() }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(loud) })).violations.map(v => v.rule)).toEqual(["diagnostic.raised"]);
   }, 20000);
 
-  it("names an adapter that throws where it should answer, at every catch in the drive", async () => {
+  it("names an adapter that throws where it should answer, at every catch in the test", async () => {
     // Each catch was deletable with the suite green; each is now seen to name the throw, and the same adapter answering is clean.
     // hold is sent twice, once on the call and once past the validator after it, and both throws are named.
-    expect((await drive(driveable({ throwsOn: "execute" }))).violations.map(v => v.rule)).toEqual(["drive.command.rejected", "drive.command.rejected"]);
+    expect((await viaCall(testable({ throwsOn: "execute" }))).violations.map(v => v.rule)).toEqual(["test.command.rejected", "test.command.rejected"]);
     // Two legs, each begun and ended, are four reports and four turns of the microphone.
-    expect((await drive(driveable({ throwsOn: "recordStep" }))).violations.map(v => v.rule)).toEqual(["drive.recordStep.rejected", "drive.recordStep.rejected", "drive.recordStep.rejected", "drive.recordStep.rejected"]);
-    expect((await drive(driveable({ throwsOn: "setMuted" }))).violations.map(v => v.rule)).toEqual(["drive.openAudio.setMuted", "drive.openAudio.setMuted", "drive.openAudio.setMuted", "drive.openAudio.setMuted"]);
-    expect((await drive(driveable({ throwsOn: "close" }))).violations.map(v => v.rule)).toEqual(["drive.openAudio.close"]);
+    expect((await viaCall(testable({ throwsOn: "recordStep" }))).violations.map(v => v.rule)).toEqual(["test.recordStep.rejected", "test.recordStep.rejected", "test.recordStep.rejected", "test.recordStep.rejected"]);
+    expect((await viaCall(testable({ throwsOn: "setMuted" }))).violations.map(v => v.rule)).toEqual(["test.openAudio.setMuted", "test.openAudio.setMuted", "test.openAudio.setMuted", "test.openAudio.setMuted"]);
+    expect((await viaCall(testable({ throwsOn: "close" }))).violations.map(v => v.rule)).toEqual(["test.openAudio.close"]);
     const store = memoryStore();
     const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } };
-    expect((await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200, rebuild: () => { throw new Error("no factory"); } })).violations.map(v => v.rule)).toEqual(["drive.reload.rejected"]);
-    expect((await drive(driveable({}))).violations).toEqual([]);
+    expect((await testAdapter(testable(script), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => { throw new Error("no factory"); } })).violations.map(v => v.rule)).toEqual(["test.reload.rejected"]);
+    expect((await viaCall(testable({}))).violations).toEqual([]);
   }, 20000);
 
   it("applies a re-delivered envelope once, and names an id reused for a different event", async () => {
@@ -1758,7 +1758,7 @@ describe("exerciseAdapter drives one call", () => {
     const first: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-1", occurredAt: at, event: { type: "transport-status", status: "active" } };
     const again: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-1", occurredAt: at, event: { type: "transport-status", status: "error", recovery: "reconnect" } as never };
     const run = async (...envelopes: ProviderEventEnvelope<"voice">[]) =>
-      await exerciseAdapter(makeAdapter({ emit: listener => { for (const envelope of envelopes) listener(envelope); } }).adapter, context, { collectOnly: true });
+      await testAdapter(makeAdapter({ emit: listener => { for (const envelope of envelopes) listener(envelope); } }).adapter, context, { collectOnly: true });
     const harmless = await run(first, first);
     expect(harmless.violations).toEqual([]);
     expect(harmless.events.filter(e => e.id === "evt-1")).toHaveLength(1);
@@ -1769,10 +1769,10 @@ describe("exerciseAdapter drives one call", () => {
     // The clean case is the store-kept adapter above, which deletes its key before publishing the end. This one leaves it.
     const store = memoryStore();
     const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, leavesKeys: true };
-    expect((await exerciseAdapter(driveable(script), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations.map(v => v.rule)).toEqual(["drive.store.retained"]);
+    expect((await testAdapter(testable(script), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200 })).violations.map(v => v.rule)).toEqual(["test.store.retained"]);
     // The control in the same process: the same adapter deleting its key is clean, and the store the test holds is empty afterwards.
     const kept = memoryStore();
-    expect((await exerciseAdapter(driveable({ ...script, leavesKeys: false }), { ...context, store: kept }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
+    expect((await testAdapter(testable({ ...script, leavesKeys: false }), { ...context, store: kept }, { collectOnly: true, withCall: true, timeoutMs: 200 })).violations).toEqual([]);
     expect(await kept.get("legs:alloc-77")).toBeUndefined();
     expect(await store.get("legs:alloc-77")).toBeDefined();
   });
@@ -1782,68 +1782,68 @@ describe("exerciseAdapter drives one call", () => {
     const listening = { refused: (report: Refusal) => { told.push(report); } };
     // A snapshot the harness would not take: the adapter hears the artefact and every rule.
     const broken = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, wrapAllowance: -5 }] };
-    expect((await exerciseAdapter(makeAdapter({ snapshot: broken, connection: listening }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["task.wrapAllowance"]);
+    expect((await testAdapter(makeAdapter({ snapshot: broken, connection: listening }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["task.wrapAllowance"]);
     expect(told).toEqual([{ artefact: "snapshot", violations: [expect.objectContaining({ rule: "task.wrapAllowance" })] }]);
     // An event it dropped: told with the envelope id.
     told.length = 0;
     const bad: ProviderEventEnvelope<"voice"> = { id: "evt-bad", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z", event: { type: "task-audio-ended", assignmentId: "" } };
-    const result = await exerciseAdapter(makeAdapter({ emitOnCapacity: listener => listener(bad), connection: listening }).adapter, context, { collectOnly: true });
+    const result = await testAdapter(makeAdapter({ emitOnCapacity: listener => listener(bad), connection: listening }).adapter, context, { collectOnly: true });
     expect(result.violations.map(v => v.rule)).toContain("event.taskAudioEnded.assignmentId");
     expect(told.map(r => [r.artefact, r.envelopeId])).toEqual([["event", "evt-bad"]]);
     // The control: a clean run tells nothing, and a conforming adapter with the method is clean.
     told.length = 0;
-    expect((await exerciseAdapter(makeAdapter({ connection: listening }).adapter, context, { collectOnly: true })).violations).toEqual([]);
+    expect((await testAdapter(makeAdapter({ connection: listening }).adapter, context, { collectOnly: true })).violations).toEqual([]);
     expect(told).toEqual([]);
     // Without the method, or throwing when told, the adapter is named.
-    expect((await exerciseAdapter(makeAdapter({ connection: { refused: undefined } }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["connection.refused.required"]);
-    expect((await exerciseAdapter(makeAdapter({ snapshot: broken, connection: { refused: () => { throw new Error("no logger"); } } }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["task.wrapAllowance", "connection.refused.rejected"]);
+    expect((await testAdapter(makeAdapter({ connection: { refused: undefined } }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["connection.refused.required"]);
+    expect((await testAdapter(makeAdapter({ snapshot: broken, connection: { refused: () => { throw new Error("no logger"); } } }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["task.wrapAllowance", "connection.refused.rejected"]);
   });
 
   it("states a capacity of zero after the run, host-stopped, and names a provider that will not take it", async () => {
     const stated: number[] = [];
     const counting = { setCapacity: async ({ count }: { count: number }) => { stated.push(count); return { status: "applied" as const }; } };
-    expect((await exerciseAdapter(makeAdapter({ connection: counting }).adapter, context, { collectOnly: true })).violations).toEqual([]);
+    expect((await testAdapter(makeAdapter({ connection: counting }).adapter, context, { collectOnly: true })).violations).toEqual([]);
     // Raised, lowered, taken away: the axis moves both ways, since a ceiling that can only rise passes a special-cased zero.
     expect(stated).toEqual([1, 2, 1, 0]);
     let highest = 0;
     const accumulating = { setCapacity: async ({ count }: { count: number }) => { if (count < highest) return { status: "failed" as const, failure: { code: "provider.capacity", message: "Capacity can only rise", retryable: false } }; highest = Math.max(highest, count); return { status: "applied" as const }; } };
     // A capacity is taken, never refused: a provider that answers failed to a lower count, or to zero, has answered a status the method does not give, once per refusal.
-    expect((await exerciseAdapter(makeAdapter({ connection: accumulating }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["result.status", "result.status"]);
+    expect((await testAdapter(makeAdapter({ connection: accumulating }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["result.status", "result.status"]);
     const refusing = { setCapacity: async ({ count }: { count: number }) => count === 0
       ? { status: "failed" as const, failure: { code: "provider.capacity", message: "Capacity must be at least one", retryable: false } }
       : { status: "applied" as const } };
-    expect((await exerciseAdapter(makeAdapter({ connection: refusing }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["result.status"]);
+    expect((await testAdapter(makeAdapter({ connection: refusing }).adapter, context, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["result.status"]);
   });
 
   it("says which rules it evaluated, so a rule never looked at is a visible gap rather than a pass", async () => {
-    const result = await exerciseAdapter(makeAdapter().adapter, context, { collectOnly: true });
+    const result = await testAdapter(makeAdapter().adapter, context, { collectOnly: true });
     expect(result.violations).toEqual([]);
     // The validators' rules as each was applied: the manifest's, the snapshot's, the task's.
-    expect(result.rulesEvaluated).toContain("manifest.id");
-    expect(result.rulesEvaluated).toContain("task.phase");
+    expect(result.rulesTested).toContain("manifest.id");
+    expect(result.rulesTested).toContain("task.phase");
     // A rule whose predicate never ran is not in the set: no entry without seconds, so held.open was never evaluated.
-    expect(result.rulesEvaluated).not.toContain("task.history.held.open");
-    // With the drive, the stream's rules are considered on every update it reads, and the open hold is evaluated while paused.
-    const driven = await drive(driveable({ restateHistory: "with-mute" }));
-    expect(driven.rulesEvaluated).toContain("stream.taskUpdated.phase");
-    expect(driven.rulesEvaluated).toContain("task.history.held.open");
-    // The drive's own rules are in it too, so a collectOnly run can say whether the drive ran at all.
-    expect(driven.rulesEvaluated).toContain("drive.timeout");
-    expect(driven.rulesEvaluated).toContain("drive.command.failed");
-    expect(result.rulesEvaluated).not.toContain("drive.timeout");
+    expect(result.rulesTested).not.toContain("task.history.held.open");
+    // With the test, the stream's rules are considered on every update it reads, and the open hold is evaluated while paused.
+    const tested = await viaCall(testable({ restateHistory: "with-mute" }));
+    expect(tested.rulesTested).toContain("stream.taskUpdated.phase");
+    expect(tested.rulesTested).toContain("task.history.held.open");
+    // The test's own rules are in it too, so a collectOnly run can say whether the test ran at all.
+    expect(tested.rulesTested).toContain("test.timeout");
+    expect(tested.rulesTested).toContain("test.command.failed");
+    expect(result.rulesTested).not.toContain("test.timeout");
     // The observer is released with the run: nothing after it is counted.
     expect(validateTask({ ...conformingSnapshot.tasks[0]!, onCall: [{ role: "party", dialId: "dial-9", since: "2026-08-21T09:05:00Z" }] } as unknown as Task, { channel: "voice" }).map(v => v.rule)).toEqual(["task.onCall.party.dial"]);
-    expect(result.rulesEvaluated).not.toContain("task.onCall.party.dial");
+    expect(result.rulesTested).not.toContain("task.onCall.party.dial");
   });
 
   it("names a provider that writes the hold into its record and never closes it on resume, or the mute once the call is over", async () => {
     // The record carries the hold open while the task is paused, and closed with its duration once it resumes;
     // the host's muted leg it restates closed, since the host ended it before the audio ended.
-    expect((await drive(driveable({ restateHistory: "with-mute" }))).violations).toEqual([]);
-    const openHold = (await drive(driveable({ restateHistory: "with-mute", leavesHoldOpen: true }))).violations.map(v => v.rule);
+    expect((await viaCall(testable({ restateHistory: "with-mute" }))).violations).toEqual([]);
+    const openHold = (await viaCall(testable({ restateHistory: "with-mute", leavesHoldOpen: true }))).violations.map(v => v.rule);
     expect(openHold).toContain("task.history.held.open");
     expect(openHold).not.toContain("task.history.muted.open");
-    const openMute = (await drive(driveable({ restateHistory: "with-mute", leavesMuteOpen: true }))).violations.map(v => v.rule);
+    const openMute = (await viaCall(testable({ restateHistory: "with-mute", leavesMuteOpen: true }))).violations.map(v => v.rule);
     expect(openMute).toContain("task.history.muted.open");
     expect(openMute).not.toContain("task.history.held.open");
   });
@@ -1852,66 +1852,66 @@ describe("exerciseAdapter drives one call", () => {
     // The store lists nothing, so what a previous life of the id left behind cannot be seen by the
     // harness; what it can see is every write through the store it handed over, including a late one.
     const store = memoryStore();
-    const late = (await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store", writesLate: true }), { ...context, store }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations.map(v => v.rule);
-    expect(late).toEqual(["drive.store.late"]);
+    const late = (await testAdapter(testable({ restateHistory: "with-mute", legsIn: "store", writesLate: true }), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200 })).violations.map(v => v.rule);
+    expect(late).toEqual(["test.store.late"]);
     // The control: the same adapter on a clean store, writing nothing late, is clean (the test above holds it).
     const clean = memoryStore();
-    expect((await exerciseAdapter(driveable({ restateHistory: "with-mute", legsIn: "store" }), { ...context, store: clean }, { collectOnly: true, drive: true, driveTimeoutMs: 200 })).violations).toEqual([]);
+    expect((await testAdapter(testable({ restateHistory: "with-mute", legsIn: "store" }), { ...context, store: clean }, { collectOnly: true, withCall: true, timeoutMs: 200 })).violations).toEqual([]);
   });
 
   it("holds an applied schedule to the manifest's bound: the calendar-updated carrying the follow-up follows within it", async () => {
     // The conforming fixture shows the follow-up on its calendar (the first test is clean). This one says applied and never shows it.
-    const silent = (await drive(driveable({ neverSchedules: true }))).violations;
-    expect(silent.map(v => v.rule)).toEqual(["drive.schedule.unsettled"]);
+    const silent = (await viaCall(testable({ neverSchedules: true }))).violations;
+    expect(silent.map(v => v.rule)).toEqual(["test.schedule.unsettled"]);
     expect(silent[0]!.message).toContain("applied says the follow-up is on the calendar");
   });
 
   it("holds an applied completion to the manifest's bound: the task-ended follows within it, or the resync says what the provider did", async () => {
     // The conforming fixture ends the task on complete and the run is clean (the first test). These two say applied and never end it.
-    const held = (await drive(driveable({ neverEnds: "held" }))).violations;
-    expect(held.map(v => v.rule)).toEqual(["drive.completion.unsettled", "stream.taskOffered.unended"]);
+    const held = (await viaCall(testable({ neverEnds: "held" }))).violations;
+    expect(held.map(v => v.rule)).toEqual(["test.completion.unsettled", "stream.taskOffered.unended"]);
     expect(held[0]!.message).toContain("a snapshot still carries alloc-77");
-    const dropped = (await drive(driveable({ neverEnds: "dropped" }))).violations;
-    expect(dropped.map(v => v.rule)).toEqual(["drive.completion.unsettled", "stream.taskOffered.unended"]);
+    const dropped = (await viaCall(testable({ neverEnds: "dropped" }))).violations;
+    expect(dropped.map(v => v.rule)).toEqual(["test.completion.unsettled", "stream.taskOffered.unended"]);
     expect(dropped[0]!.message).toContain("a snapshot no longer carries alloc-77");
   });
 
   it("sends hold once more after the call has ended, past the validator, and names an adapter that applies it", async () => {
     // The conforming fixture refuses it and the run is clean (the first test); this one applies it.
-    expect((await drive(driveable({ holdAfterEnd: true }))).violations.map(v => v.rule)).toEqual(["drive.command.interaction"]);
+    expect((await viaCall(testable({ holdAfterEnd: true }))).violations.map(v => v.rule)).toEqual(["test.command.interaction"]);
   });
 
   it("names an adapter whose end-call moves the task to completing with the audio still up, by the rule and not by the clock", async () => {
     // The conforming fixture ends the audio first and the run is clean (the first test); this one never ends it.
     // The task contradicts itself (audio, and the room still on a completing task), the stream names the
-    // update that did it, and the complete command lands on a task that fails validation. The drive does
-    // not also wait out the clock for an ending the rule has already named as missing: no drive.timeout.
-    const rules = (await drive(driveable({ completesAroundAudio: true }))).violations.map(v => v.rule);
+    // update that did it, and the complete command lands on a task that fails validation. The test does
+    // not also wait out the clock for an ending the rule has already named as missing: no test.timeout.
+    const rules = (await viaCall(testable({ completesAroundAudio: true }))).violations.map(v => v.rule);
     expect(rules).toEqual(["task.audio.completing", "task.onCall.ended", "stream.taskUpdated.audioOpen", "command.task", "stream.taskOffered.unended"]);
   });
 
   it("sends hold in confirmed too, where the provider publishes it, and names an adapter that applies it there", async () => {
-    // The drive sees the fixture's confirmed while the task is in it, so the pass through that phase is real, not raced.
-    const confirming = driveable({ confirmFirst: true });
-    const clean = await exerciseAdapter(confirming, context, { collectOnly: true, drive: true, driveTimeoutMs: 200 });
+    // The test sees the fixture's confirmed while the task is in it, so the pass through that phase is real, not raced.
+    const confirming = testable({ confirmFirst: true });
+    const clean = await testAdapter(confirming, context, { collectOnly: true, withCall: true, timeoutMs: 200 });
     expect(clean.violations).toEqual([]);
-    expect((await drive(driveable({ confirmFirst: true, holdBeforeStart: true }))).violations.map(v => v.rule)).toEqual(["drive.command.interaction"]);
+    expect((await viaCall(testable({ confirmFirst: true, holdBeforeStart: true }))).violations.map(v => v.rule)).toEqual(["test.command.interaction"]);
     // The control: without confirmed on the way, the misbehaviour has nowhere to show.
-    expect((await drive(driveable({ holdBeforeStart: true }))).violations).toEqual([]);
+    expect((await viaCall(testable({ holdBeforeStart: true }))).violations).toEqual([]);
   });
 
   it("completes a task from where it stands when there is no call to end, and says what it could not reach", async () => {
     // A voice task offering no end-call, like a chat or an email, has no completing phase to wait
     // for: the agent completes it from in-progress, and the run reaches the end.
-    const result = await drive(driveable({ noEndCall: true }));
+    const result = await viaCall(testable({ noEndCall: true }));
     expect(result.violations).toEqual([]);
     // The provider ends the audio before the ending it publishes for the agent's complete, as before every voice ending.
-    expect(result.notExercised).not.toContain("event.task-audio-ended");
-    expect(result.notExercised).not.toContain("event.task-ended");
+    expect(result.notTested).not.toContain("event.task-audio-ended");
+    expect(result.notTested).not.toContain("event.task-ended");
   });
 });
 
-describe("exerciseAdapter requires each method the declarations call for", () => {
+describe("testAdapter requires each method the declarations call for", () => {
   // Every case pairs the refusal with its control: the same adapter with the declaration
   // withdrawn is clean, so a missing method is reported because of the declaration and not
   // because the check fires for everyone.
@@ -1952,11 +1952,11 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     // The provider assumes nothing: a team on the connect snapshot is the provider assuming, and
     // the whole team is owed once the application has said on.
     expect(await rules({ capabilities: leading, snapshot: { ...minimalSnapshot, team: { members: [] } } })).toContain("team.unexpected");
-    expect(await rules({ capabilities: leading, emitOnLeadFeatures: () => undefined }, { driveTimeoutMs: 50 })).toEqual(["team.required"]);
+    expect(await rules({ capabilities: leading, emitOnLeadFeatures: () => undefined }, { timeoutMs: 50 })).toEqual(["team.required"]);
     expect(await rules({ capabilities: leading })).toEqual([]);
     // A switch the provider refuses is named; a switch answered with anything but applied is malformed.
     expect(await rules({ capabilities: leading, connection: { executeTeam: async () => { throw new Error("no"); } } })).toEqual(["team.switch.rejected"]);
-    expect(await rules({ capabilities: leading, connection: { executeTeam: async () => ({ status: "failed", failure: { code: "omni.unavailable", message: "Later", retryable: true } }) } }, { driveTimeoutMs: 50 }))
+    expect(await rules({ capabilities: leading, connection: { executeTeam: async () => ({ status: "failed", failure: { code: "omni.unavailable", message: "Later", retryable: true } }) } }, { timeoutMs: 50 }))
       .toEqual(["team.required"]);
     // After the whole team, members change one at a time: whole each time, so the same member twice is nothing new.
     const whole = teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } });
@@ -2025,7 +2025,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules(later(unchanged))).not.toContain("connection.requestBreak.required");
     const overrides = later(granted);
     const { adapter } = makeAdapter({ ...overrides, connection: { setCapacity: overrides.connection?.setCapacity } });
-    const result = await exerciseAdapter(adapter, context, { collectOnly: true });
+    const result = await testAdapter(adapter, context, { collectOnly: true });
     expect(result.authenticationState).toMatchObject({ capabilities: {} });
     expect(result.login).toMatchObject({ capabilities: { breaks: true } });
   });
@@ -2040,11 +2040,11 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     // The ask on a snapshot with the conforming task at work; the lined-up call on its own event.
     const asked = { ...conformingSnapshot, nextCall: { since: "2026-08-21T09:04:00Z" } };
     const lined = teamEvent("evt-lined", { type: "lined-up", linedUp: { party: { name: "Priya S" }, queue: "Billing", queuedSince: "2026-08-21T09:02:00Z", since: "2026-08-21T09:04:30Z", release: true } });
-    const run = await exerciseAdapter(makeAdapter({ capabilities: lining, snapshot: asked, emitOnCapacity: l => l(lined) }).adapter, context, { collectOnly: true });
+    const run = await testAdapter(makeAdapter({ capabilities: lining, snapshot: asked, emitOnCapacity: l => l(lined) }).adapter, context, { collectOnly: true });
     expect(run.violations).toEqual([]);
-    expect(run.notExercised).not.toContain("nextCall");
-    expect(run.notExercised).not.toContain("linedUp");
-    expect((await exerciseAdapter(makeAdapter().adapter, context, { collectOnly: true })).notExercised).toContain("linedUp");
+    expect(run.notTested).not.toContain("nextCall");
+    expect(run.notTested).not.toContain("linedUp");
+    expect((await testAdapter(makeAdapter().adapter, context, { collectOnly: true })).notTested).toContain("linedUp");
     // An ask with nothing at work is one the provider should have cleared.
     expect(await rules({ manifest: plainManifest, capabilities: lining, snapshot: { ...minimalSnapshot, nextCall: { since: "2026-08-21T09:04:00Z" } } })).toEqual(["snapshot.nextCall.idle"]);
     // Told count 0, the queue goes with the capacity: an entry published after that is a promise the provider cannot keep.
@@ -2068,8 +2068,8 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: { ...idle, channels: [] } } })).toEqual(["phone.channel.missing"]);
     const later = teamEvent("evt-phone", { type: "phone-updated", phone: { ...idle, status: "do-not-disturb", since: "2026-08-21T09:05:00Z" } });
     expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: idle }, emitOnCapacity: l => l(later) })).toEqual([]);
-    expect((await exerciseAdapter(makeAdapter({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: idle } }).adapter, context, { collectOnly: true })).notExercised).not.toContain("phone");
-    expect((await exerciseAdapter(makeAdapter().adapter, context, { collectOnly: true })).notExercised).toContain("phone");
+    expect((await testAdapter(makeAdapter({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: idle } }).adapter, context, { collectOnly: true })).notTested).not.toContain("phone");
+    expect((await testAdapter(makeAdapter().adapter, context, { collectOnly: true })).notTested).toContain("phone");
   });
 
   it("takes the agent's day from the wire, and holds a running instant to a provider with a clock", async () => {
@@ -2077,8 +2077,8 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const moved = teamEvent("evt-day", { type: "shift-updated", shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4482, tasksHandled: 13 } });
     expect(await rules({ emitOnCapacity: l => l(moved) })).toEqual([]);
     const withoutDay = { ...conformingSnapshot, shift: undefined };
-    expect((await exerciseAdapter(makeAdapter({ snapshot: withoutDay }).adapter, context, { collectOnly: true })).notExercised).toContain("shift");
-    expect((await exerciseAdapter(makeAdapter({ snapshot: withoutDay, emitOnCapacity: l => l(moved) }).adapter, context, { collectOnly: true })).notExercised).not.toContain("shift");
+    expect((await testAdapter(makeAdapter({ snapshot: withoutDay }).adapter, context, { collectOnly: true })).notTested).toContain("shift");
+    expect((await testAdapter(makeAdapter({ snapshot: withoutDay, emitOnCapacity: l => l(moved) }).adapter, context, { collectOnly: true })).notTested).not.toContain("shift");
     // A provider with no clock may publish no running instant, and no providerTime; one with a clock states it and implements checkTime.
     const clockless = { ...plainManifest, timeCheck: undefined } satisfies Manifest<"voice">;
     const bare = { ...minimalSnapshot, providerTime: undefined };
@@ -2112,7 +2112,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
 
   it("a login that leads is owed the team once switched on, and one that does not is never sent one", async () => {
     // The case a fixture cannot hide: the login says lead, the switch went on, and the run never saw a team.
-    expect(await rules({ capabilities: { lead: true as const }, emitOnLeadFeatures: () => undefined }, { driveTimeoutMs: 50 })).toContain("team.required");
+    expect(await rules({ capabilities: { lead: true as const }, emitOnLeadFeatures: () => undefined }, { timeoutMs: 50 })).toContain("team.required");
     expect(await rules({ capabilities: { lead: true as const } })).not.toContain("team.required");
     const whole = teamEvent("evt-team", { type: "team-updated", team: { members: [] } });
     expect(await rules({ capabilities: {}, emitOnCapacity: l => l(whole) })).toContain("team.unentitled");
@@ -2156,10 +2156,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     // platform that is breaking the rules the adapter relies on.
     const diagnostic: ProviderEventEnvelope<"voice"> = { id: "evt-diag", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "diagnostic", expected: "a task-ended names the task the agent holds", observed: "task-ended named call-99 while call-42 was held", assignmentId: "alloc-99" } };
-    const result = await exerciseAdapter(makeAdapter({ emit: listener => listener(diagnostic) }).adapter, context, { collectOnly: true });
+    const result = await testAdapter(makeAdapter({ emit: listener => listener(diagnostic) }).adapter, context, { collectOnly: true });
     expect(result.violations.map(v => v.rule)).toEqual(["diagnostic.raised"]);
     expect(result.violations[0]?.message).toContain("task-ended named call-99");
-    expect(result.notExercised).not.toContain("event.diagnostic");
+    expect(result.notTested).not.toContain("event.diagnostic");
   });
 
   it("validates the guarantees of the host a test hands the adapter, and passes them through to it", async () => {
@@ -2169,10 +2169,10 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     let seen: HostGuarantees | undefined;
     const { adapter } = makeAdapter();
     const observing = { ...adapter, connect: async (connectContext: ConnectContext) => { seen = connectContext.host.guarantees; return adapter.connect(connectContext); } } as typeof adapter;
-    expect((await exerciseAdapter(observing, { ...context, host: { ...promising, report: () => speaking } } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual([]);
+    expect((await testAdapter(observing, { ...context, host: { ...promising, report: () => speaking } } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual([]);
     expect(seen).toEqual({ personConsent: true });
     const lying: Host = { ...promising, guarantees: { personConsent: false } as unknown as HostGuarantees, report: () => speaking };
-    expect((await exerciseAdapter(makeAdapter().adapter, { ...context, host: lying } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["host.guarantee.value"]);
+    expect((await testAdapter(makeAdapter().adapter, { ...context, host: lying } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["host.guarantee.value"]);
   });
 
   it("validates the host report a test hands the adapter, first and later, and lets go of it", async () => {
@@ -2188,7 +2188,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       subscribe: listener => { if (later !== undefined) listener(later as HostReport); return unsubscribe; },
     });
     const run = async (h: Host) =>
-      (await exerciseAdapter(makeAdapter().adapter, { ...context, host: h } as ConnectContext, { collectOnly: true })).violations.map(violation => violation.rule);
+      (await testAdapter(makeAdapter().adapter, { ...context, host: h } as ConnectContext, { collectOnly: true })).violations.map(violation => violation.rule);
     const speaking = { online: true, audio: { input: { status: "available", localAudio: microphone, flowing: true }, output: { status: "available" } } };
     expect(await run(host(speaking))).toEqual([]);
     expect(await run(host({ online: true, audio: { input: { status: "unavailable", reason: "denied", failure }, output: { status: "available" } } }))).toEqual([]);
@@ -2204,7 +2204,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const { adapter } = makeAdapter();
     const observing = { ...adapter, connect: async (connectContext: ConnectContext) => { seen = connectContext.store; return adapter.connect(connectContext); } } as typeof adapter;
     const store = memoryStore();
-    expect((await exerciseAdapter(observing, { ...context, store }, { collectOnly: true })).violations).toEqual([]);
+    expect((await testAdapter(observing, { ...context, store }, { collectOnly: true })).violations).toEqual([]);
     // The adapter is handed a store the harness watches; what it writes lands in the host's, and what the host holds it reads.
     const handed = seen as LoginStore;
     await handed.set("k", "v");
@@ -2213,8 +2213,8 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect(await handed.get("host")).toBe("wrote");
     await handed.delete("k");
     expect(await store.get("k")).toBeUndefined();
-    expect((await exerciseAdapter(makeAdapter().adapter, { ...context, store: undefined } as unknown as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["store.shape"]);
-    expect((await exerciseAdapter(makeAdapter().adapter, { ...context, store: { get: store.get, set: store.set } } as unknown as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["store.delete"]);
+    expect((await testAdapter(makeAdapter().adapter, { ...context, store: undefined } as unknown as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["store.shape"]);
+    expect((await testAdapter(makeAdapter().adapter, { ...context, store: { get: store.get, set: store.set } } as unknown as ConnectContext, { collectOnly: true })).violations.map(v => v.rule)).toEqual(["store.delete"]);
     // The store keeps what it is given, by key, until it is deleted.
     await store.set("legs:call-42", "[]");
     expect(await store.get("legs:call-42")).toBe("[]");
@@ -2226,7 +2226,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     const chatManifest = { ...conformingManifest, id: "acme-chat", channel: "chat", dialOutcomes: undefined, phones: undefined, idleCapabilities: { contacts: true } } satisfies Manifest<"chat">;
     const chatSnapshot = { ...minimalSnapshot, contacts: [] } satisfies Snapshot<"chat">;
     const run = async (overrides: AdapterOverrides, host: Host) =>
-      (await exerciseAdapter(makeAdapter(overrides).adapter, { ...contextFor(overrides.manifest ?? conformingManifest), host } as ConnectContext, { collectOnly: true })).violations.map(violation => violation.rule);
+      (await testAdapter(makeAdapter(overrides).adapter, { ...contextFor(overrides.manifest ?? conformingManifest), host } as ConnectContext, { collectOnly: true })).violations.map(violation => violation.rule);
     expect(await run({}, stillHost(speaking, {}, "stream"))).toEqual([]);
     expect(await run({}, stillHost({ online: true }, {}, "stream"))).toEqual(["context.host.audio.required"]);
     const chat = { manifest: chatManifest, snapshot: chatSnapshot, connection: { openAudio: undefined, dial: undefined } };
@@ -2243,7 +2243,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
   it("releases the host subscription when connect itself throws", async () => {
     const unsubscribe = vi.fn(() => undefined);
     const host: Host = { guarantees: {}, mute: "stream", report: () => speaking, subscribe: () => unsubscribe };
-    await expect(exerciseAdapter(makeAdapter({ connect: async () => { throw new Error("no transport"); } }).adapter, { ...context, host } as ConnectContext, { collectOnly: true })).rejects.toThrow(/no transport/);
+    await expect(testAdapter(makeAdapter({ connect: async () => { throw new Error("no transport"); } }).adapter, { ...context, host } as ConnectContext, { collectOnly: true })).rejects.toThrow(/no transport/);
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
@@ -2279,7 +2279,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
       event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending", audio: undefined, ...(acceptance ? { acceptance } : {}) } },
     });
     const run = async (autoAcceptTasks: boolean, envelope: ProviderEventEnvelope<"voice">) =>
-      (await exerciseAdapter(makeAdapter({ snapshot: { ...conformingSnapshot, tasks: [], taskCount: 0 }, emitOnCapacity: listener => listener(envelope) }).adapter, { ...context, autoAcceptTasks }, { collectOnly: true }))
+      (await testAdapter(makeAdapter({ snapshot: { ...conformingSnapshot, tasks: [], taskCount: 0 }, emitOnCapacity: listener => listener(envelope) }).adapter, { ...context, autoAcceptTasks }, { collectOnly: true }))
         .violations.map(violation => violation.rule);
     expect(await run(true, offered("consent"))).toEqual([]);
     expect(await run(true, offered())).toContain("task.acceptance.required");
@@ -2337,7 +2337,7 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     // A chat provider has no microphone in play; a desk phone's is the phone's own, and the host mutes nothing.
     expect(await rules({ manifest: chatManifest, snapshot: chatSnapshot, connection: { recordStep: undefined, dial: undefined, openAudio: undefined } }))
       .not.toContain("connection.recordStep.required");
-    const deskPhone = await exerciseAdapter(makeAdapter({ connection: { recordStep: undefined, openAudio: undefined } }).adapter,
+    const deskPhone = await testAdapter(makeAdapter({ connection: { recordStep: undefined, openAudio: undefined } }).adapter,
       { ...context, phone: "deskPhone", host: stillHost({ online: true }) }, { collectOnly: true });
     expect(deskPhone.violations.map(v => v.rule)).not.toContain("connection.recordStep.required");
   });

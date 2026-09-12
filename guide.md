@@ -1646,9 +1646,9 @@ reload is the first client dying and a second coming up for the same login, and 
 publishes the same truth about the same task as the first did, or the first was publishing
 something it made up: an assignment minted for the connection, audio remembered as a boolean, a
 phone the second never read. Three pieces of exactly that state were found in one adapter in an
-afternoon, and none of it was visible until the adapter was built twice. The drive's `rebuild` is the test of this
+afternoon, and none of it was visible until the adapter was built twice. The test's `rebuild` is the test of this
 principle: given a way to build the adapter again, the run hands the login over and holds the
-second to what the first published (`drive.reload.snapshot`, `.history`, `.openAudio`, and the
+second to what the first published (`test.reload.snapshot`, `.history`, `.openAudio`, and the
 stream's own rules across the resync). An adapter that cannot be built twice against its platform
 and publish the same task is not a conformant adapter yet, whatever a single run says.
 
@@ -2180,7 +2180,7 @@ Creates one live provider connection for the signed-in agent.
 | `autoAcceptTasks` | Agent local policy policy relayed to the provider at login, stated by the agent application on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
 | `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's agent application states what its Mute does, and a desk-phone or conversation login's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's** in `guide/phone.md`. |
-| `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A login-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`drive.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`drive.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.assignment-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
+| `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A login-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`test.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`test.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.assignment-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
 | `host` | The agent application's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The agent application reports, the adapter decides** in `guide/phone.md`. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -2426,12 +2426,12 @@ update against the last publication, and on a snapshot from a provider with a cl
 overruns; that is the true value, not a copy.
 
 **A deadline stated is a deadline kept.** The provider that says how long an offer has ends it
-`expired` when it runs out, and the drive holds it to that: where the first offer carries
-`expiresInSeconds` within the drive's timeout, the drive leaves that offer unanswered and expects
-the `expired` ending within the seconds plus `settleMs`, then drives the next offer
-(`drive.offer.expired`). A preview's deadline is held to its `atDeadline` the same way: under
+`expired` when it runs out, and the test holds it to that: where the first offer carries
+`expiresInSeconds` within the test's timeout, the test leaves that offer unanswered and expects
+the `expired` ending within the seconds plus `settleMs`, then tests the next offer
+(`test.offer.expired`). A preview's deadline is held to its `atDeadline` the same way: under
 `provider-dials` the provider dials when it runs out, under `host-dials` and `waits` the preview
-stands until the desk dials (`drive.preview.deadline`).
+stands until the desk dials (`test.preview.deadline`).
 
 #### Optional periodic provider time checks and agent application estimates
 
@@ -2611,7 +2611,7 @@ break, which says so with `forced`: in effect at once, or `starting-after-task` 
 finishes the call they are on (`stream.breakState.commitBeforeGrant`); and a break never moves backwards —
 from `on-break` or `starting-after-task` to a grant or a request, or from `granted` to
 `awaiting-approval` — a new request passes through `not-requested` (`stream.breakState.backwards`).
-`exerciseAdapter` holds the stream to that from the connect snapshot on;
+`testAdapter` holds the stream to that from the connect snapshot on;
 `assertBreakFollowsItsRequests` holds any sequence.
 
 Adapters and hosts can call `validateBreakTransition(before, after)` from the package’s validation entry point
@@ -2675,7 +2675,7 @@ snapshots until it ends.
 **Every offer is owed an ending.** An assignment the provider introduced is an assignment it ends,
 with `task-ended` and an outcome, whatever became of the call: answered and completed, declined,
 withdrawn, abandoned in the ring, lapsed, taken over. An offer that is simply never mentioned
-again leaves the desk holding a task nobody will close, and the conformance drive names it
+again leaves the desk holding a task nobody will close, and the test names it
 (`stream.taskOffered.unended`).
 
 ### `task-updated`
@@ -2730,8 +2730,8 @@ manifest's `settleMs`. A provider never answers `applied` for a completion it ha
 performed. Past the bound the agent application calls `snapshot()`: a snapshot still carrying the task is a task
 held open by a provider that said it was done, and the desk shows it as unsettled -- "Completing...
 the provider has not confirmed" -- naming the command; a snapshot no longer carrying it clears the
-task, since the ending was owed and lost. The drive holds a provider to the same bound
-(`drive.completion.unsettled`). The `task-audio-ended` event and the `completing` phase are likewise
+task, since the ending was owed and lost. The test holds a provider to the same bound
+(`test.completion.unsettled`). The `task-audio-ended` event and the `completing` phase are likewise
 non-terminal. A replacement
 snapshot that no longer contains the task also clears it. Repeated `task-ended` delivery with the
 same envelope ID is harmless, and a `task-ended` naming an assignment that has already ended is
@@ -2762,7 +2762,7 @@ already done the safe thing before it speaks, and nothing in the task or break m
 a diagnostic. It exists so that the loudness reaches a person — an agent application renders each one where the
 agent works and keeps a count an operator can read, because a healthy workspace over a shouting
 console is the silence problem one layer up. One event per occurrence; the agent application counts, the
-provider does not batch. `exerciseAdapter` treats a diagnostic delivered during a run as a
+provider does not batch. `testAdapter` treats a diagnostic delivered during a run as a
 violation (`diagnostic.raised`): a conformance run against a platform that is breaking its rules
 fails loudly rather than passing with a note. A task published under `capabilitySource:
 "not-yet-read"` is the same kind of fact, stated on the task instead, and fails a run the same way
@@ -2875,7 +2875,7 @@ wider goes through this key.
 
 Whether two logins declare the same capabilities, field by field — key order aside, and with
 `team: {}` distinct from `team` absent. It is the comparison an adapter makes before republishing
-`authenticated`, and the one `exerciseAdapter` holds `refreshing` to.
+`authenticated`, and the one `testAdapter` holds `refreshing` to.
 
 ## Runtime validation
 
@@ -2900,7 +2900,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateHostReport(report)` | The agent application's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever agent application a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateHostMute(mute, softphone)` | What the agent application's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the agent application holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
 | `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
-| `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the drive, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
+| `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
 | `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
 | `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a conference's item, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.conference.remove.alone`). An agent application validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
@@ -2917,7 +2917,7 @@ carries that agent reports `team.member.self`, on a `team-member-updated` and a 
 reports `team.unentitled`, and a team event to such a login reports `event.team.capability`; given
 `leadFeatures: true`, a snapshot without a team reports `team.required`, and given `leadFeatures: false`,
 anything of the team reaching the lead reports `team.unexpected` or `event.team.features`. Without them those rules are not checked, because they cannot be.
-`exerciseAdapter` passes all three, holding the switch off until it has sent it. Given the manifest, a
+`testAdapter` passes all three, holding the switch off until it has sent it. Given the manifest, a
 snapshot or event that carries an instant the desk renders as a running duration under a manifest
 without `timeCheck` reports `manifest.timeCheck.required`.
 
@@ -2950,9 +2950,9 @@ A refusal has an aftermath on the desk and a report to the provider, and both ar
   side. The harness tells an adapter under test exactly as an agent application does
   (`connection.refused.required`, `connection.refused.rejected`).
 
-## Conformance helpers
+## Testing an adapter
 
-### `exerciseAdapter(adapter, context, options?)`
+### `testAdapter(adapter, context, options?)`
 
 Adapter conformance exercise from `@xema/omni-protocol/testing`.
 
@@ -2966,7 +2966,7 @@ By default it throws `ProtocolConformanceError` listing every violation. Pass
 `{ collectOnly: true }` to receive them on the result instead:
 
 ```ts
-const result = await exerciseAdapter(adapter, context, { collectOnly: true });
+const result = await testAdapter(adapter, context, { collectOnly: true });
 expect(result.violations).toEqual([]);
 expect(result.disconnectWasClean).toBe(true);
 ```
@@ -2978,7 +2978,7 @@ latest the session published during the run, which differs only when the adapter
 `authentication.refreshing.identity`, a changed capability set `authentication.refreshing.capabilities`.
 A capability granted by a later login requires its methods just as one declared at sign-in does.
 
-`result.notExercised` lists what the run never reached — one subject per family of rules: each
+`result.notTested` lists what the run never reached — one subject per family of rules: each
 optional part of a task (`task.browsers`, `task.history`, `task.leadAssist`, …), the break's
 `reasons` and `forced`, the team member list's `members` and a member's `request`, each declared contribution, and
 each event type (`event.task-ended`, …) — and so what a clean `violations` says nothing about.
@@ -2987,52 +2987,52 @@ no tasks exercises no task rule, and a pass over it reads as coverage it is not.
 
 **A static run never answers a call.** It states a capacity and disconnects, so everything
 downstream of `answer` -- the room, the stage, audio, every phase past `pending`, every dial
-outcome -- stays in `notExercised` for every adapter, and a rule about a live call is enforced only
-in each adopter's own tests. `{ drive: true }` closes that: the exercise takes the first task the
+outcome -- stays in `notTested` for every adapter, and a rule about a live call is enforced only
+in each adopter's own tests. `{ withCall: true }` closes that: the exercise takes the first task the
 provider offers through one ordinary lifecycle -- accept it, wait for its audio and open it on a
 softphone, hold and resume where the task offers `hold`, end the call where it offers `endCall`,
 complete it with an outcome where the agent completes -- and holds every step to the rules a
 agent application holds a provider to. Each command is validated against the task as published
-(`drive.command.*`), each answer for its method, a refusal of a control the task offered is a
-violation (`drive.command.failed`), and an event the provider owes and never sends is one too
-(`drive.timeout`, after `driveTimeoutMs`, 5000 by default). A first offer that says how long it has is left to
+(`test.command.*`), each answer for its method, a refusal of a control the task offered is a
+violation (`test.command.failed`), and an event the provider owes and never sends is one too
+(`test.timeout`, after `timeoutMs`, 5000 by default). A first offer that says how long it has is left to
 lapse and expected to end `expired`, and a preview's deadline is held to its `atDeadline`
-(`drive.offer.expired`, `drive.preview.deadline`); see **Every screen counts from the provider's
-clock**. Around the drive the exercise holds
+(`test.offer.expired`, `test.preview.deadline`); see **Every screen counts from the provider's
+clock**. Around the test the exercise holds
 the run to what an agent application holds a provider to between commands: an offer before the agent application stated
 capacity, or beyond the count with nothing dialled on it, is named
 (`stream.taskOffered.beforeCapacity`, `.overCapacity`); every user the snapshot names is looked up
 through `getUserDetails` and the answer held to the shape, nobody unasked, nobody described as
 nothing (`getUserDetails.user.*`, `getUserDetails.unasked`, `connection.getUserDetails.empty`); and
 the second adapter a `rebuild` gives comes up signed in as the same login from the secrets alone
-before it reads anything (`drive.reload.login`), and is then held to everything the first was on
+before it reads anything (`test.reload.login`), and is then held to everything the first was on
 connect: the methods its declarations call for, the agent application's report, a capacity stated to it, its
 snapshot read as the connect snapshot was, and its audio opened afresh on a task carried with
 `audio: "started"`, since the first client's session died with it. The result also says which rules the
-run evaluated, pass or fail, in `rulesEvaluated`: the validators' as each was applied, the stream's
+run evaluated, pass or fail, in `rulesTested`: the validators' as each was applied, the stream's
 as each case was considered, so a test that needs a rule to have run asserts it there rather than
 inferring it from an empty `violations`, and a rule absent from it was never looked at, which is a
 gap and not a pass. With the audio open on a softphone,
-the drive mutes it for one second and reports the leg through `recordStep`, begun and then ended,
-expecting each report `recorded` with the provider-selected history `at` (`drive.recordStep.failed`, `.rejected`, `result.recordStep.at`); then it mutes again and
+the test mutes it for one second and reports the leg through `recordStep`, begun and then ended,
+expecting each report `recorded` with the provider-selected history `at` (`test.recordStep.failed`, `.rejected`, `result.recordStep.at`); then it mutes again and
 ends the call muted, as agents do, so the leg is open when the audio ends, the provider closes it
 in the completing publication or the open entry is refused (`task.history.muted.open`),
-and the drive's closing report after the audio ended is expected `recorded` and to change nothing:
-a record restated afterwards with that leg's duration altered is named (`drive.recordStep.overwritten`).
+and the test's closing report after the audio ended is expected `recorded` and to change nothing:
+a record restated afterwards with that leg's duration altered is named (`test.recordStep.overwritten`).
 Where the provider restates the task's record afterwards, each leg is in it or the hole is named
-(`drive.recordStep.history`). Given `rebuild`, a way to build the adapter again as an agent application reload
-does, the drive reloads the agent application as a reload happens: the first client is unsubscribed,
-disconnected and its session closed (`drive.reload.handover`), and only then is a second adapter
+(`test.recordStep.history`). Given `rebuild`, a way to build the adapter again as an agent application reload
+does, the test reloads the agent application as a reload happens: the first client is unsubscribed,
+disconnected and its session closed (`test.reload.handover`), and only then is a second adapter
 built and connected for the same login with the same context and the same `store`; its snapshot
 must carry the task with that leg at its acknowledged provider timestamp and the reported actor, and the run goes on with the second as its
 connection to the end. A platform that holds the record hands it back, and an adapter that composed
-the record in memory has nothing and is named (`drive.reload.snapshot`, `drive.reload.history`,
+the record in memory has nothing and is named (`test.reload.snapshot`, `test.reload.history`,
 `.rejected`). The second adapter's snapshot is taken as any resync is: held to what the stream knew
 before it replaces it, so a phase gone backwards, a record that shrank or audio forgotten on a task
 still at work is named by the stream's own rules (`stream.snapshot.phase`, `.history`,
 `.audio`) and a reload is a place those rules keep working, not one where they stop. The second
 adapter is held to what the first was: the same provider
-(`drive.reload.manifest`), a snapshot that stands as any snapshot must, and a record that lost none
+(`test.reload.manifest`), a snapshot that stands as any snapshot must, and a record that lost none
 of the entries the first had published -- a record once read is not unread across a reload either.
 A reconnect on the same adapter object would prove nothing, since an in-process adapter's memory
 survives it; only a second object separates kept-in-the-store from never-lost. And because the
@@ -3041,31 +3041,31 @@ open task back to, and nothing about the reload is exempt from any rule. The sec
 `secrets`, so the reload is a restore before it is anything else: an adapter that holds a session
 has already put what would rebuild it into the secrets store, from the moment it was handed one,
 not only when a flow completes -- the session is the adapter's, the store is the agent application's, and a
-agent application reload is exactly when no flow will run. And once the task has ended, the store the drive
+agent application reload is exactly when no flow will run. And once the task has ended, the store the test
 handed the adapter holds no key naming the task's assignment id, delimited, never as a run of characters inside
-another id (`drive.store.retained`); an adapter whose keys never named the task leaves the rule
+another id (`test.store.retained`); an adapter whose keys never named the task leaves the rule
 unevaluated, and the result says so rather than passing it: a task's keys go
 with the task, or whatever comes next inherits them. Outside the
 interaction phases with `hold` still declared -- in
 `confirmed`, where the provider publishes it, and in `completing` once this agent's interaction has ended -- the
-drive sends `hold` past the validator that would hold it back, and expects `failed`: the adapter
+test sends `hold` past the validator that would hold it back, and expects `failed`: the adapter
 is the second gate on a control on the contact, and one that applies it outside this task's
-current interaction is named (`drive.command.interaction`). The drive cannot put a task into a phase the provider
+current interaction is named (`test.command.interaction`). The test cannot put a task into a phase the provider
 never publishes, so a provider that goes straight from `pending` to `in-progress` is checked in
 `completing` alone. A task the agent completes is
-completed from wherever it stands once the drive has nothing left to do on it -- from `completing`
+completed from wherever it stands once the test has nothing left to do on it -- from `completing`
 after an `end-call`, or from `in-progress` where there is no call to end, which is every chat and
 email and a voice task offering no `endCall` -- so a conversation reaches its end as a call does.
-The drive stops where the task offers no way on and says nothing about what it could not reach. A
+The test stops where the task offers no way on and says nothing about what it could not reach. A
 softphone adapter written for a browser needs its audio APIs supplied by whatever runs the
-harness: the drive opens audio outside a browser, and a provider that quietly stopped carrying audio
+harness: the test opens audio outside a browser, and a provider that quietly stopped carrying audio
 where `AudioContext` was missing would be lying about the one thing the channel is for. It is off by default because it issues
 commands against whatever platform the adapter is connected to: turn it on against a test backend.
 
 ```ts
-const driven = await exerciseAdapter(adapter, context, { collectOnly: true, drive: true });
-expect(driven.violations).toEqual([]);
-assertReached(driven, ["task.onCall", "task.audio", "event.task-ended"]);
+const tested = await testAdapter(adapter, context, { collectOnly: true, withCall: true });
+expect(tested.violations).toEqual([]);
+assertReached(tested, ["task.onCall", "task.audio", "event.task-ended"]);
 ```
 `assertReached(result, subjects)` is the paired assertion: it throws naming every subject the run
 never met, so a test that meant to check a team member list cannot pass on a fixture that never produced one.
@@ -3096,7 +3096,7 @@ cannot be established from TypeScript structure alone.
 | `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no team member list for a login that no longer leads. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
 | `assertTaskCapabilityWithdrawal(tasks, manifest, command)` | A capability withdrawn by a republish of the task is gone from the task: every task in the sequence is validated, all carry the offer's id, at least one capability the offer declared is absent at the end (a locked control is present, not withdrawn), and `command` is clean against the first task and refused against the last for want of a withdrawn capability and nothing else. Pair it with `assertCommandRefusedAfterWithdrawal` on the provider's answer. |
 | `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. The same assertion serves a command the provider never supported under a capability it declares. |
-| `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `exerciseAdapter` result. |
+| `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `testAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
 | `stillHost(report?, guarantees?, mute?)` | An agent application that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a softphone voice adapter, and never for a desk phone. |

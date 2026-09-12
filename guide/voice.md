@@ -131,7 +131,7 @@ stream that drops, a track that ends, a transport that disconnects, a microphone
 endpoint re-registering change nothing about the task until the provider says so. Structurally:
 `task-audio-started` and `task-audio-ended` alternate on a task whose work has begun, audio ends
 only where it arrived, what follows the audio ending is `completing` or `task-ended`, and every
-task is introduced once — `exerciseAdapter` holds the stream to that from the connect snapshot on,
+task is introduced once — `testAdapter` holds the stream to that from the connect snapshot on,
 and `assertAudioFollowsTheTask` holds any sequence.
 
 ## Connecting back during completion
