@@ -588,8 +588,13 @@ as it begins and ends, and takes the provider's published entry as the closed ac
 it does not reopen the leg, replace the provider's timestamp, or overwrite the provider's final
 duration with a later report. A later agent mute is a new leg, never a reopening of the ended one.
 
-Correlate the provider-published `muted` entry using the provider-selected `at` acknowledged
-for the current report key; a final `seconds` closes that leg under the history contract.
+**The provider assigns the instant.** `HistoryReportResult.at` is the provider's own instant for the
+leg, on its own clock, written when the provider takes the leg into its record, never an echo of
+the `at` the host reported: the host keeps the answer as the leg's identity from then on and names
+it on the closing report, and a provider that echoes the host's instant has assigned nothing
+(`drive.recordStep.identity`). Correlate the provider-published `muted` entry using that
+provider-selected `at` acknowledged for the current report key; a final `seconds` closes that leg
+under the history contract.
 This is identity matching, not reconciliation between clocks. An old closed entry, an unrelated
 task, or a stale connection cannot end a newer local mute. If publication precedes the acknowledgment,
 retain the current provider view and apply the matching closure once correlation is available;

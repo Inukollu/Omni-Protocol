@@ -1627,6 +1627,12 @@ export type HistoryReport = { assignmentId: AssignmentId; at: IsoTimestamp } & (
   | { ended?: never; seconds?: DurationSeconds }
 );
 
+/**
+ * `at` is the provider's instant for the leg, on its own clock, assigned when the provider writes
+ * the leg into its record and never an echo of the host's: the host keeps the answer as the leg's
+ * identity from then on, and names it on the closing report. A provider that echoes the host's
+ * instant has assigned nothing, and the drive names it (`drive.recordStep.identity`).
+ */
 export type HistoryReportResult =
   | { status: "recorded"; at: IsoTimestamp }
   | { status: "failed"; failure: ProtocolFailure };

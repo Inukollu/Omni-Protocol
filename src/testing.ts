@@ -1157,6 +1157,34 @@ export class TaskStream {
   private readonly endedAssignments = new Set<string>();
   /** Every assignment a `task-offered` introduced, as against one a snapshot carried: each is owed its ending. */
   private readonly offered = new Set<string>();
+  /** The last seconds-left value the stream read per task and field, with the provider instant it was published at. */
+  private readonly countdowns = new Map<string, Map<string, { value: number; atMs: number }>>();
+
+  /**
+   * A seconds-left value is the provider's arithmetic at the instant of the publication, never a
+   * value copied from an earlier one: between two publications the countdown loses at least the
+   * seconds the provider's own clock says passed, within a second of rounding.
+   */
+  private holdCountdowns(id: string, task: unknown, publishedAt: unknown, at: string, refuse: (rule: string, where: string, message: string) => void): void {
+    const atMs = typeof publishedAt === "string" ? Date.parse(publishedAt) : Number.NaN;
+    if (!isRecord(task) || Number.isNaN(atMs)) return;
+    const known = this.countdowns.get(id) ?? new Map<string, { value: number; atMs: number }>();
+    for (const field of ["expiresInSeconds", "previewEndsInSeconds", "wrapEndsInSeconds"] as const) {
+      const value = task[field];
+      if (typeof value !== "number") { known.delete(field); continue; }
+      const before = known.get(field);
+      if (before !== undefined) {
+        ruleEvaluated("stream.countdown.copied");
+        const elapsed = Math.floor((atMs - before.atMs) / 1000);
+        if (elapsed > 0 && value > before.value - elapsed + 1) {
+          refuse("stream.countdown.copied", `${at}.${field}`,
+            `${id} said ${field} ${before.value} at ${new Date(before.atMs).toISOString()} and ${value} at ${new Date(atMs).toISOString()}: ${elapsed}s passed on the provider's clock and the countdown lost fewer; seconds left are worked out at each publication, never copied from the one before`);
+        }
+      }
+      known.set(field, { value, atMs });
+    }
+    this.countdowns.set(id, known);
+  }
   // Every dial the stream can place an outcome against: one the host said it placed, or one a
   // task carried on `onCall` or in its record -- which is how a dial made before a take-over is known
   // to whoever holds the task now. `answered` or `ended` once its outcome arrived, since it comes once.
@@ -1259,6 +1287,9 @@ export class TaskStream {
     if (isRecord(snapshot) && Array.isArray(snapshot.tasks)) {
       snapshot.tasks.forEach((task, index) => {
         if (!isRecord(task) || typeof task.assignmentId !== "string") return;
+        // A snapshot from a provider with a clock is a publication at providerTime; the countdowns it carries are held to it.
+        if (typeof snapshot.providerTime === "string") this.holdCountdowns(task.assignmentId, task, snapshot.providerTime, `${at}.tasks[${index}]`, refuse);
+        else this.countdowns.delete(task.assignmentId);
         const was = this.tasks.get(task.assignmentId);
         if (was === undefined) return;
         if ((was.source === "queue" || was.source === "nobody") && task.capabilitySource === "not-yet-read") {
@@ -1329,6 +1360,7 @@ export class TaskStream {
         this.offered.add(id);
         this.tasks.set(id, TaskStream.stated(event.task));
         this.noteDials(event.task);
+        this.holdCountdowns(id, event.task, isRecord(envelope) ? envelope.occurredAt : undefined, `${at}.task`, refuse);
         break;
       }
       case "task-updated":
@@ -1339,6 +1371,7 @@ export class TaskStream {
           break;
         }
         // The rules about a known task are evaluated only once there is one.
+        this.holdCountdowns(id, event.task, isRecord(envelope) ? envelope.occurredAt : undefined, `${at}.task`, refuse);
         ruleEvaluated("stream.taskUpdated.capabilitySource", "stream.taskUpdated.phase", "stream.taskUpdated.audioOpen",
           "stream.taskUpdated.history", "stream.taskAudioEnded.follow", "stream.taskUpdated.audio", "stream.taskUpdated.stage", "stream.taskUpdated.stage.lingering");
         // Terms once read stay read. A re-read that fails is not a new fact about the task, so the
@@ -1726,9 +1759,9 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
     if (offered === undefined) return found;
     task = offered.found; cursor = offered.at;
   }
-  const taskId = task.assignmentId as string;
+  let taskId = task.assignmentId as string;
   const latestTask = (): Record<string, unknown> => task!;
-  const updated = (until: (task: Record<string, unknown>) => boolean, what: string) =>
+  const updated = (until: (task: Record<string, unknown>) => boolean, what: string, within?: { ms: number; onExpiry: () => void }) =>
     waitFor(what, envelope => {
       const event = envelope.event as Record<string, unknown>;
       if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.assignmentId === taskId) {
@@ -1736,7 +1769,7 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
         return until(event.task) ? event.task : undefined;
       }
       return undefined;
-    }, cursor).then(hit => { if (hit) cursor = hit.at; return hit; });
+    }, cursor, within).then(hit => { if (hit) cursor = hit.at; return hit; });
   const ended = (within?: { ms: number; onExpiry: () => void }) => waitFor("a task-ended for the driven task", envelope => {
     const event = envelope.event as Record<string, unknown>;
     return event.type === "task-ended" && event.assignmentId === taskId ? event : undefined;
@@ -1779,18 +1812,80 @@ async function driveOneCall<C extends Channel>(drive: Drive<C>): Promise<Protoco
   // Audio may arrive any time after the accept, before or after the task's own update says
   // in-progress: the event is the provider's word that the audio should attach, never a reply to
   // openAudio, so the drive looks for it from the accept rather than from the last update it read.
+  // 0. A deadline stated is a deadline kept. Where the first offer says how long it has, within
+  // what the drive will wait, the drive leaves it alone and expects the provider to end it expired
+  // when it runs out; the next offer is the one driven. Offers with no deadline, or a longer one,
+  // leave this rule unreached, and the result says so.
+  const settleMs = Number(drive.manifest.settleMs);
+  const lapse = latestTask().phase === "pending" ? latestTask().expiresInSeconds : undefined;
+  if (typeof lapse === "number" && lapse * 1000 <= drive.timeoutMs) {
+    ruleEvaluated("drive.offer.expired");
+    const lapsedId = taskId;
+    let missed = false;
+    const ending = await waitFor(`the expired ending of ${lapsedId}`, envelope => {
+      const event = envelope.event as Record<string, unknown>;
+      return event.type === "task-ended" && event.assignmentId === lapsedId ? event : undefined;
+    }, cursor, { ms: lapse * 1000 + settleMs, onExpiry: () => { missed = true; } });
+    if (ending === undefined) {
+      if (missed) refuse("drive.offer.expired", "drive.offer", `${lapsedId} was offered with ${lapse}s to answer and ${lapse * 1000 + settleMs}ms later it has not ended: a deadline stated is a deadline kept, and the offer ends expired naming pending`);
+      return found;
+    }
+    const outcome = isRecord(ending.found.outcome) ? ending.found.outcome : {};
+    if (!(outcome.type === "expired" && outcome.phase === "pending")) {
+      refuse("drive.offer.expired", "drive.offer", `${lapsedId} lapsed unanswered and ended ${String(outcome.type)}: an offer nobody answered before its deadline ends expired naming pending`);
+    }
+    // The next offer is the one driven; a provider with nothing more to offer ends the drive here.
+    const next = await waitFor("a task-offered after the lapsed one", envelope => {
+      const event = envelope.event as Record<string, unknown>;
+      return event.type === "task-offered" && isTask(event.task) && event.task.assignmentId !== lapsedId ? event.task : undefined;
+    }, ending.at);
+    if (next === undefined) return found;
+    task = next.found; cursor = next.at; taskId = task.assignmentId as string;
+  }
   const acceptedAt = drive.events.length;
   // 1. Accept the offer, if it is one.
   if (latestTask().phase === "pending") {
     if (await send({ type: drive.channel === "voice" ? "answer" : "accept" }) === undefined) return found;
     if (await updated(t => t.phase !== "pending", "the task leaving pending after it was accepted") === undefined) return found;
   }
-  // 2. A preview: press Call, which is a dial.
+  // 2. A preview: press Call, which is a dial. Where the preview says how long it has, within what
+  // the drive will wait, the deadline is kept to its atDeadline first: under provider-dials the
+  // provider dials when it runs out and the drive presses nothing; under host-dials and waits the
+  // preview stands until then, and the drive presses Call at zero as the desk would.
   if (latestTask().phase === "preview") {
-    const dialId = `drive-${taskId}`;
-    drive.stream.dialled(dialId);
-    if (await send({ type: "dial", dialId }, dialId) === undefined) return found;
-    if (await updated(t => t.phase === "in-progress" || t.phase === "completing", "the task leaving preview after Call") === undefined) return found;
+    const left = latestTask().previewEndsInSeconds;
+    const atDeadline = latestTask().atDeadline;
+    // Under provider-dials the provider places the call, and the desk presses nothing.
+    let pressCall = true;
+    if (typeof left === "number" && left * 1000 <= drive.timeoutMs && typeof atDeadline === "string") {
+      ruleEvaluated("drive.preview.deadline");
+      const ringing = (t: Record<string, unknown>): boolean => t.phase !== "preview"
+        || (Array.isArray(t.onCall) && t.onCall.some(who => isRecord(who) && who.role === "party" && who.stage === "ringing"));
+      if (atDeadline === "provider-dials") {
+        let missed = false;
+        const dialled = await updated(ringing, "the provider dialling at the preview's deadline", { ms: left * 1000 + settleMs, onExpiry: () => { missed = true; } });
+        if (dialled === undefined) {
+          if (!missed) return found;
+          refuse("drive.preview.deadline", "drive.preview", `${taskId} is a preview under provider-dials with ${left}s left, and the provider did not dial when it ran out: the party rings on onCall, or the task leaves preview`);
+          return found;
+        }
+        pressCall = false;
+      } else {
+        // Nothing may move the preview before its deadline under host-dials or waits: the drive
+        // waits the seconds out and expects the task where it left it.
+        const moved = await updated(t => t.phase !== "preview", "nothing", { ms: left * 1000, onExpiry: () => undefined });
+        if (moved !== undefined) {
+          refuse("drive.preview.deadline", "drive.preview", `${taskId} is a preview under ${atDeadline} with ${left}s left, and the provider moved it to ${String(moved.found.phase)} before the deadline: under ${atDeadline} the preview stands until the desk dials, or for as long as the agent needs`);
+          return found;
+        }
+      }
+    }
+    if (pressCall && latestTask().phase === "preview") {
+      const dialId = `drive-${taskId}`;
+      drive.stream.dialled(dialId);
+      if (await send({ type: "dial", dialId }, dialId) === undefined) return found;
+    }
+    if (latestTask().phase === "preview" && await updated(t => t.phase === "in-progress" || t.phase === "completing", pressCall ? "the task leaving preview after Call" : "the task leaving preview after the provider's dial") === undefined) return found;
   }
   // The other direction of step 4, wherever the task stands outside the interaction phases with the
   // control still declared: a host holds it back (command.phase.interaction), and an adapter that
