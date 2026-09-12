@@ -1990,14 +1990,25 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   if (snapshot.shift !== undefined) validateShiftInto(snapshot.shift, `${path}.shift`, into, "shift");
   // The phone as the platform sees it: owed by a provider that declares it can, and by nobody else.
   const seesPhone = isPlainObject(manifest) && manifest.phoneStatus === true;
-  // The agent's own queue: an ask needs an assignment at work to be next after, and one call at most waits.
+  // The agent's own queue: the ask and the lined-up call need an assignment at work to be next
+  // after, and neither stands beside a break the agent asked for or was put on -- the break wins.
+  const atWork = Array.isArray(snapshot.tasks) && snapshot.tasks.some((task: unknown) => isPlainObject(task) && (task.phase === "in-progress" || task.phase === "paused" || task.phase === "completing"));
+  const breakStatus = isPlainObject(snapshot.break) ? snapshot.break.status : undefined;
+  const breakStands = typeof breakStatus === "string" && breakStatus !== "not-requested";
   if (snapshot.nextCall !== undefined) {
     validateNextCallInto(snapshot.nextCall, `${path}.nextCall`, into);
-    const atWork = Array.isArray(snapshot.tasks) && snapshot.tasks.some((task: unknown) => isPlainObject(task) && (task.phase === "in-progress" || task.phase === "paused" || task.phase === "completing"));
     into.require(atWork, "snapshot.nextCall.idle", `${path}.nextCall`,
       "an ask for the next call stands only while an assignment is at work to be next after: the provider clears it when that assignment ends");
+    into.require(!breakStands, "snapshot.nextCall.break", `${path}.nextCall`,
+      `an ask for the next call does not stand beside a break that is ${String(breakStatus)}: the break wins, and the provider clears the ask`);
   }
-  if (snapshot.linedUp !== undefined) validateLinedUpInto(snapshot.linedUp, `${path}.linedUp`, into, levels);
+  if (snapshot.linedUp !== undefined) {
+    validateLinedUpInto(snapshot.linedUp, `${path}.linedUp`, into, levels);
+    into.require(atWork, "snapshot.linedUp.idle", `${path}.linedUp`,
+      "a call is lined up for an agent with an assignment at work; with nothing at work it is an offer, and travels as task-offered");
+    into.require(!breakStands, "snapshot.linedUp.break", `${path}.linedUp`,
+      `a lined-up call does not stand beside a break that is ${String(breakStatus)}: the break wins, and the call goes back to the queue for anyone`);
+  }
   if (seesPhone && snapshot.phone === undefined) {
     into.add("snapshot.phone.required", `${path}.phone`, "the manifest declares phoneStatus, so every snapshot carries the phone as the platform sees it");
   } else if (!seesPhone && snapshot.phone !== undefined && isPlainObject(manifest)) {

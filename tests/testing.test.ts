@@ -891,6 +891,8 @@ interface AdapterOverrides {
   onConnect?: (connectContext: ConnectContext) => void;
   /** Publishes once the host has stated capacity, which is when a provider may assign: where a fixture's offers belong. */
   emitOnCapacity?: (listener: (envelope: ProviderEventEnvelope<"voice">) => void) => void;
+  /** Publishes once the host has stated count 0, host-stopped: where a fixture's promises it can no longer keep belong. */
+  emitOnStop?: (listener: (envelope: ProviderEventEnvelope<"voice">) => void) => void;
   /** Publishes once the application switches the team feature on. Absent, the conforming adapter answers with an empty team. */
   emitOnLeadFeatures?: (listener: (envelope: ProviderEventEnvelope<"voice">) => void) => void;
   /** Told when the host unsubscribes, so a fixture stops speaking to a client that is gone. */
@@ -952,7 +954,11 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
           overrides.emit?.(listener);
           return () => { overrides.onUnsubscribe?.(); unsubscribe(); };
         },
-        setCapacity: async ({ count }) => { if (count > 0 && subscribed !== undefined && !emittedOnCapacity) { emittedOnCapacity = true; overrides.emitOnCapacity?.(subscribed); } return { status: "applied" }; },
+        setCapacity: async ({ count }) => {
+          if (count > 0 && subscribed !== undefined && !emittedOnCapacity) { emittedOnCapacity = true; overrides.emitOnCapacity?.(subscribed); }
+          if (count === 0 && subscribed !== undefined) overrides.emitOnStop?.(subscribed);
+          return { status: "applied" };
+        },
         refused: () => undefined,
         execute: async () => ({ status: "applied" }),
         disconnect,
@@ -1944,6 +1950,12 @@ describe("exerciseAdapter requires each method the declarations call for", () =>
     expect((await exerciseAdapter(makeAdapter().adapter, context, { collectOnly: true })).notExercised).toContain("linedUp");
     // An ask with nothing at work is one the provider should have cleared.
     expect(await rules({ manifest: plainManifest, capabilities: lining, snapshot: { ...minimalSnapshot, nextCall: { since: "2026-08-21T09:04:00Z" } } })).toEqual(["snapshot.nextCall.idle"]);
+    // Told count 0, the queue goes with the capacity: an entry published after that is a promise the provider cannot keep.
+    const stopped = teamEvent("evt-stopped", { type: "lined-up", linedUp: { since: "2026-08-21T09:06:00Z" } });
+    const askedLate = teamEvent("evt-asked-late", { type: "next-call", nextCall: { since: "2026-08-21T09:06:00Z" } });
+    expect(await rules({ capabilities: lining, emitOnStop: l => { l(stopped); l(askedLate); } })).toEqual(["stream.linedUp.stopped", "stream.nextCall.stopped"]);
+    const cleared = teamEvent("evt-cleared", { type: "lined-up" });
+    expect(await rules({ capabilities: lining, emitOnStop: l => l(cleared) })).toEqual([]);
   });
 
   it("takes the phone's own view from a provider that declares it can see the phone, held to the login's phone", async () => {
