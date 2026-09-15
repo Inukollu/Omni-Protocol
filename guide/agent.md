@@ -1,6 +1,6 @@
 # `@xema/omni-protocol`: The agent's work
 
-What an agent does on any channel: the assignment from offer to wrap, the task and its record, the controls a task offers, the commands the desk sends. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
+What an agent does on any channel: the assignment from offer to wrap, the task and its record, the controls a task offers, the commands the agent computer sends. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
 
 ## Task assignment lifecycle
 
@@ -66,7 +66,7 @@ agent's own act — a dialpad call or a connect-back, recognisable by the agent 
 `onCall`; a call a lead took over, carrying `takenOver` — arrives
 through `task-offered` with `acceptance: "automatic"` whatever `autoAcceptTasks` says, and the
 validator holds it there under either local policy and under none (`task.acceptance.originated`):
-the desk shows no **Accept** for a call the agent placed. The local policy governs work the queue
+the agent computer shows no **Accept** for a call the agent placed. The local policy governs work the queue
 routes to the agent, and nothing else.
 
 ### Pending
@@ -95,7 +95,7 @@ medium the task arrives on, not a separate decision.
 **Once a task is accepted, the call that comes with it is answered.** Omni has no discretion
 there and the provider is not consulted twice: one decision about the work, and the medium
 follows it. Where the audio lands was settled at sign-in — in Omni on a softphone, on the handset
-on a desk phone — and is not in question per call. See **How the agent hears the call** in `guide/phone.md`.
+on a hardphone — and is not in question per call. See **How the agent hears the call** in `guide/phone.md`.
 
 Automatic acceptance still begins with `task-offered`.
 
@@ -111,7 +111,7 @@ Omni withdraw **Accept** from a task still pending.
 **A deadline is seconds left, never an instant.** The agent application and the provider keep
 different clocks, and a countdown that compares one against the other is a countdown that runs
 fast or slow by their skew. Seconds from the publication that carries them are the provider's own
-arithmetic, counted down on the desk from the moment they arrive, and the transport delay is the
+arithmetic, counted down on the agent computer from the moment they arrive, and the transport delay is the
 only error. Restated on every publication that carries them, so a snapshot after a reconnect
 starts the countdown afresh from what is actually left (`task.pending.expiresInSeconds`,
 `task.preview.previewEndsInSeconds`: a whole number, zero or more).
@@ -166,7 +166,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
 | `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one, and takes the agent's `complete` as finishing early. A required outcome is the agent's to give, so it needs `agent-command` (`task.outcomes.required.mode`). |
 | `wrapAllowance` | Fixed time allowed to complete the task after primary interaction ends. For real-time audio, it begins after `task-audio-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down; stated, it is the expected wrap, shown and never acted on. `0` under `provider-automatic` is no wrap at all, so such a task publishes no `outcomes` (`task.outcomes.wrapAllowance`). |
-| `wrapEndsInSeconds` | In `completing`, wherever `wrapAllowance` is stated: how much of the wrap is left, in whole seconds from this publication, restated on every publication that carries it (`task.completing.wrapEndsInSeconds`, `.required`, `.unexpected`). A reloaded desk and a lead's screen count down the same number. See **Completion timing**. |
+| `wrapEndsInSeconds` | In `completing`, wherever `wrapAllowance` is stated: how much of the wrap is left, in whole seconds from this publication, restated on every publication that carries it (`task.completing.wrapEndsInSeconds`, `.required`, `.unexpected`). A reloaded agent computer and a lead's screen count down the same number. See **Completion timing**. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `history` | The call record: `steps` — the ordered interaction history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `interactionSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **Interaction history**. |
 | `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the agent application's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id, `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `destinationId` dialled, the `dialId` where an agent application placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. `label` names a destination -- a person, a queue -- not a phrase; the agent application supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome** in `guide/voice.md`. |
@@ -224,7 +224,7 @@ and a re-offer. Everything that names a task after the fact -- a dial outcome, a
 ending, a history report, a command -- would land on whichever assignment is open when it arrives.
 So the assignment id is unique within the provider and never reused: where the platform's handle
 never comes back, the adapter passes it through; where it does, the adapter mints the assignment id
-and keeps the mapping, and the desk never learns which. A late event finds the assignment it
+and keeps the mapping, and the agent computer never learns which. A late event finds the assignment it
 belongs to or is refused, and a task-scoped browser session (`PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME`)
 lives one assignment, never the next customer's cookies. A dial the agent application placed was
 already safe, since its outcome is placed by the agent application's own `dialId`; where the
@@ -263,14 +263,14 @@ so a `provider-automatic` task with `wrapAllowance: 0` publishes no `outcomes` a
 
 **The allowance means one thing per mode.** Under `provider-automatic` it is what the provider
 acts on: the task ends when it runs out. Under `agent-command` it is the expected wrap, stated so
-the agent can see it: the desk counts it down and, past zero, shows how far over they are, and
+the agent can see it: the agent computer counts it down and, past zero, shows how far over they are, and
 nothing acts on it -- the task waits for `complete` however long that takes, with its outcomes
 collected whenever the agent gives them. A provider that would end the task at a time is
 `provider-automatic`.
 
 **What is left travels with the task.** The allowance is the length; `wrapEndsInSeconds` is how
 much of it remains, stated on the `completing` task and restated on every publication that
-carries it, as `previewEndsInSeconds` is on a preview. A desk that reloads mid-wrap finds the
+carries it, as `previewEndsInSeconds` is on a preview. An agent computer that reloads mid-wrap finds the
 number on the snapshot; a lead's screen finds it on the member; neither starts a clock of its own,
 and both count down from receipt. Under `provider-automatic` the provider ends the task when it
 reaches zero; under `agent-command` it is the expected wrap left, `0` once overrun, and nothing
@@ -309,7 +309,7 @@ outcome, and complete the task.
 
 `0` means no wrap under `provider-automatic`: the provider completes the task at the end of the
 interaction, and `complete` has nothing to cut short. Under `agent-command` it is an expected wrap
-of nothing -- the desk shows the overrun from the start -- and the task still waits for `complete`.
+of nothing -- the agent computer shows the overrun from the start -- and the task still waits for `complete`.
 
 There is no value meaning "unlimited", because a number that is not a duration would be read as
 one. A provider that imposes no deadline says so by **omitting** `wrapAllowance`, which
@@ -375,16 +375,19 @@ Migration from the earlier spellings:
 | ForcedBreak.expectedDurationMs | `expectedEndsInSeconds`: seconds left, restated (`break.forced.expectedEndsInSeconds`, `.expectedDurationMs.renamed`); the command keeps `expectedDurationMs` |
 | MemberShift; the day on the lead's list alone | `Shift`, on `Snapshot.shift` and `shift-updated` for the agent, on `TeamMember.shift` for the lead |
 | TeamMember.listening as this lead's one entry | `MemberListening[]`, every lead's, each with `leadId` (`team.member.listening.leadId`, `.unique`, `.empty`, `.entry`, `.heard`) |
-| a member's history trimmed on the lead's list | the record whole, as the member's desk holds it |
+| a member's history trimmed on the lead's list | the record whole, as the member's computer holds it |
 | durations counted from the screen's clock | the provider's: `timeCheck` required of a provider publishing a running instant (`manifest.timeCheck.required`), `Snapshot.providerTime` with it (`snapshot.providerTime`, `.unexpected`) |
-| a wrap the desk timed from an event's receipt | `Task.wrapEndsInSeconds` in `completing`, restated (`task.completing.wrapEndsInSeconds`, `.required`, `.unexpected`) |
+| a wrap the agent computer timed from an event's receipt | `Task.wrapEndsInSeconds` in `completing`, restated (`task.completing.wrapEndsInSeconds`, `.required`, `.unexpected`) |
 | MemberTask.capabilities, capabilitySource, browsers | gone: the workspace never travels to a lead (`team.member.task.workspace`); the record and the completion terms do |
 | a member republished on a hold, a mute, a take-over | on every publication of the member's task to the member |
 | two clients on one login | the later wins; the first is ended with `recovery: "displaced"` |
 | the phone unspoken | `PhoneState` -- the device, its mute, its channels -- on `Snapshot.phone`, `phone-updated` and `TeamMember.phone`, from a manifest declaring `phoneStatus` (`snapshot.phone.required`, `.unexpected`, `phone.*`, `phone.channel.*`, `event.phone.capability`) |
 | the agent's readiness for the next call read into setCapacity | the agent's own queue: `capabilities.nextCall`, `requestNextCall`/`cancelNextCall`/`releaseLinedUp`, `Snapshot.nextCall` and `linedUp`, the `next-call` and `lined-up` events (`snapshot.nextCall.idle`, `nextCall.*`, `linedUp.*`) |
 | a harness that exercised an adapter, drove a call and evaluated rules | the harness reads as a test: `testAdapter`, `withCall`, `timeoutMs`, `notTested`, `rulesTested`, rules `test.*` (`test.timeout`, `test.offer.expired`, `test.preview.deadline`, ...) |
-| an `end-call` while the caller was on hold | refused: a `paused` task is resumed first (`command.endCall.held`), the desk shows End call disabled on hold, the provider answers `failed`, and the test names an adapter that ends from hold (`test.command.held`); `terminate-call` is not gated, it ends the caller's channel too |
+| an `end-call` while the caller was on hold | refused: a `paused` task is resumed first (`command.endCall.held`), the agent computer shows End call disabled on hold, the provider answers `failed`, and the test names an adapter that ends from hold (`test.command.held`); `terminate-call` is not gated, it ends the caller's channel too |
+| the handset spelled by its place on a desk | `hardphone`, on the manifest's `phones` and the login's `phone`; the former spelling is refused |
+| the desk | the agent computer, in the guide's prose |
+| the agent application's Mute on hold | unavailable while the task is `paused`, promised at login by a softphone login's agent application (`host.guarantees.muteUnavailableOnHold`, required there and refused of a hardphone login); a host mute beginning on a paused task is refused (`historyReport.muted.held`) and the test names an adapter that records one (`test.recordStep.held`) |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
 History and report rule names use `history` and `historyReport`; assignment rules use
@@ -428,7 +431,7 @@ Steps are `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conf
 when it began, `seconds` once it ended and omitted while it runs — and a second hold is a second
 entry after the first, never a revision of it. A leg that has ended states its duration, and the
 task says whether a leg can still be running: a hold runs only while the task is `paused`, a mute
-only while its audio is up, so a `held` entry without `seconds` on a task that is not paused, or a
+only while its audio is up and the agent application's own never begins on hold (`historyReport.muted.held`), so a `held` entry without `seconds` on a task that is not paused, or a
 `muted` one on a call that is over, is a leg nobody closed and reads exactly like a leg running now
 (`task.history.held.open`, `.muted.open`). Whoever performs the leg closes it — the
 provider whose platform parks the caller, the agent application whose microphone it is — by restating the entry
@@ -485,7 +488,7 @@ or combine them: report the representation conflict. No ambiguous event is silen
 **Interaction time is anchored, not restarted.** It runs from the
 `answered` step's `at` — from the task's first `in-progress` where the provider reports no
 history — until the task's audio ends, and a hold neither pauses nor resets it: the hold's own
-duration is the `held` entry's `seconds`, and a desk that restarts its counter on resume is
+duration is the `held` entry's `seconds`, and an agent computer that restarts its counter on resume is
 counting the wrong thing.
 
 `muted` is there because the mute is the agent application's and never the provider's — see **The station is
@@ -541,10 +544,10 @@ different claim — it says the task has had none.
 
 **What the record adds up to is stated, not summed.** A call that has changed hands arrives
 carrying what others already used of it, and the agent reads that before they say hello: the
-totals are the provider's own — never a desk summing instants that may be rounded or skewed, for
+totals are the provider's own — never an agent computer summing instants that may be rounded or skewed, for
 the same reason `seconds` is reported and not derived — and each is present when the provider
 knows it and absent when it does not, never a plausible nought. A fresh call from the queue has
-`steps` with no prior `answered` and no totals to state, and a desk shows nothing rather than
+`steps` with no prior `answered` and no totals to state, and an agent computer shows nothing rather than
 zeros. The record is restated with the task on every `task-updated` and snapshot, so an entry
 that arrives late corrects the sums. These four are what every platform reports; more will be
 added here as a need is shown, not invented ahead of one.
@@ -579,7 +582,7 @@ did ask for them forwards upstream, and how often, is its own business. The step
 `recordStep` is required of every softphone login's connection, since every call on a softphone
 can be muted by the agent application, and answers `recorded` with the canonical history `at`. A `muted` report says whose the silence was,
 `mutedBy: "host"` or `"station"`, and no other report has the word (`historyReport.mutedBy`,
-`.mutedBy.unexpected`). On a desk phone the microphone is the phone's:
+`.mutedBy.unexpected`). On a hardphone the microphone is the phone's:
 the agent application mutes nothing and records nothing.
 
 **The record is a record.** The microphone is the agent application's, and nothing in the
@@ -816,7 +819,7 @@ until the queue's terms arrive, and that the controls may change when they do --
 the buttons in front of them now, not about the provider, because that is what changes when the
 republish lands. It stays for as long as the set is provisional, beside the controls it qualifies;
 a message that shows and clears has said nothing about the buttons still on the screen. The two
-words are close in English and far apart on the desk: `nobody` is silence, `not-yet-read` is a
+words are close in English and far apart on the agent computer: `nobody` is silence, `not-yet-read` is a
 standing notice.
 
 One consequence for whoever builds the agent application: because a conformance run fails on `not-yet-read`, a
@@ -1089,7 +1092,7 @@ react rather than only display the message:
 | `omni.not-authenticated` | The provider session is no longer usable. The adapter has published `expired` at or before this answer — the state is what Omni surfaces reauthentication from; the code says why this action failed, and is never the only signal. |
 | `omni.capability-not-enabled` | The action targets a capability this task, manifest, or login did not declare — including a lead command from a login whose `capabilities` no longer carry it. |
 | `omni.assignment-not-found` | The assignment named is not one the provider holds, typically after the task already ended. |
-| `omni.phone-not-permitted` | The agent application declared a `phone` the platform does not permit for this agent -- a softphone for an agent configured for a desk phone, or the reverse. The login is refused at authentication, and the provider never reconfigures the agent to make the declaration true. See **How the agent hears the call** in `guide/phone.md`. |
+| `omni.phone-not-permitted` | The agent application declared a `phone` the platform does not permit for this agent -- a softphone for an agent configured for a hardphone, or the reverse. The login is refused at authentication, and the provider never reconfigures the agent to make the declaration true. See **How the agent hears the call** in `guide/phone.md`. |
 | `omni.destination-not-permitted` | The dialled number, or the `destinationId` named, is not one the provider offers this agent. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
 | `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `transport-status` is not `active`. |

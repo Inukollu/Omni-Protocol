@@ -140,7 +140,7 @@ which forces the break on the member; `by` names the lead who asked it to. A bre
 imposed on its own -- a schedule, a compliance hold -- says `by: "provider"`, and is the platform's
 to lift: a lead's `end-forced-break` on it is refused before it is sent
 (`team.command.endForcedBreak.provider`), and a provider that receives one answers `failed` with
-`omni.break-forced-by-provider`. The desk offers End forced break on a member only where
+`omni.break-forced-by-provider`. The agent computer offers End forced break on a member only where
 `forced.by` names a lead.
 
 **A lead lifting the restriction does not resume the agent.** On an applied
@@ -250,7 +250,7 @@ against it (`stream.taskOffered.overCapacity`).
 idle dialpad arrives through `task-offered` like any other task, and a full agent does not forbid
 it: the ceiling binds assignment, not the agent's own hand.
 
-**Capacity is not the agent's readiness.** It is the desk's division of one person across
+**Capacity is not the agent's readiness.** It is the agent computer's division of one person across
 providers, a ceiling on assignments at once, and it says nothing about the moment. An agent who
 is about to finish a call and wants the next one lined up has a different thing to say, and says
 it as **The agent's own queue** in `guide/queue.md` sets out; the ceiling stands unchanged while they do,

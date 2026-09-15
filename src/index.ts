@@ -53,7 +53,7 @@ export type UserId = string;
  * still speaking about it -- a lead names a member's assignment from another login, so the scope is
  * the provider, not the login. What the platform calls its own record, and whether it reuses that
  * name, is the adapter's business: a platform that reoffers a closed call under the same handle
- * seconds later is why the adapter, not the desk, is held to this. Scope it with `assignmentKey()`.
+ * seconds later is why the adapter, not the agent computer, is held to this. Scope it with `assignmentKey()`.
  */
 export type AssignmentId = string;
 
@@ -153,13 +153,13 @@ export const DIAL_OUTCOMES = ["answered", "busy", "no-answer", "unreachable", "r
 
 /**
  * How the agent hears the call: on a `softphone`, where the host owns the audio and opens it
- * through `openAudio`, or on a `deskPhone`, a handset the platform rings, where the host opens
+ * through `openAudio`, or on a `hardphone`, a handset the platform rings, where the host opens
  * nothing and only shows the call. A voice manifest lists the phones its platform supports, and
  * the host picks one for the login at authentication.
  */
-export type Phone = "softphone" | "deskPhone";
+export type Phone = "softphone" | "hardphone";
 
-export const PHONES = ["softphone", "deskPhone"] as const satisfies readonly Phone[];
+export const PHONES = ["softphone", "hardphone"] as const satisfies readonly Phone[];
 
 /**
  * The device itself, as the platform sees it. `ready` is registered and usable, idle or busy; the
@@ -192,14 +192,14 @@ export interface PhoneChannel {
  * is on, whether it can take a call, its own mute where the platform observes it, and its channels
  * -- one active at most, any number held. The task side says which of those calls are the agent's
  * work and where each stands; the phone side exists whether or not a task is behind a call. `muted`
- * is the phone's own button as the platform sees it, silencing whatever is active: a desk phone's,
+ * is the phone's own button as the platform sees it, silencing whatever is active: a hardphone's,
  * never a softphone's, whose microphone is the host's and whose mute is the host's report.
  */
 export interface PhoneState {
   /** The agent's phone for this provider, as the host chose it for the login at connect: which of the manifest's phones the agent hears this provider's calls on. */
   phone: Phone;
   status: PhoneStatus;
-  /** The phone's own mute, on a desk phone the platform observes; absent where it does not, or on a softphone. */
+  /** The phone's own mute, on a hardphone the platform observes; absent where it does not, or on a softphone. */
   muted?: true;
   /** When the status began, counted from the provider's clock. Omitted rather than invented. */
   since?: IsoTimestamp;
@@ -252,7 +252,7 @@ export interface Manifest<C extends Channel = Channel> {
   /** Optional provider-clock sampling through Connection.checkTime; absent means unsupported. */
   /**
    * Implements `checkTime`, and states `providerTime` on every snapshot. Required of a provider
-   * that publishes an instant the desk renders as a running duration -- a member's `since`, a
+   * that publishes an instant the agent computer renders as a running duration -- a member's `since`, a
    * lead's `listening.since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts
    * from the provider's clock and two screens differ by their delay alone.
    */
@@ -570,6 +570,12 @@ export interface HostGuarantees {
   browserUrlVisibility?: true;
   /** A `consent` offer is accepted only by the person's own explicit act, never on their behalf. */
   personConsent?: true;
+  /**
+   * The host's Mute is its own control on any call and is never offered while the task is
+   * `paused`; a mute standing when a hold begins stands through it. Required of a softphone
+   * login's host and refused of any other, since a hardphone's mute is the handset's.
+   */
+  muteUnavailableOnHold?: true;
 }
 
 export interface ProviderTimeScope {
@@ -591,7 +597,7 @@ export interface Host {
   /** Voice softphone recording support; policy and destination remain per task. */
   recording?: HostRecording;
   guarantees: HostGuarantees;
-  /** What pressing Mute does on this host. Stated on a softphone login, where the host holds the microphone; absent on a desk phone and off voice. */
+  /** What pressing Mute does on this host. Stated on a softphone login, where the host holds the microphone; absent on a hardphone and off voice. */
   mute?: HostMute;
   report(): HostReport;
   subscribe(listener: (report: HostReport) => void): Unsubscribe;
@@ -623,12 +629,12 @@ export type ConnectContext = {
   log?: (entry: unknown) => void;
 } & (
   /**
-   * On a softphone the host holds the microphone and states what its Mute does; on a desk phone,
+   * On a softphone the host holds the microphone and states what its Mute does; on a hardphone,
    * or off voice, it holds none and states nothing. The arms make the omission a compile error
    * where a live seat would otherwise be the first to find it.
    */
   | { phone: "softphone"; host: { mute: HostMute } }
-  | { phone?: "deskPhone"; host: { mute?: never; recording?: never } }
+  | { phone?: "hardphone"; host: { mute?: never; recording?: never } }
 );
 
 export type TransportStatus = "connecting" | "active" | "error";
@@ -854,7 +860,7 @@ export type HistoryStep =
 /**
  * The call record: the steps that brought the task here, one entry per occurrence and oldest
  * first, and what they add up to before this agent -- stated by the provider from its own record,
- * never summed by a desk from instants. Each total is present when the provider knows it and
+ * never summed by an agent computer from instants. Each total is present when the provider knows it and
  * absent when it does not; a plausible nought is the fallback the no-fallbacks rule forbids. The
  * record rides on the task and is replaced with it, so a late entry corrects the sums.
  */
@@ -962,7 +968,7 @@ export interface TaskTakenOver {
  */
 export type Level = string;
 
-/** A level the structure has, with the label a desk shows for "who decided". */
+/** A level the structure has, with the label an agent computer shows for "who decided". */
 export interface LevelDeclaration {
   id: Level;
   label: string;
@@ -1057,7 +1063,7 @@ export type Task<C extends Channel = Channel> = {
   /**
    * In `completing`, wherever `wrapAllowance` is stated: how much of the wrap is left, in whole
    * seconds from this publication, restated on every publication that carries it, so a reloaded
-   * desk and a lead's screen count down the same number. Under `provider-automatic` the provider
+   * agent computer and a lead's screen count down the same number. Under `provider-automatic` the provider
    * ends the task when it reaches zero; under `agent-command` it is the expected wrap left, `0`
    * once overrun, and nothing acts on it.
    */
@@ -1402,11 +1408,11 @@ export interface MemberRequest {
 }
 
 /**
- * A member's task as the lead sees it: the same task the member's desk holds, less the workspace.
+ * A member's task as the lead sees it: the same task the member's computer holds, less the workspace.
  * The assignment, what the call is and where it stands, the party as the provider shows it to
  * leads, the room, the audio, the completion terms and the whole record are here; the controls,
- * their source and the browsers are the member's desk's alone and never travel. Published to every
- * lead whenever the member's own desk hears of the task.
+ * their source and the browsers are the member's computer's alone and never travel. Published to every
+ * lead whenever the member's own agent computer hears of the task.
  */
 export type MemberTask<C extends Channel = Channel> = {
   assignmentId: AssignmentId;
@@ -1549,7 +1555,7 @@ export type TeamCommandResult =
 /**
  * The task's real-time audio as the provider holds it: `started` while audio should be attached,
  * `ended` once primary interaction's audio ended, and the field omitted while none should be. The
- * provider's word -- a desk attaches and renders audio from it, never from its own senses.
+ * provider's word -- an agent computer attaches and renders audio from it, never from its own senses.
  */
 export type TaskAudioState = "started" | "ended";
 
@@ -1649,7 +1655,7 @@ export interface Snapshot<C extends Channel = Channel> {
   loginId: string;
   /**
    * The provider's own instant of this read, required of a provider that declares `timeCheck`:
-   * every duration the desk renders off the active call is counted from the provider's clock, and
+   * every duration the agent computer renders off the active call is counted from the provider's clock, and
    * this sample saves a `checkTime` for it. Every envelope's `occurredAt` is a sample too.
    */
   providerTime?: IsoTimestamp;
@@ -1778,7 +1784,7 @@ export type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
 /**
  * What the host refused, told to the adapter that published it: a snapshot the host would not
  * replace its state with, or an event it dropped, and every rule it broke. A refusal the provider
- * never hears of is a desk frozen at its last good state for a shift with nothing wrong on the
+ * never hears of is an agent computer frozen at its last good state for a shift with nothing wrong on the
  * provider's side; this is how both sides see it.
  */
 export interface Refusal {

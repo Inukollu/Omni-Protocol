@@ -385,11 +385,11 @@ export async function testAdapter<C extends Channel>(
     // testing a host that cannot exist. Its first report and every later one are validated, a
     // voice connection's host reports its audio and no other does, and the host the adapter
     // receives is wrapped so the harness can tell whether the adapter ever asked.
-    violations.push(...validateHostGuarantees(context.host.guarantees, "context.host.guarantees"));
+    violations.push(...validateHostGuarantees(context.host.guarantees, "context.host.guarantees", adapter.manifest.channel === "voice" ? context.phone : undefined));
     // The zone is the host's to state, so a context without one is a host that cannot exist.
     violations.push(...validateTimeZone(context.timeZone, "context.timeZone"));
     // How the agent hears the call decides what the host owns: on a softphone the host has the
-    // audio and reports it; on a desk phone, or off voice, there is none for it to report.
+    // audio and reports it; on a hardphone, or off voice, there is none for it to report.
     violations.push(...validatePhone(context.phone, adapter.manifest, "context.phone"));
     const softphone = adapter.manifest.channel === "voice" && context.phone === "softphone";
     violations.push(...validateHostRecording(context.host.recording, softphone));
@@ -401,7 +401,7 @@ export async function testAdapter<C extends Channel>(
     }
     if (!softphone && hasAudio) {
       violations.push({ rule: "context.host.audio.unexpected", path: "context.host.audio",
-        message: adapter.manifest.channel === "voice" ? "a desk-phone login has no audio in the host to report" : `a ${adapter.manifest.channel} connection has no audio for the host to report` });
+        message: adapter.manifest.channel === "voice" ? "a hardphone login has no audio in the host to report" : `a ${adapter.manifest.channel} connection has no audio for the host to report` });
     }
     // What the host's Mute does is stated where the host holds a microphone, and nowhere else.
     violations.push(...validateHostMute(context.host.mute, softphone, "context.host.mute"));
@@ -436,10 +436,10 @@ export async function testAdapter<C extends Channel>(
       // Dial is declared by presence: the capability object carries a destination policy rather
       // than an `enabled` flag, so its presence is the declaration.
       if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod(on, "dial", "the manifest declares dial");
-      // On a softphone the call's audio lands in Omni, so the adapter has to open it; on a desk phone the host opens nothing.
+      // On a softphone the call's audio lands in Omni, so the adapter has to open it; on a hardphone the host opens nothing.
       if (softphone) requireMethod(on, "openAudio", "the login is on a softphone");
       // The microphone is the host's, so on a softphone every call can be muted by it, and the
-      // record of that leg is the provider's to take; on a desk phone the host holds no microphone.
+      // record of that leg is the provider's to take; on a hardphone the host holds no microphone.
       if (softphone) requireMethod(on, "recordStep", "the login is on a softphone, whose microphone the host mutes");
     };
     connectObligations(live);
@@ -1851,11 +1851,11 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
   // 2. A preview: press Call, which is a dial. Where the preview says how long it has, within what
   // the test will wait, the deadline is kept to its atDeadline first: under provider-dials the
   // provider dials when it runs out and the test presses nothing; under host-dials and waits the
-  // preview stands until then, and the test presses Call at zero as the desk would.
+  // preview stands until then, and the test presses Call at zero as the agent computer would.
   if (latestTask().phase === "preview") {
     const left = latestTask().previewEndsInSeconds;
     const atDeadline = latestTask().atDeadline;
-    // Under provider-dials the provider places the call, and the desk presses nothing.
+    // Under provider-dials the provider places the call, and the agent computer presses nothing.
     let pressCall = true;
     if (typeof left === "number" && left * 1000 <= call.timeoutMs && typeof atDeadline === "string") {
       ruleTested("test.preview.deadline");
@@ -1875,7 +1875,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
         // waits the seconds out and expects the task where it left it.
         const moved = await updated(t => t.phase !== "preview", "nothing", { ms: left * 1000, onExpiry: () => undefined });
         if (moved !== undefined) {
-          refuse("test.preview.deadline", "test.preview", `${taskId} is a preview under ${atDeadline} with ${left}s left, and the provider moved it to ${String(moved.found.phase)} before the deadline: under ${atDeadline} the preview stands until the desk dials, or for as long as the agent needs`);
+          refuse("test.preview.deadline", "test.preview", `${taskId} is a preview under ${atDeadline} with ${left}s left, and the provider moved it to ${String(moved.found.phase)} before the deadline: under ${atDeadline} the preview stands until the agent computer dials, or for as long as the agent needs`);
           return found;
         }
       }
@@ -1941,7 +1941,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       ruleTested("test.recordStep.rejected", "test.recordStep.failed");
       // The test holds its own report to the contract before it crosses, as a host must.
       const leg = { assignmentId: taskId, step: "muted", mutedBy: "host", ...body };
-      const own = validateHistoryReport(leg, "test.recordStep.report", call.manifest);
+      const own = validateHistoryReport(leg, "test.recordStep.report", call.manifest, latestTask());
       found.push(...own);
       if (own.length > 0) return;
       let answer: unknown;
@@ -1988,6 +1988,24 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       if (!call.handOver.isLive()) return found;
     }
   }
+  // The host's Mute is unavailable on hold, and the host promised as much at login: a host holds the
+  // report back (historyReport.muted.held), and an adapter that receives one anyway must refuse it --
+  // so the test sends a mute begun on hold past the validator and expects failed.
+  const muteRefusedOnHold = async (): Promise<void> => {
+    ruleTested("test.recordStep.rejected", "test.recordStep.held");
+    const leg = { assignmentId: taskId, step: "muted", mutedBy: "host", at: new Date().toISOString() };
+    let answer: unknown;
+    try {
+      answer = await call.connection.recordStep!(leg as never);
+    } catch (error) {
+      refuse("test.recordStep.rejected", "test.recordStep", `recordStep rejected rather than answered: ${String(error)}`);
+      return;
+    }
+    if (isRecord(answer) && answer.status !== "failed") {
+      refuse("test.recordStep.held", "test.recordStep",
+        "the provider recorded the host's mute begun with the caller on hold: the Mute waits for resume, and the adapter is the second gate");
+    }
+  };
   // Ending my part from hold would leave the caller in the hold with nobody coming back to them: a
   // host holds it back (command.endCall.held), and an adapter that receives it anyway must refuse
   // it -- so the test sends it past the validator and expects failed.
@@ -2011,6 +2029,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
   if (latestTask().phase === "in-progress" && offers("hold")) {
     if (await send({ type: call.channel === "chat" ? "pause" : "hold" }) !== undefined) {
       if (await updated(t => t.phase === "paused", "the task pausing after hold") !== undefined) {
+        if (canRecordMute) await muteRefusedOnHold();
         if (call.channel === "voice" && offers("endCall")) await endCallRefusedOnHold();
         // An adapter that ended the agent's part from hold has nothing left to resume; the run goes on from where it put the task.
         if (latestTask().phase === "paused" && await send({ type: "resume" }) !== undefined) {
@@ -2103,7 +2122,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     if (await send(command) !== undefined) {
       // applied says the provider has completed the task, and its ending follows within the bound
       // the manifest stated. Past it the host resyncs: a snapshot still carrying the task is a task
-      // held open by a provider that said it was done, and the desk shows it as unsettled.
+      // held open by a provider that said it was done, and the agent computer shows it as unsettled.
       ruleTested("test.completion.unsettled");
       const settle = Number(call.manifest.settleMs);
       let unsettled = false;
@@ -2305,7 +2324,7 @@ export function memoryStore(): LoginStore {
 
 /**
  * A host that reports one thing and never changes: what most adapter tests hand `testAdapter`.
- * A softphone host states what its Mute does; a desk-phone or conversation host has no microphone and states nothing.
+ * A softphone host states what its Mute does; a hardphone or conversation host has no microphone and states nothing.
  */
 export function stillHost(report: HostReport, guarantees: HostGuarantees, mute: HostMute): Host & { mute: HostMute };
 export function stillHost(report?: HostReport, guarantees?: HostGuarantees): Host & { mute?: never; recording?: never };

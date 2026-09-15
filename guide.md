@@ -20,9 +20,9 @@ every cross-reference names the file it points into.
 
 | File | |
 | --- | --- |
-| `guide/agent.md` | **The agent's work.** What an agent does on any channel: the assignment from offer to wrap, the task and its record, the controls a task offers, the commands the desk sends. |
+| `guide/agent.md` | **The agent's work.** What an agent does on any channel: the assignment from offer to wrap, the task and its record, the controls a task offers, the commands the agent computer sends. |
 | `guide/voice.md` | **Voice.** What is true of a call and of nothing else: preview, connecting back, ending a call, conference, every dial and its outcome, recording. |
-| `guide/phone.md` | **The phone.** How the agent hears the call: softphone and desk phone, the station and its headset, opening the audio, the microphone and the record. |
+| `guide/phone.md` | **The phone.** How the agent hears the call: softphone and hardphone, the station and its headset, opening the audio, the microphone and the record. |
 | `guide/chat.md` | **Chat.** What is true of a chat and of nothing else. |
 | `guide/email.md` | **Email.** What is true of an email and of nothing else. |
 | `guide/queue.md` | **The agent's own queue.** The next call, lined up for this agent while they finish the one they are on: the ask, the lined-up call, and the release. |
@@ -44,9 +44,9 @@ are used precisely throughout and mean nothing looser here.
 | **Lead** | An agent whose login declares `capabilities.lead`. The flag lets the agent application offer the team feature; the application switches it on with `lead-features` on every connect, and only then does the provider publish the team -- whole on `team-updated`, then one member at a time -- to that login and to nobody else: **the login is the permission**. The lead sees their members with their tasks and stats, and acts on them with the authority the flag carries. |
 | **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and local policy disagree, the stricter wins. |
 | **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. The protocol never describes the IVR or the queue; it carries the call's history and details to whichever agent holds it now. |
-| **Assignment** | The call routed to this agent, from the offer until the task ends. It is the one thing that crosses: the provider assigns, names the assignment with `assignmentId`, and that is the only name the desk ever uses back. A call that comes back is a new assignment on the same call, and a declined or lapsed offer is an assignment that became nothing more. What the platform calls its own record, and whether it reuses that name, is the adapter's business and unknown to the desk. |
+| **Assignment** | The call routed to this agent, from the offer until the task ends. It is the one thing that crosses: the provider assigns, names the assignment with `assignmentId`, and that is the only name the agent computer ever uses back. A call that comes back is a new assignment on the same call, and a declined or lapsed offer is an assignment that became nothing more. What the platform calls its own record, and whether it reuses that name, is the adapter's business and unknown to the agent computer. |
 | **Interaction** | The agent's time on the call, from answer until their audio ends: the `in-progress` and `paused` phases. An assignment produces at most one interaction, and a call that returns produces a new assignment and so a new interaction. |
-| **Task** in `guide/agent.md` | The desk's record of one assignment, from offer through wrap: the workspace, controls and completion work the agent has for it, described by the provider and held by the desk. A task is identified by the assignment it is the record of. `pending`, `confirmed` and `preview` are assigned and not yet interacting; `in-progress` and `paused` are the interaction; `completing` is the assignment outliving its interaction. A voice task is one assignment, never the caller's whole call. |
+| **Task** in `guide/agent.md` | The agent computer's record of one assignment, from offer through wrap: the workspace, controls and completion work the agent has for it, described by the provider and held by the agent computer. A task is identified by the assignment it is the record of. `pending`, `confirmed` and `preview` are assigned and not yet interacting; `in-progress` and `paused` are the interaction; `completing` is the assignment outliving its interaction. A voice task is one assignment, never the caller's whole call. |
 | **Channel** | The kind of work a provider carries: `voice`, `chat`, or `email`. Fixed per provider by its manifest. |
 | **Task type** | The provider's own name for a category of work — a queue, a mailbox folder, a chat source. Free-form, and finer-grained than a channel. |
 | **Capability** | A provider's declaration that a control exists for a task or a session. It says *offer this*; the provider performs it, and the agent application only offers it — see **Where a command executes** in `guide/agent.md`. |
@@ -59,7 +59,7 @@ are used precisely throughout and mean nothing looser here.
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, team member list. |
 | **Dial** | One outbound call the agent application asks a provider to place — from the idle dialpad, a preview's Call, a conference add, or a connect-back. Identified by the agent application's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome** in `guide/voice.md`. |
-| **Listen** | A lead's channel in a member's call, unasked, from the team member list: `listen` in silence, `coach` heard by the agent alone, `join-call` heard by everyone. It is a team act naming the member, never a task on the lead's desk; `listen` and `coach` leave no trace on the member's task, while a lead heard by everyone is on its `onCall` as an `agent`. Every lead sees every lead on the call. A lead who wants the call takes it over. See **Listening to a call** in `guide/lead.md`. |
+| **Listen** | A lead's channel in a member's call, unasked, from the team member list: `listen` in silence, `coach` heard by the agent alone, `join-call` heard by everyone. It is a team act naming the member, never a task on the lead's computer; `listen` and `coach` leave no trace on the member's task, while a lead heard by everyone is on its `onCall` as an `agent`. Every lead sees every lead on the call. A lead who wants the call takes it over. See **Listening to a call** in `guide/lead.md`. |
 | **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone conferenced in from the moment their dial is placed. |
 
 These fields describe state within their containing objects. Both authentication and break
@@ -198,7 +198,7 @@ type DialCapability = { destinations: DialDestinations };
 
 type DialOutcome = "answered" | "busy" | "no-answer" | "unreachable" | "rejected" | "cancelled" | "unexplained";
 
-type Phone = "softphone" | "deskPhone";
+type Phone = "softphone" | "hardphone";
 
 type PhoneStatus = "ready" | "unregistered" | "do-not-disturb" | "off-hook";
 
@@ -384,6 +384,7 @@ type HostReport = {
 type HostGuarantees = {
   browserUrlVisibility?: true;
   personConsent?: true;
+  muteUnavailableOnHold?: true;
 };
 
 type ProviderTimeScope = { providerId: string; loginId: string };
@@ -420,7 +421,7 @@ type ConnectContext = {
   log?: (entry: unknown) => void;
 } & (
   | { phone: "softphone"; host: { mute: HostMute } }
-  | { phone?: "deskPhone"; host: { mute?: never; recording?: never } }
+  | { phone?: "hardphone"; host: { mute?: never; recording?: never } }
 );
 
 type TransportStatus = "connecting" | "active" | "error";
@@ -875,7 +876,7 @@ type TaskCommandResult =
 
 ### Who decides what an agent may do
 
-An agent desk has two managers, not one. **The queue** — a process, a work type — is owned by a
+An agent agent computer has two managers, not one. **The queue** — a process, a work type — is owned by a
 process manager and **allows** a set of capabilities: hold, connect back, dial, conference,
 whether the number is visible, the actions it offers, the skills it needs. **The people** are
 managed through the organisation's structure — a team, a location, the organisation itself, in
@@ -890,7 +891,7 @@ the person settles the value for everyone below it, and where nothing enforces t
 level that says anything wins. The protocol names a level by the id the manifest declares for it and
 never describes the chain between them: which levels a person passes through is the structure's to
 know. A typical organisation has four, and they are the defaults — `DEFAULT_LEVELS`: `org`, `site`,
-`team`, `person`, each with the label a desk shows. A structure that differs states its whole
+`team`, `person`, each with the label an agent computer shows. A structure that differs states its whole
 ladder in `Manifest.orgLevels`, `person` included: what the list carries is in force, and what it
 leaves out does not exist — a structure with no site level declares `org`, `team`, `person`, and
 `site` is refused on its wire. A declared level is one the provider's own store actually resolves
@@ -916,10 +917,10 @@ to ask their lead or their site. `lockedBy` is the discriminant: a value that ca
 lock, so nothing that can be locked — a directory, a number — may carry that key itself. A
 contact's number and email are the same, since each identifies a person: where the queue says
 the agent may not see it, the provider sends `{ lockedBy }` in its place — the last digits or
-nothing — and a CRM link carries a token, never the value with a flag the desk is asked to honour.
+nothing — and a CRM link carries a token, never the value with a flag the agent computer is asked to honour.
 **What the queue locks is locked on the whole task.** A number the agent may not see appears
 nowhere else they read — not in the title, the reference, an attribute, a custom control's label,
-or a browser URL the desk shows; a browser whose URL must carry it says `urlVisibility: "hidden"`.
+or a browser URL the agent computer shows; a browser whose URL must carry it says `urlVisibility: "hidden"`.
 The adapter is the one that knows the value, so it is the one held to it: given the values the
 queue locked, the validator refuses any other field carrying one, digits compared as digits so no
 formatting hides them (`task.locked.leak`), and a conformance run whose tasks lock a party's number
@@ -927,7 +928,7 @@ or email states those values in `lockedValues`, since a run that cannot ask the 
 pass. An agent application never has the value and never asks. A name is not locked.
 
 **The lock is per audience.** Who sees the number is the provider's choice for each copy of the
-task: the member's, on their desk, and the leads', on the team member list. Hidden from the agent
+task: the member's, on their agent computer, and the leads', on the team member list. Hidden from the agent
 and shown to the lead, shown to the agent and hidden from the lead, hidden from both, shown to
 both -- any of the four, as the platform's policy says, and each copy is the provider's statement
 to that audience. Each copy keeps its own lock whole: where the lead's copy locks the number,
@@ -1709,11 +1710,11 @@ compile time.
 | `idleCapabilities` | Declares actions Omni may offer while the agent has no active task, such as voice dialing. Task controls do not belong here. |
 | `phaseLabels` | Optional static adapter-defined display names for canonical `TaskPhase` values. They cannot vary at runtime. |
 | `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
-| `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label a desk shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
-| `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `deskPhone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call** in `guide/phone.md`. |
+| `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label an agent computer shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
+| `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `hardphone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call** in `guide/phone.md`. |
 | `phoneStatus` | Voice only, declared by presence as `true`: the platform sees the phone itself -- its registration, its do-not-disturb, its hook, its calls -- and publishes it as `Snapshot.phone` and `phone-updated`. A platform that cannot see the phone omits it, and then publishes no phone (`manifest.phoneStatus`). See **The phone's own view** in `guide/phone.md`. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome** in `guide/voice.md`. |
-| `timeCheck` | `true`: implements `checkTime` and states `providerTime` on every snapshot. Required of a provider that publishes an instant the desk renders as a running duration -- a member's `since`, a `listening[].since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts from the provider's clock (`manifest.timeCheck.required`); agent application polling is independently opt-in. See **Every screen counts from the provider's clock**. |
+| `timeCheck` | `true`: implements `checkTime` and states `providerTime` on every snapshot. Required of a provider that publishes an instant the agent computer renders as a running duration -- a member's `since`, a `listening[].since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts from the provider's clock (`manifest.timeCheck.required`); agent application polling is independently opt-in. See **Every screen counts from the provider's clock**. |
 | `timestampAuthority` | Optional `"provider"`: provider timestamps are final; agent application instants are advisory. Omission makes no trust promise. |
 | `runningStepReports` | The provider takes running reports of an agent application-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the agent application sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The agent application records what it performs** in `guide/agent.md`. |
 | `settleMs` | Required. How long after `applied` the wire shows what the provider did: the `task-ended` after a `complete`, the `calendar-updated` after a `schedule`. A positive whole number of milliseconds (`manifest.settleMs`). Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
@@ -2158,9 +2159,9 @@ Creates one live provider connection for the signed-in agent.
 - May reject for authentication, configuration, or startup failure.
 - Must not create a second agent session merely because the underlying transport reconnects.
 - **One client at a time per login, and the later one wins.** A second `connect()` on a login
-  that already has a live client is the agent moving desks -- a desk left open at work, signed in
+  that already has a live client is the agent moving agent computers -- an agent computer left open at work, signed in
   from home. The provider takes the new connection, and ends the first with `transport-status`
-  `error` and `recovery: "displaced"`, so the first desk stops stating capacity and reporting legs
+  `error` and `recovery: "displaced"`, so the first agent computer stops stating capacity and reporting legs
   and shows the agent they are signed in elsewhere. Two live clients on one login would be two
   sources for one agent, and the lead's list would follow whichever spoke last.
 - The returned connection owns reconnect until Omni calls `disconnect()` or aborts `context.signal`.
@@ -2179,7 +2180,7 @@ Creates one live provider connection for the signed-in agent.
 | `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
 | `autoAcceptTasks` | Agent local policy policy relayed to the provider at login, stated by the agent application on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
-| `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's agent application states what its Mute does, and a desk-phone or conversation login's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's** in `guide/phone.md`. |
+| `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's agent application states what its Mute does, and a hardphone or conversation login's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's** in `guide/phone.md`. |
 | `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A login-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`test.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`test.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.assignment-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
 | `host` | The agent application's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The agent application reports, the adapter decides** in `guide/phone.md`. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
@@ -2188,7 +2189,7 @@ Creates one live provider connection for the signed-in agent.
 ### The agent's day
 
 Every instant on this wire carries an explicit offset, so a moment is unambiguous everywhere and
-a desk renders it in the viewer's clock without help. A **day** is different: hours toward
+an agent computer renders it in the viewer's clock without help. A **day** is different: hours toward
 target, an answer streak, a per-queue count for today -- anything bucketed by day -- is bucketed
 by somebody's day, and a platform that was never told whose uses its own. An agent in Chennai
 then finds their day rolling at 05:30, and a night shift in Chicago lands in two buckets.
@@ -2236,7 +2237,7 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | --- | --- |
 | `transport` | Current `TransportStatus` — whether this provider's transport can serve the login. Defined under **`transport-status`**. |
 | `loginId` | Identity of this login. It must match the connection context. |
-| `providerTime` | The provider's own instant of this read. Required of a provider that declares `timeCheck` (`snapshot.providerTime`), forbidden of one that does not (`snapshot.providerTime.unexpected`): a clock sample the desk counts durations from, saving it a `checkTime`. |
+| `providerTime` | The provider's own instant of this read. Required of a provider that declares `timeCheck` (`snapshot.providerTime`), forbidden of one that does not (`snapshot.providerTime.unexpected`): a clock sample the agent computer counts durations from, saving it a `checkTime`. |
 | `break` | Complete break state, including status, whether the agent may ask, reasons, retry details, and any forced break. |
 | `tasks` | Complete set of tasks currently offered to or owned by this agent. |
 | `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
@@ -2272,8 +2273,8 @@ surface in one place, and what obliges an adapter to implement each one.
 | `requestNextCall()`, `cancelNextCall()`, `releaseLinedUp()` | The login declares `capabilities.nextCall`. The three stand together: a lined-up call the agent could neither withdraw nor let go is a promise with no way out. See **The agent's own queue** in `guide/queue.md`. |
 | `executeTeam(request)` | The login declares `capabilities.lead`: every lead act, on the team surface and nowhere else. See **Lead commands** in `guide/lead.md`. |
 | `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
-| `recordStep(report)` | The manifest lists `softphone` among its `phones`. On a softphone the agent application mutes its own microphone on any call, and the provider's record has to have somewhere to take that leg; a desk phone's microphone is the phone's. See **The agent application records what it performs** in `guide/agent.md`. |
-| `openAudio(request)` | The manifest lists `softphone` among its `phones`. On a softphone the call's audio lands in Omni, so the adapter has to open it; a platform of desk phones alone never does. |
+| `recordStep(report)` | The manifest lists `softphone` among its `phones`. On a softphone the agent application mutes its own microphone on any call, and the provider's record has to have somewhere to take that leg; a hardphone's microphone is the phone's. See **The agent application records what it performs** in `guide/agent.md`. |
+| `openAudio(request)` | The manifest lists `softphone` among its `phones`. On a softphone the call's audio lands in Omni, so the adapter has to open it; a platform of hardphones alone never does. |
 
 **The four break methods stand or fall together.** Declaring `capabilities.breaks` at login and then
 implementing `requestBreak` without `commitBreak` leaves an agent granted a break that can never
@@ -2376,8 +2377,8 @@ The current exceptions and their reasons are:
 
 | Case | Exception and reason |
 | --- | --- |
-| Agent application display of provider deadlines (`expiresInSeconds`, `previewEndsInSeconds`, `wrapEndsInSeconds`) | Each is seconds from the publication that carried it, counted down on the desk from receipt: the provider's own arithmetic, so no clock is compared and the transport delay is the only error. The countdown estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
-| Agent application-triggered preview end | The desk counts `previewEndsInSeconds` down from receipt and issues `dial` when it reaches zero: the provider owns the deadline and the desk owns the trigger. It does not dial before the countdown has run out, and a reload restarts it from the next publication. |
+| Agent application display of provider deadlines (`expiresInSeconds`, `previewEndsInSeconds`, `wrapEndsInSeconds`) | Each is seconds from the publication that carried it, counted down on the agent computer from receipt: the provider's own arithmetic, so no clock is compared and the transport delay is the only error. The countdown estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
+| Agent application-triggered preview end | The agent computer counts `previewEndsInSeconds` down from receipt and issues `dial` when it reaches zero: the provider owns the deadline and the agent computer owns the trigger. It does not dial before the countdown has run out, and a reload restarts it from the next publication. |
 | Recording evidence expiry | A bounded observer-domain clock estimate with monotonic aging may assess freshness because observation and expiry belong to the recorder's clock. If time cannot be trusted, recording state is unknown; never renew evidence from receipt or replay. |
 | Unknown recording state | `observedAt` and `validUntil` are absent because there is no confirmed observation. The containing provider event still has its own `occurredAt`; that publication is not a recorder observation. |
 | Direct snapshot reads and method requests/results | These are reads/operations, not event envelopes, and their current types have no general event timestamp. A snapshot event still carries `occurredAt`; embedded source instants remain unchanged. Do not treat a method result or read completion time as an occurrence boundary. |
@@ -2392,24 +2393,24 @@ source-measured durations where required; timestamp subtraction is not a substit
 
 #### Every screen counts from the provider's clock
 
-Two screens watching the same agent -- their own desk, their lead's, a manager's on another floor
+Two screens watching the same agent -- their own computer, their lead's, a manager's on another floor
 -- must show the same numbers. Delay between them is fine; arithmetic that differs is not. So
-nothing the desk shows is its own count, with one exception: the running duration of the active
+nothing the agent computer shows is its own count, with one exception: the running duration of the active
 task or call, which a screen times itself from the moment it saw the call begin -- the
-`task-audio-started` on a softphone, the answer it sent on a desk phone -- and which two such
+`task-audio-started` on a softphone, the answer it sent on a hardphone -- and which two such
 screens may therefore disagree on, since their clocks differ. That is the whole exception. A call
 a screen found already up -- on a connect or reconnect snapshot, on a lead's list, after a reload
 -- is counted from the provider's `answered` step's `at` against the provider's clock, like every
-other duration, so a reloaded desk shows 12:40 beside the lead's 12:40 and not 0:05. And a leg
+other duration, so a reloaded agent computer shows 12:40 beside the lead's 12:40 and not 0:05. And a leg
 that has closed shows the provider's `seconds` on every screen, never the count a screen kept.
 Everything else comes from the wire.
 
 Durations off the active call -- how long a member has been `on-break` from their `since`, how
 long a lead has been listening, how long since `signedInAt` -- are counted from the provider's
-clock, never the screen's. The desk keeps the latest provider instant it has received -- a
+clock, never the screen's. The agent computer keeps the latest provider instant it has received -- a
 snapshot's `providerTime`, an envelope's `occurredAt`, a `checkTime` result -- with the monotonic
 elapsed time since receipt, and renders every such duration from that; a sample older than
-`maxSampleAgeMs` is refreshed with `checkTime`. Without a usable sample the desk shows the instant
+`maxSampleAgeMs` is refreshed with `checkTime`. Without a usable sample the agent computer shows the instant
 and no count. A provider that publishes any of these instants therefore declares `timeCheck`
 (`manifest.timeCheck.required`) and states `providerTime` on every snapshot
 (`snapshot.providerTime`). Two screens then differ by their delay and nothing else.
@@ -2417,7 +2418,7 @@ and no count. A provider that publishes any of these instants therefore declares
 **Seconds left are worked out at each publication.** `expiresInSeconds`, `previewEndsInSeconds`,
 `wrapEndsInSeconds` and `expectedEndsInSeconds` are each the provider's arithmetic at the instant
 of the publication that carries them, never a value copied from an earlier one. A provider that
-builds the next publication by spreading the last one forward hands a reloaded desk a countdown
+builds the next publication by spreading the last one forward hands a reloaded agent computer a countdown
 already spent -- sixty seconds shown beside a lead's screen showing twenty -- and the stream
 names it: between two publications of one countdown the value loses at least the seconds the
 provider's own clock says passed, within a second of rounding (`stream.countdown.copied`, on an
@@ -2431,7 +2432,7 @@ overruns; that is the true value, not a copy.
 the `expired` ending within the seconds plus `settleMs`, then tests the next offer
 (`test.offer.expired`). A preview's deadline is held to its `atDeadline` the same way: under
 `provider-dials` the provider dials when it runs out, under `host-dials` and `waits` the preview
-stands until the desk dials (`test.preview.deadline`).
+stands until the agent computer dials (`test.preview.deadline`).
 
 #### Optional periodic provider time checks and agent application estimates
 
@@ -2570,9 +2571,9 @@ died; the agent application knows how to run a login. `recovery` joins the two:
   disposes the errored connection with `disconnect()` and calls `connect()` afresh, as for
   `reconnect`, and the fresh snapshot re-establishes state. The adapter tears nothing down itself
   and expects nothing to carry on: the connection that reported `error` is finished.
-- **`displaced`** — another client connected on this login and took it: the agent moved desks.
+- **`displaced`** — another client connected on this login and took it: the agent moved agent computers.
   Nothing revives this connection on its own -- Omni does not reconnect, or it would take the
-  login straight back from the desk the agent just sat down at -- and the desk shows the agent
+  login straight back from the agent computer the agent just sat down at -- and the agent computer shows the agent
   they are signed in elsewhere, with a way to take the login back, which is a `connect()` that
   displaces the other. See **`Adapter.connect(context)`**.
 
@@ -2594,8 +2595,8 @@ come — see **Liveness**.
 
 **The status is seen, not merely known.** An agent application renders the transport's status where the agent
 works — `connecting` from the moment it is reported, `error` with what revives it — and never a
-healthy workspace over a transport that cannot serve it: an agent talking on a desk whose transport
-died was an incident, and it happened because the desk knew and did not say. The same obligation
+healthy workspace over a transport that cannot serve it: an agent talking on an agent computer whose transport
+died was an incident, and it happened because the agent computer knew and did not say. The same obligation
 covers a `diagnostic`: shown where the agent works, and counted.
 
 ### `break-state`
@@ -2675,7 +2676,7 @@ snapshots until it ends.
 **Every offer is owed an ending.** An assignment the provider introduced is an assignment it ends,
 with `task-ended` and an outcome, whatever became of the call: answered and completed, declined,
 withdrawn, abandoned in the ring, lapsed, taken over. An offer that is simply never mentioned
-again leaves the desk holding a task nobody will close, and the test names it
+again leaves the agent computer holding a task nobody will close, and the test names it
 (`stream.taskOffered.unended`).
 
 ### `task-updated`
@@ -2693,7 +2694,7 @@ platform, a station going in use the moment a call is answered, sends it then, b
 opened anything, and `openAudio` has its own answer for what the agent application did. It
 names a task whose work has begun, and it alternates with `task-audio-ended`: audio that never
 started cannot end, so a live call whose provider says nothing about its audio is a provider in
-breach, not a state a desk fills in from its own devices.
+breach, not a state an agent computer fills in from its own devices.
 
 The event is the transition and the task's `audio` field is the state. A `task-updated` re-states
 the audio its task already holds — republishing `started` on a hold is a statement, not a second
@@ -2728,7 +2729,7 @@ and not for ever: `applied` to a `complete` says the
 provider has completed the task, and its `task-ended` follows within the
 manifest's `settleMs`. A provider never answers `applied` for a completion it has not yet
 performed. Past the bound the agent application calls `snapshot()`: a snapshot still carrying the task is a task
-held open by a provider that said it was done, and the desk shows it as unsettled -- "Completing...
+held open by a provider that said it was done, and the agent computer shows it as unsettled -- "Completing...
 the provider has not confirmed" -- naming the command; a snapshot no longer carrying it clears the
 task, since the ending was owed and lost. The test holds a provider to the same bound
 (`test.completion.unsettled`). The `task-audio-ended` event and the `completing` phase are likewise
@@ -2841,7 +2842,7 @@ agent's own queue** in `guide/queue.md`.
 ### `phone-updated`
 
 The phone as the platform now sees it, whole, replacing `Snapshot.phone`: a registration lost or
-back, do-not-disturb pressed or cleared, the handset lifted with no call or replaced, the desk
+back, do-not-disturb pressed or cleared, the handset lifted with no call or replaced, the agent computer
 phone's own mute. Emitted only by a provider whose manifest declares `phoneStatus`
 (`event.phone.capability`). The lead's member carries the same `PhoneState`, republished with the
 member. See **The phone's own view** in `guide/phone.md`.
@@ -2891,12 +2892,12 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
-| `validateHostGuarantees(guarantees)` | What an agent application promises: only the guarantees this contract names, each declared by presence and never `false`. The harness validates the guarantees of whatever agent application a test hands the adapter. |
+| `validateHostGuarantees(guarantees, path?, phone?)` | What an agent application promises: only the guarantees this contract names, each declared by presence and never `false`. Given the login's phone, the mute promise is held to it: `muteUnavailableOnHold` required of a softphone login's agent application and refused of any other (`host.guarantee.muteUnavailableOnHold.required` / `.unexpected`). The harness validates the guarantees of whatever agent application a test hands the adapter, against the phone it chose. |
 | `validateProviderTimeCheckPolicy(policy)` | Explicit optional polling settings, positive safe-integer durations and round-trip/timeout/interval ordering. |
 | `validateProviderTimeCheckRequest(request)` | Fresh-request shape; the agent application enforces actual uniqueness and outstanding-request lifetime. |
 | `validateProviderTimeCheckResult(result, request, loginId)` | ISO timestamp, clock identity, exact request/login correlation; timing and source accuracy remain runtime checks. |
 | `validateProviderTimeEstimate(estimate, scope)` | Optional agent application estimate shape and provider/login scope; no accuracy guarantee. |
-| `validateHistoryReport(report, path?, manifest?)` | What the agent application reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. |
+| `validateHistoryReport(report, path?, manifest?, task?)` | What the agent application reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. Given the task, the agent application's own mute beginning on a `paused` task is refused (`historyReport.muted.held`): the Mute waits for resume. |
 | `validateHostReport(report)` | The agent application's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever agent application a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateHostMute(mute, softphone)` | What the agent application's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the agent application holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
 | `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
@@ -2918,7 +2919,7 @@ reports `team.unentitled`, and a team event to such a login reports `event.team.
 `leadFeatures: true`, a snapshot without a team reports `team.required`, and given `leadFeatures: false`,
 anything of the team reaching the lead reports `team.unexpected` or `event.team.features`. Without them those rules are not checked, because they cannot be.
 `testAdapter` passes all three, holding the switch off until it has sent it. Given the manifest, a
-snapshot or event that carries an instant the desk renders as a running duration under a manifest
+snapshot or event that carries an instant the agent computer renders as a running duration under a manifest
 without `timeCheck` reports `manifest.timeCheck.required`.
 
 `assertNoViolations(violations)` throws `ProtocolConformanceError` — which carries the full
@@ -2931,22 +2932,22 @@ reaching the workspace.
 
 ### What the agent application does with what it refuses
 
-A refusal has an aftermath on the desk and a report to the provider, and both are stated.
+A refusal has an aftermath on the agent computer and a report to the provider, and both are stated.
 
 - **A refused snapshot replaces nothing.** The agent application keeps the last state it took from this
   provider whole, and shows the provider as faulted -- the transport as it stands, and the words
   "last update refused" with the rule -- so the agent knows the view is standing still rather than
   believing it current. It does not adopt the good half of a snapshot: a task the agent is on would
-  vanish from the desk while the call is up.
+  vanish from the agent computer while the call is up.
 - **A refused event is dropped and counted.** The state the agent application holds does not move for it. The
   provider is told, and may republish a corrected state or raise a `diagnostic`; the agent application retries
-  nothing. The desk shows nothing for it: the view kept moving for every other event, so "last
+  nothing. The agent computer shows nothing for it: the view kept moving for every other event, so "last
   update refused" would be false of it, and a chip that said nothing would be right about the
   transport. Counted, and the provider told, is all an agent application can truthfully do for one event.
 - **The provider is told, every time.** `refused(report)` carries the artefact, the envelope id for
   an event, and every violation with its rule and path. An adapter logs it at error and treats it as
   its own defect until shown otherwise: what the agent application refused never reached the agent, and a
-  provider that hears nothing runs a whole shift beside a frozen desk with nothing wrong on its
+  provider that hears nothing runs a whole shift beside a frozen agent computer with nothing wrong on its
   side. The harness tells an adapter under test exactly as an agent application does
   (`connection.refused.required`, `connection.refused.rejected`).
 
@@ -2988,7 +2989,7 @@ no tasks exercises no task rule, and a pass over it reads as coverage it is not.
 **A static run never answers a call.** It states a capacity and disconnects, so everything
 downstream of `answer` -- the room, the stage, audio, every phase past `pending`, every dial
 outcome -- stays in `notTested` for every adapter, and a rule about a live call is enforced only
-in each adopter's own tests. `{ withCall: true }` closes that: the exercise takes the first task the
+in each adopter's own tests. `{ withCall: true }` closes that: the test takes the first task the
 provider offers through one ordinary lifecycle -- accept it, wait for its audio and open it on a
 softphone, hold and resume where the task offers `hold`, end the call where it offers `endCall`,
 complete it with an outcome where the agent completes -- and holds every step to the rules a
@@ -3014,6 +3015,8 @@ as each case was considered, so a test that needs a rule to have run asserts it 
 inferring it from an empty `violations`, and a rule absent from it was never looked at, which is a
 gap and not a pass. With the audio open on a softphone,
 the test mutes it for one second and reports the leg through `recordStep`, begun and then ended,
+and with the task on hold sends a mute begun there past the validator and expects `failed`, naming an
+adapter that records it (`test.recordStep.held`);
 expecting each report `recorded` with the provider-selected history `at` (`test.recordStep.failed`, `.rejected`, `result.recordStep.at`); then it mutes again and
 ends the call muted, as agents do, so the leg is open when the audio ends, the provider closes it
 in the completing publication or the open entry is refused (`task.history.muted.open`),
@@ -3101,7 +3104,7 @@ cannot be established from TypeScript structure alone.
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `testAdapter` result. |
 | `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
-| `stillHost(report?, guarantees?, mute?)` | An agent application that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a softphone voice adapter, and never for a desk phone. |
+| `stillHost(report?, guarantees?, mute?)` | An agent application that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a softphone voice adapter, and never for a hardphone. |
 | `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for an agent application that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |
 | `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a forced break arriving in effect with `forced`. The harness applies the same rules after the connect snapshot. |
 | `assertAudioFollowsTheTask(envelopes, snapshot?)` | The audio follows the task and never decides it: every task is introduced once, `task-audio-started` and `task-audio-ended` alternate on work that has begun, audio ends only where it arrived, and what follows the audio ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no audio satisfies it by never testing it — pair it with the assertion that the audio end is present. |
