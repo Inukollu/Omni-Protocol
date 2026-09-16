@@ -14,7 +14,7 @@ the lined-up call, and the release.
 // the login declares it, as it declares breaks
 { status: "authenticated", identity: {...}, capabilities: { breaks: true, nextCall: true } }
 
-// 1. The ask. The agent presses Next call during the call or the wrap; the desk offers the button
+// 1. The ask. The agent presses Next call during the call or the wrap; the agent computer offers the button
 //    when it sees fit -- past the midpoint of the handling time is one way.
 await connection.requestNextCall()
 // -> { status: "requested" }: the provider holds the ask; nothing is promised
@@ -41,7 +41,7 @@ await connection.releaseLinedUp()
 **The ask lives only as long as its purpose.** It needs an assignment at work to be next after,
 so an idle agent has nothing to press (`snapshot.nextCall.idle`), and the provider clears it on
 its own when that assignment ends, when a call is lined up to meet it, and when the agent
-withdraws it with `cancelNextCall()`. The desk never keeps it past any of those. `requested` says
+withdraws it with `cancelNextCall()`. The agent computer never keeps it past any of those. `requested` says
 the provider holds the ask, not that a call will come: a queue may be empty.
 
 **The queue lives within capacity, and never beside a break.** The ask and the lined-up call are
@@ -50,13 +50,13 @@ promises to assign, and a promise the provider can no longer keep goes:
 - **Told `count: 0`**, host-stopped, the provider assigns nothing, so it clears the ask and lets the
   lined-up call go back to the queue for anyone; an entry published after that is refused
   (`stream.nextCall.stopped`, `stream.linedUp.stopped`). The queue is per provider, as the ask
-  was made on that provider's call, and the desk's division of capacity is what it was.
+  was made on that provider's call, and the agent computer's division of capacity is what it was.
 - **A break wins.** An agent who has asked for a break, been granted one starting after this
   task, or been put on one has said the opposite of "line up my next call", and the two never
   stand together: while a break is in flight or in effect -- any status but `not-requested` --
   `requestNextCall()` is refused with `omni.unavailable`, and a break arriving after a
   call was lined up drops the call, the caller going back to the queue for anyone
-  (`snapshot.nextCall.break`, `snapshot.linedUp.break`). The desk shows Next call or the break
+  (`snapshot.nextCall.break`, `snapshot.linedUp.break`). The agent computer shows Next call or the break
   controls, never both.
 - **A lined-up call needs an agent at work** as the ask does: a call lined up for an agent with
   nothing at work is an offer that has not been made, and travels as `task-offered`
@@ -65,7 +65,7 @@ promises to assign, and a promise the provider can no longer keep goes:
 **The lined-up call is not a task, and rides no task event.** Until the offer there is no
 assignment and nothing to accept, so it has no phase, no capabilities and no history, and it
 rings nothing: the caller is still in the platform's queue, the phone has no channel for it, and
-the desk shows "next for you" and nothing to act on but the release. It becomes a task by the
+the agent computer shows "next for you" and nothing to act on but the release. It becomes a task by the
 ordinary `task-offered`, with `acceptance: "automatic"` since the agent asked, and counts against
 capacity from that moment as any assignment does; the `queued` step in its history carries the
 caller's whole wait. One at a time: the phone only ever takes the next one, so `linedUp` is an
@@ -79,7 +79,7 @@ the platform's routing: releasing one call, or withdrawing the ask, ends nothing
 and the provider may line a repeat caller up again.
 
 **Letting go is the provider's say.** `release: true` on the lined-up call grants the agent Let
-go; absent, the platform means them to take the call and the desk offers nothing
+go; absent, the platform means them to take the call and the agent computer offers nothing
 (`linedUp.release`). `releaseLinedUp()` against an entry without it is refused with
 `omni.capability-not-enabled`, as any control the provider did not grant. `cancelNextCall()`
 withdraws the ask alone: once a call is lined up the ask is met, and what happens to that call is

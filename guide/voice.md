@@ -37,7 +37,7 @@ is work, not a cancellation. A `preview` task therefore needs a manifest that sa
 
 **Preparation and trigger ownership are per task.** Unlimited preparation omits both
 `previewEndsInSeconds` and `atDeadline`: only an agent pressing Call starts dialing. Fixed
-preparation carries the seconds the provider says are left, counted down on the desk from the
+preparation carries the seconds the provider says are left, counted down on the agent computer from the
 publication that carried them and restated on every later one, and exactly one trigger owner:
 
 | Declaration | At preparation end |
@@ -82,7 +82,7 @@ Unsupported source correlation/outcome/audio evidence remains an integration blo
 
 **Drop both fields when the phase moves.** A provider that builds the `in-progress` task by
 spreading the `preview` one carries `previewEndsInSeconds` and `atDeadline` with it, and the agent application refuses
-the update (`task.preview.deadline.unexpected`): the desk keeps the task as it last stood, and the
+the update (`task.preview.deadline.unexpected`): the agent computer keeps the task as it last stood, and the
 provider is told through `refused` exactly which rule, so the state that looked right on its side
 is named on its side. The task past preview has no deadline to wait for, so it carries neither
 field.
@@ -224,7 +224,7 @@ capabilities: {
 
 | Field | Contract |
 | --- | --- |
-| `destinations` | The items the control offers, at least one, with unique `id` values. Each is a button or a menu item on the desk. |
+| `destinations` | The items the control offers, at least one, with unique `id` values. Each is a button or a menu item on the agent computer. |
 | `id` | What Omni sends as `destinationId` on a `conference` command, and what the provider executes. |
 | `label` | What the agent reads. |
 
@@ -260,7 +260,7 @@ provider decides: another IVR, a queue, a survey, or the end of the call. Gated 
 
 **Never from hold.** An `end-call` while the task is `paused` would leave the caller in the hold
 with nobody coming back to them, and the provider's path for a caller who continues never begins.
-So the caller is taken off hold first: the desk holds the command back while the task is `paused`
+So the caller is taken off hold first: the agent computer holds the command back while the task is `paused`
 (`command.endCall.held`) and shows End call disabled on hold, and a provider that receives it
 anyway answers `failed`. Resume, then end. `terminate-call` needs no such gate: it ends the
 caller's channel with the rest, held or not, and nobody is left waiting.
@@ -270,7 +270,7 @@ the caller's, any colleague the agent added, and anyone else on the call. Nobody
 line. Gated by `terminateCall`, a separate permission, since ending a customer's call is a
 different thing from putting my own side down.
 
-Both are commands to the provider through `execute`, and nothing happens on the desk until the
+Both are commands to the provider through `execute`, and nothing happens on the agent computer until the
 provider reports it: the agent's audio ends on `task-audio-ended`, the task moves to `completing`,
 any wrap allowance runs, and the agent completes. Neither is `task-ended`, and `complete` is
 neither of them. Both capabilities are the queue's to grant and a level's to lock, and both may
@@ -362,7 +362,7 @@ those named here: a statement about the switch, sent instead of the nearest caus
 `reason` is the switch's own words, optional, and shown to the agent attributed to the switch rather
 than to Omni. The two are different things and may travel together: a switch can say "could not
 create dialog" in words and still name no cause a code would carry, so `unexplained` with a
-`reason` is a dial the switch described but did not classify, and a desk renders the words without
+`reason` is a dial the switch described but did not classify, and an agent computer renders the words without
 inventing the class.
 
 **`assignmentId` is the task the dial was placed on**, resolved from the dial's own identity and never from
@@ -378,7 +378,7 @@ idle dialpad call, which has no task yet -- or whose entry has already left the 
 outcome for a dial nobody placed and no task mentions is what `stream.dialOutcome.unknown` refuses.
 
 **`answered` says what happened to the dial; `onCall` says who is in the room.** They are two
-claims, and both are true at once when a leg answers and never joins. A desk shows `answered` as the
+claims, and both are true at once when a leg answers and never joins. An agent computer shows `answered` as the
 dial's conclusion and says "on the call" only when the person appears on `Task.onCall`; the obvious
 reading of `answered` -- that they are on the line -- is the one it does not make.
 
@@ -455,7 +455,7 @@ cannot tell ringing from joined says it contains someone who may never arrive. N
 held (`task.onCall.held.ringing`). A colleague who never answers is a dial that ended: the
 provider restates the room without the entry, and the agent is back with the customer.
 
-The desk shows a dial as placed on `dialling`, never as reached; shows the person in the room when
+The agent computer shows a dial as placed on `dialling`, never as reached; shows the person in the room when
 they appear on `onCall`; and shows the outcome, with the switch's reason, against the call it
 belonged to -- with no retry, since a wrong number is not worth redialling and the decision is the
 agent's.

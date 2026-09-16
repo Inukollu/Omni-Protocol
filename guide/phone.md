@@ -1,12 +1,12 @@
 # `@xema/omni-protocol`: The phone
 
-How the agent hears the call: softphone and desk phone, the station and its headset, opening the audio, the microphone and the record. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
+How the agent hears the call: softphone and hardphone, the station and its headset, opening the audio, the microphone and the record. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
 
 ## Real-time audio
 
 Every voice provider has audio: `channel: "voice"` says audio exists. Where the agent hears it
 depends on the `phone` the agent application selected at authentication and connect from the manifest's
-`phones`. On a softphone, audio lands in Omni; on a desk phone, it lands on the handset and Omni
+`phones`. On a softphone, audio lands in Omni; on a hardphone, it lands on the handset and Omni
 opens no audio. See **How the agent hears the call**. Audio transitions are voice-only;
 chat and email publish none (`event.audio.channel`, `stream.taskAudio.channel`).
 
@@ -34,7 +34,7 @@ what failed, and reports. It never decides for the adapter what a missing microp
 **The agent application also guarantees, and a promise the provider cannot see is not one it can rely on.**
 Two of this contract's obligations fall on the agent application rather than the provider — honouring a task
 browser's `urlVisibility`, and taking a `consent` offer only on the person's own press — and more
-than one desk speaks this contract: a browser and a native application differ in what they can
+than one agent computer speaks this contract: a browser and a native application differ in what they can
 reach, and a provider never branches on which it is talking to, only on what it has declared —
 here, and in `host.mute` (see **The station is the agent application's**). So `ConnectContext.host.guarantees` says which promises the
 connected agent application makes, declared once per connection, presence being the guarantee exactly as it is
@@ -44,6 +44,7 @@ the permission everywhere else:
 | --- | --- |
 | `browserUrlVisibility` | Every task browser's `urlVisibility` is honoured in this agent application's chrome, tab by tab. A provider that would send a caller's number in a URL checks this first and tokenises where the promise is absent. |
 | `personConsent` | A `consent` offer is accepted only by the person's own explicit act, never on their behalf. A provider whose work may only be taken by a human checks this first and does not offer it where the promise is absent. |
+| `muteUnavailableOnHold` | The agent application's Mute is its own control on any call and is never offered while the task is `paused`: a mute standing when a hold begins stands through it, and the agent lifts it after resume. Held to the login's phone at connect: required of a softphone login's agent application, whose microphone it is (`host.guarantee.muteUnavailableOnHold.required`), and refused of a hardphone login's, whose mute is the handset's (`.unexpected`). So an agent application that cannot control its mute fails at login, not on a call. |
 
 A guarantee the agent application does not make is an absent key, never `false` — `validateHostGuarantees`
 refuses a false one, as it refuses a name this contract does not list.
@@ -64,7 +65,7 @@ is the one that knows whether an agent without a microphone, or without a speake
 The agent application's own obligations here — asking at connect, never publishing `not-asked` when it does,
 publishing a state and not a flicker — are Omni's tests' to hold. `testAdapter` holds the
 other side: it validates the shape of whatever agent application a test hands the adapter, requires `audio` on
-a softphone login and none elsewhere -- not on a desk phone, not off voice
+a softphone login and none elsewhere -- not on a hardphone, not off voice
 (`context.host.audio.required` / `.unexpected`), holds `host.mute` to the same line (`host.mute.required`
 / `.unexpected`, `host.mute` for a third word) -- and refuses a voice adapter that never asked the
 agent application anything (`connection.host.consulted`), and one that subscribed to nothing will never hear of a
@@ -105,14 +106,14 @@ a return.
 ### How the agent hears the call
 
 A voice platform can put an agent on a **softphone**, where the call's audio lands in the agent application
-and Omni owns the microphone and the playback, or on a **desk phone**, a handset on the platform's
+and Omni owns the microphone and the playback, or on a **hardphone**, a handset on the platform's
 switch that the platform rings, where the agent application owns no audio and only shows the call. Which of
 these a platform can do is a fact about the platform, and which one a login is on is a choice the
 agent application makes for that agent -- so the manifest declares and the agent application chooses.
 
 ```ts
 // Manifest: what the platform can do
-phones: ["softphone", "deskPhone"]
+phones: ["softphone", "hardphone"]
 // The agent application, at authentication and again at connect: which one this login is on
 { phone: "softphone" }
 ```
@@ -122,37 +123,37 @@ A voice manifest lists its `phones` and any other channel lists none (`manifest.
 and one the manifest listed (`context.phone.required`, `.unexpected`, `.unsupported`). Everything
 about audio then follows the phone rather than the channel: on a softphone the agent application reports its
 audio, the adapter implements `openAudio`, and `task-audio-started` is the word to open it; on a
-desk phone the agent application reports no audio, opens nothing, and `task-audio-started` still marks the
-moment the call is live so the desk shows it, with the sound on the handset. A platform that lists
-`deskPhone` alone never implements `openAudio`; one that lists `softphone` always does.
+hardphone the agent application reports no audio, opens nothing, and `task-audio-started` still marks the
+moment the call is live so the agent computer shows it, with the sound on the handset. A platform that lists
+`hardphone` alone never implements `openAudio`; one that lists `softphone` always does.
 
 **The mode comes from the agent application; the status comes from the provider.** The agent application knows which kind
 of station the agent signed in at, because the person chose it, and nothing else can know that.
 The provider knows whether that station can carry a call right now -- whether a handset is
 registered -- which an agent application in a browser cannot see. So the agent application's `phone` selects the branch, and
 the provider's own knowledge of the device decides readiness within it. A provider never overrides
-the agent application's declaration from its device record: treating a desk-phone login as a softphone because
+the agent application's declaration from its device record: treating a hardphone login as a softphone because
 the handset is momentarily unregistered, and demanding a microphone of it, is the reading this
 sentence exists to refuse. What the provider does when the handset is not registered is what it
 does for any station that cannot take a call -- hold the agent not-ready and say why.
 
-**On a desk-phone login the agent application never calls `openAudio`.** There is no stream to hand over and
+**On a hardphone login the agent application never calls `openAudio`.** There is no stream to hand over and
 no audio to attach; an agent application that calls it anyway is in error, and an adapter that receives the call
 answers `unavailable` with a non-retryable failure, since waiting changes nothing about a station
 that is a telephone. The harness requires no `openAudio` of such an adapter and never calls it.
 
-**Which handset a desk-phone login rings is the platform's configuration for that agent**, and
+**Which handset a hardphone login rings is the platform's configuration for that agent**, and
 this wire never asks the agent for it: an agent application declares `phone` and nothing more. What a platform
 asks on surfaces of its own is its own decision.
 
 **A declared phone the platform does not permit for this agent is a login that cannot be
 established.** The manifest says what the platform can do; the agent's record, kept by an
 administrator, says what this agent is configured for, and the two can disagree with the agent application's
-declaration -- a softphone declared for an agent whose record says desk phone. Honouring that
+declaration -- a softphone declared for an agent whose record says hardphone. Honouring that
 declaration on a switch that allows one registration per endpoint would evict the handset: the
 agent's phone stops ringing and their calls land in a tab, and nobody is told. So the provider
 refuses the login at authentication, with `omni.phone-not-permitted` and a message the agent application shows
--- "this agent is configured for a desk phone" -- and refusing is correct, not an override of the
+-- "this agent is configured for a hardphone" -- and refusing is correct, not an override of the
 agent application. It is a refusal, never a negotiation afterwards and never a quiet substitution, and it is
 never retryable: trying again does not reconfigure the agent, and an agent application validating the answer
 (`validateAuthenticationResult`) refuses a phone refusal marked otherwise
@@ -218,7 +219,7 @@ changes, and every softphone agent application can do it. A *station* mute silen
 the operating system: every application on the machine goes quiet, the system shows it, and a
 headset that follows the system follows it. Only a native agent application can do it. `Host.mute` says which
 this agent application does -- `stream` or `station` -- stated on a softphone login, where the agent application holds the
-microphone, and absent on a desk phone and off voice (`host.mute.required` / `.unexpected`). A
+microphone, and absent on a hardphone and off voice (`host.mute.required` / `.unexpected`). A
 browser says `stream`. A native agent application says whichever it does. Nothing on the wire says what kind of
 application the agent application is; a provider reads only what the agent application declared.
 
@@ -232,7 +233,15 @@ mute through the capture track's muted state, read-only, and cannot lift it; a n
 the endpoint and can clear an operating-system mute. A hardware slider is nobody's to clear.
 
 **The record carries the same word.** A `muted` interaction leg is a period the agent could not be
-heard, and the record exists so that period is not a hole. The agent application reports every such period
+heard, and the record exists so that period is not a hole. **The Mute waits for resume.** On a
+softphone the agent application's own Mute is unavailable while the task is `paused`, as it
+promised at login (`muteUnavailableOnHold`): mute then hold is ordinary, and the muted leg runs on
+across the held one; hold then mute is not, and a `muted` leg with `mutedBy: "host"` beginning on a
+paused task is held back by the agent application (`historyReport.muted.held`) and refused by a
+provider that receives one anyway. The test sends one past the validator while the task is held
+and names an adapter that records it (`test.recordStep.held`). A station mute the agent
+application observes on hold -- the headset's slider, the operating system -- is a fact, reported
+with `mutedBy: "station"`, and stands. The agent application reports every such period
 through `recordStep` -- its own Mute, and a station mute it observed during a call -- with
 `mutedBy` saying whose the silence was, and the provider writes the word into the entry
 (`task.history.mutedBy`). The report names no agent because the agent application has exactly one, and
@@ -257,7 +266,7 @@ as by a click. What a call-control headset sends, and what becomes of it:
 | --- | --- | --- | --- |
 | Mute button | The headset, on the HID Telephony usage page: a Phone Mute report on the press, a Mute LED the agent application writes back | A press of the agent application's Mute, performed the agent application's way; the LED follows the agent application's state, so button, light and control are one state with one owner | The `muted` leg, `mutedBy: "host"` |
 | Hook switch | The headset, HID Telephony | A press of the agent application's Answer or End call, only where the task is in a phase that has one; the off-hook and ring lights follow the task | The existing `answer` and `end-call` commands |
-| Flash, redial, speed dial | Older headsets and desk-phone style devices | Flash is Hold and Resume where the task offers `hold`; redial and speed dial map to nothing on a desk that never redials, and are ignored | Nothing new |
+| Flash, redial, speed dial | Older headsets and hardphone style devices | Flash is Hold and Resume where the task offers `hold`; redial and speed dial map to nothing on an agent computer that never redials, and are ignored | Nothing new |
 | Volume up and down | The headset's own amplifier, or the operating system through the consumer-control keys | Nothing: the device and the system handle it | Nothing, except that a speaker at nought is `audio.output.flowing: false` where the agent application can know it |
 | Microphone gain and level | The operating system, the headset's own boost | A level meter, so the agent can see they are heard | Nothing: a level is a flicker, not a state |
 | Hardware or operating-system mute | A slider on the headset, the system's input mute | Observes it, publishes `flowing: false, mutedBy: "station"`, records the leg during a call, and tells the agent which it is where it knows -- headset or system -- and what to do; an agent application whose mute is `station` clears a system mute itself, a browser can only say so | The report and the leg |
@@ -279,7 +288,7 @@ There are two views of a call, and the contract carries both. The task side says
 the agent's work and where each stands: the phase, the audio, the room. The phone side is the
 device: whether it can take a call at all, its own mute, and the calls on it, which exist whether
 or not a task is behind them -- an internal call on the extension, a lead's listening leg, a call
-the platform put on the phone that the desk never saw as a task. The host's report covers neither:
+the platform put on the phone that the agent computer never saw as a task. The host's report covers neither:
 it says what the station has, a microphone and a speaker, and cannot say whether the phone is
 registered. The platform sees the phone, so this is the provider's to publish, as `Snapshot.phone`
 and `phone-updated`, from a manifest that declares `phoneStatus` (`snapshot.phone.required`,
@@ -287,14 +296,14 @@ and `phone-updated`, from a manifest that declares `phoneStatus` (`snapshot.phon
 
 ```ts
 // a conference in progress on alloc-42 -- one channel, since the bridge mixes -- with alloc-43 parked
-const busy: PhoneState = { phone: "deskPhone", status: "ready", muted: true, channels: [
+const busy: PhoneState = { phone: "hardphone", status: "ready", muted: true, channels: [
   { state: "active", since: "2026-09-12T10:30:04Z", assignmentId: "alloc-42" },
   { state: "held", since: "2026-09-12T10:35:20Z", assignmentId: "alloc-43" },
 ] };
-// an internal call on the extension the desk never saw as a task
-const internal: PhoneState = { phone: "deskPhone", status: "ready", channels: [{ state: "active", since: "2026-09-12T11:02:00Z" }] };
-// a desk phone the platform lost
-const down: PhoneState = { phone: "deskPhone", status: "unregistered", since: "2026-09-12T10:41:00Z", channels: [] };
+// an internal call on the extension the agent computer never saw as a task
+const internal: PhoneState = { phone: "hardphone", status: "ready", channels: [{ state: "active", since: "2026-09-12T11:02:00Z" }] };
+// a hardphone the platform lost
+const down: PhoneState = { phone: "hardphone", status: "unregistered", since: "2026-09-12T10:41:00Z", channels: [] };
 ```
 
 **The device.** `status` is the phone itself: `ready` is registered and usable, idle or busy, and
@@ -320,12 +329,12 @@ members are on the task's `onCall`, never repeated here. Each channel is `ringin
 the two views agree** (`phone.channel.task`): `active` with the task at work and its audio
 started, `held` with the task `paused`, `ringing` with the task `pending` or its party ringing on
 `onCall`; and a task with its audio started has a channel (`phone.channel.missing`), since the
-phone carries every call the desk is on. A channel naming no task is the phone's alone, and the
-desk shows it as a call it cannot act on.
+phone carries every call the agent computer is on. A channel naming no task is the phone's alone, and the
+agent computer shows it as a call it cannot act on.
 
 **The mute is the phone's, and it silences whatever is active.** It is one flag on the phone, not
 a property of a channel: whichever channel is active is silent while it is set, and the held
-channels are unaffected. Who owns it follows the phone. On a desk phone the mute button is the
+channels are unaffected. Who owns it follows the phone. On a hardphone the mute button is the
 handset's, and the platform observes it or does not: `muted: true` where it does, absent where it
 does not, never invented. On a softphone the microphone is the host's, its mute is the host's
 report as **The station is the agent application's** sets out, and nothing the provider publishes
@@ -334,6 +343,6 @@ moves it: `muted` on a softphone's state is the platform echoing the host, and i
 never the live flag.
 
 **The lead sees the member's phone as the member does.** The member on the team member list
-carries the same `PhoneState`, republished with the member on every change, so a desk phone that
+carries the same `PhoneState`, republished with the member on every change, so a hardphone that
 is down, or a call on it that is no task, shows the same on both screens, and neither derives it
 from anything else.

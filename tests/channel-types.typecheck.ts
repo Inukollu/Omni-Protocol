@@ -256,7 +256,7 @@ export const leadTakesOver: TaskCommand<"voice"> = { type: "lead-assist", action
 // @ts-expect-error A chat has no call for a lead to join.
 export const chatAskLead: TaskCommand<"chat"> = { type: "lead-assist", action: "request" };
 export const leadRequestedTask = { ...emailTask, assignmentId: "call-11", channel: "voice", capabilities: { leadAssist: true }, leadAssist: { stage: "requested", since: "2026-08-21T09:04:00Z" } } satisfies Task<"voice">;
-// A call a lead took over is an ordinary assignment on the lead's desk, marked with where it came from.
+// A call a lead took over is an ordinary assignment on the lead's computer, marked with where it came from.
 export const takenOverTask = { ...emailTask, assignmentId: "call-11", channel: "voice", capabilities: {}, takenOver: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } } satisfies Task<"voice">;
 // Ending my part and terminating the caller are two commands under two capabilities.
 export const endMyPart: TaskCommand<"voice"> = { type: "end-call" };
@@ -317,18 +317,20 @@ export const promisingHost: Host = { guarantees: { browserUrlVisibility: true, p
 export const reticentHost: Host = { guarantees: {}, report: () => noAudioHere, subscribe: () => () => undefined };
 // The station is the host's: a softphone host states what its Mute does, and a silenced device says who silenced it.
 export const streamMutingHost: Host = { guarantees: {}, mute: "stream", report: () => noAudioHere, subscribe: () => () => undefined };
-// The connect context ties the mute kind to the phone: a softphone login states it, a desk phone or a conversation cannot.
+// The connect context ties the mute kind to the phone: a softphone login states it, a hardphone or a conversation cannot.
 const store: LoginStore = { get: async () => undefined, set: async () => undefined, delete: async () => undefined };
 const seatless = { guarantees: {}, report: () => noAudioHere, subscribe: () => () => undefined };
 export const softphoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "softphone", host: { ...reticentHost, mute: "stream" } };
-export const deskPhoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "deskPhone", host: seatless };
+export const hardphoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "hardphone", host: seatless };
 export const chatLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, host: seatless };
 // @ts-expect-error A softphone login's host states what its Mute does.
 export const silentSoftphoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "softphone", host: seatless };
-// @ts-expect-error A desk phone's microphone is the phone's: the host states no mute.
-export const mutingDeskPhoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "deskPhone", host: { ...reticentHost, mute: "stream" } };
+// @ts-expect-error A hardphone's microphone is the phone's: the host states no mute.
+export const mutingHardphoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "hardphone", host: { ...reticentHost, mute: "stream" } };
+// @ts-expect-error renamed away: the handset is a hardphone; the former spelling is refused.
+export const deskPhoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, store, phone: "deskPhone", host: seatless };
 // @ts-expect-error Every connection carries the login's store.
-export const storelessLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, phone: "deskPhone", host: seatless };
+export const storelessLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, phone: "hardphone", host: seatless };
 export const stationMutingHost: Host = { guarantees: {}, mute: "station", report: () => noAudioHere, subscribe: () => () => undefined };
 // @ts-expect-error A host mutes the stream it sends or the station's microphone; there is no third way.
 export const softMutingHost: Host = { guarantees: {}, mute: "soft", report: () => noAudioHere, subscribe: () => () => undefined };
@@ -409,9 +411,9 @@ export const queueEmptied: ProviderEvent<"voice"> = { type: "lined-up" };
 export const linedUpTask: LinedUpCall = { since: "2026-08-21T09:04:30Z", assignmentId: "alloc-57" };
 // @ts-expect-error Letting go is granted by presence, never refused by a flag.
 export const heldFast: LinedUpCall = { since: "2026-08-21T09:04:30Z", release: false };
-export const busyPhone: PhoneState = { phone: "deskPhone", status: "ready", muted: true, channels: [{ state: "active", since: "2026-08-21T09:00:04Z", assignmentId: "alloc-42" }, { state: "held", since: "2026-08-21T09:05:20Z" }] };
-export const phoneMoved: ProviderEvent<"voice"> = { type: "phone-updated", phone: { phone: "deskPhone", status: "unregistered", channels: [] } };
-export const seesThePhone: Manifest<"voice"> = { id: "acme", displayName: "Acme", channel: "voice", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, phones: ["deskPhone"], phoneStatus: true };
+export const busyPhone: PhoneState = { phone: "hardphone", status: "ready", muted: true, channels: [{ state: "active", since: "2026-08-21T09:00:04Z", assignmentId: "alloc-42" }, { state: "held", since: "2026-08-21T09:05:20Z" }] };
+export const phoneMoved: ProviderEvent<"voice"> = { type: "phone-updated", phone: { phone: "hardphone", status: "unregistered", channels: [] } };
+export const seesThePhone: Manifest<"voice"> = { id: "acme", displayName: "Acme", channel: "voice", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, phones: ["hardphone"], phoneStatus: true };
 // @ts-expect-error A chat provider has no phone to see.
 export const chatSeesThePhone: Manifest<"chat"> = { id: "acme", displayName: "Acme", channel: "chat", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, phoneStatus: true };
 // @ts-expect-error A channel is one of ringing, active or held.
@@ -421,10 +423,10 @@ export const dayMoved: ProviderEvent<"voice"> = { type: "shift-updated", shift: 
 export const memberDay: Shift = { signedInAt: "2026-08-21T08:58:12Z" };
 // The lead's copy of a task: the record and the terms, never the workspace.
 export const leadsCopy: MemberTask<"voice"> = { assignmentId: "alloc-7", title: "Billing call", channel: "voice", taskType: "Billing", phase: "completing", completionMode: "provider-automatic", wrapAllowance: 60, wrapEndsInSeconds: 20 };
-// @ts-expect-error renamed away: browsers, controls and their source stay on the member's desk.
+// @ts-expect-error renamed away: browsers, controls and their source stay on the member's computer.
 export const leadsWorkspace: MemberTask<"voice"> = { ...leadsCopy, browsers: [] };
-// A displaced client: another desk took the login, and this one is finished.
-export const displaced: ProviderEvent<"voice"> = { type: "transport-status", status: "error", recovery: "displaced", message: "Signed in from another desk" };
+// A displaced client: another agent computer took the login, and this one is finished.
+export const displaced: ProviderEvent<"voice"> = { type: "transport-status", status: "error", recovery: "displaced", message: "Signed in from another agent computer" };
 export const wrapping: Task<"voice"> = { ...emailTask, assignmentId: "call-15", channel: "voice", capabilities: {}, phase: "completing", completionMode: "provider-automatic", wrapAllowance: 60, wrapEndsInSeconds: 20 };
 // @ts-expect-error renamed away: the day is one shape for the agent and their lead, Shift.
 export const formerMemberDay: MemberShift = { signedInAt: "2026-08-21T08:58:12Z" };

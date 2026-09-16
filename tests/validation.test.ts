@@ -719,7 +719,7 @@ describe("validateTeamMembers", () => {
     expect(withTasks([trimmed, trimmed])).toEqual(["team.member.tasks.unique"]);
     expect(withTasks("none")).toEqual(["team.member.tasks.shape"]);
     expect(withTasks([trimmed], { availability: "signed-out" })).toEqual(["team.member.tasks.availability"]);
-    // A task carries no lead state, on the team member list as on the desk.
+    // A task carries no lead state, on the team member list as on the agent computer.
     expect(withTasks([{ ...trimmed, listening: { assignmentId: "alloc-7", mode: "listen", since: at } }])).toEqual(["task.leadState.retired"]);
     // Every lead on this member's call: who, which call, in the mode they are heard; one member's call at a time, per lead.
     const entry = (over: Record<string, unknown> = {}) => ({ leadId: "L-9", assignmentId: "alloc-7", mode: "listen", since: at, ...over });
@@ -819,9 +819,9 @@ describe("validateTeamMembers", () => {
 
   it("carries the phone's own view from a provider that can see it: the device, its mute, its channels, agreeing with the tasks", () => {
     const at = "2026-08-21T09:00:00Z";
-    const seeing = manifest({ phoneStatus: true, phones: ["softphone", "deskPhone"] });
-    const read = (phone: unknown, over: Record<string, unknown> = {}) => rules(validateSnapshot(snapshot({ phone, ...over }), seeing, "snapshot", { phone: "deskPhone" }));
-    const idle = { phone: "deskPhone", status: "ready", channels: [] };
+    const seeing = manifest({ phoneStatus: true, phones: ["softphone", "hardphone"] });
+    const read = (phone: unknown, over: Record<string, unknown> = {}) => rules(validateSnapshot(snapshot({ phone, ...over }), seeing, "snapshot", { phone: "hardphone" }));
+    const idle = { phone: "hardphone", status: "ready", channels: [] };
     expect(read(idle)).toEqual([]);
     // Owed by a provider that declared it can see the phone, and by nobody else.
     expect(rules(validateSnapshot(snapshot(), seeing))).toEqual(["snapshot.phone.required"]);
@@ -835,7 +835,7 @@ describe("validateTeamMembers", () => {
     for (const status of ["unregistered", "off-hook"]) {
       expect(read({ ...idle, status, channels: [{ state: "active", since: at }] })).toEqual(["phone.status.channels"]);
     }
-    // The mute is the phone's: a desk phone's button the platform observes, never a softphone's, whose mute is the host's report.
+    // The mute is the phone's: a hardphone's button the platform observes, never a softphone's, whose mute is the host's report.
     expect(read({ ...idle, muted: true })).toEqual([]);
     expect(read({ ...idle, muted: false })).toEqual(["phone.muted"]);
     expect(rules(validateSnapshot(snapshot({ phone: { ...idle, phone: "softphone", muted: true } }), seeing, "snapshot", { phone: "softphone" }))).toEqual(["phone.muted.softphone"]);
@@ -859,8 +859,8 @@ describe("validateTeamMembers", () => {
     expect(read({ ...idle, channels: [{ state: "active", since: at, assignmentId: "alloc-99" }] }, { tasks: [working] })).toEqual(["phone.channel.assignment", "phone.channel.missing"]);
     const offered = { ...task({ phase: "pending", acceptance: "consent", capabilities: {} }), assignmentId: "alloc-44" };
     expect(read({ ...idle, channels: [{ state: "ringing", since: at, assignmentId: "alloc-44" }] }, { tasks: [offered] })).toEqual([]);
-    // On its own event, from a provider that declared it; and on the member, as the member's own desk holds it.
-    expect(rules(validateEventEnvelope(envelope({ type: "phone-updated", phone: idle }), seeing, "event", { phone: "deskPhone" }))).toEqual([]);
+    // On its own event, from a provider that declared it; and on the member, as the member's own agent computer holds it.
+    expect(rules(validateEventEnvelope(envelope({ type: "phone-updated", phone: idle }), seeing, "event", { phone: "hardphone" }))).toEqual([]);
     expect(rules(validateEventEnvelope(envelope({ type: "phone-updated", phone: idle }), manifest()))).toEqual(["event.phone.capability"]);
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", phone: idle }] }))).toEqual([]);
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", phone: { ...idle, status: "busy" } }] }))).toEqual(["phone.status"]);
@@ -1064,7 +1064,7 @@ describe("validateEventEnvelope", () => {
     expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "session gone" })).toEqual([]);
     expect(check({ type: "transport-status", status: "error", recovery: "reauthenticate" })).toEqual([]);
     // Another client took the login: this one is finished, and nothing revives it but the agent taking the login back.
-    expect(check({ type: "transport-status", status: "error", recovery: "displaced", message: "Signed in from another desk" })).toEqual([]);
+    expect(check({ type: "transport-status", status: "error", recovery: "displaced", message: "Signed in from another agent computer" })).toEqual([]);
     expect(check({ type: "transport-status", status: "error" })).toEqual(["event.transportStatus.recovery.required"]);
     expect(check({ type: "transport-status", status: "error", recovery: "retry" })).toEqual(["event.transportStatus.recovery"]);
     // Both directions: a status with nothing to revive carries no recovery.
@@ -1141,7 +1141,7 @@ describe("validateEventEnvelope", () => {
     expect(ended({ type: "expired", phase: "pending" })).toEqual([]);
     expect(ended({ type: "expired", phase: "confirmed" })).toEqual([]);
     expect(ended({ type: "expired", phase: "in-progress" })).toContain("event.taskEnded.outcome.expired");
-    // Nothing expires a preview: the provider dials, the desk dials, or it waits. Withdrawn, it is cancelled by the provider.
+    // Nothing expires a preview: the provider dials, the agent computer dials, or it waits. Withdrawn, it is cancelled by the provider.
     expect(ended({ type: "expired", phase: "preview" })).toEqual(["event.taskEnded.outcome.expired"]);
     expect(ended({ type: "cancelled", by: "provider", reason: "Campaign closed" })).toEqual([]);
     expect(ended({ type: "failed", failure: { code: "x", message: "y", retryable: false } })).toEqual([]);
@@ -1204,6 +1204,15 @@ describe("validateHistoryReport", () => {
     expect(report({ mutedBy: "headset" })).toEqual(["historyReport.mutedBy"]);
     expect(report({ step: "held", mutedBy: undefined })).toEqual([]);
     expect(report({ step: "held" })).toEqual(["historyReport.mutedBy.unexpected"]);
+    // The host's Mute waits for resume: a leg of it beginning on a paused task is refused, given the task.
+    const on = (phase: string, over: Record<string, unknown> = {}) => rules(validateHistoryReport({ assignmentId: "alloc-42", step: "muted", at: "2026-08-21T09:00:00Z", mutedBy: "host", ...over }, "historyReport", undefined, { phase }));
+    expect(on("paused")).toEqual(["historyReport.muted.held"]);
+    expect(on("in-progress")).toEqual([]);
+    // A station mute observed on hold is a fact, and the running and closing reports of a leg begun before the hold stand.
+    expect(on("paused", { mutedBy: "station" })).toEqual([]);
+    expect(on("paused", { seconds: 15 })).toEqual([]);
+    expect(on("paused", { seconds: 42, ended: true })).toEqual([]);
+    expect(on("paused", { step: "held", mutedBy: undefined })).toEqual([]);
     expect(report({ seconds: 15 })).toEqual([]);
     expect(report({ seconds: 42, ended: true })).toEqual([]);
     // The end is stated, never inferred, and it carries the final duration.
@@ -1243,6 +1252,16 @@ describe("validateHostGuarantees", () => {
     expect(rules(validateHostGuarantees({ personConsent: false }))).toEqual(["host.guarantee.value"]);
     expect(rules(validateHostGuarantees({ hidesUrls: true }))).toEqual(["host.guarantee.unknown"]);
     expect(rules(validateHostGuarantees("yes"))).toEqual(["host.guarantees.shape"]);
+  });
+
+  it("holds the mute promise to the login's phone: required of a softphone host, refused of any other", () => {
+    expect(rules(validateHostGuarantees({ muteUnavailableOnHold: true }, "host.guarantees", "softphone"))).toEqual([]);
+    expect(rules(validateHostGuarantees({}, "host.guarantees", "softphone"))).toEqual(["host.guarantee.muteUnavailableOnHold.required"]);
+    expect(rules(validateHostGuarantees({ muteUnavailableOnHold: true }, "host.guarantees", "hardphone"))).toEqual(["host.guarantee.muteUnavailableOnHold.unexpected"]);
+    expect(rules(validateHostGuarantees({}, "host.guarantees", "hardphone"))).toEqual([]);
+    // Without the phone, the promise is only held to its shape, as any other guarantee.
+    expect(rules(validateHostGuarantees({ muteUnavailableOnHold: true }))).toEqual([]);
+    expect(rules(validateHostGuarantees({ muteUnavailableOnHold: false }, "host.guarantees", "softphone"))).toEqual(["host.guarantee.muteUnavailableOnHold.required", "host.guarantee.value"]);
   });
 });
 
@@ -1951,7 +1970,7 @@ describe("every dial has an outcome", () => {
     expect(m({ dialOutcomes: "answered" })).toEqual(["manifest.dialOutcomes.shape"]);
     expect(m({ dialOutcomes: ["answered", "ringing"] })).toEqual(["manifest.dialOutcome"]);
     expect(m({ dialOutcomes: ["answered", "busy", "busy"] })).toEqual(["manifest.dialOutcome.unique"]);
-    // Both branches: a success the provider cannot state, or a failure it cannot, leaves the desk guessing.
+    // Both branches: a success the provider cannot state, or a failure it cannot, leaves the agent computer guessing.
     expect(m({ dialOutcomes: ["busy", "no-answer"] })).toEqual(["manifest.dialOutcomes.answered"]);
     expect(m({ dialOutcomes: ["answered"] })).toEqual(["manifest.dialOutcomes.failure"]);
     expect(m({ channel: "chat", dialOutcomes: ["answered", "no-answer"] })).toEqual(["manifest.dialOutcomes.channel"]);
@@ -2009,7 +2028,7 @@ describe("every dial has an outcome", () => {
     expect(rules(validateResult({ status: "applied", dialId: "dial-7f2" }, "execute"))).toEqual(["result.dialId.unexpected"]);
     expect(rules(validateResult({ status: "failed", failure: { code: "omni.destination-not-permitted", message: "Not in contacts", retryable: false } }, "execute", "result", "dial-7f2"))).toEqual([]);
     // A phone the platform does not permit for the agent is refused by name, and the name is the contract's.
-    expect(rules(validateResult({ status: "failed", failure: { code: "omni.phone-not-permitted", message: "This agent is configured for a desk phone", retryable: false } }, "execute"))).toEqual([]);
+    expect(rules(validateResult({ status: "failed", failure: { code: "omni.phone-not-permitted", message: "This agent is configured for a hardphone", retryable: false } }, "execute"))).toEqual([]);
     expect(rules(validateResult({ status: "failed", failure: { code: "omni.station-mismatch", message: "x", retryable: false } }, "execute"))).toEqual(["failure.code.unknown"]);
   });
 
@@ -2294,7 +2313,7 @@ describe("validateTaskCommand", () => {
 });
 
 describe("an authentication refusal", () => {
-  const refusal = { code: "omni.phone-not-permitted", message: "This agent is configured for a desk phone", retryable: false };
+  const refusal = { code: "omni.phone-not-permitted", message: "This agent is configured for a hardphone", retryable: false };
   it("validates the challenge a host must render", () => {
     const field = { name: "username", label: "Username", type: "text", required: true, autocomplete: "username" };
     const credentials = { flowId: "flow-1", method: "credentials", fields: [field] };
@@ -2355,8 +2374,8 @@ describe("how the agent hears the call", () => {
   it("has a voice manifest list its phones, and no other channel list any", () => {
     const m = (over: Record<string, unknown>) => rules(validateManifest(manifest(over)));
     expect(m({ phones: ["softphone"] })).toEqual([]);
-    expect(m({ phones: ["deskPhone"] })).toEqual([]);
-    expect(m({ phones: ["softphone", "deskPhone"] })).toEqual([]);
+    expect(m({ phones: ["hardphone"] })).toEqual([]);
+    expect(m({ phones: ["softphone", "hardphone"] })).toEqual([]);
     expect(m({ phones: undefined })).toEqual(["manifest.phones.required"]);
     expect(m({ phones: [] })).toEqual(["manifest.phones.required"]);
     expect(m({ phones: ["handset"] })).toEqual(["manifest.phone"]);
@@ -2368,8 +2387,8 @@ describe("how the agent hears the call", () => {
   it("holds the host's choice of phone to the manifest", () => {
     const voice = manifest({ phones: ["softphone"] });
     expect(rules(validatePhone("softphone", voice))).toEqual([]);
-    expect(rules(validatePhone("deskPhone", voice))).toEqual(["context.phone.unsupported"]);
-    expect(rules(validatePhone("deskPhone", manifest({ phones: ["softphone", "deskPhone"] })))).toEqual([]);
+    expect(rules(validatePhone("hardphone", voice))).toEqual(["context.phone.unsupported"]);
+    expect(rules(validatePhone("hardphone", manifest({ phones: ["softphone", "hardphone"] })))).toEqual([]);
     expect(rules(validatePhone("handset", voice))).toEqual(["context.phone"]);
     expect(rules(validatePhone(undefined, voice))).toEqual(["context.phone.required"]);
     expect(rules(validatePhone("softphone", manifest({ channel: "chat" })))).toEqual(["context.phone.unexpected"]);

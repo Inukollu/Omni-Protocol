@@ -155,7 +155,7 @@ const OFFERABLE_PHASES = membersOf<Extract<TaskPhase, "pending">>({
   pending: true,
 });
 const PREVIEW_DEADLINES = membersOf<PreviewDeadline>({ "provider-dials": true, "host-dials": true, waits: true });
-const PHONES = membersOf<Phone>({ softphone: true, deskPhone: true });
+const PHONES = membersOf<Phone>({ softphone: true, hardphone: true });
 const PHONE_STATUSES = membersOf<PhoneStatus>({ ready: true, unregistered: true, "do-not-disturb": true, "off-hook": true });
 const PHONE_CHANNEL_STATES = membersOf<PhoneChannelState>({ ringing: true, active: true, held: true });
 const LISTENING_MODES = membersOf<ListeningMode>({ listen: true, coach: true, "join-call": true });
@@ -419,7 +419,7 @@ function validateIdleCapabilities(value: unknown, channel: string, path: string,
 }
 
 /**
- * A provider that dials says how a dial can end, both ways: `answered`, or the desk cannot tell
+ * A provider that dials says how a dial can end, both ways: `answered`, or the agent computer cannot tell
  * reached from still ringing, and at least one way of not reaching, or it can never say failed.
  * Off voice nothing dials, and the idle dialpad is a dial, so declaring it is declaring this.
  */
@@ -456,7 +456,7 @@ function validateDialOutcomes(manifest: Record<string, unknown>, path: string, i
 }
 
 /**
- * A voice platform says which phones it can put an agent on -- a softphone in the host, a desk
+ * A voice platform says which phones it can put an agent on -- a softphone in the host, an agent computer
  * phone it rings -- and nothing off voice does, since there is no call to hear.
  */
 function validatePhones(manifest: Record<string, unknown>, path: string, into: Collector): void {
@@ -466,7 +466,7 @@ function validatePhones(manifest: Record<string, unknown>, path: string, into: C
     return;
   }
   if (!Array.isArray(declared) || declared.length === 0) {
-    into.add("manifest.phones.required", path, "a voice manifest lists the phones its platform can put an agent on: softphone, deskPhone, or both");
+    into.add("manifest.phones.required", path, "a voice manifest lists the phones its platform can put an agent on: softphone, hardphone, or both");
     return;
   }
   declared.forEach((phone: unknown, index: number) => {
@@ -653,7 +653,7 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
           }
           ids.add(level.id as string);
         } else wellFormed = false;
-        if (!into.filled(level.label, "manifest.orgLevel.label", `${at}.label`, "a level needs the label a desk shows for it")) wellFormed = false;
+        if (!into.filled(level.label, "manifest.orgLevel.label", `${at}.label`, "a level needs the label an agent computer shows for it")) wellFormed = false;
       });
       if (wellFormed && !ids.has("person")) {
         into.add("manifest.orgLevels.person", `${path}.orgLevels`,
@@ -812,7 +812,7 @@ const levelIds = (levels: readonly string[] | undefined): readonly string[] => l
 /**
  * What the queue locks is locked on the whole task. Given the locked values, every other field an
  * agent reads -- the title, the reference, an attribute, a custom control's label, a browser URL the
- * desk shows -- is held to carrying none of them. A number is compared by its digits, so no
+ * agent computer shows -- is held to carrying none of them. A number is compared by its digits, so no
  * formatting hides it; anything else by its text, case aside.
  */
 function validateNothingLeaksInto(task: Record<string, unknown>, locked: readonly string[], path: string, into: Collector): void {
@@ -1214,7 +1214,7 @@ export interface TaskValidationContext {
   /**
    * A member's task on the team member list, trimmed by the provider: the workspace -- controls,
    * their source, browsers, completion terms -- is the member's and may be absent; what is present
-   * is held to the same rules as on the member's own desk.
+   * is held to the same rules as on the member's own agent computer.
    */
   member?: true;
 }
@@ -1289,7 +1289,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   // travels exactly when Omni said tasks may be auto-accepted, and only while the task is pending.
   // Work the agent originated -- a dial or connect-back, carrying the host's dialId on onCall; a
   // lead's join, carrying assisting; a listen, carrying listening -- was accepted by the command
-  // that created it, and says so whatever the provisioning: the desk shows no Accept for a call
+  // that created it, and says so whatever the provisioning: the agent computer shows no Accept for a call
   // the agent placed. The provisioning governs work the queue routes, and nothing else.
   const originated = task.phase === "pending" && originatedByTheAgent(task);
   ruleTested("task.acceptance.originated");
@@ -1325,7 +1325,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   if (task.phase === "completing" && task.wrapAllowance !== undefined) {
     if (task.wrapEndsInSeconds === undefined) {
       into.add("task.completing.wrapEndsInSeconds.required", `${path}.wrapEndsInSeconds`,
-        "a completing task with a wrap allowance says how much of it is left, so a reloaded desk and a lead's screen count down the same number");
+        "a completing task with a wrap allowance says how much of it is left, so a reloaded agent computer and a lead's screen count down the same number");
     } else {
       into.require(isDurationSeconds(task.wrapEndsInSeconds), "task.completing.wrapEndsInSeconds", `${path}.wrapEndsInSeconds`,
         "wrapEndsInSeconds is how much wrap is left: a whole number of seconds, zero or more, counted from this publication");
@@ -1378,7 +1378,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   // Where the terms came from is stated with them: a host cannot tell "the platform permits
   // nothing" from "the terms could not be read" from the set alone, and the provider knows which.
   if (context.member === true) {
-    // The lead's copy is the record, the room and the terms; the workspace stays on the member's desk.
+    // The lead's copy is the record, the room and the terms; the workspace stays on the member's computer.
     for (const field of ["capabilities", "capabilitySource", "browsers"] as const) {
       if (task[field] !== undefined) into.add("team.member.task.workspace", `${path}.${field}`, `${field} is the member's workspace, and never travels to a lead`);
     }
@@ -1946,7 +1946,7 @@ function validateTeamMemberInto(member: unknown, at: string, context: ReaderCont
   }
   // The member's own history for the day: about the person, not any one call.
   if (member.shift !== undefined) validateShiftInto(member.shift, `${at}.shift`, into, "team.member.shift");
-  // The member's phone as the platform sees it, the same state the member's own desk holds.
+  // The member's phone as the platform sees it, the same state the member's own agent computer holds.
   if (member.phone !== undefined) validatePhoneStateInto(member.phone, `${at}.phone`, {}, into);
   // The member's own queue, as their own snapshot carries it.
   if (member.nextCall !== undefined) validateNextCallInto(member.nextCall, `${at}.nextCall`, into);
@@ -1979,7 +1979,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
 
   into.oneOf(snapshot.transport, TRANSPORT_STATUSES, "snapshot.transport", `${path}.transport`);
   // The provider's own instant of the read: required where the provider has a clock to state, and
-  // a clock nobody declared is not one the desk may count from.
+  // a clock nobody declared is not one the agent computer may count from.
   if (isPlainObject(manifest) && manifest.timeCheck === true) {
     into.timestamp(snapshot.providerTime, "snapshot.providerTime", `${path}.providerTime`);
   } else if (snapshot.providerTime !== undefined) {
@@ -2031,7 +2031,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
         into.require(agrees, "phone.channel.task", `${here}.state`,
           `the phone says ${String(channel.state)} and the task ${String(channel.assignmentId)} says ${String(task!.phase)}${task!.audio === undefined ? "" : ` with audio ${String(task!.audio)}`}: the two views of one call agree`);
       });
-      // And a task at work with audio has a channel: the phone carries every call the desk is on.
+      // And a task at work with audio has a channel: the phone carries every call the agent computer is on.
       tasks.forEach((task, index) => {
         if (task.audio === "started" && !(snapshot.phone as Record<string, unknown> & { channels: unknown[] }).channels.some(channel => isPlainObject(channel) && channel.assignmentId === task.assignmentId)) {
           into.add("phone.channel.missing", `${path}.tasks[${index}]`, `${String(task.assignmentId)} has its audio started and the phone carries no channel for it`);
@@ -2404,7 +2404,7 @@ function validatePreferencesInto(value: unknown, path: string, into: Collector, 
 }
 
 /** The team's policy per capability as the lead sees it: the setting, who set it, who locked it. */
-/** Whether a publication carries an instant the desk renders as a running duration, which the provider's clock reads. */
+/** Whether a publication carries an instant the agent computer renders as a running duration, which the provider's clock reads. */
 function carriesRunningInstant(value: unknown): boolean {
   if (!isPlainObject(value)) return false;
   if (isPlainObject(value.shift) && value.shift.signedInAt !== undefined) return true;
@@ -2427,7 +2427,7 @@ function carriesRunningInstant(value: unknown): boolean {
 function requireClockInto(value: unknown, manifest: unknown, path: string, into: Collector): void {
   if (!isPlainObject(manifest) || manifest.timeCheck === true || !carriesRunningInstant(value)) return;
   into.add("manifest.timeCheck.required", path,
-    "this publishes an instant the desk renders as a running duration -- a since, a signedInAt -- and the manifest declares no timeCheck: every screen counts such a duration from the provider's clock, so the provider states one");
+    "this publishes an instant the agent computer renders as a running duration -- a since, a signedInAt -- and the manifest declares no timeCheck: every screen counts such a duration from the provider's clock, so the provider states one");
 }
 
 /** The agent's standing ask for the next call: since when. */
@@ -2479,7 +2479,7 @@ function validatePhoneStateInto(value: unknown, path: string, context: ReaderCon
   into.oneOf(value.status, PHONE_STATUSES, "phone.status", `${path}.status`);
   if (value.muted !== undefined) {
     into.require(value.muted === true, "phone.muted", `${path}.muted`, "the phone's mute is stated by presence: send true or omit it");
-    // The softphone's microphone is the host's, and its mute is the host's report; the platform observes a desk phone's button, or nothing.
+    // The softphone's microphone is the host's, and its mute is the host's report; the platform observes a hardphone's button, or nothing.
     into.require(value.phone !== "softphone", "phone.muted.softphone", `${path}.muted`,
       "a softphone's microphone is the host's and its mute is the host's report; the platform echoes nothing of it");
   }
@@ -2602,12 +2602,12 @@ function validateUnavailable(value: Record<string, unknown>, rule: string, path:
  * check belongs to the host's own tests and to the harness, which validates whatever host a test
  * hands the adapter.
  */
-const HOST_GUARANTEES = membersOf<keyof HostGuarantees>({ browserUrlVisibility: true, personConsent: true });
+const HOST_GUARANTEES = membersOf<keyof HostGuarantees>({ browserUrlVisibility: true, personConsent: true, muteUnavailableOnHold: true });
 const MUTED_BY = membersOf<MutedBy>({ host: true, station: true });
 const HOST_MUTES = membersOf<HostMute>({ stream: true, station: true });
 
 /**
- * What pressing Mute does on this host, stated on a softphone login and nowhere else: on a desk
+ * What pressing Mute does on this host, stated on a softphone login and nowhere else: on an agent computer
  * phone the microphone is the phone's, and off voice there is none. Neither the value nor its
  * absence is inferred from what kind of application the host is.
  */
@@ -2640,7 +2640,7 @@ export function validateHostMute(mute: unknown, softphone: boolean, path = "host
   const into = new Collector();
   if (mute === undefined) {
     into.require(!softphone, "host.mute.required", path, "a softphone login's host states what its Mute does: stream or station");
-  } else if (into.require(softphone, "host.mute.unexpected", path, "only a softphone login's host holds a microphone to mute; a desk phone's is the phone's, and a conversation has none")) {
+  } else if (into.require(softphone, "host.mute.unexpected", path, "only a softphone login's host holds a microphone to mute; a hardphone's is the phone's, and a conversation has none")) {
     into.oneOf(mute, HOST_MUTES, "host.mute", path);
   }
   return into.violations;
@@ -2650,11 +2650,22 @@ export function validateHostMute(mute: unknown, softphone: boolean, path = "host
  * What a host promises. Presence is the guarantee, so a key declared `false` is refused: a
  * promise withheld is an absent key, never a false one, exactly as a capability is.
  */
-export function validateHostGuarantees(guarantees: unknown, path = "host.guarantees"): ProtocolViolation[] {
+export function validateHostGuarantees(guarantees: unknown, path = "host.guarantees", phone?: unknown): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(guarantees)) {
     into.add("host.guarantees.shape", path, "a host declares its guarantees as an object, empty when it makes none");
     return into.violations;
+  }
+  // The login's phone decides who holds the mute: a softphone host owns it and promises to keep it
+  // off the hold; a hardphone's is the handset's, and a host off voice has none.
+  if (phone !== undefined) {
+    if (phone === "softphone") {
+      into.require(guarantees.muteUnavailableOnHold === true, "host.guarantee.muteUnavailableOnHold.required", `${path}.muteUnavailableOnHold`,
+        "a softphone login's host holds the mute and promises it is unavailable while the task is paused");
+    } else {
+      into.require(guarantees.muteUnavailableOnHold === undefined, "host.guarantee.muteUnavailableOnHold.unexpected", `${path}.muteUnavailableOnHold`,
+        `a ${describeValue(phone)} login's host holds no mute to promise anything of`);
+    }
   }
   for (const [name, declared] of Object.entries(guarantees)) {
     if (declared === undefined) continue;
@@ -2671,7 +2682,7 @@ export function validateHostGuarantees(guarantees: unknown, path = "host.guarant
  * a task, a step, when it began, how long so far if the host says, and an explicit end that
  * carries the final duration.
  */
-export function validateHistoryReport(report: unknown, path = "historyReport", manifest?: unknown): ProtocolViolation[] {
+export function validateHistoryReport(report: unknown, path = "historyReport", manifest?: unknown, task?: unknown): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(report)) {
     into.add("historyReport.shape", path, "a history report must be an object");
@@ -2682,8 +2693,16 @@ export function validateHistoryReport(report: unknown, path = "historyReport", m
   into.oneOf(report.step, HISTORY_STEPS, "historyReport.step", `${path}.step`);
   into.timestamp(report.at, "historyReport.at", `${path}.at`);
   // A muted leg says whose the silence was; no other leg has anyone to name for it.
-  if (report.step === "muted") into.oneOf(report.mutedBy, MUTED_BY, "historyReport.mutedBy", `${path}.mutedBy`);
-  else if ((HISTORY_STEPS as readonly unknown[]).includes(report.step)) {
+  if (report.step === "muted") {
+    into.oneOf(report.mutedBy, MUTED_BY, "historyReport.mutedBy", `${path}.mutedBy`);
+    // The host's own Mute is unavailable while the caller is on hold: a leg of it beginning on a paused
+    // task is a control the host promised not to offer. A station mute it observed on hold is a fact and
+    // stands, and so do the running and closing reports of a leg begun before the hold.
+    if (report.mutedBy === "host" && report.ended === undefined && report.seconds === undefined && isPlainObject(task)) {
+      into.require(task.phase !== "paused", "historyReport.muted.held", `${path}.at`,
+        "the caller is on hold: the host's Mute waits for resume, and a mute begun on hold is not recorded");
+    }
+  } else if ((HISTORY_STEPS as readonly unknown[]).includes(report.step)) {
     into.require(report.mutedBy === undefined, "historyReport.mutedBy.unexpected", `${path}.mutedBy`, "only a muted leg says who silenced the microphone");
   }
   if (report.seconds !== undefined) {
