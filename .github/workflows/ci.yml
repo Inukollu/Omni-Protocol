@@ -21,7 +21,10 @@ jobs:
       fail-fast: false
       matrix:
         node: [20, 22, 24]
-    runs-on: ubuntu-latest
+    # The self-hosted pool when CI_RUNNER names it, as the sibling repositories do; hosted when it is
+    # unset. A switch, not a failover: if the named pool is down, jobs queue. Name the pool as
+    # '["self-hosted","Linux"]', never bare self-hosted, which also matches macOS and Windows machines.
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '["ubuntu-latest"]') }}
     timeout-minutes: 15
     steps:
       - name: Check out the pull request merge
