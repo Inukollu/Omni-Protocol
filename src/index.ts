@@ -309,7 +309,8 @@ export interface SecretStore {
  * A small store for one login's operational state -- what an adapter holds about open work that
  * its platform cannot hold for it, such as the interaction legs a host reported. Kept by the host for
  * the life of the login, across a reload of the host, and cleared at sign-out. Never for anything
- * sensitive: that is `SecretStore`, whose contract is that a host may clear it aggressively.
+ * sensitive: that is `SecretStore`, whose contract is that a host may clear it aggressively, and
+ * clears it once the session has ended.
  */
 export interface LoginStore {
   get(key: string): Promise<string | undefined>;
@@ -387,13 +388,21 @@ export interface UserCapabilities {
  * Only `authenticated` and `refreshing` know who the agent is and what they may do, and only
  * `authenticated` has something to expire. A state carrying more than it knows is a state Omni
  * would render as fact.
+ *
+ * `signed-out` is the agent's own Sign out on this agent computer, and nothing else. `terminated`
+ * is a session ended from outside it -- a supervisor, the agent on another screen, the platform
+ * itself -- and says who: a person by id, or `provider` where no person was behind it, with the
+ * reason as a failure that is never retryable. `expired` is a session whose time ran out or whose
+ * refresh is failing. The stored secrets go with every ending: signed out, terminated, and expired
+ * unless its failure says `retryable: true`.
  */
 export type AuthenticationState =
   | { status: "signed-out" }
   | { status: "authenticating" }
   | { status: "authenticated"; identity: User; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
   | { status: "refreshing"; identity: User; capabilities: UserCapabilities }
-  | { status: "expired"; identity?: User; failure?: AuthenticationFailure };
+  | { status: "expired"; identity?: User; failure?: AuthenticationFailure }
+  | { status: "terminated"; by: UserId | "provider"; identity?: User; failure: AuthenticationFailure & { retryable: false } };
 
 export interface CredentialField {
   name: string;
@@ -436,6 +445,11 @@ export interface AuthenticationSession {
   complete(request: CompleteAuthenticationRequest): Promise<CompleteAuthenticationResult>;
   /** Cancels an abandoned SSO window or credentials form. */
   cancelAuthentication(flowId: string): Promise<AuthenticationActionResult>;
+  /**
+   * The agent's own Sign out. Tells the provider where it can, deletes the stored secrets whatever
+   * happened, and moves to `signed-out`; answers `failed` when the provider could not be told, so
+   * the host can show that a session may remain there. Never called for a `terminated` session.
+   */
   signOut(): Promise<AuthenticationActionResult>;
   close(): Promise<void>;
 }
