@@ -238,7 +238,7 @@ softphone the agent application's own Mute is unavailable while the task is `pau
 promised at login (`muteUnavailableOnHold`): mute then hold is ordinary, and the muted leg runs on
 across the held one; hold then mute is not, and a `muted` leg with `mutedBy: "host"` beginning on a
 paused task is held back by the agent application (`historyReport.muted.held`) and refused by a
-provider that receives one anyway. The test sends one past the validator while the task is held
+provider that receives one anyway, `failed` with `omni.on-hold`. The test sends one past the validator while the task is held
 and names an adapter that records it (`test.recordStep.held`). A station mute the agent
 application observes on hold -- the headset's slider, the operating system -- is a fact, reported
 with `mutedBy: "station"`, and stands. The agent application reports every such period

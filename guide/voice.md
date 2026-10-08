@@ -262,7 +262,7 @@ provider decides: another IVR, a queue, a survey, or the end of the call. Gated 
 with nobody coming back to them, and the provider's path for a caller who continues never begins.
 So the caller is taken off hold first: the agent computer holds the command back while the task is `paused`
 (`command.endCall.held`) and shows End call disabled on hold, and a provider that receives it
-anyway answers `failed`. Resume, then end. `terminate-call` needs no such gate: it ends the
+anyway answers `failed` with `omni.on-hold`, so the agent application can say resume first. Resume, then end. `terminate-call` needs no such gate: it ends the
 caller's channel with the rest, held or not, and nobody is left waiting.
 
 **`terminate-call` ends the whole call.** Every channel on it ends at the provider: the agent's,
@@ -463,114 +463,120 @@ agent's.
 ## Independent task recording
 
 Recording is voice-only. A task can arrive already recording, including while pending, and offer
-no recording controls. The provider publishes only its own current state on
-the provider field of the task’s `recording` state. The agent application publishes its own full scoped view in `HostReport.recordings`.
-A provider task update cannot replace agent application state. Neither a capability nor an accepted command
-establishes recording. Missing state, lost recorder observation, transport loss and expired
-observation mean unknown; they never mean stopped. Paused means a recording remains open without
-capturing. Task hold, task pause and recording pause are independent.
+no recording controls. **Each recorder publishes its own recordings, as a list, whenever one
+changes.** The provider's are the task's `recordings`, restated whole on every publication of the task
+and on every snapshot. The agent application's are on its `HostReport.recordings`, one entry per
+assignment, never on a provider's task. A provider task update cannot replace the agent
+application's recordings, and a command to one recorder has no effect on the other.
 
-The per-task policy is `Task.capabilities.recording`, with independently optional provider and agent application
-action sets. The outer capability may be locked. Absence grants no permission, and a state may
-exist without any permission. A provider may offer only stop for a recording started automatically,
-or withdraw a control on a later task update. There is no global recording mode and no automatic
-start from a capability declaration. Agent application support is declared on `ConnectContext.host.recording`,
-not the provider-owned manifest. The task names one of the storage places the agent application provisioned, by `storageId`;
-an unknown storage place or an unsupported action is refused visibly, never redirected to provider
-recording or a default upload location. Initial agent application support requires voice softphone audio and
-capture of both local and remote audio; an agent application unable to capture either must refuse start/resume.
-This package declares that contract; it supplies no recorder, audio mixing, storage or upload.
+```json
+"recordings": [
+  { "id": "rec-7", "follows": "party", "status": "recording" },
+  { "id": "rec-8", "follows": "agent", "status": "paused", "reason": "sensitive-details" },
+  { "id": "rec-3", "follows": "party", "status": "not-recording" }
+]
+```
 
-| Action | Required current recording state | Confirmed outcome |
+**A recording follows one side of the call.** `follows` says whose channel it captures: the
+`party`'s, or the `agent`'s own. The two are separate captures on most platforms, and the agent
+computer needs to know which: a recording that follows the party keeps capturing hold music
+while the agent talks to a colleague, and only one that follows the agent says whether the
+agent's own voice is on it. Each side has at most one recording that is, or may be, capturing at
+once -- `starting`, `recording`, `paused` or `unknown` (`recording.follows.live`) -- and any number
+that have finished.
+
+**Nothing expires.** A recording stands as its recorder last stated it until the recorder says
+otherwise. There is no observation time, no validity window and no clock to compare: everything
+the agent computer shows comes from the wire, and a recording mark that went dark when a recorder
+check ran late, then came back, was a fault reported from the floor. The recorder publishes on
+change and restates the whole list on connect and resume.
+
+| Status | Meaning |
+| --- | --- |
+| `starting` | Asked for and not yet confirmed by the recorder. |
+| `recording` | Capturing. A pause or a stop still in flight stays `recording` until the recorder confirms it: telling the agent they are not recorded when they may be is the one thing this must never say. |
+| `paused` | Open but not capturing, with a `reason`: `requested`, someone asked for it, or `sensitive-details`, the platform paused it while card or account details are taken. |
+| `not-recording` | Finished, or never started on that side; captured audio is kept or discarded as its stop or cancel said. |
+| `unknown` | The recorder cannot say, with a `reason`: `recorder-unreachable`, or `unsettled`, a command whose effect it could not establish either way. Never shown as stopped. |
+
+A mark that is not lit says why: `paused` and `unknown` carry a reason from those closed lists, and
+nothing else carries one (`recording.reason`, `.reason.unexpected`). Task hold, task pause and
+recording pause are independent.
+
+**Permission is per task.** The policy is `Task.capabilities.recording`, with independently
+optional provider and agent application action sets. The outer capability may be locked. Absence
+grants no permission, and a recording may exist without any permission. A provider may offer only
+stop for a recording started automatically, or withdraw a control on a later task update. There is
+no global recording mode and no automatic start from a capability declaration. Agent application
+support is declared on `ConnectContext.host.recording`, not the provider-owned manifest. The task
+names one of the storage places the agent application provisioned, by `storageId`; an unknown
+storage place or an unsupported action is refused visibly, never redirected to provider recording
+or a default upload location. Initial agent application support requires voice softphone audio and
+capture of both local and remote audio; an agent application unable to capture either must refuse
+start/resume. This package declares that contract; it supplies no recorder, audio mixing, storage
+or upload.
+
+**A command names what it acts on.** A start names the side, `follows`; every other action names
+the recording by its `recordingId`. The recorder mints the id when it accepts the start, before
+the recorder has answered, publishes the recording `starting` under it, and keeps it through pause
+and resume; a later start is a new recording with a new id. The recorder serializes the operations
+on each recording and refuses an action the recording no longer stands for: a pause on a recording
+that is not `recording`, a stop on one already `not-recording`, a start on a side already
+capturing, a recording the task does not carry (`recording.command.state`,
+`.command.recordingId`). Nothing is retried on the recorder's own account.
+
+| Action | The recording before | Confirmed outcome |
 | --- | --- | --- |
-| start | inactive | active with a new recording identity |
-| pause | active | paused, preserving recording identity and captured audio |
-| resume | paused | active with the same recording identity |
-| stop | active or paused | inactive; finish and retain captured audio |
-| cancel | active or paused | inactive; abandon and discard captured audio |
+| start | none live on that side | a new recording on that side, `recording` |
+| pause | `recording` | the same recording, `paused`, captured audio kept |
+| resume | `paused` | the same recording, `recording` |
+| stop | `recording` or `paused` | the same recording, `not-recording`; captured audio finished and kept |
+| cancel | `recording` or `paused` | the same recording, `not-recording`; captured audio discarded |
 
-Stop finishes the recording and retains captured audio. Cancel abandons the recording and discards
-its captured audio; the task policy offers it with `cancel: true`. There is no configurable cancel
-effect. A recorder that cannot confirm completion must not offer Cancel; it can offer Stop instead.
-Cancel never means cancelling an in-flight start request or deleting arbitrary past recordings.
-Stop can be applied only after finalization/retention succeeds; Cancel only after both cessation
-and completion of this recording's audio succeed under the recorder's storage contract.
-Partial success -- capture stopped but the storage outcome unknown, a start the recorder cannot
-vouch for either way -- is a settled `failed`, under the code `omni.recording-unsettled`: the
-command did not do what it promised, and the state the provider publishes with it is whatever
-capture state is actually known. It is never `applied`, and never an unsettled promise the agent
-application would be left to resync, since the provider knows exactly what it could not settle.
-There is no request identity on a recording command: the outcome is the state, and what the
-agent sees is the state. Retention is not a promise of sample-perfect audio.
+Stop finishes the recording and retains captured audio. Cancel abandons it and discards captured
+audio; the task policy offers it with `cancel: true`, and there is no configurable cancel effect.
+A recorder that cannot confirm completion must not offer Cancel; it can offer Stop instead. Cancel
+never means cancelling an in-flight start or deleting past recordings. Stop is applied only after
+finalization and retention succeed; Cancel only after both cessation and discarding succeed.
+**Applied means confirmed**: the recorder publishes the confirming list before it answers
+`applied`. Failed means confirmed no effect. Partial success -- capture stopped but the storage
+outcome unknown, a start the recorder cannot vouch for either way -- is a settled `failed` under
+`omni.recording-unsettled`, and the recording is published `unknown` with the reason `unsettled`.
+A rejected promise means the outcome is unknown: show the failure, reconcile, and do not retry or
+pretend `not-recording`. There is no request identity on a recording command: the outcome is the
+recording, and what the agent sees is the recording. Retention is not a promise of sample-perfect
+audio.
 
-Provider commands go exclusively to `Connection.execute`; agent application commands go exclusively to
-`HostRecording.execute`. Both include the assignment and observation identities; all
-non-start commands identify the particular recording. IDs are opaque and scoped by provider login,
-task and recorder owner. They are never inferred from filenames or current agent identity. A
-recording ID survives pause/resume and reassignment only where the same recorder confirms continuity;
-commands always name the current assignment. A later start gets a different ID. Reconnect does not
-create a new recording or fresh evidence. After lost continuity, use unknown until reconciled.
-There is no automatic restart, hand-over to another recorder, or stop on task hold/disconnect.
-Task removal does not prove recording stopped: outstanding agent application recorders remain tracked by the
-agent application until its executor reconciles/finishes them, with visible unresolved cleanup failures.
+Provider commands go only to `Connection.execute`; agent application commands go only to
+`HostRecording.execute`. Both name the assignment. Ids are opaque and scoped by provider login,
+task and recorder; they are never inferred from filenames or the current agent. Reconnect creates
+no recording; the recorder restates its list. There is no automatic restart, hand-over to another
+recorder, or stop on task hold or disconnect. Task removal does not prove recording stopped:
+outstanding agent application recordings stay tracked by the agent application until its recorder
+finishes them, with unresolved cleanup failures visible.
 
-Only start/resume require an in-progress or paused task with started audio. Pause/stop/cancel may
-also finish an independently observed recorder while the task is completing. A pending task may
-show active recording, but agent controls wait until interaction begins. The two recording paths may
-both be active. A command to either path has no implied effect on the other.
+Only start and resume need an `in-progress` or `paused` task with started audio. Pause, stop and
+cancel may also finish a recording while the task is `completing`. A pending task may show a
+recording, but agent controls wait until interaction begins.
 
-Each confirmed observation has a fresh opaque observation identity, a canonical UTC millisecond
-observation instant and an exclusive expiry. These times describe current evidence, never historical
-capture boundaries. A trusted observer-domain current time must satisfy observedAt <= now < validUntil.
-Use `effectiveRecordingState` with that explicitly trusted time; an unavailable clock yields unknown.
-Receipt, replay and task publication never extend freshness. Clock discontinuity invalidates evidence;
-consumers using the explicit recording-expiry clock-estimation exception must invalidate that
-estimate and use monotonic aging so clock rollback cannot
-revive expired evidence. The executor compares observation identity and recording identity against
-its latest state atomically before I/O. An intervening observation or assignment change refuses the
-stale command; it never acts on a replacement recorder. Providers lacking trustworthy current-state
-identity or observation time publish unknown and offer no issuable controls.
+Use `validateTask` and `validateTaskCommand` for the published shape and static permissions.
+Immediately before dispatch, also use `validateRecordingRequest` against the full current task;
+for agent application commands supply the current declaration, full report and softphone context.
+The same checks run at the recorder; client validation alone is not authorization.
+`validateRecordings` checks one recorder's list, and `validateRecordingOutcome` checks an answer
+against the lists published before and after it: an applied start shows a new recording on its side,
+anything else the same recording in its new status, and a failed one nothing changed there. It
+cannot prove retention or source truth from a status; those remain the recorder's obligations. The
+storage place named on the task is bound when start creates a recording, and later policy cannot
+redirect it.
 
-Use `validateTask` and `validateTaskCommand` for published shape and static permissions.
-Immediately before dispatch, additionally use `validateRecordingRequest` against the full current
-task and explicit observer-domain time. For agent application commands also supply the current agent application declaration,
-full agent application report and softphone context. The same checks must run at the executing boundary;
-client validation alone is not authorization. The executor serializes operations on each recorder
-and compares `observationId` and `recordingId` against its latest evidence before acting: a
-command against superseded evidence is refused, and nothing is retried on the executor's own
-account.
-
-Keep command progress in agent application UI separately from authoritative state. Applied means the requested
-recording transition and any retain/discard effect actually completed; publish the confirming task or agent application report before
-resolving applied. Failed means confirmed no effect. Rejected promise means outcome unknown:
-show the failure, reconcile that path and do not automatically retry or pretend inactive. Authoritative
-updates remain full current task/agent application views, not replayed provider events. These current-state fields
-create no interaction-history entries and infer no actors, durations or historical capture boundaries.
-
-Migration is explicit: replace the old true recording capability with per-path action policies,
-replace untargeted commands with scoped commands, and retain protocol version 1. During pre-release
-development, hosts and adapters must align their recording contracts; negotiation does not detect
-differences between package revisions that share that protocol number. No legacy-shape fallback is provided.
-This change does not publish a package or enable recording in any existing agent application/provider by itself.
-
-`validateRecordingOutcome` checks confirming observations against recording-specific applied/failed
-semantics, including pause/resume identity and rejection of a dialling result. It cannot prove audio
-retention/completion or source truth from a status flag; those remain executor obligations.
-
-The storage place named on the task is bound when start actually creates a recording. Existing recordings
-keep that binding through pause/resume/stop/cancel; a later policy cannot redirect their stored audio.
-The executor rejects a mismatched storage place rather than moving or discarding another binding.
-Action permission does not authorize unattended invocation: agent application controls require the agent's explicit
-act, and provider authorization remains enforced at its authenticated command boundary.
-
-
-Recording dispatch must receive the same known task-validation context as the published task.
-Pass organisation levels and other known restrictions through the optional fourth argument of
-`validateTaskCommand`, and through `taskContext` in `validateRecordingRequest`. This keeps a valid
-custom organisation lock from being rejected against the default ladder, and prevents known
-capability restrictions from disappearing at dispatch. The standalone `validateRecordingCommandState`
-requires an affirmative permission; false, malformed permission declarations and unknown actions grant nothing.
-
+Recording dispatch receives the same known task-validation context as the published task: pass
+organisation levels and other known restrictions through the optional fourth argument of
+`validateTaskCommand`, and through `taskContext` in `validateRecordingRequest`, so a valid custom
+organisation lock is not rejected against the default ladder. Migration is explicit: the former
+`recording` state with its observation and validity window is refused on a task
+(`recording.task.renamed`), and a command carries no observation id. Protocol version 1 stays;
+there is no legacy-shape fallback.
 
 ### Agent application recording announcements to the caller
 
@@ -590,7 +596,7 @@ cancel, they hear that recording stopped. If pause/resume is supported, say paus
 pause is not presented as a finished recording. Announcements follow actual capture transitions,
 not button clicks, accepted requests or task-policy changes. When attaching to an already-active
 agent application recording, announce that recording is active, without inventing its original start time.
-Repeated observations of the same state do not repeat announcements. Unknown or expired evidence
+Restating the same status does not repeat an announcement. A recording that is `unknown`
 must never produce a stopped announcement.
 
 A local sound, UI indicator, screen-reader message to the agent, or sound leaking through the

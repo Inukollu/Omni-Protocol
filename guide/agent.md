@@ -384,6 +384,9 @@ Migration from the earlier spellings:
 | the phone unspoken | `PhoneState` -- the device, its mute, its channels -- on `Snapshot.phone`, `phone-updated` and `TeamMember.phone`, from a manifest declaring `phoneStatus` (`snapshot.phone.required`, `.unexpected`, `phone.*`, `phone.channel.*`, `event.phone.capability`) |
 | the agent's readiness for the next call read into setCapacity | the agent's own queue: `capabilities.nextCall`, `requestNextCall`/`cancelNextCall`/`releaseLinedUp`, `Snapshot.nextCall` and `linedUp`, the `next-call` and `lined-up` events (`snapshot.nextCall.idle`, `nextCall.*`, `linedUp.*`) |
 | a harness that exercised an adapter, drove a call and evaluated rules | the harness reads as a test: `testAdapter`, `withCall`, `timeoutMs`, `notTested`, `rulesTested`, rules `test.*` (`test.timeout`, `test.offer.expired`, `test.preview.deadline`, ...) |
+| a `callback-requested` step, and a callback task starting its history afresh | a `callback-requested` step (`by` when an agent arranged it); a callback's task carries the earlier call's steps, oldest first |
+| a recording state with an observation id, an observation instant and a validity window, and the helpers that aged it | `recordings` on the task and on `HostRecordingReport`: a list, each recording with `id`, `follows` (`party` or `agent`), `status` (`starting`, `recording`, `paused`, `not-recording`, `unknown`) and a `reason` where paused or unknown; nothing expires; commands name `follows` for a start and `recordingId` otherwise; `validateRecordings` (`recording.task.renamed` refuses the former field) |
+| a refusal on hold under `omni.command-not-permitted` | `omni.on-hold` |
 | an `end-call` while the caller was on hold | refused: a `paused` task is resumed first (`command.endCall.held`), the agent computer shows End call disabled on hold, the provider answers `failed`, and the test names an adapter that ends from hold (`test.command.held`); `terminate-call` is not gated, it ends the caller's channel too |
 | the handset spelled by its place on a desk | `hardphone`, on the manifest's `phones` and the login's `phone`; the former spelling is refused |
 | the desk | the agent computer, in the guide's prose |
@@ -426,7 +429,20 @@ something else, which will arrive under its own name and must not be folded in h
 It rides in the snapshot and is replaced whole like everything else there.
 
 Steps are `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conferenced`,
-`unanswered`, and each is defined on `TaskHistoryStep`.
+`unanswered`, `callback-requested`, and each is defined on `TaskHistoryStep`.
+
+**A callback carries the call it comes back to.** When a caller asks to be called back, or an agent
+arranges it, the provider writes a `callback-requested` step: `by` names the agent who arranged it, and
+is absent when the caller chose it in the queue. The callback reaches an agent as a new task, and that
+task's history carries the earlier call's steps, oldest first, the `callback-requested` step among them,
+then the callback's own -- as a hand-over carries the steps before it. The agent opening a callback
+sees that the caller waited and asked, or whose promise they are keeping, and a second try reads as
+one, the way contact-centre platforms keep a callback with its original contact.
+
+**One call has one history.** Every task the call reaches restates the earlier steps exactly as they
+stood: the same step, instant, person, dial and destination, and a duration once stated never
+changes. `assertHistoryAgreesAcrossTasks(earlier, later)` holds two tasks of one call to that, for an
+adopter's own test that drives a hand-over, take-over or callback.
 
 **The record is one entry per occurrence, oldest first.** Each hold is its own `held` entry — `at`
 when it began, `seconds` once it ended and omitted while it runs — and a second hold is a second
@@ -1099,6 +1115,7 @@ react rather than only display the message:
 | `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `transport-status` is not `active`. |
 | `omni.break-already-committed` | Cancellation lost the commit/cancel race; Omni must finish commit recovery. |
 | `omni.recording-unsettled` | A recording command the provider could not settle either way: a settled `failed`, never a promise left unresolved. See **Independent task recording** in `guide/voice.md`. |
+| `omni.on-hold` | Refused because the caller is on hold: the agent application's own Mute begun on a `paused` task, or `end-call` there. The agent application says resume first. The test expects this code on both (`test.recordStep.held`, `test.command.held`). |
 | `omni.break-forced-by-provider` | A lead asked to lift a break the platform imposed; the platform lifts its own. See **Forced breaks** in `guide/breaks.md`. |
 
 They are published as `OMNI_FAILURE_CODES`.
