@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
-import type { LoginStore, Refusal, PhoneState } from "../src/index.js";
+import type { LoginStore, Refusal, PhoneState, SecretStore, AuthenticationContext } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
 import { memoryStore, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, testAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
@@ -913,7 +913,9 @@ interface AdapterOverrides {
   /** Told when the host unsubscribes, so a fixture stops speaking to a client that is gone. */
   onUnsubscribe?: () => void;
   /** Publishes authentication states to the harness once it subscribes to the session. */
-  emitAuthentication?: (listener: (state: AuthenticationState) => void) => void;
+  emitAuthentication?: (listener: (state: AuthenticationState) => void, secrets: SecretStore) => void;
+  /** A token the adapter stores in the secrets when its session is created, as a real adapter does after sign-in. */
+  storesSecret?: boolean;
   /** Methods to replace, or to remove by passing `undefined`. */
   connection?: Partial<Record<keyof Connection<"voice">, unknown>>;
   authenticated?: boolean;
@@ -932,13 +934,14 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
   const unsubscribeAuthentication = vi.fn(() => undefined);
   const adapter = {
     manifest: (overrides.manifest ?? conformingManifest) as Manifest<"voice">,
-    async createAuthenticationSession() {
+    async createAuthenticationSession(authenticationContext: AuthenticationContext) {
+      if (overrides.storesSecret) await authenticationContext.secrets.set("refresh-token", "rt-1");
       return {
         state: () => overrides.authenticated === false
           ? { status: "signed-out" as const }
           : { status: "authenticated" as const, identity: { id: "1042", displayName: "Asha Rao", timeZone: (overrides.identityTimeZone === false ? undefined : overrides.identityTimeZone ?? "Pacific/Chatham") as string }, capabilities: overrides.capabilities ?? { breaks: true }, expiresAt: "2026-08-21T12:00:00Z" },
         subscribe: (listener: (state: AuthenticationState) => void) => {
-          overrides.emitAuthentication?.(listener);
+          overrides.emitAuthentication?.(listener, authenticationContext.secrets);
           return unsubscribeAuthentication;
         },
         start: async () => ({ status: "rejected" as const, failure: { code: "already-authenticated", message: "Already authenticated", retryable: false } }),
@@ -2185,6 +2188,22 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(result.violations.map(v => v.rule)).toEqual(["diagnostic.raised"]);
     expect(result.violations[0]?.message).toContain("task-ended named call-99");
     expect(result.notTested).not.toContain("event.diagnostic");
+  });
+
+  it("holds an ended session to its secrets: gone before the ending is published, kept only for a retryable expiry", async () => {
+    const reason = { code: "provider.session-terminated", message: "Your session was ended by Ravi Kumar", retryable: false as const };
+    const ending = (state: AuthenticationState, deletes: boolean) => rules({ storesSecret: true, emitAuthentication: (publish, secrets) => {
+      if (deletes) void secrets.delete("refresh-token");
+      publish(state);
+    } });
+    // Each ending with the token still held is named; the same ending after the delete is clean.
+    for (const state of [{ status: "terminated", by: "u-77", failure: reason }, { status: "signed-out" }, { status: "expired" },
+      { status: "expired", failure: { ...reason, code: "provider.refresh-refused" } }] as AuthenticationState[]) {
+      expect(await ending(state, false), state.status).toContain("authentication.secrets.retained");
+      expect(await ending(state, true), state.status).not.toContain("authentication.secrets.retained");
+    }
+    // A refresh failing for a passing reason keeps the token for the retry.
+    expect(await ending({ status: "expired", failure: { code: "network", message: "Offline", retryable: true } }, false)).not.toContain("authentication.secrets.retained");
   });
 
   it("validates the guarantees of the host a test hands the adapter, and passes them through to it", async () => {

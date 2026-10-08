@@ -388,6 +388,7 @@ Migration from the earlier spellings:
 | the handset spelled by its place on a desk | `hardphone`, on the manifest's `phones` and the login's `phone`; the former spelling is refused |
 | the desk | the agent computer, in the guide's prose |
 | the agent application's Mute on hold | unavailable while the task is `paused`, promised at login by a softphone login's agent application (`host.guarantees.muteUnavailableOnHold`, required there and refused of a hardphone login); a host mute beginning on a paused task is refused (`historyReport.muted.held`) and the test names an adapter that records one (`test.recordStep.held`) |
+| a session ended from outside the agent computer, reported as `expired` | `terminated`, with `by` (a person or `provider`) and a reason never retryable; `signed-out` is only the agent's own Sign out here; an ended session's secrets are deleted before the ending is published (`authentication.secrets.retained`), kept only for an `expired` whose failure is retryable; the agent application clears the store after, and resumes no stored token |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
 History and report rule names use `history` and `historyReport`; assignment rules use

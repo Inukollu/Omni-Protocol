@@ -70,7 +70,7 @@ state use `status`; name the object when discussing them to avoid ambiguity.
 | `phase` | A task | `pending`, `confirmed`, `preview`, `in-progress`, `paused`, `completing` |
 | `audio` | A task's audio | `started`, `ended` |
 | `transport` | A connection | `connecting`, `active`, `error` |
-| `status` | An authentication session | `signed-out`, `authenticating`, `authenticated`, `refreshing`, `expired` |
+| `status` | An authentication session | `signed-out`, `authenticating`, `authenticated`, `refreshing`, `expired`, `terminated` |
 | `status` | The agent’s break lifecycle | `not-requested`, `awaiting-approval`, `granted`, `starting-after-task`, `on-break` |
 | `availability` | A team member | `ready`, `on-task`, `on-break`, `elsewhere`, `signed-out` |
 
@@ -301,7 +301,8 @@ type AuthenticationState =
   | { status: "authenticating" }
   | { status: "authenticated"; identity: User; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
   | { status: "refreshing"; identity: User; capabilities: UserCapabilities }
-  | { status: "expired"; identity?: User; failure?: AuthenticationFailure };
+  | { status: "expired"; identity?: User; failure?: AuthenticationFailure }
+  | { status: "terminated"; by: UserId | "provider"; identity?: User; failure: AuthenticationFailure & { retryable: false } };
 
 type AuthenticationFailure = {
   code: string;
@@ -1991,11 +1992,12 @@ reports later changes.
 
 | Status | Contract |
 | --- | --- |
-| `signed-out` | No usable provider session exists. |
+| `signed-out` | No usable provider session exists, because the agent signed out on this agent computer, or never signed in. Only the agent's own Sign out here leads to it. |
 | `authenticating` | An interactive `browser-sso` or `credentials` flow is active. |
 | `authenticated` | A usable session exists. Includes the provider identity, the login's `capabilities`, and optional token expiry time. |
 | `refreshing` | The adapter is refreshing its session. Existing provider identity and capabilities remain available, unchanged: a change to either is published as `authenticated`. |
-| `expired` | The session cannot currently be used. It may include an identity and typed failure. |
+| `expired` | The session's time ran out, or its refresh is failing. It may include an identity and typed failure. The agent signs in again on the same login, and the workspace stays. |
+| `terminated` | The session was ended from outside this agent computer: by a supervisor, by the agent on another screen, or by the platform itself. `by` says who, a person by `UserId` or `provider` where no person was behind it (`authentication.terminated.by`), and `failure` says why and is never retryable (`authentication.terminated.failure`, `.retryable`). It is never reported as `expired`, which would hide who ended it, nor as `signed-out`, which is the agent's own act. |
 
 Omni calls `connect()` only after authentication reaches `authenticated`. Token refresh remains
 adapter-owned; the adapter publishes `refreshing`, followed by `authenticated` or `expired`.
@@ -2137,16 +2139,50 @@ authorization codes, tokens, or provider responses containing secrets.
 
 ### Sign-out
 
-`signOut()` revokes or invalidates the provider session where supported, deletes stored
-session secrets, and moves state to `signed-out`.
-`close()` stops authentication-state observation but does not sign the agent out.
+`signOut()` is the agent's own Sign out on this agent computer. It tells the provider where
+supported, revoking or invalidating the session, then **deletes the stored session secrets
+whatever happened**, and moves state to `signed-out`. Telling the provider may be retried within a
+short bound the adapter states, and then given up: a provider that cannot be reached never keeps a
+token on the agent's machine. If it was not told, `signOut()` still deletes and still reaches
+`signed-out`, and answers `failed`, so the agent application can show that a session may remain at
+the provider. `close()` stops authentication-state observation but does not sign the agent out.
+
+**The final moments are the agent application's to finish.** Its own steps before signing out --
+stopping capacity, putting tasks down -- may be retried within a short bound it states, and then
+given up; a step that failed never skips `signOut()`. A desk that skipped the adapter's sign-out
+because its own retirement failed left the token behind, and the next reload restored the session.
+
+### How a session's secrets end
+
+A token that can no longer start a session does not outlive it. The adapter deletes the stored
+secrets **before** it publishes the ending, so that nothing is left for a reload to restore:
+
+| Ending | Secrets | The provider |
+| --- | --- | --- |
+| `signed-out` | Deleted, whether or not the provider was told. | Told where supported, as above. |
+| `terminated` | Deleted. | Never told: the session is already over, and a sign-out sent now could end the agent's newer session somewhere else. |
+| `expired` with a failure that says `retryable: true` | Kept, for the retry: a network outage does not sign out a floor. | Retried by the adapter. |
+| `expired` otherwise | Deleted: the provider refused the token, or its time ran out. | Not told. |
+
+**The agent application makes sure after the adapter.** Once a session is `signed-out`,
+`terminated`, or `expired` with anything but a retryable failure, the agent application clears that
+provider's partition of the store, and a sign-in after it always starts a fresh flow and never
+resumes a stored token. The adapter deletes; the agent application makes sure. `testAdapter` holds
+the adapter's half: when a published state ends the session, the store it handed the adapter must
+already be empty (`authentication.secrets.retained`).
 
 ### Secure-storage boundary
 
-Omni provides an OS-backed `SecretStore` scoped to the provider manifest ID. It exposes only
-`get`, `set`, and `delete`; adapters cannot enumerate another provider's secrets. Adapters may store
-refresh tokens or equivalent session material, but never raw submitted credentials. Secrets must
-not appear in manifests, logs, events, snapshots, task attributes, errors, or browser storage.
+The agent application provides the `SecretStore`, scoped to the provider manifest ID. It exposes
+only `get`, `set`, and `delete`; adapters cannot enumerate another provider's secrets. **What backs
+it is the agent application's, and depends on what it is**: a native agent application uses the
+operating system's keychain; a browser agent application has none, and keeps the store in the
+tab's session storage, which survives a reload and ends with the tab. A browser store is readable
+by any script running on its page, so a browser agent application is only as safe as its own page.
+
+Adapters may store refresh tokens or equivalent session material, but never raw submitted
+credentials, and they put a secret nowhere but the `SecretStore`: never in manifests, logs,
+events, snapshots, task attributes, errors, the login's `store`, or browser storage of their own.
 
 ## Connecting to a provider
 

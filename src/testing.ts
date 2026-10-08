@@ -371,6 +371,17 @@ export async function testAdapter<C extends Channel>(
       const own = validateAuthenticationState(state, "authentication", { levels });
       violations.push(...own);
       if (own.length > 0) return;
+      // A session that has ended takes its secrets with it: the adapter deletes them before it
+      // publishes the ending, so a reload has nothing to restore. Only an expiry whose failure is
+      // retryable keeps them, for the retry.
+      if (sessionEnded(state)) {
+        ruleTested("authentication.secrets.retained");
+        if (storedSecrets.size > 0) {
+          violations.push({ rule: "authentication.secrets.retained", path: "authentication.status",
+            message: `the session is ${state.status} and the adapter still holds ${storedSecrets.size} stored secret(s): ` +
+              "an ended session's secrets are deleted before the ending is published, or a reload restores it" });
+        }
+      }
       if (state.status === "refreshing") {
         violations.push(...refreshingCarriesOver(current(), state, "authentication"));
       } else if (state.status === "authenticated") {
@@ -898,6 +909,12 @@ export function assertAuthenticationRestoreAndExpiry(
 }
 
 /** The tasks an envelope carries: the one a task event names, or a snapshot event's list. */
+/** Whether a published state ends the session, so its stored secrets must already be gone. */
+function sessionEnded(state: AuthenticationState): boolean {
+  return state.status === "signed-out" || state.status === "terminated"
+    || (state.status === "expired" && state.failure?.retryable !== true);
+}
+
 /** Whether a store key names the task: the id as a delimited token, never as a run of characters inside another id. */
 function namesTask(key: string, taskId: string): boolean {
   return key.split(/[^A-Za-z0-9_-]+/).includes(taskId);
@@ -934,7 +951,7 @@ function notYetReadTasks(tasks: readonly unknown[], path: string): ProtocolViola
  * Capabilities are current, not fixed. A provider that withdraws one republishes `authenticated`
  * with the new set, and the next snapshot agrees with it. `states` is what the authentication
  * session published, first to last: beginning and ending `authenticated` for the same identity,
- * passing only through usable states (`expired` or `signed-out` ends the login instead), with at
+ * passing only through usable states (`expired`, `terminated` or `signed-out` ends the login instead), with at
  * least one capability gone by the end. `snapshot` is the first snapshot published after the last
  * state, validated against that login -- so a team member list still published to a login that no longer
  * leads, or requests to one that may no longer join, is the failure.

@@ -118,7 +118,7 @@ const TRANSPORT_STATUSES = membersOf<TransportStatus>({ connecting: true, active
 const AUTHENTICATION_METHODS = membersOf<AuthenticationMethod>({ "browser-sso": true, credentials: true });
 const AUTHENTICATION_BROWSERS = membersOf<Extract<AuthenticationChallenge, { method: "browser-sso" }>["browser"]>({ system: true, omni: true });
 const AUTHENTICATION_STATUSES = membersOf<AuthenticationState["status"]>({
-  "signed-out": true, authenticating: true, authenticated: true, refreshing: true, expired: true,
+  "signed-out": true, authenticating: true, authenticated: true, refreshing: true, expired: true, terminated: true,
 });
 const BREAK_APPROVALS = membersOf<BreakStatus>({
   "not-requested": true, "awaiting-approval": true, granted: true, "starting-after-task": true, "on-break": true,
@@ -3364,10 +3364,20 @@ export function validateAuthenticationState(state: unknown, path = "authenticati
   if (state.status === "authenticated" || state.status === "refreshing") {
     validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
     validateUserCapabilitiesInto(state.capabilities, `${path}.capabilities`, into, context.levels);
-  } else if (state.status === "expired") {
+  } else if (state.status === "expired" || state.status === "terminated") {
     if (state.identity !== undefined) validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
     if (state.failure !== undefined) {
       validateAuthenticationFailureInto(state.failure, `${path}.failure`, into);
+    }
+    if (state.status === "terminated") {
+      // Ended from outside this agent computer: who did it, and why, and nothing to retry.
+      into.require(isUserId(state.by) || state.by === "provider", "authentication.terminated.by", `${path}.by`,
+        "a terminated session says who ended it: the person by user id, or provider where the platform did");
+      if (into.require(isPlainObject(state.failure), "authentication.terminated.failure", `${path}.failure`,
+        "a terminated session carries the reason it was ended")) {
+        into.require((state.failure as Record<string, unknown>).retryable === false, "authentication.terminated.retryable", `${path}.failure.retryable`,
+          "a session ended from outside is over: its failure is not retryable");
+      }
     }
   } else {
     into.require(state.identity === undefined, "authentication.identity.unexpected", `${path}.identity`,
@@ -3375,8 +3385,12 @@ export function validateAuthenticationState(state: unknown, path = "authenticati
   }
 
   if (state.failure !== undefined) {
-    into.require(state.status === "expired", "authentication.failure.unexpected", `${path}.failure`,
-      "only an expired state may carry a failure");
+    into.require(state.status === "expired" || state.status === "terminated", "authentication.failure.unexpected", `${path}.failure`,
+      "only an expired or terminated state may carry a failure");
+  }
+  if (state.by !== undefined) {
+    into.require(state.status === "terminated", "authentication.by.unexpected", `${path}.by`,
+      "only a terminated session says who ended it; the agent's own sign-out is signed-out");
   }
   if (state.expiresAt !== undefined) {
     into.require(state.status === "authenticated", "authentication.expiresAt.unexpected", `${path}.expiresAt`,

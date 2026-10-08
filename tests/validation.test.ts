@@ -1702,6 +1702,24 @@ describe("rules that had no test", () => {
 describe("validateAuthenticationState", () => {
   const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
 
+  it("tells a session ended from outside from the agent's own sign-out and from an expiry, with who ended it", () => {
+    const state = (value: Record<string, unknown>) => rules(validateAuthenticationState(value));
+    const reason = { code: "provider.session-terminated", message: "Your session was ended by Ravi Kumar", retryable: false };
+    expect(state({ status: "terminated", by: "u-77", failure: reason })).toEqual([]);
+    expect(state({ status: "terminated", by: "provider", identity: user, failure: reason })).toEqual([]);
+    // Who ended it, and why, and nothing to retry.
+    expect(state({ status: "terminated", failure: reason })).toEqual(["authentication.terminated.by"]);
+    expect(state({ status: "terminated", by: "", failure: reason })).toEqual(["authentication.terminated.by"]);
+    expect(state({ status: "terminated", by: "u-77" })).toEqual(["authentication.terminated.failure"]);
+    expect(state({ status: "terminated", by: "u-77", failure: { ...reason, retryable: true } })).toEqual(["authentication.terminated.retryable"]);
+    // The agent's own sign-out names nobody, and an expiry is not an ending someone chose.
+    expect(state({ status: "signed-out" })).toEqual([]);
+    expect(state({ status: "signed-out", by: "u-77" })).toEqual(["authentication.by.unexpected"]);
+    expect(state({ status: "expired", identity: user, failure: { ...reason, retryable: true } })).toEqual([]);
+    expect(state({ status: "expired", by: "u-77" })).toEqual(["authentication.by.unexpected"]);
+    expect(state({ status: "signed-out", failure: reason })).toEqual(["authentication.failure.unexpected"]);
+  });
+
   it("declares what the team left to the person on the login, with who set it", () => {
     const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
     const prefs = (value: unknown) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: value } }));
