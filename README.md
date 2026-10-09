@@ -15,8 +15,10 @@ system.
 | `guide/` | One file per role and channel: `agent.md`, `lead.md`, `queue.md`, `breaks.md`, `phone.md`, `voice.md`, `chat.md`, `email.md`. Each points back into `guide.md` for what it relies on. |
 | `src/index.ts` | The TypeScript declarations. |
 | `src/validation.ts` | Runtime validators Omni applies to adapter output. |
-| `src/testing.ts` | Testing an adapter an adapter runs against its own test state. |
+| `src/testing.ts` | The test an adapter runs against its own test state. |
 | `tests/` | One test file per source module, plus the guards over the guide and the repository's own text. |
+| `GLOSSARY.md` | **The words.** Every term in plain language, with what the larger contact-centre platforms call it. |
+| `CALL_FLOW.md`, `CHAT_FLOW.md`, `EMAIL_FLOW.md` | **The flows.** How a task moves on each channel, from the offer to its end, as diagrams. |
 
 ## Entry points
 
