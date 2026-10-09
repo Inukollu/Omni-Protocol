@@ -21,10 +21,10 @@ jobs:
       fail-fast: false
       matrix:
         node: [20, 22, 24]
-    # The self-hosted pool when CI_RUNNER names it, as the sibling repositories do; hosted when it is
-    # unset. A switch, not a failover: if the named pool is down, jobs queue. Name the pool as
-    # '["self-hosted","Linux"]', never bare self-hosted, which also matches macOS and Windows machines.
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '["ubuntu-latest"]') }}
+    # GitHub-hosted, never the self-hosted pool: this repository is public, anyone can open a pull
+    # request against it, and GitHub advises against running public repositories' code on persistent
+    # shared machines. Pinned rather than read from a variable, so no setting can route it there.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Check out the pull request merge
