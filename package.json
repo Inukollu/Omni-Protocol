@@ -8,6 +8,10 @@
   "files": [
     "dist",
     "README.md",
+    "GLOSSARY.md",
+    "CALL_FLOW.md",
+    "CHAT_FLOW.md",
+    "EMAIL_FLOW.md",
     "guide.md",
     "guide",
     "LICENSE"
