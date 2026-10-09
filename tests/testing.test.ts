@@ -111,6 +111,12 @@ describe("assertCapabilityWithdrawal", () => {
     expect(() => assertCapabilityWithdrawal([lead, lead], bare, manifest)).toThrow(/withdrawn/);
   });
 
+  it("rejects a sequence that does not begin and end signed in", () => {
+    const refreshing = { status: "refreshing", identity: lead.identity, capabilities: lead.capabilities } satisfies AuthenticationState;
+    expect(() => assertCapabilityWithdrawal([lead, refreshing], bare, manifest)).toThrow(/begin and end/);
+    expect(() => assertCapabilityWithdrawal([lead, refreshing, demoted], bare, manifest)).not.toThrow();
+  });
+
   it("rejects a sequence that changes identity", () => {
     const other = { ...demoted, identity: { id: "A-9", displayName: "Bo", timeZone: "Pacific/Chatham" } } satisfies AuthenticationState;
     expect(() => assertCapabilityWithdrawal([lead, other], bare, manifest)).toThrow(/new login/);
@@ -1291,7 +1297,7 @@ describe("testAdapter tests one call", () => {
     /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
     legsIn?: "memory" | "store";
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
-    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "without-refused";
+    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "audio-throws" | "without-refused";
     /** A provider that takes the host's late closing report as the leg's duration, overwriting what it closed at audio end, and restates the record. */
     overwritesLateClose?: boolean;
     /** A provider whose store keys never name the task, or name it only as a run of characters inside another id: the harness can see nothing of them, and says so. */
@@ -1324,7 +1330,9 @@ describe("testAdapter tests one call", () => {
     refusesLateClose?: boolean;
     /** Where the adapter throws instead of answering, so each catch in the test is seen to name it. */
     providerTime?: boolean;
-    throwsOn?: "execute" | "recordStep" | "setMuted" | "close" | "rebuild" }
+    throwsOn?: "execute" | "end-call-on-hold" | "disconnect" | "recordStep" | "setMuted" | "close" | "rebuild";
+    /** A task with no wrap: provider-automatic, wrapAllowance 0, ended by the provider once the call ends. */
+    noWrap?: boolean }
   /** A provider whose platform answers every command with the events a host is owed, or misbehaves on request. */
   let drvSeq = 0;
   const testable = (script: Script = {}) => {
@@ -1340,7 +1348,11 @@ describe("testAdapter tests one call", () => {
     const base: Record<string, unknown> = {
       ...conformingSnapshot.tasks[0]!, assignmentId: myAssignment, capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), schedule: true, outcomes: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
       browsers: [], history: undefined, audio: undefined, party: { name: "Maya Rao", number: "+919876543210" },
+
+      ...(script.noWrap ? { completionMode: "provider-automatic", wrapAllowance: 0 } : {}),
     };
+    // A task with no wrap has nothing to record an outcome against.
+    if (script.noWrap) delete (base.capabilities as Record<string, unknown>).outcomes;
     let phase = "pending";
     let offeredOnce = false;
     let muted: { at: string; seconds: number; mutedBy: "host" | "station" } | undefined;
@@ -1399,6 +1411,7 @@ describe("testAdapter tests one call", () => {
       snapshot: { ...conformingSnapshot, tasks: [], taskCount: 0 },
       ...(script.reloadAs === "another-provider" && script.platform?.open === true ? { manifest: { ...conformingManifest, id: "acme-voice-2" } } : {}),
       ...(script.reloadAs === "signed-out" && script.platform?.open === true ? { authenticated: false } : {}),
+      ...(script.throwsOn === "disconnect" ? { disconnect: async () => { throw new Error("socket already gone"); } } : {}),
       // The platform remembers its first client alone: a later client is not the first, even once the first is gone.
       emit: l => { listener = l; if (script.platform !== undefined && script.platform.firstTaken !== true) { script.platform.firstTaken = true; script.platform.firstListener = l; } },
       // A client that is gone hears nothing: the platform's push to it goes nowhere, as on a reload.
@@ -1438,6 +1451,7 @@ describe("testAdapter tests one call", () => {
         execute: async ({ command, assignmentId }: { command: { type: string }; assignmentId?: string }) => {
           if (assignmentId !== myAssignment) return { status: "failed", failure: { code: "omni.assignment-not-found", message: `no assignment ${String(assignmentId)}`, retryable: false } };
           if (script.throwsOn === "execute" && command.type === "hold") throw new Error("hub unreachable");
+          if (script.throwsOn === "end-call-on-hold" && command.type === "end-call" && phase === "paused") throw new Error("hub unreachable");
           switch (command.type) {
             case "answer":
               // The phase moves first and the audio follows on its own event, which is the only
@@ -1503,6 +1517,11 @@ describe("testAdapter tests one call", () => {
               endAudio();
               // t() restates the record after it has taken the phase, so what the record says of a leg follows the phase it is published under.
               emit({ type: "task-updated", task: t({ phase: "completing", audio: "ended", onCall: script.keepRoomOnEnd ? room : [] }) });
+              // With no wrap there is nothing for the agent to complete: the provider ends the task itself.
+              if (script.noWrap) setTimeout(() => {
+                if (script.platform !== undefined) script.platform.open = false;
+                emit({ type: "task-ended", assignmentId: myAssignment, outcome: { type: "completed", by: "provider" } });
+              }, 0);
               return { status: "applied" };
             case "schedule": {
               // Applied says the follow-up is on the calendar, and the calendar restated whole shows it.
@@ -1524,7 +1543,7 @@ describe("testAdapter tests one call", () => {
             default: return { status: "failed", failure: { code: "omni.capability-not-enabled", message: command.type, retryable: false } };
           }
         },
-        openAudio: async () => script.reloadAs === "audio-unavailable" && isSecond
+        openAudio: async () => script.reloadAs === "audio-throws" && isSecond ? (() => { throw new Error("media server gone"); })() : script.reloadAs === "audio-unavailable" && isSecond
           ? { status: "unavailable" as const, failure: { code: "provider.audio", message: "No audio on this instance", retryable: false } }
           : ({ status: "opened", audio: { remoteAudio: {} as MediaStream,
           setMuted: () => { if (script.throwsOn === "setMuted") throw new Error("no mixer"); },
@@ -1904,6 +1923,51 @@ describe("testAdapter tests one call", () => {
     const general = (await viaCall(testable({ onHoldCode: "omni.command-not-permitted" }))).violations;
     expect(general.map(v => v.rule)).toEqual(["test.recordStep.held", "test.command.held"]);
     expect(general[0]!.message).toContain("omni.on-hold");
+  });
+
+  it("names a first client that throws while a reload takes it down, and passes the same reload when it goes down cleanly", async () => {
+    const run = async (throwsOn?: "disconnect") => {
+      const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, ...(throwsOn === undefined ? {} : { throwsOn }) };
+      return (await testAdapter(testable(script), { ...context, store: memoryStore() }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable({ ...script, throwsOn: undefined }) })).violations.map(v => v.rule);
+    };
+    expect(await run()).toEqual([]);
+    expect(await run("disconnect")).toContain("test.reload.handover");
+  });
+
+  it("names a reloaded record whose muted leg says another source, and passes the one that kept host", async () => {
+    const run = async (restateHistory: "with-mute" | "with-mute-by-station", second: "with-mute" | "with-mute-by-station") => {
+      const script = { restateHistory, legsIn: "store" as const, platform: { open: false } };
+      const result = await testAdapter(testable(script), { ...context, store: memoryStore() }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable({ ...script, restateHistory: second }) });
+      return result.violations;
+    };
+    expect(await run("with-mute", "with-mute")).toEqual([]);
+    const changed = await run("with-mute", "with-mute-by-station");
+    expect(changed.map(v => v.rule)).toContain("test.reload.history");
+    expect(changed.find(v => v.rule === "test.reload.history")!.message).toContain("mutedBy");
+  });
+
+  it("names a second adapter that throws while the reload reopens its audio, and passes the one that answers", async () => {
+    const run = async (reloadAs?: "audio-throws") => {
+      const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, ...(reloadAs === undefined ? {} : { reloadAs }) };
+      return (await testAdapter(testable(script), { ...context, store: memoryStore() }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(script) })).violations.map(v => v.rule);
+    };
+    expect(await run()).toEqual([]);
+    expect(await run("audio-throws")).toContain("test.reload.rejected");
+  });
+
+  it("names an adapter whose execute throws on the end-call probed on hold, and passes the one that answers", async () => {
+    expect((await viaCall(testable({}))).violations).toEqual([]);
+    expect((await viaCall(testable({ throwsOn: "end-call-on-hold" }))).violations.map(v => v.rule)).toEqual(["test.command.rejected"]);
+  });
+
+  it("waits for the provider to end a task with no wrap, and completes nothing itself", async () => {
+    const result = await viaCall(testable({ noWrap: true }));
+    expect(result.violations).toEqual([]);
+    // The ending the run saw is the provider's, since the test sent no complete.
+    const ending = result.events.map(e => e.event).find(e => e.type === "task-ended");
+    expect(ending).toMatchObject({ outcome: { type: "completed", by: "provider" } });
+    // The control: the same fixture with a wrap is completed by the test, which is the other arm of the same step.
+    expect((await viaCall(testable({}))).violations).toEqual([]);
   });
 
   it("sends end-call while the caller is on hold, past the validator, and names an adapter that ends the agent's part from there", async () => {
@@ -2347,6 +2411,27 @@ describe("testAdapter requires each method the declarations call for", () => {
     const carried = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0]!, phase: "pending" as const, audio: undefined }] };
     expect(await rules({ snapshot: carried })).toContain("task.acceptance.required");
     expect(await rules({ snapshot: { ...carried, tasks: [{ ...carried.tasks[0]!, acceptance: "consent" as const }] } })).toEqual([]);
+  });
+
+  it("waits for a team-updated that arrives after the switch, and names one that never comes", async () => {
+    const team = teamEvent("evt-team", { type: "team-updated", team: { members: [] } });
+    expect(await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: minimalSnapshot, emitOnLeadFeatures: listener => { setTimeout(() => listener(team), 20); } })).not.toContain("team.required");
+    expect(await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: minimalSnapshot, emitOnLeadFeatures: () => undefined }, { timeoutMs: 100 })).toContain("team.required");
+  });
+
+  it("asks getUserDetails() about the people a team member's own tasks name, not only the members", async () => {
+    const asked: string[][] = [];
+    const getUserDetails = async (ids: string[]) => { asked.push([...ids]); return ids.map(id => ({ id, displayName: `User ${id}`, timeZone: "Pacific/Chatham" })); };
+    const memberTask = (steps: unknown[]) => {
+      const { browsers: _b, capabilities: _c, capabilitySource: _s, ...rest } = conformingSnapshot.tasks[0]!;
+      return { ...rest, assignmentId: "alloc-88", history: { steps } };
+    };
+    const led = (steps: unknown[]) => ({ ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task", tasks: [memberTask(steps)] }] } });
+    await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: led([{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-31" }]), connection: { getUserDetails } });
+    expect(asked.flat()).toContain("A-31");
+    asked.length = 0;
+    await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: led([]), connection: { getUserDetails } });
+    expect(asked.flat()).not.toContain("A-31");
   });
 
   it("getUserDetails(), when a UserId arrives on an event, on a task's lead, or on a call taken over", async () => {

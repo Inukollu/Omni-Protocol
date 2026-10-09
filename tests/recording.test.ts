@@ -90,6 +90,14 @@ describe("independent recording controls", () => {
     expect(validateTask(current, { channel: "voice" })).toEqual([]);
     expect(rules(check("stop", "recording", "provider", {}, {}, current as Task<"voice">))).toContain("recording.command.permission");
   });
+  it("holds a start or resume sent through validateTaskCommand to live audio, as dispatch does", () => {
+    const silent = { ...task([]), audio: undefined } as Task<"voice">;
+    expect(rules(validateTaskCommand(command("start"), silent))).toContain("recording.request.phase");
+    expect(validateTaskCommand(command("start"), task([]))).toEqual([]);
+    const paused = [recording("paused")];
+    expect(rules(validateTaskCommand(command("resume"), { ...task(paused), audio: undefined } as Task<"voice">))).toContain("recording.request.phase");
+    expect(validateTaskCommand(command("resume"), task(paused))).toEqual([]);
+  });
   it("routes provider commands only through execute and rejects legacy commands", () => {
     expect(validateTaskCommand(command("pause"), task())).toEqual([]);
     expect(rules(validateTaskCommand(command("pause", "host"), task()))).toContain("recording.command.source");
