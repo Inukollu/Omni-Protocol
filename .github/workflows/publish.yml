@@ -2,12 +2,24 @@ name: Publish
 
 # Publishes each merge to main, allocating the next unpublished version and recording it back.
 # npmjs trusts this workflow through OIDC: Trusted Publisher is Inukollu/Omni-Protocol, publish.yml.
+# A version means the package changed: a merge publishes only when something the package ships, or
+# builds it from, changed. Keep this list in step with package.json "files"; a change to tests,
+# scripts or workflows alone publishes nothing. workflow_dispatch publishes on demand.
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - .github/**
+    paths:
+      - src/**
+      - guide.md
+      - guide/**
       - README.md
+      - GLOSSARY.md
+      - "*_FLOW.md"
+      - LICENSE
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - tsconfig.json
   workflow_dispatch:
 
 permissions:
