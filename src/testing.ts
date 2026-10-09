@@ -2249,8 +2249,6 @@ export class TeamStream {
     this.members = TeamStream.ids(isRecord(snapshot) ? snapshot.team : undefined);
   }
 
-  /** Whether the team currently carries this member, as the events left it. */
-  has(id: string): boolean { return this.members?.has(id) === true; }
 
   apply(envelope: unknown, path = "event"): ProtocolViolation[] {
     const event = isRecord(envelope) ? envelope.event : undefined;

@@ -27,6 +27,11 @@ import {
   validateResult,
   validateTeamMember,
   validateTeamMembers,
+  validateNextCall,
+  validateLinedUp,
+  validatePhoneState,
+  validateUserDetails,
+  validateRecordingOutcome,
   type ProtocolViolation,
 } from "../src/validation.js";
 
@@ -403,6 +408,9 @@ describe("validateTask", () => {
     expect(withLocked({ reference: "asha.rao@EXAMPLE.com" })).toEqual(["task.locked.leak"]);
     expect(withLocked({ attributes: [{ key: "cli", type: "text", value: "919876543210" }] })).toEqual(["task.locked.leak"]);
     expect(withLocked({ attributes: [{ key: "cli", type: "text", value: "last four 3210" }] })).toEqual([]);
+    // A contact attribute carries a party of its own: its number is held like any other text, and a locked one is no leak.
+    expect(withLocked({ attributes: [{ key: "caller", type: "contact", party: { name: "Asha", number: "+919876543210" } }] })).toEqual(["task.locked.leak"]);
+    expect(withLocked({ attributes: [{ key: "caller", type: "contact", party: { name: "Asha", number: { lockedBy: "team" } } }] })).toEqual([]);
     const crm = { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/?ani=919876543210", sharedSession: false };
     expect(withLocked({ browsers: [crm] })).toEqual(["task.locked.leak"]);
     expect(withLocked({ browsers: [{ ...crm, urlVisibility: "hidden" }] })).toEqual([]);
@@ -2624,4 +2632,86 @@ describe("outcome API migration", () => {
       }
     }
   });
+});
+
+
+describe("validateNextCall, validateLinedUp and validatePhoneState, each on its own", () => {
+  const at = "2026-08-21T09:00:00Z";
+  it("takes the agent's standing ask for the next call: since when, and nothing else", () => {
+    expect(validateNextCall({ since: at })).toEqual([]);
+    expect(rules(validateNextCall({ since: "soon" }))).toEqual(["nextCall.since"]);
+    expect(rules(validateNextCall({ since: at, assignmentId: "alloc-1" }))).toEqual(["nextCall.field"]);
+    expect(rules(validateNextCall("now"))).toEqual(["nextCall.shape"]);
+  });
+  it("takes a call lined up in the agent's own queue, its caller held to the same contact rules", () => {
+    const lined = { party: { name: "Priya S" }, queue: "Billing", queuedSince: at, since: at, release: true };
+    expect(validateLinedUp(lined)).toEqual([]);
+    expect(validateLinedUp({ since: at })).toEqual([]);
+    expect(rules(validateLinedUp({ ...lined, release: false }))).toEqual(["linedUp.release"]);
+    expect(rules(validateLinedUp({ ...lined, queue: "" }))).toEqual(["linedUp.queue"]);
+    expect(rules(validateLinedUp({ ...lined, since: undefined }))).toEqual(["linedUp.since"]);
+    expect(rules(validateLinedUp({ ...lined, ringing: true }))).toEqual(["linedUp.field"]);
+    expect(rules(validateLinedUp({ ...lined, party: { name: "" } }))).toContain("contact.name");
+    expect(rules(validateLinedUp(null))).toEqual(["linedUp.shape"]);
+  });
+  it("takes the phone as the platform sees it", () => {
+    expect(validatePhoneState({ phone: "hardphone", status: "ready", channels: [] })).toEqual([]);
+    expect(validatePhoneState({ phone: "softphone", status: "ready", channels: [{ state: "active", since: at, assignmentId: "alloc-42" }] })).toEqual([]);
+    expect(rules(validatePhoneState({ phone: "hardphone", status: "asleep", channels: [] }))).toContain("phone.status");
+    expect(rules(validatePhoneState({ phone: "softphone", status: "ready", muted: true, channels: [] }))).toEqual(["phone.muted.softphone"]);
+    expect(rules(validatePhoneState("ready"))).toEqual(["phone.shape"]);
+  });
+});
+
+describe("every refusal of the wrong shape names its rule", () => {
+  // One row per guard: the input with the field broken, the same input with it whole, and the rule the broken one must name.
+  const t = (over: Record<string, unknown>) => validateTask(task(over), { channel: "voice" });
+  const m = (over: Record<string, unknown>) => validateManifest(manifest(over));
+  const snap = (over: Record<string, unknown>) => validateSnapshot(snapshot(over), manifest({ idleCapabilities: { contacts: true, calendar: true } }));
+  const ev = (event: Record<string, unknown>) => validateEventEnvelope(envelope(event), manifest({ idleCapabilities: { calendar: true } }));
+  const at = "2026-08-21T09:00:00Z";
+  const summary = { title: "Voice", waitingCount: 0, updatedAt: at, metrics: [] };
+  const breakOn = { status: "on-break", canRequestBreak: false, activeReasonId: "lunch", reasons: [{ id: "lunch", label: "Lunch", kind: "meal" }] };
+  const rows: [string, () => ProtocolViolation[], () => ProtocolViolation[], string][] = [
+    ["contact attributes", () => validateContact({ name: "A", attributes: "x" }), () => validateContact({ name: "A", attributes: [] }), "attributes.shape"],
+    ["contact attribute", () => validateContact({ name: "A", attributes: ["x"] }), () => validateContact({ name: "A", attributes: [] }), "attribute.shape"],
+    ["scheduled activity", () => validateScheduledActivity("x"), () => validateScheduledActivity({ id: "cb-1", title: "Follow-up", startsAt: at, endsAt: at }), "activity.shape"],
+    ["idle capabilities", () => m({ idleCapabilities: "x" }), () => m({ idleCapabilities: { contacts: true } }), "manifest.idleCapabilities.shape"],
+    ["personal browser", () => m({ idleCapabilities: { personalBrowser: "x" } }), () => m({ idleCapabilities: {} }), "manifest.personalBrowser.shape"],
+    ["personal browser list", () => m({ idleCapabilities: { personalBrowser: { access: { mode: "allow-list", allowList: "x" } } } }),
+      () => m({ idleCapabilities: { personalBrowser: { access: { mode: "allow-list", allowList: ["crm.example.com"] } } } }), "manifest.personalBrowser.access.list"],
+    ["dial", () => m({ idleCapabilities: { dial: "x" } }), () => m({ idleCapabilities: { dial: { destinations: "any-number" } }, dialOutcomes: ["answered"] }), "manifest.dial.shape"],
+    ["phase labels", () => m({ phaseLabels: "x" }), () => m({}), "manifest.phaseLabels.shape"],
+    ["conference destination", () => t({ capabilities: { conference: { destinations: ["x"] } } }), () => t({ capabilities: { conference: { destinations: [{ id: "tier2", label: "Tier 2" }] } } }), "task.destination.shape"],
+    ["outcomes", () => t({ capabilities: { outcomes: "x" } }), () => t({ capabilities: { outcomes: true } }), "task.outcomes.shape"],
+    ["outcome code", () => t({ capabilities: { outcomes: { codes: ["x"] } } }), () => t({ capabilities: { outcomes: { codes: [{ id: "resolved", label: "Resolved" }] } } }), "task.outcome.shape"],
+    ["task attributes", () => t({ attributes: "x" }), () => t({ attributes: [] }), "task.attributes.shape"],
+    ["task attribute", () => t({ attributes: ["x"] }), () => t({ attributes: [{ key: "k", type: "text", value: "v" }] }), "task.attribute.shape"],
+    ["task attribute label", () => t({ attributes: [{ key: "k", type: "text", value: "v", label: "" }] }), () => t({ attributes: [{ key: "k", type: "text", value: "v", label: "Plan" }] }), "task.attribute.label"],
+    ["history step", () => t({ history: { steps: ["x"] } }), () => t({ history: { steps: [] } }), "task.history.entry"],
+    ["on the call", () => t({ onCall: "x" }), () => t({ onCall: [] }), "task.onCall.shape"],
+    ["lead assist", () => t({ capabilities: { leadAssist: true }, leadAssist: "x" }), () => t({ capabilities: { leadAssist: true } }), "task.leadAssist.shape"],
+    ["taken over", () => t({ takenOver: "x" }), () => t({ takenOver: { memberId: "A-1", since: at } }), "task.takenOver.shape"],
+    ["forced break", () => snap({ break: { ...breakOn, forced: "x" } }), () => snap({ break: breakOn }), "break.forced.shape"],
+    ["break reasons", () => snap({ break: { status: "not-requested", canRequestBreak: true, reasons: "x" } }), () => snap({}), "break.reasons.shape"],
+    ["break reason", () => snap({ break: { status: "not-requested", canRequestBreak: true, reasons: ["x"] } }), () => snap({}), "break.reason.shape"],
+    ["team", () => validateTeamMembers("x"), () => validateTeamMembers({ members: [] }), "team.shape"],
+    ["snapshot contacts", () => snap({ contacts: "x" }), () => snap({ contacts: [] }), "snapshot.contacts.shape"],
+    ["snapshot calendar", () => snap({ calendar: "x" }), () => snap({ calendar: [] }), "snapshot.calendar.shape"],
+    ["task-ended outcome", () => ev({ type: "task-ended", assignmentId: "alloc-42", outcome: "x" }), () => ev({ type: "task-ended", assignmentId: "alloc-42", outcome: { type: "completed", by: "agent" } }), "event.taskEnded.outcome.shape"],
+    ["queue summary", () => ev({ type: "queue-summary", summary: "x" }), () => ev({ type: "queue-summary", summary }), "event.summary.shape"],
+    ["summary subtitle", () => ev({ type: "queue-summary", summary: { ...summary, subtitle: "" } }), () => ev({ type: "queue-summary", summary: { ...summary, subtitle: "Main line" } }), "event.summary.subtitle"],
+    ["summary metrics", () => ev({ type: "queue-summary", summary: { ...summary, metrics: "x" } }), () => ev({ type: "queue-summary", summary }), "event.summary.metrics.shape"],
+    ["summary metric", () => ev({ type: "queue-summary", summary: { ...summary, metrics: ["x"] } }), () => ev({ type: "queue-summary", summary }), "event.summary.metric.shape"],
+    ["announcement html", () => ev({ type: "announcement", text: "Hello", announcedAt: at, html: 5 }), () => ev({ type: "announcement", text: "Hello", announcedAt: at, html: "<p>Hello</p>" }), "event.announcement.html"],
+    ["calendar event", () => ev({ type: "calendar-updated", calendar: "x" }), () => ev({ type: "calendar-updated", calendar: [] }), "event.calendar.shape"],
+    ["user details", () => validateUserDetails("x", []), () => validateUserDetails([], []), "getUserDetails.shape"],
+    ["recording outcome", () => validateRecordingOutcome(null, [], [], undefined), () => validateRecordingOutcome({ type: "recording", source: "provider", action: "stop", recordingId: "r" }, [], [], undefined), "recording.outcome.shape"],
+  ];
+  for (const [name, broken, whole, rule] of rows) {
+    it(`${name}: ${rule}`, () => {
+      expect(rules(broken())).toContain(rule);
+      expect(rules(whole())).not.toContain(rule);
+    });
+  }
 });

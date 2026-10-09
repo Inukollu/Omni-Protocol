@@ -2548,7 +2548,9 @@ a backend that does not know the session yet — yields no snapshot, and the ada
 
 A snapshot must account for **everything the adapter has emitted before it resolves**, not merely
 everything emitted when it was requested. Omni drops the state-replacing events held during the
-read on that promise, and applies the rest after it (see **`Connection.snapshot()`**); an adapter
+read on that promise, and applies the rest after it (see **`Connection.snapshot()`**). Which kinds a
+snapshot restates, and so supersedes, is exported from the testing module as
+`SUPERSEDED_BY_A_SNAPSHOT`, so an agent application and the harness drop the same ones; an adapter
 that serves a stale snapshot and then lets an earlier event through will have Omni apply state the
 snapshot already superseded. The harness reads its connect snapshot the same way, and holds the
 snapshot to accounting for every task event it superseded: a task published during the read and
@@ -2935,6 +2937,9 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateProviderTimeEstimate(estimate, scope)` | Optional agent application estimate shape and provider/login scope; no accuracy guarantee. |
 | `validateHistoryReport(report, path?, manifest?, task?)` | What the agent application reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. Given the task, the agent application's own mute beginning on a `paused` task is refused (`historyReport.muted.held`): the Mute waits for resume. |
 | `validateHostReport(report)` | The agent application's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever agent application a test hands the adapter; `stillHost(report)` builds one that never changes. |
+| `validateNextCall(value)` | The agent's standing ask for the next call, on its own as `next-call` and `Snapshot.nextCall` carry it: since when, and nothing else (`nextCall.since`, `nextCall.field`). |
+| `validateLinedUp(value, path?, levels?)` | A call lined up in the agent's own queue, on its own as `lined-up` and `Snapshot.linedUp` carry it: the caller under the same contact rules as a task's party, the queue's label, the waits, and `release` by presence (`linedUp.*`). |
+| `validatePhoneState(value, path?, context?)` | The phone as the platform sees it, on its own as `phone-updated` and `Snapshot.phone` carry it: its status, its one active channel, its mute where a hardphone's is observed (`phone.*`). |
 | `validateHostMute(mute, softphone)` | What the agent application's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the agent application holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
 | `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
 | `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
