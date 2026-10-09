@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
 import type { LoginStore, Refusal, PhoneState, SecretStore, AuthenticationContext } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
-import { memoryStore, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, testAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
+import { memoryStore, assertHistoryAgreesAcrossTasks, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, testAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const voiceTask = {
   title: "Customer call",
@@ -1308,6 +1308,8 @@ describe("testAdapter tests one call", () => {
     leavesHoldOpen?: boolean;
     endsFromHold?: boolean;
     recordsMuteOnHold?: boolean;
+    onHoldCode?: string;
+    withholdsDialOutcome?: boolean;
     /** A provider that restates the host's muted leg without its duration after the call is over. */
     leavesMuteOpen?: boolean;
     /** End-call moves the task to completing and publishes no task-audio-ended: the audio stays up through the wrap-up. */
@@ -1467,7 +1469,7 @@ describe("testAdapter tests one call", () => {
               // Call from a preview: a dial, answered dialling, with the party ringing and then the call up.
               const dialId = (command as unknown as { dialId: string }).dialId;
               emit({ type: "task-updated", task: t({ phase: "preview", previewEndsInSeconds: 0, atDeadline: script.preview?.atDeadline ?? "waits", onCall: [{ role: "party", stage: "ringing", dialId, since: at }] }) });
-              emit({ type: "dial-outcome", dialId, outcome: "answered", assignmentId: myAssignment });
+              if (!script.withholdsDialOutcome) emit({ type: "dial-outcome", dialId, outcome: "answered", assignmentId: myAssignment });
               emit({ type: "task-updated", task: t({ phase: "in-progress", onCall: room }) });
               emit({ type: "task-audio-started", assignmentId: myAssignment }); audioUp = true;
               return { status: "dialling", dialId };
@@ -1492,7 +1494,7 @@ describe("testAdapter tests one call", () => {
               emit({ type: "task-updated", task: t({ phase: "in-progress", audio: "started", onCall: room }) }); return { status: "applied" };
             case "end-call":
               // A conforming adapter refuses to end the agent's part with the caller on hold; one that applies it is the second gate failing.
-              if (phase === "paused" && !script.endsFromHold) return { status: "failed", failure: { code: "provider.on-hold", message: "Resume before ending", retryable: false } };
+              if (phase === "paused" && !script.endsFromHold) return { status: "failed", failure: { code: script.onHoldCode ?? "omni.on-hold", message: "Resume before ending", retryable: false } };
               if (script.completesAroundAudio) {
                 emit({ type: "task-updated", task: t({ phase: "completing", audio: "started", onCall: room }) });
                 return { status: "applied" };
@@ -1534,7 +1536,7 @@ describe("testAdapter tests one call", () => {
           if (script.refuseRecordStep) return { status: "failed", failure: { code: "provider.unavailable", message: "No record today", retryable: true } };
           // A conforming adapter refuses the host's mute begun with the caller on hold; one that records it is the second gate failing.
           if (report.step === "muted" && report.mutedBy === "host" && report.ended === undefined && report.seconds === undefined && phase === "paused" && !script.recordsMuteOnHold) {
-            return { status: "failed", failure: { code: "provider.on-hold", message: "Resume before muting", retryable: false } };
+            return { status: "failed", failure: { code: script.onHoldCode ?? "omni.on-hold", message: "Resume before muting", retryable: false } };
           }
           // A closing report for a leg the provider already closed at audio end is answered recorded and changes nothing.
           if (report.step === "muted" && closedAtEnd !== undefined && report.at === closedAtEnd.at) {
@@ -1614,7 +1616,8 @@ describe("testAdapter tests one call", () => {
     // The conforming fixture records it and the run is clean (the first test). The provider may
     // restate the record afterwards; when it does, the host's leg is in it or the hole is named.
     // The test reports two legs, each begun and ended: the mid-call one it closes itself, and the one it leaves open into end-call.
-    expect((await viaCall(testable({ refuseRecordStep: true }))).violations.map(v => v.rule)).toEqual(["test.recordStep.failed", "test.recordStep.failed", "test.recordStep.failed", "test.recordStep.failed"]);
+    // The mute probed on hold is refused too, but for the store being down rather than the hold, so its code is named as well.
+    expect((await viaCall(testable({ refuseRecordStep: true }))).violations.map(v => v.rule)).toEqual(["test.recordStep.failed", "test.recordStep.failed", "test.recordStep.held", "test.recordStep.failed", "test.recordStep.failed"]);
     expect((await viaCall(testable({ restateHistory: "with-mute" }))).violations).toEqual([]);
     expect((await viaCall(testable({ restateHistory: "without-mute" }))).violations.map(v => v.rule)).toEqual(["test.recordStep.history", "test.recordStep.history"]);
     // The record keeps the host's word on whose the silence was.
@@ -1692,6 +1695,9 @@ describe("testAdapter tests one call", () => {
   it("holds a preview's deadline to its atDeadline: the provider dials under provider-dials, and the preview stands under waits and host-dials", async () => {
     // A preview under provider-dials: the platform dials when it runs out, and one that never does is named.
     expect((await viaCall(testable({ preview: { atDeadline: "provider-dials", seconds: 0, honoured: true } }))).violations).toEqual([]);
+    // Call pressed in a preview is a dial owed exactly one outcome: the same run with the outcome withheld is named.
+    expect((await viaCall(testable({ preview: { atDeadline: "waits", seconds: 0, honoured: true } }))).violations).toEqual([]);
+    expect((await viaCall(testable({ preview: { atDeadline: "waits", seconds: 0, honoured: true }, withholdsDialOutcome: true }))).violations.map(v => v.rule)).toEqual(["stream.dialOutcome.missing"]);
     expect((await viaCall(testable({ preview: { atDeadline: "provider-dials", seconds: 0, honoured: false } }))).violations.map(v => v.rule)).toEqual(["test.preview.deadline", "stream.taskOffered.unended"]);
     // Under waits and host-dials the preview stands until the agent computer dials; a platform that moves it early is named.
     for (const atDeadline of ["waits", "host-dials"] as const) {
@@ -1894,6 +1900,10 @@ describe("testAdapter tests one call", () => {
     // The conforming fixture refuses it and the run is clean: the control in the same run, with the mute from in-progress recorded.
     expect((await viaCall(testable({}))).violations).toEqual([]);
     expect((await viaCall(testable({ recordsMuteOnHold: true }))).violations.map(v => v.rule)).toEqual(["test.recordStep.held"]);
+    // A refusal under another code is named too: on hold, the code is omni.on-hold, so the agent application can say resume first.
+    const general = (await viaCall(testable({ onHoldCode: "omni.command-not-permitted" }))).violations;
+    expect(general.map(v => v.rule)).toEqual(["test.recordStep.held", "test.command.held"]);
+    expect(general[0]!.message).toContain("omni.on-hold");
   });
 
   it("sends end-call while the caller is on hold, past the validator, and names an adapter that ends the agent's part from there", async () => {
@@ -2433,5 +2443,22 @@ describe("testAdapter requires each method the declarations call for", () => {
       },
     });
     expect(found).toEqual([]);
+  });
+});
+
+
+describe("assertHistoryAgreesAcrossTasks", () => {
+  const first = { step: "queued" as const, at: "2026-08-21T09:00:00Z", seconds: 41 };
+  const answered = { step: "answered" as const, at: "2026-08-21T09:00:41Z", by: "a-17" };
+  const handed = { step: "transferred" as const, at: "2026-08-21T09:05:53Z", by: "a-17" };
+  const withSteps = (assignmentId: string, steps: unknown[]) => ({ ...voiceTask, assignmentId, history: { steps } }) as unknown as Task;
+  it("accepts a later task that restates every earlier step, closing a leg the earlier one had open", () => {
+    expect(() => assertHistoryAgreesAcrossTasks(withSteps("a-1", [first, answered]), withSteps("a-2", [first, { ...answered, seconds: 312 }, handed]))).not.toThrow();
+  });
+  it("names a step restated differently, a duration changed, a step dropped, and a task with no history", () => {
+    expect(() => assertHistoryAgreesAcrossTasks(withSteps("a-1", [first, answered]), withSteps("a-2", [first, { ...answered, by: "a-99" }]))).toThrow(/steps\[1\]\.by/);
+    expect(() => assertHistoryAgreesAcrossTasks(withSteps("a-1", [first]), withSteps("a-2", [{ ...first, seconds: 40 }]))).toThrow(/does not change/);
+    expect(() => assertHistoryAgreesAcrossTasks(withSteps("a-1", [first, answered]), withSteps("a-2", [first]))).toThrow(/carries every earlier step/);
+    expect(() => assertHistoryAgreesAcrossTasks({ ...voiceTask, assignmentId: "a-1" } as unknown as Task, withSteps("a-2", [first]))).toThrow(/no history/);
   });
 });

@@ -2155,9 +2155,9 @@ describe("validateTaskCommand", () => {
     expect(rules(validateTaskCommand({ type: "conference", action: "remove", destinationId: "tier2" }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "conference", action: "remove" }))).toEqual(["command.conference.remove.target"]);
     expect(rules(validateTaskCommand({ type: "conference", action: "remove", party: true, destinationId: "tier2" }))).toEqual(["command.conference.remove.target"]);
-    expect(rules(validateTaskCommand({ type: "recording", source: "provider", observationId: "o", recordingId: "r", action: "rewind" }))).toEqual(["recording.command.action"]);
+    expect(rules(validateTaskCommand({ type: "recording", source: "provider", recordingId: "r", action: "rewind" }))).toEqual(["recording.command.action"]);
     // A recording command carries no request identity: the outcome is the state, and a partial effect is a settled failure.
-    expect(rules(validateTaskCommand({ type: "recording", source: "provider", requestId: "q", observationId: "o", action: "start" }))).toEqual(["recording.field"]);
+    expect(rules(validateTaskCommand({ type: "recording", source: "provider", requestId: "q", follows: "party", action: "start" }))).toEqual(["recording.field"]);
     expect(rules(validateTaskCommand({ type: "lead-assist", action: "join" }))).toEqual(["command.leadAssist.action"]);
     expect(rules(validateTaskCommand({ type: "complete", outcome: "" }))).toEqual(["command.complete.outcome"]);
   });

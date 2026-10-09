@@ -524,26 +524,45 @@ export interface TaskRecordingPolicy {
   provider?: RecordingActions;
   host?: RecordingActions & { storageId: string };
 }
-/** Current evidence only. Expiry/disconnect means unknown, never a historical stop. */
-export type RecordingState =
-  | { status: "unknown"; observationId?: never; observedAt?: never; validUntil?: never; recordingId?: never }
-  | ({ observationId: string; observedAt: IsoTimestamp; validUntil: IsoTimestamp } & (
-      | { status: "inactive"; recordingId?: never }
-      | { status: "active" | "paused"; recordingId: string }
-    ));
-/** Opaque IDs are scoped by login, task and recorder owner; preserved across pause/resume. */
-export type RecordingCommand = {
-  type: "recording";
-  source: RecordingSource;
-  /** Compare-and-set against current evidence; never act on a replacement recording. */
-  observationId: string;
-} & (
-  | { action: "start"; recordingId?: never }
-  | { action: "pause" | "resume" | "stop" | "cancel"; recordingId: string }
+/** Whose side of the call a recording captures: the party's channel, or the agent's own. */
+export type RecordingSide = "party" | "agent";
+export const RECORDING_SIDES = ["party", "agent"] as const satisfies readonly RecordingSide[];
+/**
+ * Where a recording stands, as its recorder last stated it. `starting` is asked for and not yet
+ * confirmed. A stop or a pause in flight stays `recording` until the recorder confirms it, since
+ * telling the agent they are not recorded when they may be is the one thing this must never say.
+ */
+export type RecordingStatus = "starting" | "recording" | "paused" | "not-recording" | "unknown";
+export const RECORDING_STATUSES = ["starting", "recording", "paused", "not-recording", "unknown"] as const satisfies readonly RecordingStatus[];
+/** Why a recording is paused: someone asked, or the platform paused it while sensitive details are taken. */
+export type RecordingPausedReason = "requested" | "sensitive-details";
+export const RECORDING_PAUSED_REASONS = ["requested", "sensitive-details"] as const satisfies readonly RecordingPausedReason[];
+/** Why a recording's state is unknown: its recorder cannot be reached, or a command could not be settled either way. */
+export type RecordingUnknownReason = "recorder-unreachable" | "unsettled";
+export const RECORDING_UNKNOWN_REASONS = ["recorder-unreachable", "unsettled"] as const satisfies readonly RecordingUnknownReason[];
+/**
+ * One recording of one side of the call, published whenever it changes and restated whole with
+ * every publication of the task and on every snapshot. Nothing expires: the mark stands as last
+ * stated until its recorder says otherwise. `id` is the recorder's, minted when the start is
+ * accepted -- before the recorder has answered -- and kept through pause and resume; a later
+ * start is a new recording with a new id.
+ */
+export type Recording = { id: string; follows: RecordingSide } & (
+  | { status: "starting" | "recording" | "not-recording"; reason?: never }
+  | { status: "paused"; reason: RecordingPausedReason }
+  | { status: "unknown"; reason: RecordingUnknownReason }
+);
+/**
+ * A start names the side to record; every other action names the recording by its id, and the
+ * recorder refuses one that no longer stands where the action needs it.
+ */
+export type RecordingCommand = { type: "recording"; source: RecordingSource } & (
+  | { action: "start"; follows: RecordingSide; recordingId?: never }
+  | { action: "pause" | "resume" | "stop" | "cancel"; recordingId: string; follows?: never }
 );
 export interface HostRecordingReport {
   assignmentId: AssignmentId;
-  state: RecordingState;
+  recordings: Recording[];
 }
 /** Host declaration in ConnectContext, not the provider-owned Manifest. */
 export interface HostRecording {
@@ -869,7 +888,8 @@ export type HistoryStep =
   | "muted"
   | "transferred"
   | "conferenced"
-  | "unanswered";
+  | "unanswered"
+  | "callback-requested";
 
 /**
  * The call record: the steps that brought the task here, one entry per occurrence and oldest
@@ -906,8 +926,9 @@ export interface TaskHistoryStep {
    */
   seconds?: DurationSeconds;
   /**
-   * Who took part. Absent on `queued`, where nobody does; absent on any other step means the
-   * provider could not attribute it, which is a different claim and a legitimate one.
+   * Who took part. Absent on `queued`, where nobody does; absent on `callback-requested`, where the
+   * caller chose it in the queue, and present there when an agent arranged it; absent on any other
+   * step means the provider could not attribute it, which is a different claim and a legitimate one.
    */
   by?: UserId;
   /** On a `muted` step, and only there: whose the silence was, as the host reported it. */
@@ -1090,8 +1111,8 @@ export type Task<C extends Channel = Channel> = {
   // onCall is this interaction's current room, not the lifetime of the caller or whole bridge.
   // Its room, a lead asked onto it or taking it over, and real-time audio are voice affairs; forbidden elsewhere.
   & (C extends "voice"
-    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
-    : { recording?: never; onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
+    ? { recordings?: Recording[]; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
+    : { recordings?: never; onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
 
 /**
  * What the provider wants of Omni's acceptance policy for one offer. On routed work, present only
@@ -1785,6 +1806,8 @@ export const OMNI_FAILURE_CODES = [
   "omni.break-already-committed",
   /** A recording command the provider could not settle either way: no start, stop, pause or resume it can vouch for. */
   "omni.recording-unsettled",
+  /** Refused because the caller is on hold: the host's Mute, or end-call, waits for resume. */
+  "omni.on-hold",
   /** A lead asked to lift a break the platform itself imposed; the platform lifts its own. */
   "omni.break-forced-by-provider",
 ] as const;
@@ -1940,7 +1963,10 @@ export const assignmentKey = (providerId: string, assignmentId: AssignmentId): s
 export const userKey = (providerId: string, userId: UserId): string =>
   `${encodeURIComponent(providerId)}:${encodeURIComponent(userId)}`;
 
-/** Every history step somebody takes part in. `queued` is the one nobody does. */
+/**
+ * Every history step somebody from the provider takes part in. `queued` is the one nobody does, and
+ * `callback-requested` is the caller's choice unless an agent arranged it, so neither is here.
+ */
 export const HISTORY_STEPS_WITH_A_PERSON = [
   "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered",
 ] as const satisfies readonly HistoryStep[];
@@ -1953,7 +1979,7 @@ export const historyStepDials = (step: HistoryStep): boolean =>
 
 // Pinned both ways: a step added to `HistoryStep` has to be placed here, and a step listed here
 // has to exist there. `satisfies` on the list covers the second; this statement covers the first.
-true satisfies [Exclude<HistoryStep, "queued">] extends [(typeof HISTORY_STEPS_WITH_A_PERSON)[number]] ? true : false;
+true satisfies [Exclude<HistoryStep, "queued" | "callback-requested">] extends [(typeof HISTORY_STEPS_WITH_A_PERSON)[number]] ? true : false;
 
 /** Whether an absent `by` means "could not attribute" rather than "nobody was involved". */
 export function historyStepExpectsAPerson(step: HistoryStep): boolean {

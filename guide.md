@@ -83,7 +83,7 @@ user IDs, returned user details and directory requirements are unchanged.
 
 ### `OMNI_PROTOCOL_VERSION`
 
-The exact protocol version implemented by this package. The current value remains `1` during pre-release development. Recording contract changes do not introduce a new protocol version. Hosts and adapters adopt the current declarations together; this does not provide compatibility mapping for older recording shapes.
+The exact protocol version implemented by this package. The current value remains `1` during pre-release development. Recording contract changes do not introduce a new protocol version. Hosts and adapters adopt the current declarations together; there is no compatibility mapping for older recording shapes.
 
 ### `Manifest.supportedProtocolVersions`
 
@@ -343,23 +343,22 @@ interface TaskRecordingPolicy {
   provider?: RecordingActions;
   host?: RecordingActions & { storageId: string };
 }
-type RecordingState =
-  | { status: "unknown"; observationId?: never; observedAt?: never; validUntil?: never; recordingId?: never }
-  | ({ observationId: string; observedAt: IsoTimestamp; validUntil: IsoTimestamp } & (
-      | { status: "inactive"; recordingId?: never }
-      | { status: "active" | "paused"; recordingId: string }
-    ));
-type RecordingCommand = {
-  type: "recording";
-  source: RecordingSource;
-  observationId: string;
-} & (
-  | { action: "start"; recordingId?: never }
-  | { action: "pause" | "resume" | "stop" | "cancel"; recordingId: string }
+type RecordingSide = "party" | "agent";
+type RecordingStatus = "starting" | "recording" | "paused" | "not-recording" | "unknown";
+type RecordingPausedReason = "requested" | "sensitive-details";
+type RecordingUnknownReason = "recorder-unreachable" | "unsettled";
+type Recording = { id: string; follows: RecordingSide } & (
+  | { status: "starting" | "recording" | "not-recording"; reason?: never }
+  | { status: "paused"; reason: RecordingPausedReason }
+  | { status: "unknown"; reason: RecordingUnknownReason }
+);
+type RecordingCommand = { type: "recording"; source: RecordingSource } & (
+  | { action: "start"; follows: RecordingSide; recordingId?: never }
+  | { action: "pause" | "resume" | "stop" | "cancel"; recordingId: string; follows?: never }
 );
 interface HostRecordingReport {
   assignmentId: AssignmentId;
-  state: RecordingState;
+  recordings: Recording[];
 }
 interface HostRecording {
   announcesToCaller?: true;
@@ -694,7 +693,8 @@ type HistoryStep =
   | "muted"
   | "transferred"
   | "conferenced"
-  | "unanswered";
+  | "unanswered"
+  | "callback-requested";
 
 type TaskHistory = {
   steps: TaskHistoryStep[];
@@ -777,8 +777,8 @@ type Task<C extends Channel = Channel> = {
   history?: TaskHistory;
 } & TaskCompletion & (
   C extends "voice"
-    ? { recording?: { provider?: RecordingState }; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
-    : { recording?: never; onCall?: never; leadAssist?: never; takenOver?: never; audio?: never }
+    ? { recordings?: Recording[]; onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
+    : { recordings?: never; onCall?: never; leadAssist?: never; takenOver?: never; audio?: never }
 );
 
 type PreviewDeadline = "provider-dials" | "host-dials" | "waits";
@@ -1345,6 +1345,7 @@ const OMNI_FAILURE_CODES = [
   "omni.unavailable",
   "omni.break-already-committed",
   "omni.recording-unsettled",
+  "omni.on-hold",
   "omni.break-forced-by-provider",
 ] as const;
 type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
@@ -2415,8 +2416,6 @@ The current exceptions and their reasons are:
 | --- | --- |
 | Agent application display of provider deadlines (`expiresInSeconds`, `previewEndsInSeconds`, `wrapEndsInSeconds`) | Each is seconds from the publication that carried it, counted down on the agent computer from receipt: the provider's own arithmetic, so no clock is compared and the transport delay is the only error. The countdown estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
 | Agent application-triggered preview end | The agent computer counts `previewEndsInSeconds` down from receipt and issues `dial` when it reaches zero: the provider owns the deadline and the agent computer owns the trigger. It does not dial before the countdown has run out, and a reload restarts it from the next publication. |
-| Recording evidence expiry | A bounded observer-domain clock estimate with monotonic aging may assess freshness because observation and expiry belong to the recorder's clock. If time cannot be trusted, recording state is unknown; never renew evidence from receipt or replay. |
-| Unknown recording state | `observedAt` and `validUntil` are absent because there is no confirmed observation. The containing provider event still has its own `occurredAt`; that publication is not a recorder observation. |
 | Direct snapshot reads and method requests/results | These are reads/operations, not event envelopes, and their current types have no general event timestamp. A snapshot event still carries `occurredAt`; embedded source instants remain unchanged. Do not treat a method result or read completion time as an occurrence boundary. |
 | Agent application-provided provider-clock estimate | Best-effort ISO time may be supplied by the agent application for optional comparisons; it is not a source observation or accuracy guarantee. The reason is that the agent application does not own the provider clock. |
 | Provider receipt timestamps | The provider may use its own receipt instant for final records of receipt/processing because agent application timestamps are untrusted advisory input. Receipt must not be presented as an earlier action or capture boundary. |
@@ -2524,14 +2523,13 @@ A provider need not trust or adopt any agent application-supplied timestamp. It 
 message using its own clock at receipt and use that for its own processing/accounting. The reason
 for this exception is that agent application clocks and agent application estimates are not authoritative at the provider.
 Receipt time must be described as receipt/observation time, not relabeled as the original agent application
-action, recorder capture boundary, or proof an operation applied. An existing field with a
+action, a recording's start or stop, or proof an operation applied. An existing field with a
 specific occurrence meaning still requires that evidence; this option does not silently redefine
 it. Agent application-only instants remain advisory input; the provider owns its authoritative publication.
 
 This agent application estimate is another explicit timestamp exception: it helps optional displays and
 provider-clock comparisons when the agent application lacks that clock directly. It is not a source occurrence,
-may not replace event/history timestamps, and alone cannot authorize deadline actions or prove
-recording freshness. Uses requiring a trustworthy bound still need independently established
+may not replace event/history timestamps, and alone cannot authorize deadline actions. Uses requiring a trustworthy bound still need independently established
 clock accuracy/drift assumptions. It neither synchronizes the operating-system clock nor changes
 ISO timestamps already published by the provider.
 
@@ -2713,7 +2711,9 @@ snapshots until it ends.
 with `task-ended` and an outcome, whatever became of the call: answered and completed, declined,
 withdrawn, abandoned in the ring, lapsed, taken over. An offer that is simply never mentioned
 again leaves the agent computer holding a task nobody will close, and the test names it
-(`stream.taskOffered.unended`).
+(`stream.taskOffered.unended`). **Every dial is owed its outcome** the same way: a dial the test
+placed and the provider answered `dialling` with no `dial-outcome` by the end of the run is named
+(`stream.dialOutcome.missing`).
 
 ### `task-updated`
 
@@ -3144,6 +3144,7 @@ cannot be established from TypeScript structure alone.
 | `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for an agent application that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |
 | `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a forced break arriving in effect with `forced`. The harness applies the same rules after the connect snapshot. |
 | `assertAudioFollowsTheTask(envelopes, snapshot?)` | The audio follows the task and never decides it: every task is introduced once, `task-audio-started` and `task-audio-ended` alternate on work that has begun, audio ends only where it arrived, and what follows the audio ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no audio satisfies it by never testing it — pair it with the assertion that the audio end is present. |
+| `assertHistoryAgreesAcrossTasks(earlier, later)` | Two tasks of one call -- a hand-over, a take-over, a callback: the later restates every earlier step in order, with the same step, instant, person, dial and destination, and any duration already stated unchanged. Throws when either carries no history. |
 | `assertBreakAttemptProviders(candidates, asked)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
 | `assertForcedBreakStopsTheRest(forcedOn, candidates, stopped)` | A forced break on one provider stops the agent everywhere else: capacity zero stated on every other usable provider holding capacity, nothing on the forcing one, nothing on a dead login. See **Forced breaks** in `guide/breaks.md`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `on-break` only once nothing is outstanding — never beside a task, never later than the step that has none. |

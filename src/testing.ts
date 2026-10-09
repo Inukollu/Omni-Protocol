@@ -8,6 +8,7 @@ import {
   type Connection,
   type Snapshot,
   type Task,
+  type TaskHistoryStep,
   type BreakStatus,
   type BrowserSessionKeyInput,
   type Channel,
@@ -718,6 +719,12 @@ export async function testAdapter<C extends Channel>(
         violations.push({ rule: "stream.taskOffered.unended", path: "event.task-ended",
           message: `${id} was offered and never ended: every offer is owed a task-ended, whatever became of the call` });
       }
+      // Every dial the test placed, and the provider answered dialling, is owed exactly one outcome.
+      ruleTested("stream.dialOutcome.missing");
+      for (const id of stream.dialsWithoutOutcome()) {
+        violations.push({ rule: "stream.dialOutcome.missing", path: "event.dial-outcome",
+          message: `${id} was answered dialling and never got its dial-outcome: every dial ends in exactly one, however it ended` });
+      }
     }
     // Capacity supersedes rather than accumulates, so a decrease is as ordinary as an increase: the
     // host raises it, lowers it, and takes it away, and the provider takes each as the ceiling it is.
@@ -909,6 +916,11 @@ export function assertAuthenticationRestoreAndExpiry(
 }
 
 /** The tasks an envelope carries: the one a task event names, or a snapshot event's list. */
+/** The failure code of a failed answer, as the provider stated it. */
+function failureCode(answer: Record<string, unknown>): unknown {
+  return isRecord(answer.failure) ? answer.failure.code : undefined;
+}
+
 /** Whether a published state ends the session, so its stored secrets must already be gone. */
 function sessionEnded(state: AuthenticationState): boolean {
   return state.status === "signed-out" || state.status === "terminated"
@@ -1206,11 +1218,21 @@ export class TaskStream {
   // task carried on `onCall` or in its record -- which is how a dial made before a take-over is known
   // to whoever holds the task now. `answered` or `ended` once its outcome arrived, since it comes once.
   private readonly dials = new Map<string, "placed" | "answered" | "ended">();
+  private readonly placedHere = new Set<string>();
 
   /** The host placed a dial: its outcome, whenever it arrives, is one the stream expects. */
   dialled(dialId: string): void {
     if (!this.dials.has(dialId)) this.dials.set(dialId, "placed");
   }
+
+  /** A dial the test placed itself and the provider answered dialling: it is owed exactly one outcome. */
+  placedByTest(dialId: string): void {
+    this.dialled(dialId);
+    this.placedHere.add(dialId);
+  }
+
+  /** The dials the test placed that never got their outcome. */
+  dialsWithoutOutcome(): string[] { return [...this.placedHere].filter(id => this.dials.get(id) === "placed"); }
 
   private noteDials(task: unknown): void {
     if (!isRecord(task)) return;
@@ -1901,6 +1923,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       const dialId = `test-${taskId}`;
       call.stream.dialled(dialId);
       if (await send({ type: "dial", dialId }, dialId) === undefined) return found;
+      call.stream.placedByTest(dialId);
     }
     if (latestTask().phase === "preview" && await updated(t => t.phase === "in-progress" || t.phase === "completing", pressCall ? "the task leaving preview after Call" : "the task leaving preview after the provider's dial") === undefined) return found;
   }
@@ -2021,6 +2044,9 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     if (isRecord(answer) && answer.status !== "failed") {
       refuse("test.recordStep.held", "test.recordStep",
         "the provider recorded the host's mute begun with the caller on hold: the Mute waits for resume, and the adapter is the second gate");
+    } else if (isRecord(answer) && failureCode(answer) !== "omni.on-hold") {
+      refuse("test.recordStep.held", "test.recordStep",
+        `the provider refused the mute begun on hold as ${String(failureCode(answer))}: a refusal because the caller is on hold answers omni.on-hold, so the agent application can say resume first`);
     }
   };
   // Ending my part from hold would leave the caller in the hold with nobody coming back to them: a
@@ -2040,6 +2066,9 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
         "the provider ended the agent's part with the caller on hold: end-call waits for resume, and the adapter is the second gate");
       // Applied, the task leaves paused; the run reads where the adapter put it rather than resuming a call it ended.
       await updated(t => t.phase !== "paused", "the task after an end-call applied from hold");
+    } else if (isRecord(answer) && failureCode(answer) !== "omni.on-hold") {
+      refuse("test.command.held", "test.command.end-call",
+        `the provider refused end-call on hold as ${String(failureCode(answer))}: a refusal because the caller is on hold answers omni.on-hold, so the agent application can say resume first`);
     }
   };
   // 4. Hold and resume, where offered.
@@ -2347,6 +2376,40 @@ export function stillHost(report: HostReport, guarantees: HostGuarantees, mute: 
 export function stillHost(report?: HostReport, guarantees?: HostGuarantees): Host & { mute?: never; recording?: never };
 export function stillHost(report: HostReport = { online: true }, guarantees: HostGuarantees = {}, mute?: HostMute): Host {
   return { guarantees, ...(mute === undefined ? {} : { mute }), report: () => report, subscribe: () => () => undefined };
+}
+
+/**
+ * One call's history as it reaches a second task: an earlier agent's task and a later one of the same
+ * call -- a hand-over, a take-over, a callback. The later task restates every earlier step, in order,
+ * as the earlier task had it: the same step, instant, person, dial and destination, and the same
+ * duration wherever the earlier task had already stated one (a leg still open there may be closed
+ * here). Throws on the first step that disagrees, and when either task carries no history, since
+ * two absent records agree about nothing.
+ */
+export function assertHistoryAgreesAcrossTasks(earlier: Task, later: Task): void {
+  const steps = (task: Task, which: string): TaskHistoryStep[] => {
+    const history = (task as { history?: { steps?: TaskHistoryStep[] } }).history;
+    if (history === undefined || !Array.isArray(history.steps)) {
+      throw new Error(`The ${which} task ${task.assignmentId} carries no history to compare`);
+    }
+    return history.steps;
+  };
+  const before = steps(earlier, "earlier");
+  const after = steps(later, "later");
+  if (after.length < before.length) {
+    throw new Error(`${later.assignmentId} restates ${after.length} step(s) of the call and ${earlier.assignmentId} already had ${before.length}: a later task carries every earlier step`);
+  }
+  before.forEach((step, index) => {
+    const restated = after[index]!;
+    for (const field of ["step", "at", "by", "dialId", "destinationId", "mutedBy"] as const) {
+      if (step[field] !== restated[field]) {
+        throw new Error(`steps[${index}].${field} is ${String(step[field])} on ${earlier.assignmentId} and ${String(restated[field])} on ${later.assignmentId}: one call has one history`);
+      }
+    }
+    if (step.seconds !== undefined && restated.seconds !== step.seconds) {
+      throw new Error(`steps[${index}].seconds is ${step.seconds} on ${earlier.assignmentId} and ${String(restated.seconds)} on ${later.assignmentId}: a stated duration does not change`);
+    }
+  });
 }
 
 /** One provider as the host sees it when freezing the providers a break attempt asks. */
