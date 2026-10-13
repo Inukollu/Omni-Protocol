@@ -114,7 +114,7 @@ const TASK_PHASES = membersOf<TaskPhase>({
   pending: true, confirmed: true, preview: true, "in-progress": true, paused: true, completing: true,
 });
 const COMPLETION_MODES = membersOf<CompletionMode>({ "agent-command": true, "provider-automatic": true });
-const CAPABILITY_SOURCES = membersOf<CapabilitySource>({ queue: true, nobody: true, "not-yet-read": true });
+const CAPABILITY_SOURCES = membersOf<CapabilitySource>({ queue: true, dialer: true, nobody: true, "not-yet-read": true });
 const ACCEPTANCE_MODES = membersOf<AcceptanceMode>({
   "no-preference": true, "consent": true, "automatic": true,
 });
