@@ -1042,13 +1042,14 @@ export interface Locked {
 export type Lockable<T> = T | Locked;
 
 /**
- * Who chose a task's capabilities. `not-yet-read` is a fault the provider states on the task rather
- * than hides: the platform's terms could not be read, and the set published is what the provider
- * will honour, not what the platform permits.
+ * Who chose a task's capabilities: the queue that handed the work over, the dialer that declared
+ * outbound work, or nobody for an agent's own outbound. `not-yet-read` is a fault the provider
+ * states on the task rather than hides: the platform's terms could not be read, and the set
+ * published is what the provider will honour, not what the platform permits.
  */
-export type CapabilitySource = "queue" | "nobody" | "not-yet-read";
+export type CapabilitySource = "queue" | "dialer" | "nobody" | "not-yet-read";
 
-export const CAPABILITY_SOURCES = ["queue", "nobody", "not-yet-read"] as const satisfies readonly CapabilitySource[];
+export const CAPABILITY_SOURCES = ["queue", "dialer", "nobody", "not-yet-read"] as const satisfies readonly CapabilitySource[];
 
 export type Task<C extends Channel = Channel> = {
   /** The assignment this task is the record of, and its one identity. See `AssignmentId`. */

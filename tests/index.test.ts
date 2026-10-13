@@ -290,7 +290,7 @@ describe("every dial has an outcome", () => {
 
   it("closes the set of outcomes, and says which record steps a dial writes", () => {
     expect(DIAL_OUTCOMES).toEqual(["answered", "busy", "no-answer", "unreachable", "rejected", "cancelled", "unexplained"]);
-    expect(CAPABILITY_SOURCES).toEqual(["queue", "nobody", "not-yet-read"]);
+    expect(CAPABILITY_SOURCES).toEqual(["queue", "dialer", "nobody", "not-yet-read"]);
     expect(HOST_MUTES).toEqual(["stream", "station"]);
     expect(MUTED_BY).toEqual(["host", "station"]);
     expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);

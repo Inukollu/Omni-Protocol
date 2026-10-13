@@ -755,7 +755,7 @@ type Lockable<T> = T | Locked;
 
 type TaskAudioState = "started" | "ended";
 
-type CapabilitySource = "queue" | "nobody" | "not-yet-read";
+type CapabilitySource = "queue" | "dialer" | "nobody" | "not-yet-read";
 
 type Task<C extends Channel = Channel> = {
   assignmentId: AssignmentId;

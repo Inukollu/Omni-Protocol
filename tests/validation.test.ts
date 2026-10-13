@@ -2567,7 +2567,9 @@ describe("validateTask capabilitySource", () => {
   const rules = (t: unknown) => validateTask(t, voice).map(v => v.rule);
 
   it("requires the task to say where its capabilities came from, and closes the set", () => {
-    for (const source of ["queue", "nobody", "not-yet-read"]) expect(rules(task({ capabilitySource: source }))).toEqual([]);
+    for (const source of ["queue", "dialer", "nobody", "not-yet-read"]) expect(rules(task({ capabilitySource: source }))).toEqual([]);
+    // One spelling across the system: the British form is not a second name for it.
+    expect(rules(task({ capabilitySource: "dialler" }))).toEqual(["task.capabilitySource"]);
     expect(rules(task({ capabilitySource: undefined }))).toEqual(["task.capabilitySource"]);
     expect(rules(task({ capabilitySource: "Unreadable" }))).toEqual(["task.capabilitySource"]);
   });
