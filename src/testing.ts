@@ -91,6 +91,7 @@ const STATE_SUBJECTS = [
   "phone",
   "nextCall",
   "linedUp",
+  "labels",
   "contacts",
   "calendar",
   "team.policies",
@@ -102,6 +103,7 @@ const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   "task-audio-started": true, "task-audio-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
   "team-updated": true, "team-member-updated": true, "team-member-removed": true, "team-policies-updated": true,
   "contacts-updated": true, "calendar-updated": true, "shift-updated": true, "phone-updated": true, "next-call": true, "lined-up": true,
+  "labels-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
 const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
@@ -174,6 +176,7 @@ function observeSnapshot(value: unknown, seen: Set<ContractSubject>): void {
   if (value.phone !== undefined) seen.add("phone");
   if (value.nextCall !== undefined) seen.add("nextCall");
   if (value.linedUp !== undefined) seen.add("linedUp");
+  if (value.labels !== undefined) seen.add("labels");
 }
 
 function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
@@ -194,6 +197,7 @@ function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
     case "phone-updated": seen.add("phone"); break;
     case "next-call": if (event.nextCall !== undefined) seen.add("nextCall"); break;
     case "lined-up": if (event.linedUp !== undefined) seen.add("linedUp"); break;
+    case "labels-updated": seen.add("labels"); break;
     default: break;
   }
 }
@@ -1174,7 +1178,7 @@ const REACHABLE_PHASES: Record<string, Set<string>> = {
 export const SUPERSEDED_BY_A_SNAPSHOT: ReadonlySet<string> = new Set([
   "snapshot", "transport-status", "break-state", "task-offered", "task-updated", "task-ended",
   "task-audio-started", "task-audio-ended", "team-updated", "team-member-updated", "team-member-removed", "team-policies-updated",
-  "contacts-updated", "calendar-updated", "shift-updated", "phone-updated", "next-call", "lined-up",
+  "contacts-updated", "calendar-updated", "shift-updated", "phone-updated", "next-call", "lined-up", "labels-updated",
 ]);
 
 export class TaskStream {

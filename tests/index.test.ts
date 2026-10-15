@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BREAK_KINDS,
   BROWSER_ISOLATION_SCHEMES,
+  DEFAULT_HISTORY_STEP_LABELS,
   DEFAULT_TASK_PHASE_LABELS,
   DEFAULT_TASK_TYPE_PRESENTATION,
   DIAL_OUTCOMES,
@@ -22,6 +23,7 @@ import {
   defineAdapter,
   historyStepExpectsAPerson,
   isAllowedBrowserUrl,
+  localizedText,
   negotiateProtocolVersion,
   normalizeContactEmail,
   normalizeContactNumber,
@@ -74,6 +76,34 @@ describe("Omni protocol", () => {
     }
     expect(DEFAULT_TASK_PHASE_LABELS.voice["in-progress"]).toBe("On Call");
     expect(DEFAULT_TASK_TYPE_PRESENTATION.email).toEqual({ singular: "Email", plural: "Emails", referenceLabel: "Email ID" });
+  });
+
+  it("names every history step, the call's arrival as the agent says it", () => {
+    const steps: HistoryStep[] = ["arrived", "queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered", "callback-requested"];
+    expect(Object.keys(DEFAULT_HISTORY_STEP_LABELS).sort()).toEqual([...steps].sort());
+    for (const label of Object.values(DEFAULT_HISTORY_STEP_LABELS)) expect(label.trim()).not.toBe("");
+    expect(DEFAULT_HISTORY_STEP_LABELS.arrived).toBe("Incoming call");
+  });
+});
+
+describe("localizedText", () => {
+  const label = { en: "Entered", hi: "कॉल आई", "en-IN": "Call came in" };
+
+  it("finds the agent's language, then the language without its region", () => {
+    expect(localizedText(label, ["hi"])).toBe("कॉल आई");
+    expect(localizedText(label, ["en-IN"])).toBe("Call came in");
+    expect(localizedText(label, ["hi-IN"])).toBe("कॉल आई");
+    expect(localizedText(label, ["EN-gb"])).toBe("Entered");
+    // The agent's languages in their order: the first one the provider wrote wins.
+    expect(localizedText(label, ["ta", "hi", "en"])).toBe("कॉल आई");
+  });
+
+  it("finds nothing rather than another language, so the agent application uses its own word", () => {
+    expect(localizedText(label, ["ta"])).toBeUndefined();
+    expect(localizedText(label, [])).toBeUndefined();
+    expect(localizedText(undefined, ["en"])).toBeUndefined();
+    // A tag sharing letters is not the same language: "e" is no prefix of "en".
+    expect(localizedText({ e: "x" } as never, ["en"])).toBeUndefined();
   });
 
   it("names the breaks a contact centre runs, once each", () => {
@@ -263,15 +293,16 @@ describe("browserSessionKey", () => {
 
 describe("historyStepExpectsAPerson", () => {
   it("says which steps have a person, so an absent agent can be read correctly", () => {
-    // queued is the only step nobody takes part in: an absent agent there is not a gap.
-    expect(historyStepExpectsAPerson("queued")).toBe(false);
+    // Nobody takes part in arrived or queued: an absent agent there is not a gap.
+    const nobody: HistoryStep[] = ["arrived", "queued"];
+    for (const step of nobody) expect(historyStepExpectsAPerson(step)).toBe(false);
     // The control that matters: every other step does expect one, so an absent agent on any
     // of them means "handled, could not attribute" rather than "nobody involved".
-    const everyStep: HistoryStep[] = ["queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"];
-    for (const step of everyStep.filter(step => step !== "queued")) {
+    const everyStep: HistoryStep[] = ["arrived", "queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"];
+    for (const step of everyStep.filter(step => !nobody.includes(step))) {
       expect(historyStepExpectsAPerson(step)).toBe(true);
     }
-    expect(HISTORY_STEPS_WITH_A_PERSON).toEqual(everyStep.filter(step => step !== "queued"));
+    expect(HISTORY_STEPS_WITH_A_PERSON).toEqual(everyStep.filter(step => !nobody.includes(step)));
   });
 });
 
@@ -295,6 +326,6 @@ describe("every dial has an outcome", () => {
     expect(MUTED_BY).toEqual(["host", "station"]);
     expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);
     for (const step of HISTORY_STEPS_THAT_DIAL) expect(historyStepDials(step)).toBe(true);
-    for (const step of ["queued", "offered", "answered", "held", "muted"] as const) expect(historyStepDials(step)).toBe(false);
+    for (const step of ["arrived", "queued", "offered", "answered", "held", "muted"] as const) expect(historyStepDials(step)).toBe(false);
   });
 });

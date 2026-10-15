@@ -1119,17 +1119,18 @@ describe("testAdapter", () => {
       "event.task-audio-started", "event.task-audio-ended", "event.task-ended", "event.dial-outcome", "event.announcement", "event.queue-summary",
       "event.diagnostic", "event.team-updated", "event.team-member-updated", "event.team-member-removed", "event.team-policies-updated",
       "event.contacts-updated", "event.calendar-updated", "event.shift-updated", "event.phone-updated", "event.next-call", "event.lined-up",
+      "event.labels-updated",
     ];
     // The rich task carries browsers, history, an outcome policy, conference destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.history", "task.onCall", "task.leadAssist", "task.takenOver",
       "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp",
-      "shift", "phone", "nextCall", "linedUp", "contacts", "calendar", "team.policies",
+      "shift", "phone", "nextCall", "linedUp", "labels", "contacts", "calendar", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot, or on the team that
     // arrives once the feature is switched on.
@@ -1139,9 +1140,9 @@ describe("testAdapter", () => {
     } satisfies Snapshot<"voice">;
     const asking = teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "on-task", request: { assignmentId: "alloc-42", since: "2026-08-21T09:04:00Z" } }] } });
     expect(state(await run({ capabilities: { lead: true as const }, snapshot: reached, emitOnLeadFeatures: listener => listener(asking) })))
-      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "team.policies"]);
+      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
     const withTeam = await run({ capabilities: { lead: true as const } });
-    expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "team.policies"]);
+    expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
     expect(events(withTeam)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
     const oneByOne = await run({ capabilities: { lead: true as const }, emitOnLeadFeatures: listener => {
       listener(teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } }));
@@ -1149,7 +1150,7 @@ describe("testAdapter", () => {
       listener(teamEvent("evt-gone", { type: "team-member-removed", memberId: "A-2" }));
       listener(teamEvent("evt-policies", { type: "team-policies-updated", policies: { hold: { setting: "off", setBy: "team" } } }));
     } });
-    expect(state(oneByOne)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp"]);
+    expect(state(oneByOne)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels"]);
     expect(events(oneByOne)).toEqual(everyEvent.filter(subject => !subject.startsWith("event.team-")));
   });
 
@@ -2172,6 +2173,17 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: idle }, emitOnCapacity: l => l(later) })).toEqual([]);
     expect((await testAdapter(makeAdapter({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: idle } }).adapter, context, { collectOnly: true })).notTested).not.toContain("phone");
     expect((await testAdapter(makeAdapter().adapter, context, { collectOnly: true })).notTested).toContain("phone");
+  });
+
+  it("reaches the customer's words on the snapshot or on labels-updated, and checks them there", async () => {
+    const words = { historySteps: { arrived: { en: "New call", hi: "नई कॉल" } } };
+    const notTested = async (overrides: AdapterOverrides) => (await testAdapter(makeAdapter(overrides).adapter, context, { collectOnly: true })).notTested;
+    expect(await notTested({})).toContain("labels");
+    expect(await notTested({ snapshot: { ...conformingSnapshot, labels: words } })).not.toContain("labels");
+    const renamed = teamEvent("evt-words", { type: "labels-updated", labels: words });
+    expect(await notTested({ emitOnCapacity: l => l(renamed) })).not.toContain("labels");
+    expect(await rules({ emitOnCapacity: l => l(renamed) })).toEqual([]);
+    expect(await rules({ snapshot: { ...conformingSnapshot, labels: { historySteps: { arrived: "New call" } } } })).toEqual(["labels.historySteps.label"]);
   });
 
   it("takes the agent's day from the wire, and holds a running instant to a provider with a clock", async () => {

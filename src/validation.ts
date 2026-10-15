@@ -131,7 +131,7 @@ const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
   ready: true, "on-task": true, "on-break": true, elsewhere: true, "signed-out": true,
 });
 const HISTORY_STEPS = membersOf<HistoryStep>({
-  queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
+  arrived: true, queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
   "callback-requested": true,
 });
 const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
@@ -617,15 +617,10 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
   validateDialOutcomes(manifest, `${path}.dialOutcomes`, into);
   validatePhones(manifest, `${path}.phones`, into);
 
-  if (manifest.phaseLabels !== undefined) {
-    if (!isPlainObject(manifest.phaseLabels)) {
-      into.add("manifest.phaseLabels.shape", `${path}.phaseLabels`, "phaseLabels must be an object when present");
-    } else {
-      for (const [phase, label] of Object.entries(manifest.phaseLabels)) {
-        into.oneOf(phase, TASK_PHASES, "manifest.phaseLabels.phase", `${path}.phaseLabels.${phase}`);
-        into.filled(label, "manifest.phaseLabels.label", `${path}.phaseLabels.${phase}`, "a phase label must not be empty");
-      }
-    }
+  // Labels are the signed-in customer's, set by its own admin: a manifest is fixed when the adapter ships.
+  for (const former of ["phaseLabels", "historyStepLabels", "taskTypePresentation"]) {
+    into.require(!Object.hasOwn(manifest, former), "manifest.labels.moved", `${path}.${former}`,
+      "labels are the signed-in customer's own words and travel as Snapshot.labels and labels-updated; the manifest carries none");
   }
 
   if (manifest.runningStepReports !== undefined) {
@@ -667,27 +662,69 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
     }
   }
 
-  if (manifest.taskTypePresentation !== undefined) {
-    if (!isPlainObject(manifest.taskTypePresentation)) {
-      into.add("manifest.taskTypePresentation.shape", `${path}.taskTypePresentation`,
-        "taskTypePresentation must be an object when present");
-    } else {
-      for (const [taskType, presentation] of Object.entries(manifest.taskTypePresentation)) {
-        const at = `${path}.taskTypePresentation.${taskType}`;
-        if (!isPlainObject(presentation)) {
-          into.add("manifest.taskTypePresentation.entry", at, "each presentation must be an object");
-          continue;
-        }
-        into.filled(presentation.singular, "manifest.taskTypePresentation.singular", `${at}.singular`, "a presentation needs a singular name");
-        into.filled(presentation.plural, "manifest.taskTypePresentation.plural", `${at}.plural`, "a presentation needs a plural name");
-        if (presentation.referenceLabel !== undefined) {
-          into.filled(presentation.referenceLabel, "manifest.taskTypePresentation.referenceLabel", `${at}.referenceLabel`,
-            "referenceLabel must not be empty when present");
-        }
+  return into.violations;
+}
+
+/** Language tags as BCP 47 writes them: a language, then subtags of up to eight letters or digits. */
+const LANGUAGE_TAG = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*$/;
+
+/** The customer's own words, as `Snapshot.labels` and `labels-updated` carry them. */
+export function validateLabels(value: unknown, path = "labels"): ProtocolViolation[] {
+  const into = new Collector();
+  validateLabelsInto(value, path, into);
+  return into.violations;
+}
+
+function validateLabelsInto(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("labels.shape", path, "labels are an object, empty when the customer set none");
+    return;
+  }
+  for (const [field, rule, allowed] of [["phases", "phase", TASK_PHASES], ["historySteps", "step", HISTORY_STEPS]] as const) {
+    if (value[field] === undefined) continue;
+    if (!isPlainObject(value[field])) {
+      into.add(`labels.${field}.shape`, `${path}.${field}`, `${field} must be an object when present`);
+      continue;
+    }
+    for (const [key, label] of Object.entries(value[field])) {
+      // Renames only: a label never adds a phase or a step the protocol does not have.
+      into.oneOf(key, allowed, `labels.${field}.${rule}`, `${path}.${field}.${key}`);
+      validateLocalizedText(label, `labels.${field}.label`, `${path}.${field}.${key}`, into);
+    }
+  }
+  if (value.taskTypes !== undefined) {
+    if (!isPlainObject(value.taskTypes)) {
+      into.add("labels.taskTypes.shape", `${path}.taskTypes`, "taskTypes must be an object when present");
+      return;
+    }
+    for (const [taskType, presentation] of Object.entries(value.taskTypes)) {
+      const at = `${path}.taskTypes.${taskType}`;
+      if (!isPlainObject(presentation)) {
+        into.add("labels.taskTypes.entry", at, "each task type's names must be an object");
+        continue;
+      }
+      validateLocalizedText(presentation.singular, "labels.taskTypes.singular", `${at}.singular`, into);
+      validateLocalizedText(presentation.plural, "labels.taskTypes.plural", `${at}.plural`, into);
+      if (presentation.referenceLabel !== undefined) {
+        validateLocalizedText(presentation.referenceLabel, "labels.taskTypes.referenceLabel", `${at}.referenceLabel`, into);
       }
     }
   }
-  return into.violations;
+}
+
+/** One text per language: at least one, each tag well-formed and stated once, each text filled. */
+function validateLocalizedText(value: unknown, rule: string, path: string, into: Collector): void {
+  if (!isPlainObject(value) || Object.keys(value).length === 0) {
+    into.add(rule, path, `a label is one text per language, keyed by language tag, as { en: "On Call" }; received ${describeValue(value)}`);
+    return;
+  }
+  const seen = new Set<string>();
+  for (const [tag, text] of Object.entries(value)) {
+    if (!into.require(LANGUAGE_TAG.test(tag), `${rule}.language`, `${path}.${tag}`, `${describeValue(tag)} is not a language tag such as en, hi or en-IN`)) continue;
+    into.require(!seen.has(tag.toLowerCase()), `${rule}.language.unique`, `${path}.${tag}`, "language tags are case-insensitive, and each language is stated once");
+    seen.add(tag.toLowerCase());
+    into.filled(text, `${rule}.text`, `${path}.${tag}`, "a label must not be empty in any language it is given in");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1018,6 +1055,11 @@ function validateHistory(value: unknown, path: string, into: Collector, task: { 
       return;
     }
     into.oneOf(entry.step, HISTORY_STEPS, "task.history.step", `${at}.step`);
+    // A call arrives once, before anything else happens to it.
+    if (entry.step === "arrived") {
+      into.require(index === 0, "task.history.arrived.first", `${at}.step`,
+        "arrived is when the call reached the provider: the first step, and only once");
+    }
     if (into.timestamp(entry.at, "task.history.at", `${at}.at`)) {
       // The record is one entry per occurrence, oldest first: a second hold is a second entry
       // after the first, never a revision of it or an entry filed out of its turn.
@@ -1059,9 +1101,9 @@ function validateHistory(value: unknown, path: string, into: Collector, task: { 
     if (entry.by !== undefined) {
       into.require(isUserId(entry.by), "task.history.by", `${at}.by`,
         "by must be a non-empty user id; omit it when the person cannot be identified");
-      // On `queued` nobody takes part, so there is nothing to name.
-      into.require(entry.step !== "queued", "task.history.by.unexpected", `${at}.by`,
-        "a queued step names nobody");
+      // On `arrived` and `queued` nobody takes part, so there is nothing to name.
+      into.require(entry.step !== "arrived" && entry.step !== "queued", "task.history.by.unexpected", `${at}.by`,
+        `${describeValue(entry.step)} names nobody`);
     }
     // A step that dialled says where to and, when a host placed it, which dial; no other step dialled.
     const dialled = typeof entry.step === "string" && (HISTORY_STEPS_THAT_DIAL as readonly string[]).includes(entry.step);
@@ -1992,6 +2034,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   requireClockInto(snapshot, manifest, path, into);
   // The agent's own day, as the provider counts it: the same numbers their lead sees.
   if (snapshot.shift !== undefined) validateShiftInto(snapshot.shift, `${path}.shift`, into, "shift");
+  if (snapshot.labels !== undefined) validateLabelsInto(snapshot.labels, `${path}.labels`, into);
   // The phone as the platform sees it: owed by a provider that declares it can, and by nobody else.
   const seesPhone = isPlainObject(manifest) && manifest.phoneStatus === true;
   // The agent's own queue: the ask and the lined-up call need an assignment at work to be next
@@ -2353,6 +2396,9 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       break;
     case "shift-updated":
       validateShiftInto(event.shift, `${at}.shift`, into, "shift");
+      break;
+    case "labels-updated":
+      validateLabelsInto(event.labels, `${at}.labels`, into);
       break;
     case "calendar-updated":
       into.require(idle.calendar === true, "event.calendar.capability", `${at}.calendar`,
