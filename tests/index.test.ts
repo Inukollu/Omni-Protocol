@@ -22,6 +22,7 @@ import {
   sameCapabilities,
   defineAdapter,
   historyStepExpectsAPerson,
+  historySpans,
   isAllowedBrowserUrl,
   localizedText,
   negotiateProtocolVersion,
@@ -31,6 +32,7 @@ import {
   userKey,
   type BrowserSessionKeyInput,
   type HistoryStep,
+  type TaskHistoryStep,
   type ProviderEvent,
   type TaskBrowser,
   type TaskPhase,
@@ -288,6 +290,32 @@ describe("browserSessionKey", () => {
     // would pass for a function that returned something different every time.
     expect(browserSessionKey({ providerId: "Acme", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) }))
       .toBe(browserSessionKey({ providerId: "Acme", assignmentId: "t2-a", taskType: "Support", browser: reusing(scheme) }));
+  });
+});
+
+describe("historySpans", () => {
+  it("shows consecutive entries of one step as one span, and keeps every entry", () => {
+    const answered: TaskHistoryStep = { step: "answered", at: "2026-08-21T08:59:42Z", by: "a-17" };
+    const hold: TaskHistoryStep = { step: "held", at: "2026-08-21T09:00:00Z", seconds: 20, by: "a-17" };
+    const steps: TaskHistoryStep[] = [
+      { step: "arrived", at: "2026-08-21T08:58:40Z", seconds: 2 },
+      { step: "self-service", at: "2026-08-21T08:58:42Z", seconds: 3 },
+      { step: "self-service", at: "2026-08-21T08:58:45Z", seconds: 27 },
+      { step: "queued", at: "2026-08-21T08:59:12Z", seconds: 30 },
+      answered,
+      hold,
+      { step: "held", at: "2026-08-21T09:01:00Z", by: "a-17" },
+    ];
+    const spans = historySpans(steps);
+    expect(spans.map(span => [span.step, span.entries.length, span.seconds])).toEqual([
+      ["arrived", 1, 2], ["self-service", 2, 30], ["queued", 1, 30],
+      // An answer still running, and a hold still running, leave their spans without a total rather than one that misses them.
+      ["answered", 1, undefined], ["held", 2, undefined],
+    ]);
+    expect(spans.map(span => span.at)).toEqual(["2026-08-21T08:58:40Z", "2026-08-21T08:58:42Z", "2026-08-21T08:59:12Z", "2026-08-21T08:59:42Z", "2026-08-21T09:00:00Z"]);
+    // The same step apart is two spans: grouping is only of neighbours.
+    expect(historySpans([hold, answered, { ...hold, seconds: 5 }]).map(span => span.step)).toEqual(["held", "answered", "held"]);
+    expect(historySpans([])).toEqual([]);
   });
 });
 

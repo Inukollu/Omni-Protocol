@@ -443,13 +443,16 @@ arrive omits it rather than guessing an instant. Omni shows it as *Incoming call
 Amazon Connect keeps an initiation time, Genesys Cloud a conversation start and NICE CXone a contact
 start, separate from the queue.
 
-**Time with the IVR or a bot is `self-service`.** The caller pressing through a menu, talking to a
-voice bot, or a chat customer with a bot before a person takes over: one step for all of them, on
-every channel, the way Genesys Cloud and NICE CXone report IVR and bot time together as
-self-service. Nobody from the provider takes part, so it has no `by`. `at` is when the customer
-entered it and `seconds`, once it ended, how long they spent there; a customer sent back to a menu
-after a transfer has a second entry, one per visit, as a second queue is a second `queued`. A
-customer that words it *IVR* for its agents does so in `labels.historySteps`.
+**Time the platform handles the customer before a queue is `self-service`.** The caller pressing
+through a menu, talking to a voice bot, hearing an announcement, or waiting while the platform
+looks them up; a chat customer with a bot before a person takes over: one step for all of them, on
+every channel. Genesys Cloud and NICE CXone report IVR and bot time as self-service; here it also
+takes in the routing time Genesys Cloud keeps as a separate system segment, so a provider that
+measures the gap before each queue without knowing what played in it reports it here rather than
+nowhere. It is therefore not evidence that the customer used a menu. Nobody from the provider takes
+part, so it has no `by`. `at` is when it began and `seconds`, once it ended, how long it lasted; a
+customer routed again after a transfer has a second entry, one per visit, as a second queue is a
+second `queued`. A customer that words it *IVR* for its agents does so in `labels.historySteps`.
 
 **A callback carries the call it comes back to.** When a caller asks to be called back, or an agent
 arranges it, the provider writes a `callback-requested` step: `by` names the agent who arranged it, and
@@ -483,7 +486,13 @@ provider closed it. One publisher of the closed leg, and no order between them t
 hold, at the entry's `at` plus its `seconds`, and nothing is lost by not naming it twice. The same goes for every step: two mutes are two
 `muted` entries, and a call that joined two queues -- a menu's, then this one -- has two `queued`
 entries, one per join. Order is enforced: an entry earlier than the one before it is refused
-(`task.history.order`). **Intervals between steps are the agent application's to subtract**, never a
+(`task.history.order`).
+
+**Shown as spans.** The record keeps one entry per occurrence, because leads count them — two holds
+are two holds, the way Amazon Connect counts holds per contact, and two queues say which queue the
+call waited in. The agent sees consecutive entries of one step as one span: `historySpans(steps)`
+groups them, as Genesys Cloud keeps segments apart in its record and joins them in the agent's
+timeline. A provider never merges entries to get that look. **Intervals between steps are the agent application's to subtract**, never a
 total the provider adds: *time to offer*, from the call joining its queue to the agent's screen lighting
 up, is the `offered` entry's `at` minus the last `queued` entry's, and the ring is outside it.
 `queueSeconds` keeps the industry's meaning -- the whole wait until somebody answered -- and is not
