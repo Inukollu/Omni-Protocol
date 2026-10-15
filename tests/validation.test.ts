@@ -29,6 +29,7 @@ import {
   validateTeamMembers,
   validateNextCall,
   validateLinedUp,
+  validateLabels,
   validatePhoneState,
   validateUserDetails,
   validateRecordingOutcome,
@@ -222,7 +223,7 @@ describe("validateManifest", () => {
     ["no version this host speaks", manifest({ supportedProtocolVersions: [99] }), "manifest.supportedProtocolVersions.interoperable"],
     ["no authentication method", manifest({ authenticationMethods: [] }), "manifest.authenticationMethods"],
     ["an unknown authentication method", manifest({ authenticationMethods: ["magic-link"] }), "manifest.authenticationMethod"],
-    ["an unknown phase label", manifest({ phaseLabels: { ringing: "Ringing" } }), "manifest.phaseLabels.phase"],
+    ["labels in the manifest", manifest({ phaseLabels: { pending: { en: "Ringing" } } }), "manifest.labels.moved"],
   ])("rejects %s", (_label, value, rule) => {
     expect(rules(validateManifest(value))).toContain(rule);
     // The control in the same test: the conforming manifest is not refused for it.
@@ -874,6 +875,39 @@ describe("validateTeamMembers", () => {
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", phone: { ...idle, status: "busy" } }] }))).toEqual(["phone.status"]);
   });
 
+  it("carries the customer's own words on the snapshot and on labels-updated, per language", () => {
+    const singular = { en: "Support call", hi: "सहायता कॉल" };
+    const plural = { en: "Support calls", hi: "सहायता कॉलें" };
+    const words = {
+      phases: { pending: { en: "Ringing", hi: "घंटी बज रही है" } },
+      historySteps: { arrived: { en: "New call", hi: "नई कॉल" }, queued: { en: "Waiting" } },
+      taskTypes: { Support: { singular, plural, referenceLabel: { en: "Case" } } },
+    };
+    expect(rules(validateSnapshot(snapshot({ labels: words }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ labels: "x" }), manifest()))).toEqual(["labels.shape"]);
+    const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
+    expect(check({ type: "labels-updated", labels: words })).toEqual([]);
+    // Empty is the admin having set nothing: the agent application's own words throughout.
+    expect(check({ type: "labels-updated", labels: {} })).toEqual([]);
+    expect(check({ type: "labels-updated" })).toEqual(["labels.shape"]);
+    const labels = (over: Record<string, unknown>) => rules(validateLabels(over));
+    // Renames only: no phase or step comes into being by being labelled.
+    expect(labels({ phases: { ringing: { en: "Ringing" } } })).toEqual(["labels.phases.phase"]);
+    expect(labels({ historySteps: { processing: { en: "Processing" } } })).toEqual(["labels.historySteps.step"]);
+    // One text per language; a single string is one language for everybody, and is refused.
+    expect(labels({ phases: { pending: "Ringing" } })).toEqual(["labels.phases.label"]);
+    expect(labels({ historySteps: { arrived: "Entered" } })).toEqual(["labels.historySteps.label"]);
+    expect(labels({ phases: { pending: {} } })).toEqual(["labels.phases.label"]);
+    expect(labels({ phases: { pending: { en: "" } } })).toEqual(["labels.phases.label.text"]);
+    expect(labels({ phases: { pending: { english: "Ringing" } } })).toEqual(["labels.phases.label.language"]);
+    expect(labels({ phases: { pending: { "en-IN": "Ringing", "en-in": "Ringing" } } })).toEqual(["labels.phases.label.language.unique"]);
+    expect(labels({ taskTypes: { Support: "call" } })).toEqual(["labels.taskTypes.entry"]);
+    expect(labels({ taskTypes: { Support: { plural } } })).toEqual(["labels.taskTypes.singular"]);
+    expect(labels({ taskTypes: { Support: { singular } } })).toEqual(["labels.taskTypes.plural"]);
+    expect(labels({ taskTypes: { Support: { singular: "Support call", plural } } })).toEqual(["labels.taskTypes.singular"]);
+    expect(labels({ taskTypes: { Support: { singular, plural, referenceLabel: { en: "" } } } })).toEqual(["labels.taskTypes.referenceLabel.text"]);
+  });
+
   it("carries the agent's own day on their snapshot and on shift-updated, in the shape their lead sees", () => {
     const at = "2026-08-21T08:58:12Z";
     const day = { signedInAt: at, talkSeconds: 4210, holdSeconds: 305, breakSeconds: 900, tasksHandled: 12, events: [{ at, kind: "signed-in" }] };
@@ -1470,11 +1504,26 @@ describe("the other direction, everywhere", () => {
     expect(rules(validateTask(task({ attributes: [order, order] }), voice))).toEqual(["task.attribute.unique"]);
   });
 
-  it("names nobody on a queued step", () => {
+  it("names nobody on an arrived or queued step", () => {
     const step = (entry: Record<string, unknown>) => rules(validateTask(task({ history: { steps: [{ at: "2026-08-21T09:00:00Z", ...entry }] } }), voice));
     expect(step({ step: "answered", by: "A-1" })).toEqual([]);
     expect(step({ step: "queued" })).toEqual([]);
     expect(step({ step: "queued", by: "A-1" })).toEqual(["task.history.by.unexpected"]);
+    expect(step({ step: "arrived", seconds: 20 })).toEqual([]);
+    expect(step({ step: "arrived", by: "A-1" })).toEqual(["task.history.by.unexpected"]);
+  });
+
+  it("starts the record where the call arrived, once", () => {
+    const history = (steps: unknown[]) => rules(validateTask(task({ history: { steps } }), voice));
+    const arrived = { step: "arrived", at: "2026-08-21T08:58:40Z", seconds: 20 };
+    const queued = { step: "queued", at: "2026-08-21T08:59:00Z", seconds: 41 };
+    const answered = { step: "answered", at: "2026-08-21T08:59:41Z", by: "a-17" };
+    expect(history([arrived, queued, answered])).toEqual([]);
+    // A provider that did not see the arrival omits it.
+    expect(history([queued, answered])).toEqual([]);
+    // Anywhere but first is out of its turn, even at an instant that keeps the order.
+    expect(history([queued, { ...arrived, at: "2026-08-21T08:59:10Z" }, answered])).toEqual(["task.history.arrived.first"]);
+    expect(history([arrived, { ...arrived, at: "2026-08-21T08:58:50Z" }, queued])).toEqual(["task.history.arrived.first"]);
   });
 
   it("declares the capability that shows a task's browsers", () => {
@@ -1617,14 +1666,11 @@ describe("rules that had no test", () => {
 
   it("manifest presentation, labels, dial, and personal browser", () => {
     const m = (over: Record<string, unknown>) => rules(validateManifest(manifest(over)));
-    expect(m({ taskTypePresentation: { Support: { singular: "Support call", plural: "Support calls", referenceLabel: "Case" } } })).toEqual([]);
-    expect(m({ taskTypePresentation: "Support" })).toEqual(["manifest.taskTypePresentation.shape"]);
-    expect(m({ taskTypePresentation: { Support: "call" } })).toEqual(["manifest.taskTypePresentation.entry"]);
-    expect(m({ taskTypePresentation: { Support: { plural: "Support calls" } } })).toEqual(["manifest.taskTypePresentation.singular"]);
-    expect(m({ taskTypePresentation: { Support: { singular: "Support call" } } })).toEqual(["manifest.taskTypePresentation.plural"]);
-    expect(m({ taskTypePresentation: { Support: { singular: "Support call", plural: "Support calls", referenceLabel: "" } } })).toEqual(["manifest.taskTypePresentation.referenceLabel"]);
-    expect(m({ phaseLabels: { pending: "Ringing" } })).toEqual([]);
-    expect(m({ phaseLabels: { pending: "" } })).toEqual(["manifest.phaseLabels.label"]);
+    // Labels are the signed-in customer's own words, so a manifest fixed at release carries none.
+    expect(m({})).toEqual([]);
+    expect(m({ phaseLabels: { pending: { en: "Ringing" } } })).toEqual(["manifest.labels.moved"]);
+    expect(m({ historyStepLabels: { arrived: { en: "Entered" } } })).toEqual(["manifest.labels.moved"]);
+    expect(m({ taskTypePresentation: { Support: { singular: { en: "Call" }, plural: { en: "Calls" } } } })).toEqual(["manifest.labels.moved"]);
     expect(m({ idleCapabilities: { dial: { destinations: "any-number" } }, dialOutcomes: ["answered", "no-answer"] })).toEqual([]);
     expect(m({ idleCapabilities: { dial: {} }, dialOutcomes: ["answered", "no-answer"] })).toEqual(["manifest.dial.destinations"]);
     // Stated, never defaulted: which navigations the access applies to is required.
@@ -2683,7 +2729,9 @@ describe("every refusal of the wrong shape names its rule", () => {
     ["personal browser list", () => m({ idleCapabilities: { personalBrowser: { access: { mode: "allow-list", allowList: "x" } } } }),
       () => m({ idleCapabilities: { personalBrowser: { access: { mode: "allow-list", allowList: ["crm.example.com"] } } } }), "manifest.personalBrowser.access.list"],
     ["dial", () => m({ idleCapabilities: { dial: "x" } }), () => m({ idleCapabilities: { dial: { destinations: "any-number" } }, dialOutcomes: ["answered"] }), "manifest.dial.shape"],
-    ["phase labels", () => m({ phaseLabels: "x" }), () => m({}), "manifest.phaseLabels.shape"],
+    ["labels", () => validateLabels("x"), () => validateLabels({}), "labels.shape"],
+    ["phase labels", () => validateLabels({ phases: "x" }), () => validateLabels({ phases: {} }), "labels.phases.shape"],
+    ["task type labels", () => validateLabels({ taskTypes: "x" }), () => validateLabels({ taskTypes: {} }), "labels.taskTypes.shape"],
     ["conference destination", () => t({ capabilities: { conference: { destinations: ["x"] } } }), () => t({ capabilities: { conference: { destinations: [{ id: "tier2", label: "Tier 2" }] } } }), "task.destination.shape"],
     ["outcomes", () => t({ capabilities: { outcomes: "x" } }), () => t({ capabilities: { outcomes: true } }), "task.outcomes.shape"],
     ["outcome code", () => t({ capabilities: { outcomes: { codes: ["x"] } } }), () => t({ capabilities: { outcomes: { codes: [{ id: "resolved", label: "Resolved" }] } } }), "task.outcome.shape"],

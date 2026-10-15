@@ -409,6 +409,7 @@ first, and what they add up to before this agent:
 ```ts
 history: {
   steps: [
+    { step: "arrived",     at: "2026-08-21T00:58:40Z", seconds: 20 },
     { step: "queued",      at: "2026-08-21T00:59:00Z", seconds: 41 },
     { step: "answered",    at: "2026-08-21T00:59:41Z", seconds: 312, by: "a-17" },
     { step: "held",        at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" },
@@ -429,8 +430,17 @@ something else, which will arrive under its own name and must not be folded in h
 
 It rides in the snapshot and is replaced whole like everything else there.
 
-Steps are `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conferenced`,
+Steps are `arrived`, `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conferenced`,
 `unanswered`, `callback-requested`, and each is defined on `TaskHistoryStep`.
+
+**The record starts where the call started.** `arrived` is the instant the call reached the
+provider, before any menu or queue, and its `seconds`, when the provider measured them, are how
+long it took to move on to the next step. Nobody takes part in it, so it never has `by`. It is the
+first step and appears once (`task.history.arrived.first`); a provider that did not see the call
+arrive omits it rather than guessing an instant. Omni shows it as *Incoming call* unless the customer words it in
+`labels.historySteps`, the way
+Amazon Connect keeps an initiation time, Genesys Cloud a conversation start and NICE CXone a contact
+start, separate from the queue.
 
 **A callback carries the call it comes back to.** When a caller asks to be called back, or an agent
 arranges it, the provider writes a `callback-requested` step: `by` names the agent who arranged it, and
@@ -465,7 +475,7 @@ hold, at the entry's `at` plus its `seconds`, and nothing is lost by not naming 
 `muted` entries, and a call that joined two queues -- a menu's, then this one -- has two `queued`
 entries, one per join. Order is enforced: an entry earlier than the one before it is refused
 (`task.history.order`). **Intervals between steps are the agent application's to subtract**, never a
-total the provider adds: *time to offer*, from the call's arrival to the agent's screen lighting
+total the provider adds: *time to offer*, from the call joining its queue to the agent's screen lighting
 up, is the `offered` entry's `at` minus the last `queued` entry's, and the ring is outside it.
 `queueSeconds` keeps the industry's meaning -- the whole wait until somebody answered -- and is not
 that interval. **The second is the record's grain.** A duration is a positive whole number of
@@ -541,7 +551,7 @@ Four rules a provider has to keep:
   wrongly; carrying the name here would also copy it into every task and leave it to go stale.
 
 **An absent `by` means different things on different steps, and both are legitimate.** On
-`queued` nobody takes part, so there is nothing to name. On every other step somebody did — see
+`arrived` and `queued` nobody takes part, so there is nothing to name. On every other step somebody did — see
 `HISTORY_STEPS_WITH_A_PERSON` and `historyStepExpectsAPerson()` — so an absent `by` there says
 *this was handled and the provider cannot say by whom*. The one step that is never unattributed is
 `muted`: the agent application has exactly one agent and the provider knows who, so `by` is required there
@@ -554,7 +564,7 @@ worse than one saying plainly it could not attribute a leg — and far better th
 nothing because a single leg could not be named.
 
 An agent application must render the two differently. Showing an unattributed `answered` the same way as
-`queued` tells the agent nobody was involved, which is not what was said. Omni renders it as
+`queued` or `arrived` tells the agent nobody was involved, which is not what was said. Omni renders it as
 *"not recorded"* in the place the name would go.
 
 Omit `history` entirely when the provider cannot observe the steps. Empty `steps` is a

@@ -232,12 +232,36 @@ export type IdleCapabilities<C extends Channel = Channel> = {
   contacts?: true;
 } & (C extends "voice" ? { dial?: DialCapability } : { dial?: never });
 
-export type TaskPhaseLabels = Readonly<Partial<Record<TaskPhase, string>>>;
+/** A BCP 47 language tag: `en`, `hi`, `en-IN`. */
+export type LanguageTag = string;
+
+/**
+ * One display text per language the provider words it in, keyed by language tag. The agent
+ * application shows the one for the agent's language, found with `localizedText()`, and its own
+ * word when the provider gave none in that language.
+ */
+export type LocalizedText = Readonly<Record<LanguageTag, string>>;
+
+export type TaskPhaseLabels = Readonly<Partial<Record<TaskPhase, LocalizedText>>>;
+
+export type HistoryStepLabels = Readonly<Partial<Record<HistoryStep, LocalizedText>>>;
 
 export interface TaskTypePresentation {
-  singular: string;
-  plural: string;
-  referenceLabel?: string;
+  singular: LocalizedText;
+  plural: LocalizedText;
+  referenceLabel?: LocalizedText;
+}
+
+/**
+ * What the signed-in customer calls things, as its own admin set them in the provider: one
+ * customer's agents read "New call" where another's read "Entered". Each part is partial and
+ * renames only; the values underneath stay the protocol's, so counts by phase or step add up.
+ */
+export interface Labels {
+  phases?: TaskPhaseLabels;
+  historySteps?: HistoryStepLabels;
+  /** Keyed by `taskType`. An entry replaces the channel default outright rather than merging. */
+  taskTypes?: Readonly<Record<string, TaskTypePresentation>>;
 }
 
 export interface Manifest<C extends Channel = Channel> {
@@ -259,9 +283,6 @@ export interface Manifest<C extends Channel = Channel> {
   timeCheck?: true;
   /** Provider uses its own timestamps for final records; host timestamps are advisory. Omission makes no trust promise. */
   timestampAuthority?: "provider";
-  phaseLabels?: TaskPhaseLabels;
-  /** Keyed by `taskType`. An entry replaces the channel default outright rather than merging. */
-  taskTypePresentation?: Record<string, TaskTypePresentation>;
   /** The organisation's whole ladder, stated outright, `person` included. Omitted for the typical four, `DEFAULT_LEVELS`. */
   orgLevels?: LevelDeclaration[];
   /**
@@ -881,6 +902,7 @@ export type TaskAttribute = TaskAttributeBase & (
 );
 
 export type HistoryStep =
+  | "arrived"
   | "queued"
   | "offered"
   | "answered"
@@ -926,7 +948,7 @@ export interface TaskHistoryStep {
    */
   seconds?: DurationSeconds;
   /**
-   * Who took part. Absent on `queued`, where nobody does; absent on `callback-requested`, where the
+   * Who took part. Absent on `arrived` and `queued`, where nobody does; absent on `callback-requested`, where the
    * caller chose it in the queue, and present there when an agent arranged it; absent on any other
    * step means the provider could not attribute it, which is a different claim and a legitimate one.
    */
@@ -1711,6 +1733,8 @@ export interface Snapshot<C extends Channel = Channel> {
   /** The call waiting in the agent's own queue, while one is; replaced whole by `lined-up`. */
   linedUp?: LinedUpCall;
   team?: TeamMembers;
+  /** The signed-in customer's own words, from its admin's settings; replaced whole by `labels-updated`. Omitted where it set none. */
+  labels?: Labels;
 }
 
 /**
@@ -1781,7 +1805,9 @@ export type ProviderEvent<C extends Channel = Channel> =
   /** The agent's ask for the next call as it now stands: present while it stands, absent once met, withdrawn or outlived. */
   | { type: "next-call"; nextCall?: NextCallRequest }
   /** The agent's own queue as it now stands: the call lined up for them, or nothing. */
-  | { type: "lined-up"; linedUp?: LinedUpCall };
+  | { type: "lined-up"; linedUp?: LinedUpCall }
+  /** The customer's words as its admin now has them, whole: present with what it set, empty when it set nothing. */
+  | { type: "labels-updated"; labels: Labels };
 
 /**
  * The `Provider` prefix survives here for a mechanical reason rather than a naming one: `Event`
@@ -1938,7 +1964,30 @@ export const DEFAULT_TASK_TYPE_PRESENTATION = {
   voice: { singular: "Call", plural: "Calls", referenceLabel: "Call ID" },
   chat: { singular: "Chat", plural: "Chats", referenceLabel: "Chat ID" },
   email: { singular: "Email", plural: "Emails", referenceLabel: "Email ID" },
-} as const satisfies Readonly<Record<Channel, TaskTypePresentation>>;
+} as const satisfies Readonly<Record<Channel, { singular: string; plural: string; referenceLabel: string }>>;
+
+export const DEFAULT_HISTORY_STEP_LABELS = {
+  arrived: "Incoming call", queued: "Queued", offered: "Offered", answered: "Answered", held: "On hold",
+  muted: "Muted", transferred: "Transferred", conferenced: "Conferenced", unanswered: "Unanswered",
+  "callback-requested": "Callback requested",
+} as const satisfies Readonly<Record<HistoryStep, string>>;
+
+/**
+ * The provider's text for the first of `languages` it has, matched as BCP 47 lookup does: the tag
+ * whole, then with its last subtag dropped, so `hi-IN` finds `hi`. Undefined when it has none of
+ * them, and the agent application shows its own word; never another language in their place.
+ */
+export function localizedText(text: LocalizedText | undefined, languages: readonly LanguageTag[]): string | undefined {
+  if (text === undefined) return undefined;
+  const byTag = new Map(Object.entries(text).map(([tag, value]) => [tag.toLowerCase(), value]));
+  for (const language of languages) {
+    for (let tag = language.toLowerCase(); tag !== ""; tag = tag.includes("-") ? tag.slice(0, tag.lastIndexOf("-")) : "") {
+      const found = byTag.get(tag);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Utilities.
@@ -1965,8 +2014,9 @@ export const userKey = (providerId: string, userId: UserId): string =>
   `${encodeURIComponent(providerId)}:${encodeURIComponent(userId)}`;
 
 /**
- * Every history step somebody from the provider takes part in. `queued` is the one nobody does, and
- * `callback-requested` is the caller's choice unless an agent arranged it, so neither is here.
+ * Every history step somebody from the provider takes part in. `arrived` and `queued` are the ones
+ * nobody does, and `callback-requested` is the caller's choice unless an agent arranged it, so none
+ * of them is here.
  */
 export const HISTORY_STEPS_WITH_A_PERSON = [
   "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered",
@@ -1980,7 +2030,7 @@ export const historyStepDials = (step: HistoryStep): boolean =>
 
 // Pinned both ways: a step added to `HistoryStep` has to be placed here, and a step listed here
 // has to exist there. `satisfies` on the list covers the second; this statement covers the first.
-true satisfies [Exclude<HistoryStep, "queued" | "callback-requested">] extends [(typeof HISTORY_STEPS_WITH_A_PERSON)[number]] ? true : false;
+true satisfies [Exclude<HistoryStep, "arrived" | "queued" | "callback-requested">] extends [(typeof HISTORY_STEPS_WITH_A_PERSON)[number]] ? true : false;
 
 /** Whether an absent `by` means "could not attribute" rather than "nobody was involved". */
 export function historyStepExpectsAPerson(step: HistoryStep): boolean {

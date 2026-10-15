@@ -233,8 +233,6 @@ type Manifest<C extends Channel = Channel> = {
   idleCapabilities?: IdleCapabilities<C>;
   timeCheck?: true;
   timestampAuthority?: "provider";
-  phaseLabels?: TaskPhaseLabels;
-  taskTypePresentation?: Record<string, TaskTypePresentation>;
   orgLevels?: LevelDeclaration[];
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   phones?: C extends "voice" ? Phone[] : never;
@@ -259,12 +257,22 @@ These serialized strings are stable protocol values and must not be renamed or r
 ### Presentation
 
 ```ts
-type TaskPhaseLabels = Readonly<Partial<Record<TaskPhase, string>>>;
+type LanguageTag = string; // BCP 47: "en", "hi", "en-IN"
+type LocalizedText = Readonly<Record<LanguageTag, string>>;
+
+type TaskPhaseLabels = Readonly<Partial<Record<TaskPhase, LocalizedText>>>;
+type HistoryStepLabels = Readonly<Partial<Record<HistoryStep, LocalizedText>>>;
 
 type TaskTypePresentation = {
-  singular: string;
-  plural: string;
-  referenceLabel?: string;
+  singular: LocalizedText;
+  plural: LocalizedText;
+  referenceLabel?: LocalizedText;
+};
+
+type Labels = {
+  phases?: TaskPhaseLabels;
+  historySteps?: HistoryStepLabels;
+  taskTypes?: Readonly<Record<string, TaskTypePresentation>>;
 };
 ```
 
@@ -524,6 +532,7 @@ type Snapshot = {
   nextCall?: NextCallRequest;
   linedUp?: LinedUpCall;
   team?: TeamMembers;
+  labels?: Labels;
 };
 
 type AgentCapacity = {
@@ -686,6 +695,7 @@ type TaskAttribute = TaskAttributeBase & (
 );
 
 type HistoryStep =
+  | "arrived"
   | "queued"
   | "offered"
   | "answered"
@@ -1218,7 +1228,8 @@ type ProviderEvent =
   | { type: "shift-updated"; shift: Shift }
   | { type: "phone-updated"; phone: PhoneState }
   | { type: "next-call"; nextCall?: NextCallRequest }
-  | { type: "lined-up"; linedUp?: LinedUpCall };
+  | { type: "lined-up"; linedUp?: LinedUpCall }
+  | { type: "labels-updated"; labels: Labels };
 
 type ProviderEventEnvelope = {
   id: string;
@@ -1351,8 +1362,8 @@ const OMNI_FAILURE_CODES = [
 type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
 ```
 
-`HISTORY_STEPS_WITH_A_PERSON` is every `HistoryStep` except `queued`, which is the one nobody
-takes part in. `historyStepExpectsAPerson()` tests membership.
+`HISTORY_STEPS_WITH_A_PERSON` is every `HistoryStep` except `arrived` and `queued`, which nobody
+takes part in, and `callback-requested`, which the caller may choose alone. `historyStepExpectsAPerson()` tests membership.
 
 ### Failure and validation
 
@@ -1373,25 +1384,82 @@ interface ProtocolViolation {
 
 ## Presentation labels
 
-Adapters may supply static display labels for canonical protocol values. Labels affect presentation
-only and cannot vary by connection, task, snapshot, or event.
+**Each customer's admin chooses the words its agents see, in each language it serves**, in the
+provider, and the provider publishes them for the signed-in customer as `Snapshot.labels`,
+replaced whole by `labels-updated` when the admin changes them. Customer A's agents read *New call*
+where customer B's read *Entered*, on the same adapter, and a change reaches agents without an
+adapter release. That is how Genesys Cloud loads an organisation's presence names at sign-in and
+pushes the change when an admin edits one, and how Amazon Connect and NICE CXone keep agent state
+names per instance or business unit. A manifest is fixed when the adapter ships, so it carries no
+labels (`manifest.labels.moved`). `labels` is omitted, or `labels-updated` carries `{}`, when the
+customer set nothing, and the agent application shows its own words throughout.
+
+```ts
+labels: {
+  phases: { "in-progress": { en: "On Call", hi: "कॉल पर" } },
+  historySteps: { arrived: { en: "New call", hi: "नई कॉल" }, queued: { en: "Waiting" } },
+  taskTypes: { Support: { singular: { en: "Support call" }, plural: { en: "Support calls" }, referenceLabel: { en: "Case" } } },
+}
+```
+
+`validateLabels(value, path?)` checks one on its own.
+
+**Every word is per language.** Every label is a
+`LocalizedText`: one text per BCP 47 language tag, as `{ en: "On Call", hi: "कॉल पर" }`. The agent
+application finds the agent's language with `localizedText(text, languages)`, which tries each of
+the agent's languages in order, the tag whole and then without its last subtag, so `hi-IN` finds
+`hi`. When the provider wrote none of them, it returns nothing and the agent application shows its
+own word; it never shows another language in their place. A single string is the former shape and
+is refused (`labels.phases.label`, `labels.historySteps.label`,
+`labels.taskTypes.singular`), as are an empty text (`….text`), a key that is not a language tag
+(`….language`) and one language given twice in different case (`….language.unique`). This is how
+Genesys Cloud words its presence definitions and NICE CXone its agent states: the value is the
+platform's, and the words are per language.
+
+The values underneath never change: a customer renames what its agents see, so a lead's counts by
+phase or by step still add up.
 
 ### Renaming a phase
 
-`manifest.phaseLabels` renames the canonical `TaskPhase` values for the agent. It never adds a
-phase or removes one.
+`labels.phases` renames the canonical `TaskPhase` values for the agent. It never adds a
+phase or removes one (`labels.phases.phase`).
 
 `TaskPhaseLabels` is `Partial` so that renaming one phase keeps the default wording for the rest —
-an adapter changing "On Call" does not restate the other five.
+a customer changing "On Call" does not restate the other five.
 
-**A task is labelled by the provider that owns it**, from that provider's manifest merged over its
+**A task is labelled by the provider that owns it**, from that provider's `labels` merged over its
 channel defaults. Two adapters may word the same phase differently and each is right about its own
 tasks: a call reads as the voice platform names it while a chat beside it reads as its own does.
 How Omni words a view spanning several providers is its own presentation problem, not a provider's.
 
+### Naming the history steps
+
+`labels.historySteps` words the `HistoryStep` values the way `labels.phases` words phases: per
+step, per language, and partial, so a customer that calls `arrived` *Entered* restates nothing
+else. It never adds a step; a provider's own stages that the protocol has no step for are not
+labelled into existence (`labels.historySteps.step`).
+
+`DEFAULT_HISTORY_STEP_LABELS` is what Omni shows when the customer words a step in none of the
+agent's languages:
+
+```ts
+const DEFAULT_HISTORY_STEP_LABELS = {
+  arrived: "Incoming call",
+  queued: "Queued",
+  offered: "Offered",
+  answered: "Answered",
+  held: "On hold",
+  muted: "Muted",
+  transferred: "Transferred",
+  conferenced: "Conferenced",
+  unanswered: "Unanswered",
+  "callback-requested": "Callback requested",
+} as const satisfies Readonly<Record<HistoryStep, string>>;
+```
+
 ### `DEFAULT_TASK_PHASE_LABELS`
 
-What Omni shows when an adapter overrides nothing.
+What Omni shows when the customer renames nothing.
 
 ```ts
 const DEFAULT_TASK_PHASE_LABELS = {
@@ -1426,14 +1494,14 @@ const DEFAULT_TASK_PHASE_LABELS = {
 
 ### Naming a kind of work
 
-`TaskTypePresentation` says what one kind of work is called. Unlike `phaseLabels`, an entry
-**replaces the channel default outright** rather than merging.
+`TaskTypePresentation` says what one kind of work is called, in `labels.taskTypes`. Unlike
+`labels.phases`, an entry **replaces the channel default outright** rather than merging.
 `singular` and `plural` are required together because pluralisation is not mechanical, and a
 half-supplied entry would leave Omni pairing one provider's noun with another's plural.
 
 ### `DEFAULT_TASK_TYPE_PRESENTATION`
 
-The per-channel fallback, used for any `taskType` the adapter does not name.
+The per-channel fallback, used for any `taskType` the customer does not name.
 
 ```ts
 const DEFAULT_TASK_TYPE_PRESENTATION = {
@@ -1453,21 +1521,21 @@ const DEFAULT_TASK_TYPE_PRESENTATION = {
     referenceLabel: "Email ID",
   },
 } as const satisfies Readonly<
-  Record<"voice" | "chat" | "email", TaskTypePresentation>
+  Record<"voice" | "chat" | "email", { singular: string; plural: string; referenceLabel: string }>
 >;
 ```
 
 ### Naming task types
 
 `channel` is too coarse for agent-facing names. A WhatsApp call and a PSTN call are both `voice`,
-but the provider may name them differently through static manifest metadata:
+but the customer may name them differently:
 
 ```ts
-const taskTypePresentation = {
+const taskTypes = {
   WhatsApp: {
-    singular: "Conversation",
-    plural: "Conversations",
-    referenceLabel: "Conversation ID",
+    singular: { en: "Conversation", hi: "बातचीत" },
+    plural: { en: "Conversations", hi: "बातचीतें" },
+    referenceLabel: { en: "Conversation ID" },
   },
 } satisfies Record<string, TaskTypePresentation>;
 ```
@@ -1710,8 +1778,6 @@ compile time.
 | `supportedProtocolVersions` | Required non-empty list of versions this adapter can speak. Must share at least one with Omni. |
 | `authenticationMethods` | Required non-empty list of supported login methods. |
 | `idleCapabilities` | Declares actions Omni may offer while the agent has no active task, such as voice dialing. Task controls do not belong here. |
-| `phaseLabels` | Optional static adapter-defined display names for canonical `TaskPhase` values. They cannot vary at runtime. |
-| `taskTypePresentation` | Optional static adapter-defined presentation keyed by exact `taskType`. It names the item and its optional agent-facing reference. |
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label an agent computer shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `hardphone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call** in `guide/phone.md`. |
 | `phoneStatus` | Voice only, declared by presence as `true`: the platform sees the phone itself -- its registration, its do-not-disturb, its hook, its calls -- and publishes it as `Snapshot.phone` and `phone-updated`. A platform that cannot see the phone omits it, and then publishes no phone (`manifest.phoneStatus`). See **The phone's own view** in `guide/phone.md`. |
@@ -2283,6 +2349,7 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | `phone` | The phone as the platform sees it -- the device, whether it can take a call, its own mute where observed -- from a provider whose manifest declares `phoneStatus`; required there (`snapshot.phone.required`) and forbidden otherwise (`snapshot.phone.unexpected`). Replaced whole by `phone-updated`. See **The phone's own view** in `guide/phone.md`. |
 | `nextCall` | The agent's standing ask for the next call, while it stands: `since`. It needs an assignment at work to be next after (`snapshot.nextCall.idle`) and the provider clears it when that assignment ends, when a call is lined up, and when the agent withdraws it. Replaced whole by `next-call`. See **The agent's own queue** in `guide/queue.md`. |
 | `linedUp` | The call waiting in the agent's own queue, while one is: the caller as shown to this audience, the queue, the caller's wait, when it was lined up, and `release` where the provider lets the agent let it go. Not a task yet. Replaced whole by `lined-up`. See **The agent's own queue** in `guide/queue.md`. |
+| `labels` | The signed-in customer's own words for phases, history steps and kinds of work, per language, as its admin set them in the provider. Replaced whole by `labels-updated`. Omitted where the customer set none. See **Presentation labels**. |
 | `shift` | The agent's own day so far, as the provider counts it -- the same `Shift` their lead sees on the team member list, the same numbers from the same count. Replaced whole by `shift-updated`. Omitted only where the provider cannot say. See **The agent's day is on the wire**. |
 | `team` | Required `TeamMembers` when the login declares `capabilities.lead` and the lead has the team feature on, `members: []` when nobody is in it. Forbidden otherwise — the login is the permission, and a lead who turned the feature off gets nothing of the team. |
 
@@ -2326,7 +2393,7 @@ Returns the provider's complete authoritative state at one point in time.
   snapshot is read is held until it lands, and what happens to it then depends on what it is. A
   snapshot restates state, so an event of a state-replacing kind -- `task-offered`, `task-updated`,
   `task-ended`, `task-audio-started`, `task-audio-ended`, `break-state`, `team-updated`,
-  `team-member-updated`, `team-member-removed`, `team-policies-updated`, `shift-updated`,
+  `team-member-updated`, `team-member-removed`, `team-policies-updated`, `shift-updated`, `labels-updated`,
   `contacts-updated`, `calendar-updated`, `transport-status`, `snapshot` -- is dropped, because the
   snapshot accounts for it. An event that reports a transaction no snapshot carries --
   `dial-outcome`, `diagnostic`, `announcement`, `queue-summary` -- is applied after the snapshot,
@@ -2892,6 +2959,11 @@ ended, a break ended, a sign-out -- and never to say nothing changed. It carries
 the agent's lead sees for them on the team member list, so the two screens show one day. See
 **The agent's day is on the wire**.
 
+### `labels-updated`
+
+The customer's words, whole, replacing `Snapshot.labels`: emitted when its admin changes them, and
+carrying `{}` when the admin has cleared them all. See **Presentation labels**.
+
 ## Utilities
 
 ### `assignmentKey(providerId, assignmentId)`
@@ -2939,6 +3011,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateHostReport(report)` | The agent application's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever agent application a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateNextCall(value)` | The agent's standing ask for the next call, on its own as `next-call` and `Snapshot.nextCall` carry it: since when, and nothing else (`nextCall.since`, `nextCall.field`). |
 | `validateLinedUp(value, path?, levels?)` | A call lined up in the agent's own queue, on its own as `lined-up` and `Snapshot.linedUp` carry it: the caller under the same contact rules as a task's party, the queue's label, the waits, and `release` by presence (`linedUp.*`). |
+| `validateLabels(value, path?)` | The customer's words on their own, as `labels-updated` and `Snapshot.labels` carry them: renames of the protocol's phases and steps only, and every word one text per well-formed language tag (`labels.*`). |
 | `validatePhoneState(value, path?, context?)` | The phone as the platform sees it, on its own as `phone-updated` and `Snapshot.phone` carry it: its status, its one active channel, its mute where a hardphone's is observed (`phone.*`). |
 | `validateHostMute(mute, softphone)` | What the agent application's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the agent application holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
 | `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
@@ -3167,6 +3240,6 @@ Adapters should run the relevant scenarios against deterministic test state befo
 
 How a deployment themes Omni is the agent application's concern and is specified with the agent application, not here. What
 belongs in this contract is the boundary. A provider says what a control **is** through its
-capabilities and what its work is **called** through `phaseLabels` and `taskTypePresentation`; how
+capabilities and what its work is **called** through the customer's `labels`; how
 any of it is drawn is Omni's. A task cannot select a design language, inject a component, or
 override the agent's theme and font preferences.
