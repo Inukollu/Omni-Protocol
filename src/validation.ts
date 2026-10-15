@@ -3339,6 +3339,33 @@ export function validateAuthenticationFailure(failure: unknown, path = "failure"
   return into.violations;
 }
 
+/**
+ * A redirect URI in one of RFC 8252's three forms. A private-use scheme is reverse-domain (§7.1),
+ * a loopback is an IP literal rather than `localhost` (§8.3) and may vary only its port (§7.3),
+ * and none carries a fragment, which the authorization response could not be appended beside.
+ */
+export function validateRedirectUri(value: unknown, path = "redirectUri"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!into.filled(value, "redirectUri", path, "browser SSO needs the fixed redirect URI the provider registered")) return into.violations;
+  let url: URL;
+  try {
+    url = new URL(value as string);
+  } catch {
+    into.add("redirectUri", path, `${describeValue(value)} is not an absolute URI`);
+    return into.violations;
+  }
+  into.require(url.hash === "" && !(value as string).includes("#"), "redirectUri.fragment", path, "a redirect URI carries no fragment");
+  const scheme = url.protocol.slice(0, -1);
+  if (scheme === "http") {
+    into.require(url.hostname === "127.0.0.1" || url.hostname === "[::1]", "redirectUri.http", path,
+      "plain http is for loopback only, as 127.0.0.1 or [::1] -- not localhost, which may resolve elsewhere");
+  } else if (scheme !== "https") {
+    into.require(/^[a-z][a-z0-9+-]*(\.[a-z0-9+-]+)+$/.test(scheme), "redirectUri.scheme", path,
+      `a private-use scheme is a reverse domain name the host controls, as com.example.omni; ${describeValue(scheme)} is not`);
+  }
+  return into.violations;
+}
+
 function validateAuthenticationChallenge(value: unknown, path: string, into: Collector): void {
   if (!isPlainObject(value)) {
     into.add("authentication.result.challenge", path, "interaction-required carries the challenge to put to the person");

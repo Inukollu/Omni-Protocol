@@ -290,6 +290,7 @@ type AuthenticationContext = {
   loginId: string;
   timeZone: TimeZone;
   phone?: Phone;
+  redirectUri?: string;
   secrets: SecretStore;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
@@ -447,7 +448,7 @@ type AuthenticationChallenge =
   | { flowId: string; method: "credentials"; fields: CredentialField[] };
 
 type StartAuthenticationRequest =
-  | { requestId: string; method: "browser-sso"; callbackUrl: string }
+  | { requestId: string; method: "browser-sso" }
   | { requestId: string; method: "credentials" };
 
 type StartAuthenticationResult =
@@ -455,7 +456,7 @@ type StartAuthenticationResult =
   | { status: "rejected"; failure: AuthenticationFailure };
 
 type CompleteAuthenticationRequest =
-  | { flowId: string; method: "browser-sso"; callbackUrl: string }
+  | { method: "browser-sso"; callbackUrl: string; flowId?: never }
   | { flowId: string; method: "credentials"; values: Readonly<Record<string, string>> };
 
 type CompleteAuthenticationResult =
@@ -2132,17 +2133,32 @@ short-lived, opaque `flowId`; rejection returns `AuthenticationFailure`.
 
 #### Browser SSO
 
-For `browser-sso`, Omni issues a one-time callback URL and passes it to `start()`:
+**The redirect URI is fixed, never minted per flow.** An issuer that follows current guidance
+compares the redirect URI exactly against the one registered (RFC 9700 §2.1, §4.1.3), so a path
+carrying a request id is refused by every one of them. The host states the URI once, for this host
+and adapter, as `AuthenticationContext.redirectUri`, and the provider registers it on its public
+client ahead of time. It takes one of the three forms RFC 8252 gives a native or browser app, as
+Google, Microsoft Entra and Okta register them:
+
+| Form | Example | When |
+| --- | --- | --- |
+| `https` | `https://agent.example.com/auth/acme-voice` | Omni in a browser tab, or a desktop app with a claimed https link. |
+| Private-use scheme | `com.example.omni:/auth/acme-voice` | A desktop app. The scheme is a reverse domain name the host controls (RFC 8252 §7.1). |
+| Loopback | `http://127.0.0.1:53127/auth/acme-voice` | A desktop app listening locally. Only the port varies between flows (§7.3); the host is the IP literal, never `localhost` (§8.3). |
+
+`validateRedirectUri(uri)` refuses anything else: a scheme that is not a reverse domain, such as
+`omni-agent:` (`redirectUri.scheme`), plain http to any host but the loopback literal
+(`redirectUri.http`), and a fragment (`redirectUri.fragment`). Its path names the adapter, so one
+host serves several providers on one scheme.
+
+`start()` then carries nothing about the callback:
 
 ```ts
-{
-  requestId: "auth-42",
-  method: "browser-sso",
-  callbackUrl: "omni-agent://auth/acme-voice/auth-42"
-}
+{ requestId: "auth-42", method: "browser-sso" }
 ```
 
-The adapter creates the OAuth/OIDC request, including PKCE, `state`, and OIDC `nonce`, and returns:
+The adapter creates the OAuth/OIDC request with its OAuth redirect URI set to the context's `redirectUri`,
+PKCE, OIDC `nonce`, and a `state` that names this flow, and returns:
 
 ```ts
 {
@@ -2157,7 +2173,10 @@ The adapter creates the OAuth/OIDC request, including PKCE, `state`, and OIDC `n
 ```
 
 Omni opens the requested `system` or `omni` browser. After redirect, it passes the complete callback
-URL to `complete()`. The adapter validates the flow, exchanges the authorization code, and returns
+URL, query included, to `complete()` as `{ method: "browser-sso", callbackUrl }`. The request names
+no flow: **the flow is found by `state`**, which the adapter issued and alone can read, and a
+`state` it never issued, or already used, is rejected. Omni routes the callback to the adapter by
+the URI's path and never encodes a request id in it. The adapter validates the flow, exchanges the authorization code, and returns
 the authenticated provider identity. Provider tokens never enter Omni UI or general protocol state.
 An Omni-hosted SSO browser uses a dedicated temporary authentication session and never shares
 cookies or storage with task or personal browsers.
@@ -3034,6 +3053,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
 | `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
 | `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
+| `validateRedirectUri(uri, path?)` | A host's fixed redirect URI in one of RFC 8252's forms: `https`, a reverse-domain private-use scheme, or loopback http to `127.0.0.1` or `[::1]`, with no fragment (`redirectUri.*`). |
 | `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a conference's item, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.conference.remove.alone`), the caller off hold before the agent's part ends (`command.endCall.held`). An agent application validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
