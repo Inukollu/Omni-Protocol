@@ -725,6 +725,13 @@ type TaskHistoryStep = {
   mutedBy?: MutedBy;
 };
 
+type HistorySpan = {
+  step: HistoryStep;
+  at: IsoTimestamp;
+  seconds?: DurationSeconds;
+  entries: TaskHistoryStep[];
+};
+
 type TaskCompletion =
   | { completionMode: "agent-command"; wrapAllowance?: DurationSeconds }
   | { completionMode: "provider-automatic"; wrapAllowance: DurationSeconds };
@@ -2989,6 +2996,14 @@ wider goes through this key.
 Whether two logins declare the same capabilities, field by field — key order aside, and with
 `team: {}` distinct from `team` absent. It is the comparison an adapter makes before republishing
 `authenticated`, and the one `testAdapter` holds `refreshing` to.
+
+### `historySpans(steps)`
+
+Groups a record's consecutive entries of one step into a `HistorySpan` each — `step`, the first
+entry's `at`, `seconds` summed when every entry states one and absent when any does not, and the
+`entries` themselves — so every agent application shows *Self-service · 30s* once where the
+record has two self-service entries in a row. Only neighbours are grouped: a hold, an answer and
+another hold are three spans. See **Shown as spans** in `guide/agent.md`.
 
 ## Runtime validation
 

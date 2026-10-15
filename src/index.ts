@@ -2033,6 +2033,35 @@ export const historyStepDials = (step: HistoryStep): boolean =>
 // has to exist there. `satisfies` on the list covers the second; this statement covers the first.
 true satisfies [Exclude<HistoryStep, "arrived" | "self-service" | "queued" | "callback-requested">] extends [(typeof HISTORY_STEPS_WITH_A_PERSON)[number]] ? true : false;
 
+/**
+ * Consecutive entries of one step, shown as one span. The record keeps an entry per occurrence --
+ * two holds are counted as two -- and this is how the agent sees them: once, from the first
+ * entry's `at`, lasting the sum of their `seconds` when every entry states one, and with no
+ * duration when any does not, never a sum that silently leaves a running leg out.
+ */
+export interface HistorySpan {
+  step: HistoryStep;
+  at: IsoTimestamp;
+  seconds?: DurationSeconds;
+  entries: TaskHistoryStep[];
+}
+
+/** Groups a record's consecutive same-step entries into spans, oldest first. */
+export function historySpans(steps: readonly TaskHistoryStep[]): HistorySpan[] {
+  const spans: HistorySpan[] = [];
+  for (const entry of steps) {
+    const last = spans[spans.length - 1];
+    if (last !== undefined && last.step === entry.step) last.entries.push(entry);
+    else spans.push({ step: entry.step, at: entry.at, entries: [entry] });
+  }
+  for (const span of spans) {
+    if (span.entries.every(entry => entry.seconds !== undefined)) {
+      span.seconds = span.entries.reduce((total, entry) => total + (entry.seconds as number), 0);
+    }
+  }
+  return spans;
+}
+
 /** Whether an absent `by` means "could not attribute" rather than "nobody was involved". */
 export function historyStepExpectsAPerson(step: HistoryStep): boolean {
   return (HISTORY_STEPS_WITH_A_PERSON as readonly HistoryStep[]).includes(step);
