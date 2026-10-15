@@ -100,7 +100,7 @@ hands only through routing or a lead's take-over.
 
 | Term | In plain words | What others call it |
 | --- | --- | --- |
-| **History** | The steps a call went through before and with this agent: arrived, queued, answered, held, handed over. | *Contact trace record* (Amazon Connect), *conversation details* or *segments* (Genesys Cloud), *call detail record*. |
+| **History** | The steps a call went through before and with this agent: arrived, self-service, queued, answered, held, handed over. | *Contact trace record* (Amazon Connect), *conversation details* or *segments* (Genesys Cloud), *call detail record*. |
 | **Recording** | A recording of one side of the call, the customer's or the agent's. | *Call recording*, *screen and voice recording*. |
 | **Paused for sensitive details** | Recording stops while card or account details are given. | *Secure pause* (Genesys Cloud), *PCI pause*. |
 

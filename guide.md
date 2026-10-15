@@ -696,6 +696,7 @@ type TaskAttribute = TaskAttributeBase & (
 
 type HistoryStep =
   | "arrived"
+  | "self-service"
   | "queued"
   | "offered"
   | "answered"
@@ -1362,7 +1363,7 @@ const OMNI_FAILURE_CODES = [
 type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
 ```
 
-`HISTORY_STEPS_WITH_A_PERSON` is every `HistoryStep` except `arrived` and `queued`, which nobody
+`HISTORY_STEPS_WITH_A_PERSON` is every `HistoryStep` except `arrived`, `self-service` and `queued`, which nobody
 takes part in, and `callback-requested`, which the caller may choose alone. `historyStepExpectsAPerson()` tests membership.
 
 ### Failure and validation
@@ -1445,6 +1446,7 @@ agent's languages:
 ```ts
 const DEFAULT_HISTORY_STEP_LABELS = {
   arrived: "Incoming call",
+  "self-service": "Self-service",
   queued: "Queued",
   offered: "Offered",
   answered: "Answered",

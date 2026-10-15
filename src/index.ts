@@ -903,6 +903,7 @@ export type TaskAttribute = TaskAttributeBase & (
 
 export type HistoryStep =
   | "arrived"
+  | "self-service"
   | "queued"
   | "offered"
   | "answered"
@@ -948,7 +949,7 @@ export interface TaskHistoryStep {
    */
   seconds?: DurationSeconds;
   /**
-   * Who took part. Absent on `arrived` and `queued`, where nobody does; absent on `callback-requested`, where the
+   * Who took part. Absent on `arrived`, `self-service` and `queued`, where nobody does; absent on `callback-requested`, where the
    * caller chose it in the queue, and present there when an agent arranged it; absent on any other
    * step means the provider could not attribute it, which is a different claim and a legitimate one.
    */
@@ -1967,7 +1968,7 @@ export const DEFAULT_TASK_TYPE_PRESENTATION = {
 } as const satisfies Readonly<Record<Channel, { singular: string; plural: string; referenceLabel: string }>>;
 
 export const DEFAULT_HISTORY_STEP_LABELS = {
-  arrived: "Incoming call", queued: "Queued", offered: "Offered", answered: "Answered", held: "On hold",
+  arrived: "Incoming call", "self-service": "Self-service", queued: "Queued", offered: "Offered", answered: "Answered", held: "On hold",
   muted: "Muted", transferred: "Transferred", conferenced: "Conferenced", unanswered: "Unanswered",
   "callback-requested": "Callback requested",
 } as const satisfies Readonly<Record<HistoryStep, string>>;
@@ -2014,8 +2015,8 @@ export const userKey = (providerId: string, userId: UserId): string =>
   `${encodeURIComponent(providerId)}:${encodeURIComponent(userId)}`;
 
 /**
- * Every history step somebody from the provider takes part in. `arrived` and `queued` are the ones
- * nobody does, and `callback-requested` is the caller's choice unless an agent arranged it, so none
+ * Every history step somebody from the provider takes part in. `arrived`, `self-service` and
+ * `queued` are the ones nobody does, and `callback-requested` is the caller's choice unless an agent arranged it, so none
  * of them is here.
  */
 export const HISTORY_STEPS_WITH_A_PERSON = [
@@ -2030,7 +2031,7 @@ export const historyStepDials = (step: HistoryStep): boolean =>
 
 // Pinned both ways: a step added to `HistoryStep` has to be placed here, and a step listed here
 // has to exist there. `satisfies` on the list covers the second; this statement covers the first.
-true satisfies [Exclude<HistoryStep, "arrived" | "queued" | "callback-requested">] extends [(typeof HISTORY_STEPS_WITH_A_PERSON)[number]] ? true : false;
+true satisfies [Exclude<HistoryStep, "arrived" | "self-service" | "queued" | "callback-requested">] extends [(typeof HISTORY_STEPS_WITH_A_PERSON)[number]] ? true : false;
 
 /** Whether an absent `by` means "could not attribute" rather than "nobody was involved". */
 export function historyStepExpectsAPerson(step: HistoryStep): boolean {
