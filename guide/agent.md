@@ -409,7 +409,8 @@ first, and what they add up to before this agent:
 ```ts
 history: {
   steps: [
-    { step: "arrived",     at: "2026-08-21T00:58:40Z", seconds: 20 },
+    { step: "arrived",     at: "2026-08-21T00:58:40Z", seconds: 2 },
+    { step: "self-service", at: "2026-08-21T00:58:42Z", seconds: 18 },
     { step: "queued",      at: "2026-08-21T00:59:00Z", seconds: 41 },
     { step: "answered",    at: "2026-08-21T00:59:41Z", seconds: 312, by: "a-17" },
     { step: "held",        at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" },
@@ -430,7 +431,7 @@ something else, which will arrive under its own name and must not be folded in h
 
 It rides in the snapshot and is replaced whole like everything else there.
 
-Steps are `arrived`, `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conferenced`,
+Steps are `arrived`, `self-service`, `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conferenced`,
 `unanswered`, `callback-requested`, and each is defined on `TaskHistoryStep`.
 
 **The record starts where the call started.** `arrived` is the instant the call reached the
@@ -441,6 +442,14 @@ arrive omits it rather than guessing an instant. Omni shows it as *Incoming call
 `labels.historySteps`, the way
 Amazon Connect keeps an initiation time, Genesys Cloud a conversation start and NICE CXone a contact
 start, separate from the queue.
+
+**Time with the IVR or a bot is `self-service`.** The caller pressing through a menu, talking to a
+voice bot, or a chat customer with a bot before a person takes over: one step for all of them, on
+every channel, the way Genesys Cloud and NICE CXone report IVR and bot time together as
+self-service. Nobody from the provider takes part, so it has no `by`. `at` is when the customer
+entered it and `seconds`, once it ended, how long they spent there; a customer sent back to a menu
+after a transfer has a second entry, one per visit, as a second queue is a second `queued`. A
+customer that words it *IVR* for its agents does so in `labels.historySteps`.
 
 **A callback carries the call it comes back to.** When a caller asks to be called back, or an agent
 arranges it, the provider writes a `callback-requested` step: `by` names the agent who arranged it, and
@@ -551,7 +560,7 @@ Four rules a provider has to keep:
   wrongly; carrying the name here would also copy it into every task and leave it to go stale.
 
 **An absent `by` means different things on different steps, and both are legitimate.** On
-`arrived` and `queued` nobody takes part, so there is nothing to name. On every other step somebody did — see
+`arrived`, `self-service` and `queued` nobody takes part, so there is nothing to name. On every other step somebody did — see
 `HISTORY_STEPS_WITH_A_PERSON` and `historyStepExpectsAPerson()` — so an absent `by` there says
 *this was handled and the provider cannot say by whom*. The one step that is never unattributed is
 `muted`: the agent application has exactly one agent and the provider knows who, so `by` is required there
@@ -564,7 +573,7 @@ worse than one saying plainly it could not attribute a leg — and far better th
 nothing because a single leg could not be named.
 
 An agent application must render the two differently. Showing an unattributed `answered` the same way as
-`queued` or `arrived` tells the agent nobody was involved, which is not what was said. Omni renders it as
+`queued`, `self-service` or `arrived` tells the agent nobody was involved, which is not what was said. Omni renders it as
 *"not recorded"* in the place the name would go.
 
 Omit `history` entirely when the provider cannot observe the steps. Empty `steps` is a

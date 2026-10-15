@@ -1504,13 +1504,15 @@ describe("the other direction, everywhere", () => {
     expect(rules(validateTask(task({ attributes: [order, order] }), voice))).toEqual(["task.attribute.unique"]);
   });
 
-  it("names nobody on an arrived or queued step", () => {
+  it("names nobody on an arrived, self-service or queued step", () => {
     const step = (entry: Record<string, unknown>) => rules(validateTask(task({ history: { steps: [{ at: "2026-08-21T09:00:00Z", ...entry }] } }), voice));
     expect(step({ step: "answered", by: "A-1" })).toEqual([]);
     expect(step({ step: "queued" })).toEqual([]);
     expect(step({ step: "queued", by: "A-1" })).toEqual(["task.history.by.unexpected"]);
     expect(step({ step: "arrived", seconds: 20 })).toEqual([]);
     expect(step({ step: "arrived", by: "A-1" })).toEqual(["task.history.by.unexpected"]);
+    expect(step({ step: "self-service", seconds: 45 })).toEqual([]);
+    expect(step({ step: "self-service", by: "A-1" })).toEqual(["task.history.by.unexpected"]);
   });
 
   it("starts the record where the call arrived, once", () => {
@@ -1524,6 +1526,23 @@ describe("the other direction, everywhere", () => {
     // Anywhere but first is out of its turn, even at an instant that keeps the order.
     expect(history([queued, { ...arrived, at: "2026-08-21T08:59:10Z" }, answered])).toEqual(["task.history.arrived.first"]);
     expect(history([arrived, { ...arrived, at: "2026-08-21T08:58:50Z" }, queued])).toEqual(["task.history.arrived.first"]);
+  });
+
+  it("records time with the IVR or a bot as self-service, once per visit, on any channel", () => {
+    const menu = { step: "self-service", at: "2026-08-21T08:58:42Z", seconds: 18 };
+    const steps = [
+      { step: "arrived", at: "2026-08-21T08:58:40Z", seconds: 2 }, menu,
+      { step: "queued", at: "2026-08-21T08:59:00Z", seconds: 41 },
+      { step: "answered", at: "2026-08-21T08:59:41Z", seconds: 60, by: "a-17" },
+      { step: "transferred", at: "2026-08-21T09:00:41Z", by: "a-17", destinationId: "billing-menu" },
+      // Sent back to a menu after the transfer: a second visit, a second entry.
+      { ...menu, at: "2026-08-21T09:00:45Z", seconds: 12 },
+    ];
+    expect(rules(validateTask(task({ history: { steps } }), voice))).toEqual([]);
+    // A chat customer with a bot before a person is the same step.
+    const chat = { channel: "chat" };
+    expect(rules(validateTask(task({ taskType: "Chat", history: { steps: [menu] } }), chat)).filter(rule => rule.startsWith("task.history"))).toEqual([]);
+    expect(rules(validateTask(task({ history: { steps: [{ ...menu, by: "a-17" }] } }), voice))).toEqual(["task.history.by.unexpected"]);
   });
 
   it("declares the capability that shows a task's browsers", () => {

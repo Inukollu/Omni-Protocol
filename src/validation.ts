@@ -131,7 +131,7 @@ const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
   ready: true, "on-task": true, "on-break": true, elsewhere: true, "signed-out": true,
 });
 const HISTORY_STEPS = membersOf<HistoryStep>({
-  arrived: true, queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
+  arrived: true, "self-service": true, queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
   "callback-requested": true,
 });
 const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
@@ -1101,8 +1101,8 @@ function validateHistory(value: unknown, path: string, into: Collector, task: { 
     if (entry.by !== undefined) {
       into.require(isUserId(entry.by), "task.history.by", `${at}.by`,
         "by must be a non-empty user id; omit it when the person cannot be identified");
-      // On `arrived` and `queued` nobody takes part, so there is nothing to name.
-      into.require(entry.step !== "arrived" && entry.step !== "queued", "task.history.by.unexpected", `${at}.by`,
+      // On `arrived`, `self-service` and `queued` nobody takes part, so there is nothing to name.
+      into.require(entry.step !== "arrived" && entry.step !== "self-service" && entry.step !== "queued", "task.history.by.unexpected", `${at}.by`,
         `${describeValue(entry.step)} names nobody`);
     }
     // A step that dialled says where to and, when a host placed it, which dial; no other step dialled.

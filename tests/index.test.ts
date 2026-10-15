@@ -79,7 +79,7 @@ describe("Omni protocol", () => {
   });
 
   it("names every history step, the call's arrival as the agent says it", () => {
-    const steps: HistoryStep[] = ["arrived", "queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered", "callback-requested"];
+    const steps: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered", "callback-requested"];
     expect(Object.keys(DEFAULT_HISTORY_STEP_LABELS).sort()).toEqual([...steps].sort());
     for (const label of Object.values(DEFAULT_HISTORY_STEP_LABELS)) expect(label.trim()).not.toBe("");
     expect(DEFAULT_HISTORY_STEP_LABELS.arrived).toBe("Incoming call");
@@ -293,12 +293,12 @@ describe("browserSessionKey", () => {
 
 describe("historyStepExpectsAPerson", () => {
   it("says which steps have a person, so an absent agent can be read correctly", () => {
-    // Nobody takes part in arrived or queued: an absent agent there is not a gap.
-    const nobody: HistoryStep[] = ["arrived", "queued"];
+    // Nobody takes part in arrived, self-service or queued: an absent agent there is not a gap.
+    const nobody: HistoryStep[] = ["arrived", "self-service", "queued"];
     for (const step of nobody) expect(historyStepExpectsAPerson(step)).toBe(false);
     // The control that matters: every other step does expect one, so an absent agent on any
     // of them means "handled, could not attribute" rather than "nobody involved".
-    const everyStep: HistoryStep[] = ["arrived", "queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"];
+    const everyStep: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"];
     for (const step of everyStep.filter(step => !nobody.includes(step))) {
       expect(historyStepExpectsAPerson(step)).toBe(true);
     }
@@ -326,6 +326,6 @@ describe("every dial has an outcome", () => {
     expect(MUTED_BY).toEqual(["host", "station"]);
     expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);
     for (const step of HISTORY_STEPS_THAT_DIAL) expect(historyStepDials(step)).toBe(true);
-    for (const step of ["arrived", "queued", "offered", "answered", "held", "muted"] as const) expect(historyStepDials(step)).toBe(false);
+    for (const step of ["arrived", "self-service", "queued", "offered", "answered", "held", "muted"] as const) expect(historyStepDials(step)).toBe(false);
   });
 });
