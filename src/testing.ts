@@ -439,6 +439,10 @@ export async function testAdapter<C extends Channel>(
       subscribe: listener => { consulted.subscribe = true; return context.host.subscribe(listener); },
     } as ConnectContext["host"];
 
+    // A cancelled sign-in fails with the cancellation's own reason. The probe hands connect() a
+    // signal already aborted, so the answer is exact and owes nothing to the machine's speed; it
+    // gets the host and store unwrapped, so what it consults is not counted for the real connect.
+    violations.push(...await cancelledConnect(adapter, context));
     const connecting = connectingReports({ ...context, host, store: watched.store } as ConnectContext, violations);
     const connected = connecting.context;
     try {
@@ -886,6 +890,22 @@ function refreshingCarriesOver(
     });
   }
   return found;
+}
+
+/** Calls `connect()` on an already-cancelled signal and names an adapter that connects anyway or fails for another reason. */
+async function cancelledConnect<C extends Channel>(adapter: Adapter<C>, context: ConnectContext): Promise<ProtocolViolation[]> {
+  const cancel = new AbortController();
+  cancel.abort(new Error("the agent application cancelled this sign-in"));
+  const { transportStatus: _unused, ...rest } = context;
+  try {
+    const stray = await adapter.connect({ ...rest, signal: cancel.signal } as ConnectContext);
+    try { await stray.disconnect(); } catch { /* the connection that should not exist is ended as far as it can be */ }
+    return [{ rule: "connect.signal.aborted", path: "connect.signal",
+      message: "connect() resolved on a signal already aborted; a cancelled sign-in fails with signal.reason" }];
+  } catch (error) {
+    return error === cancel.signal.reason ? [] : [{ rule: "connect.signal.reason", path: "connect.signal",
+      message: `connect() on an aborted signal failed with ${String(error)}, not with signal.reason` }];
+  }
 }
 
 /**

@@ -691,6 +691,7 @@ export type ConnectContext = {
    * Mute is tied to the phone by the arms below.
    */
   host: Host;
+  /** The agent application giving up on this sign-in: stop promptly and reject `connect()` with `signal.reason`. */
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
   /**

@@ -958,6 +958,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
       };
     },
     async connect(connectContext) {
+      connectContext.signal?.throwIfAborted();
       if (overrides.connect !== undefined) return overrides.connect();
       let subscribed: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
       let emittedOnCapacity = false;
@@ -2350,6 +2351,22 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect((await run({ status: "connecting", message: " " })).rules).toEqual(["connect.transportStatus.message"]);
     // A host without the field is fine: the adapter reports only where it is present.
     expect((await testAdapter(reporting({ status: "connecting", message }), context, { collectOnly: true })).violations).toEqual([]);
+  });
+
+  it("requires a cancelled sign-in to fail with the signal's reason, and passes one that does", async () => {
+    const answering = (onCancelled: "reason" | "connect" | "other") => {
+      const { adapter } = makeAdapter();
+      return { ...adapter, connect: async (connectContext: ConnectContext) => {
+        if (connectContext.signal?.aborted === true && onCancelled === "other") throw new Error("socket closed");
+        if (onCancelled === "connect") return adapter.connect({ ...connectContext, signal: undefined } as ConnectContext);
+        return adapter.connect(connectContext);
+      } } as typeof adapter;
+    };
+    const rules = async (onCancelled: "reason" | "connect" | "other") =>
+      (await testAdapter(answering(onCancelled), context, { collectOnly: true })).violations.map(v => v.rule);
+    expect(await rules("reason")).toEqual([]);
+    expect(await rules("connect")).toEqual(["connect.signal.aborted"]);
+    expect(await rules("other")).toEqual(["connect.signal.reason"]);
   });
 
   it("names a transportStatus report made after connect() settled, and not the same report made before", async () => {

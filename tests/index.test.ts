@@ -212,7 +212,8 @@ describe("localizedText", () => {
           close: async () => undefined,
         };
       },
-      async connect() {
+      async connect(context) {
+        context.signal?.throwIfAborted();
         return {
           snapshot: () => ({ transport: "active" as const, loginId: "session-1", break: { status: "not-requested" as const, canRequestBreak: true }, tasks: [], taskCount: 0 }),
           subscribe: listener => {
