@@ -2250,6 +2250,9 @@ short bound the adapter states, and then given up: a provider that cannot be rea
 token on the agent's machine. If it was not told, `signOut()` still deletes and still reaches
 `signed-out`, and answers `failed`, so the agent application can show that a session may remain at
 the provider. `close()` stops authentication-state observation but does not sign the agent out.
+The agent application ends the connection itself, with `disconnect()`: the sign-out is its own act,
+so the adapter reports no transport `error` for it, and a connection closed by the platform as the
+sign-out lands is not news to anyone.
 
 **The final moments are the agent application's to finish.** Its own steps before signing out --
 stopping capacity, putting tasks down -- may be retried within a short bound it states, and then
@@ -2705,7 +2708,10 @@ died; the agent application knows how to run a login. `recovery` joins the two:
   `connect()` again on the same login — same `loginId` — and the fresh connect snapshot
   re-establishes state exactly as a reconnect snapshot does. `connect()` is once per
   `Connection`, not once per login.
-- **`reauthenticate`** — the session under the login died: a token rejected, a remote logout. Omni
+- **`reauthenticate`** — the session under the login lapsed and the same login can be restored: a
+  token rejected, published as `expired`. A session ended from outside -- a remote logout, a
+  permission withdrawn -- is `terminated`, which is the whole message and gets no transport `error`
+  beside it (see **Authentication state**). Omni
   runs the authentication flow first, on the same session and `loginId`, never through
   `signed-out`; the authentication session decides whether stored material refreshes it silently or
   the agent must act, exactly as at sign-in. Once the state returns to `authenticated`, Omni
