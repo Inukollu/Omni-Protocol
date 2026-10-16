@@ -1215,7 +1215,7 @@ type TransportRecovery = "reconnect" | "reauthenticate" | "displaced";
 type ProviderEvent =
   | { type: "snapshot"; reason: "reconnected" | "provider-requested"; snapshot: Snapshot }
   | { type: "transport-status"; status: "connecting" | "active"; message?: string }
-  | { type: "transport-status"; status: "error"; recovery: TransportRecovery; message?: string }
+  | { type: "transport-status"; status: "error"; recovery: TransportRecovery; message: string }
   | { type: "break-state"; break: BreakState }
   | {
       type: "task-offered";
@@ -2075,7 +2075,7 @@ reports later changes.
 | `authenticated` | A usable session exists. Includes the provider identity, the login's `capabilities`, and optional token expiry time. |
 | `refreshing` | The adapter is refreshing its session. Existing provider identity and capabilities remain available, unchanged: a change to either is published as `authenticated`. |
 | `expired` | The session's time ran out, or its refresh is failing. It may include an identity and typed failure. The agent signs in again on the same login, and the workspace stays. |
-| `terminated` | The session was ended from outside this agent computer: by a supervisor, by the agent on another screen, or by the platform itself. `by` says who, a person by `UserId` or `provider` where no person was behind it (`authentication.terminated.by`), and `failure` says why and is never retryable (`authentication.terminated.failure`, `.retryable`). It is never reported as `expired`, which would hide who ended it, nor as `signed-out`, which is the agent's own act. |
+| `terminated` | The session was ended from outside this agent computer: by a supervisor, by the agent on another screen, or by the platform itself. `by` says who, a person by `UserId` or `provider` where no person was behind it (`authentication.terminated.by`), and `failure` says why and is never retryable (`authentication.terminated.failure`, `.retryable`). It is never reported as `expired`, which would hide who ended it, nor as `signed-out`, which is the agent's own act. The session's ending is the whole message: the agent application disposes the connection with `disconnect()` and shows `failure.message` on the sign-in, and the adapter reports no transport `error` beside it -- `reauthenticate` would say this session is restored, and it is not. |
 
 Omni calls `connect()` only after authentication reaches `authenticated`. Token refresh remains
 adapter-owned; the adapter publishes `refreshing`, followed by `authenticated` or `expired`.
@@ -2094,6 +2094,14 @@ session for one agent. The exception is a transport that reported `error` with `
 calls `connect()` afresh, as for `reconnect` -- see **`transport-status`**. What "signing in again
 replaces the login" describes is a new `AuthenticationSession` under a new `loginId`, after
 `signed-out`.
+
+**A sign-in the platform no longer allows is ended, not restored.** A role changed mid-shift can
+take away what the login was built on -- an agent made a supervisor may no longer have a phone, and
+the platform refuses to renew the softphone. Retrying cannot help and the same session cannot carry
+on, so the adapter deletes the secrets and publishes `terminated`, `by: "provider"`, with a failure
+in the agent's words: `{ code: "phone-not-allowed", message: "Your sign-in no longer allows a phone.
+Sign in again.", retryable: false }`. The agent application disposes the connection and shows that
+message on the sign-in.
 
 ### What the login may do
 
@@ -2687,7 +2695,7 @@ safe for the agent to see.
 | --- | --- |
 | `connecting` | No usable transport right now, and the adapter expects to recover on its own. Nobody needs to act. Startup and every reconnect pass through this value. |
 | `active` | The transport is up and the provider is serving this session. It is the only value under which work arrives. |
-| `error` | The adapter cannot serve the session and is not simply mid-reconnect. Say why in `message`, and say what revives it in `recovery` — required here, forbidden on any other status. It is not terminal: an adapter that recovers on its own still reports `connecting` and then `active`, and one that cannot is revived as `recovery` says. |
+| `error` | The adapter cannot serve the session and is not simply mid-reconnect. Say why in `message` (`event.transportStatus.message.required`), and say what revives it in `recovery` — both required here, and `recovery` forbidden on any other status. It is not terminal: an adapter that recovers on its own still reports `connecting` and then `active`, and one that cannot is revived as `recovery` says. |
 
 **An error names its recovery, and the agent application acts on that word.** The adapter knows why its session
 died; the agent application knows how to run a login. `recovery` joins the two:
@@ -2740,7 +2748,10 @@ adapter that leaves a stale `active` in place is telling Omni to keep waiting fo
 come — see **Liveness**.
 
 **The status is seen, not merely known.** An agent application renders the transport's status where the agent
-works — `connecting` from the moment it is reported, `error` with what revives it — and never a
+works — `connecting` from the moment it is reported, `error` with what revives it — and shows the
+provider's `message` as written, never a generic "disconnected" in its place: the provider knows why,
+and the words are what tell the agent whether to wait, sign in again or call somebody. The same holds
+for the `failure.message` of an `expired` or `terminated` session. Never a
 healthy workspace over a transport that cannot serve it: an agent talking on an agent computer whose transport
 died was an incident, and it happened because the agent computer knew and did not say. The same obligation
 covers a `diagnostic`: shown where the agent works, and counted.

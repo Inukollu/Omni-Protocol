@@ -1105,14 +1105,22 @@ describe("validateEventEnvelope", () => {
 
   it("requires an error to name its recovery, and nothing else to carry one", () => {
     expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "session gone" })).toEqual([]);
-    expect(check({ type: "transport-status", status: "error", recovery: "reauthenticate" })).toEqual([]);
+    expect(check({ type: "transport-status", status: "error", recovery: "reauthenticate", message: "Your session ended. Sign in again." })).toEqual([]);
     // Another client took the login: this one is finished, and nothing revives it but the agent taking the login back.
     expect(check({ type: "transport-status", status: "error", recovery: "displaced", message: "Signed in from another agent computer" })).toEqual([]);
-    expect(check({ type: "transport-status", status: "error" })).toEqual(["event.transportStatus.recovery.required"]);
-    expect(check({ type: "transport-status", status: "error", recovery: "retry" })).toEqual(["event.transportStatus.recovery"]);
+    expect(check({ type: "transport-status", status: "error", message: "session gone" })).toEqual(["event.transportStatus.recovery.required"]);
+    expect(check({ type: "transport-status", status: "error", recovery: "retry", message: "session gone" })).toEqual(["event.transportStatus.recovery"]);
     // Both directions: a status with nothing to revive carries no recovery.
     expect(check({ type: "transport-status", status: "connecting", recovery: "reconnect" })).toEqual(["event.transportStatus.recovery.unexpected"]);
     expect(check({ type: "transport-status", status: "active" })).toEqual([]);
+  });
+
+  it("requires an error to say why, and lets the other statuses go without", () => {
+    expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "session gone" })).toEqual([]);
+    expect(check({ type: "transport-status", status: "error", recovery: "reconnect" })).toEqual(["event.transportStatus.message.required"]);
+    expect(check({ type: "transport-status", status: "error", recovery: "reconnect", message: "" })).toEqual(["event.transportStatus.message"]);
+    expect(check({ type: "transport-status", status: "connecting" })).toEqual([]);
+    expect(check({ type: "transport-status", status: "connecting", message: "" })).toEqual(["event.transportStatus.message"]);
   });
 
   it("carries the reader into a team-updated and into a reconnect snapshot", () => {

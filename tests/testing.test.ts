@@ -1797,7 +1797,7 @@ describe("testAdapter tests one call", () => {
   it("applies a re-delivered envelope once, and names an id reused for a different event", async () => {
     const at = "2026-08-21T09:00:00Z";
     const first: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-1", occurredAt: at, event: { type: "transport-status", status: "active" } };
-    const again: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-1", occurredAt: at, event: { type: "transport-status", status: "error", recovery: "reconnect" } as never };
+    const again: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-1", occurredAt: at, event: { type: "transport-status", status: "error", recovery: "reconnect", message: "session gone" } };
     const run = async (...envelopes: ProviderEventEnvelope<"voice">[]) =>
       await testAdapter(makeAdapter({ emit: listener => { for (const envelope of envelopes) listener(envelope); } }).adapter, context, { collectOnly: true });
     const harmless = await run(first, first);

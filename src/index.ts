@@ -1789,7 +1789,7 @@ export interface QueueSummary {
 export type ProviderEvent<C extends Channel = Channel> =
   | { type: "snapshot"; reason: "reconnected" | "provider-requested"; snapshot: Snapshot<C> }
   | { type: "transport-status"; status: "connecting" | "active"; message?: string }
-  | { type: "transport-status"; status: "error"; recovery: TransportRecovery; message?: string }
+  | { type: "transport-status"; status: "error"; recovery: TransportRecovery; message: string }
   | { type: "break-state"; break: BreakState }
   | {
       type: "task-offered";
