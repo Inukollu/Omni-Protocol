@@ -290,6 +290,7 @@ type AuthenticationContext = {
   loginId: string;
   timeZone: TimeZone;
   phone?: Phone;
+  redirectUri?: string;
   secrets: SecretStore;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
@@ -427,6 +428,7 @@ type ConnectContext = {
   host: Host;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
+  transportStatus?: (update: { status: "connecting"; message?: string }) => void;
 } & (
   | { phone: "softphone"; host: { mute: HostMute } }
   | { phone?: "hardphone"; host: { mute?: never; recording?: never } }
@@ -447,7 +449,7 @@ type AuthenticationChallenge =
   | { flowId: string; method: "credentials"; fields: CredentialField[] };
 
 type StartAuthenticationRequest =
-  | { requestId: string; method: "browser-sso"; callbackUrl: string }
+  | { requestId: string; method: "browser-sso" }
   | { requestId: string; method: "credentials" };
 
 type StartAuthenticationResult =
@@ -455,7 +457,7 @@ type StartAuthenticationResult =
   | { status: "rejected"; failure: AuthenticationFailure };
 
 type CompleteAuthenticationRequest =
-  | { flowId: string; method: "browser-sso"; callbackUrl: string }
+  | { method: "browser-sso"; callbackUrl: string; flowId?: never }
   | { flowId: string; method: "credentials"; values: Readonly<Record<string, string>> };
 
 type CompleteAuthenticationResult =
@@ -2132,17 +2134,32 @@ short-lived, opaque `flowId`; rejection returns `AuthenticationFailure`.
 
 #### Browser SSO
 
-For `browser-sso`, Omni issues a one-time callback URL and passes it to `start()`:
+**The redirect URI is fixed, never minted per flow.** An issuer that follows current guidance
+compares the redirect URI exactly against the one registered (RFC 9700 §2.1, §4.1.3), so a path
+carrying a request id is refused by every one of them. The host states the URI once, for this host
+and adapter, as `AuthenticationContext.redirectUri`, and the provider registers it on its public
+client ahead of time. It takes one of the three forms RFC 8252 gives a native or browser app, as
+Google, Microsoft Entra and Okta register them:
+
+| Form | Example | When |
+| --- | --- | --- |
+| `https` | `https://agent.example.com/auth/acme-voice` | Omni in a browser tab, or a desktop app with a claimed https link. |
+| Private-use scheme | `com.example.omni:/auth/acme-voice` | A desktop app. The scheme is a reverse domain name the host controls (RFC 8252 §7.1). |
+| Loopback | `http://127.0.0.1:53127/auth/acme-voice` | A desktop app listening locally. Only the port varies between flows (§7.3); the host is the IP literal, never `localhost` (§8.3). |
+
+`validateRedirectUri(uri)` refuses anything else: a scheme that is not a reverse domain, such as
+`omni-agent:` (`redirectUri.scheme`), plain http to any host but the loopback literal
+(`redirectUri.http`), and a fragment (`redirectUri.fragment`). Its path names the adapter, so one
+host serves several providers on one scheme.
+
+`start()` then carries nothing about the callback:
 
 ```ts
-{
-  requestId: "auth-42",
-  method: "browser-sso",
-  callbackUrl: "omni-agent://auth/acme-voice/auth-42"
-}
+{ requestId: "auth-42", method: "browser-sso" }
 ```
 
-The adapter creates the OAuth/OIDC request, including PKCE, `state`, and OIDC `nonce`, and returns:
+The adapter creates the OAuth/OIDC request with its OAuth redirect URI set to the context's `redirectUri`,
+PKCE, OIDC `nonce`, and a `state` that names this flow, and returns:
 
 ```ts
 {
@@ -2157,7 +2174,10 @@ The adapter creates the OAuth/OIDC request, including PKCE, `state`, and OIDC `n
 ```
 
 Omni opens the requested `system` or `omni` browser. After redirect, it passes the complete callback
-URL to `complete()`. The adapter validates the flow, exchanges the authorization code, and returns
+URL, query included, to `complete()` as `{ method: "browser-sso", callbackUrl }`. The request names
+no flow: **the flow is found by `state`**, which the adapter issued and alone can read, and a
+`state` it never issued, or already used, is rejected. Omni routes the callback to the adapter by
+the URI's path and never encodes a request id in it. The adapter validates the flow, exchanges the authorization code, and returns
 the authenticated provider identity. Provider tokens never enter Omni UI or general protocol state.
 An Omni-hosted SSO browser uses a dedicated temporary authentication session and never shares
 cookies or storage with task or personal browsers.
@@ -2295,8 +2315,9 @@ Creates one live provider connection for the signed-in agent.
 | `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's agent application states what its Mute does, and a hardphone or conversation login's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's** in `guide/phone.md`. |
 | `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A login-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`test.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`test.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.assignment-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
 | `host` | The agent application's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The agent application reports, the adapter decides** in `guide/phone.md`. |
-| `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
+| `signal` | Optional cancellation signal: the agent application giving up on this sign-in. When it is aborted, stop startup promptly, begin no new work, and reject `connect()` with `signal.reason`, as the web platform's own fetch does. The harness hands `connect()` a signal already aborted and names a connection made anyway (`connect.signal.aborted`) or a failure with anything but `signal.reason` (`connect.signal.reason`). |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
+| `transportStatus` | Optional. The `connecting` arm of **`transport-status`**, for while `connect()` is still pending: same shape, same rule that `message` is safe for the agent to see. Callable only until `connect()` settles. See **Before the connection exists**. |
 
 ### The agent's day
 
@@ -2689,6 +2710,19 @@ died; the agent application knows how to run a login. `recovery` joins the two:
   they are signed in elsewhere, with a way to take the login back, which is a `connect()` that
   displaces the other. See **`Adapter.connect(context)`**.
 
+**Before the connection exists.** A provider can hold a sign-in back before any connection
+stands: every agent licence on the site in use, a sign-in queue. The adapter retries as
+**Patience is the agent application's** asks, but until `connect()` resolves the agent application
+holds no `Connection` to hear `transport-status` from, and a first sign-in to a full site would
+just hang. So the adapter reports through `ConnectContext.transportStatus` -- `{ status:
+"connecting", message }`, the same arm and the same safety rule -- and the agent application
+renders it exactly as it renders `connecting`. Only `connecting`: a sign-in that cannot succeed
+rejects `connect()`. It is callable only until `connect()` settles, and from then on the
+connection's own `transport-status` speaks; the harness names a call made later
+(`connect.transportStatus.late`), a status other than `connecting` (`connect.transportStatus.status`)
+and an empty message (`connect.transportStatus.message`). A host may omit it, so an adapter calls
+it only where it is present.
+
 **Patience is the agent application's.** An adapter in `connecting` retries for as long as it takes and never
 has to decide when to stop. Omni owns giving up: after however long it chooses to wait, it may
 call `disconnect()` and either `connect()` afresh or surface the failure — so neither side waits
@@ -3034,6 +3068,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
 | `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
 | `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
+| `validateRedirectUri(uri, path?)` | A host's fixed redirect URI in one of RFC 8252's forms: `https`, a reverse-domain private-use scheme, or loopback http to `127.0.0.1` or `[::1]`, with no fragment (`redirectUri.*`). |
 | `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a conference's item, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.conference.remove.alone`), the caller off hold before the agent's part ends (`command.endCall.held`). An agent application validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |

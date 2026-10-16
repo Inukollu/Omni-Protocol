@@ -958,6 +958,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
       };
     },
     async connect(connectContext) {
+      connectContext.signal?.throwIfAborted();
       if (overrides.connect !== undefined) return overrides.connect();
       let subscribed: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
       let emittedOnCapacity = false;
@@ -2326,6 +2327,63 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await run(host(speaking, { online: "yes" }))).toEqual(["host.online"]);
     expect(unsubscribe).toHaveBeenCalledTimes(4);
     expect(await rules({})).toEqual([]);
+  });
+
+  it("hands the host's transportStatus to a pending connect, and names a report the connecting arm does not allow", async () => {
+    const message = "Every agent licence on this site is in use. You will be signed in as soon as one is free.";
+    const reporting = (update: unknown) => {
+      const { adapter } = makeAdapter();
+      return { ...adapter, connect: async (connectContext: ConnectContext) => {
+        connectContext.transportStatus?.(update as { status: "connecting"; message?: string });
+        return adapter.connect(connectContext);
+      } } as typeof adapter;
+    };
+    const run = async (update: unknown) => {
+      const heard: unknown[] = [];
+      const result = await testAdapter(reporting(update), { ...context, transportStatus: u => { heard.push(u); } }, { collectOnly: true });
+      return { rules: result.violations.map(v => v.rule), heard };
+    };
+    // A report while connect() is pending reaches the host as sent, and is clean.
+    expect(await run({ status: "connecting", message })).toEqual({ rules: [], heard: [{ status: "connecting", message }] });
+    expect(await run({ status: "connecting" })).toEqual({ rules: [], heard: [{ status: "connecting" }] });
+    // Only connecting exists before a connection, and a message is never empty.
+    expect((await run({ status: "active" })).rules).toEqual(["connect.transportStatus.status"]);
+    expect((await run({ status: "connecting", message: " " })).rules).toEqual(["connect.transportStatus.message"]);
+    // A host without the field is fine: the adapter reports only where it is present.
+    expect((await testAdapter(reporting({ status: "connecting", message }), context, { collectOnly: true })).violations).toEqual([]);
+  });
+
+  it("requires a cancelled sign-in to fail with the signal's reason, and passes one that does", async () => {
+    const answering = (onCancelled: "reason" | "connect" | "other") => {
+      const { adapter } = makeAdapter();
+      return { ...adapter, connect: async (connectContext: ConnectContext) => {
+        if (connectContext.signal?.aborted === true && onCancelled === "other") throw new Error("socket closed");
+        if (onCancelled === "connect") return adapter.connect({ ...connectContext, signal: undefined } as ConnectContext);
+        return adapter.connect(connectContext);
+      } } as typeof adapter;
+    };
+    const rules = async (onCancelled: "reason" | "connect" | "other") =>
+      (await testAdapter(answering(onCancelled), context, { collectOnly: true })).violations.map(v => v.rule);
+    expect(await rules("reason")).toEqual([]);
+    expect(await rules("connect")).toEqual(["connect.signal.aborted"]);
+    expect(await rules("other")).toEqual(["connect.signal.reason"]);
+  });
+
+  it("names a transportStatus report made after connect() settled, and not the same report made before", async () => {
+    const reporting = (late: boolean) => {
+      const { adapter } = makeAdapter();
+      return { ...adapter, connect: async (connectContext: ConnectContext) => {
+        const report = () => connectContext.transportStatus?.({ status: "connecting" });
+        if (!late) report();
+        const connection = await adapter.connect(connectContext);
+        // Late: on the harness's first read, by when connect() has long settled.
+        return late ? { ...connection, snapshot: () => { report(); return connection.snapshot(); } } : connection;
+      } } as typeof adapter;
+    };
+    const rules = async (late: boolean) =>
+      (await testAdapter(reporting(late), { ...context, transportStatus: () => {} }, { collectOnly: true })).violations.map(v => v.rule);
+    expect(await rules(false)).toEqual([]);
+    expect(await rules(true)).toEqual(["connect.transportStatus.late"]);
   });
 
   it("requires the login's store of every connection, and passes it through", async () => {

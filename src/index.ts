@@ -354,6 +354,14 @@ export interface AuthenticationContext {
    * a voice provider and absent for any other. The same value arrives later as `ConnectContext.phone`.
    */
   phone?: Phone;
+  /**
+   * Where the provider's sign-in page sends the agent back, fixed for this host and adapter so the
+   * provider registers it once and its issuer compares it exactly (RFC 9700). Required when the
+   * host offers `browser-sso`. One of RFC 8252's three forms: `https`, a reverse-domain private-use
+   * scheme such as `com.example.omni:/auth/acme-voice`, or loopback `http://127.0.0.1:<port>/...`,
+   * where only the port varies. Never minted per flow: the flow travels in OAuth `state`.
+   */
+  redirectUri?: string;
   /** Scoped to this provider's manifest id. */
   secrets: SecretStore;
   signal?: AbortSignal;
@@ -438,7 +446,7 @@ export type AuthenticationChallenge =
   | { flowId: string; method: "credentials"; fields: CredentialField[] };
 
 export type StartAuthenticationRequest =
-  | { requestId: string; method: "browser-sso"; callbackUrl: string }
+  | { requestId: string; method: "browser-sso" }
   | { requestId: string; method: "credentials" };
 
 export type StartAuthenticationResult =
@@ -446,7 +454,11 @@ export type StartAuthenticationResult =
   | { status: "rejected"; failure: AuthenticationFailure };
 
 export type CompleteAuthenticationRequest =
-  | { flowId: string; method: "browser-sso"; callbackUrl: string }
+  /**
+   * The whole URL the browser came back to, query included. It names no flow: the adapter finds
+   * its flow by the `state` it put in the authorization request, and refuses a state it never issued.
+   */
+  | { method: "browser-sso"; callbackUrl: string; flowId?: never }
   | { flowId: string; method: "credentials"; values: Readonly<Record<string, string>> };
 
 export type CompleteAuthenticationResult =
@@ -679,8 +691,15 @@ export type ConnectContext = {
    * Mute is tied to the phone by the arms below.
    */
   host: Host;
+  /** The agent application giving up on this sign-in: stop promptly and reject `connect()` with `signal.reason`. */
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
+  /**
+   * The transport-status `connecting` arm, for while `connect()` is still pending and there is no
+   * Connection to carry it: a seat limit, a sign-in queue. Callable only until `connect()` settles;
+   * from then on the Connection's own `transport-status` speaks. Optional for hosts.
+   */
+  transportStatus?: (update: { status: "connecting"; message?: string }) => void;
 } & (
   /**
    * On a softphone the host holds the microphone and states what its Mute does; on a hardphone,

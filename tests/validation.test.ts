@@ -30,6 +30,7 @@ import {
   validateNextCall,
   validateLinedUp,
   validateLabels,
+  validateRedirectUri,
   validatePhoneState,
   validateUserDetails,
   validateRecordingOutcome,
@@ -2783,4 +2784,24 @@ describe("every refusal of the wrong shape names its rule", () => {
       expect(rules(whole())).not.toContain(rule);
     });
   }
+});
+
+describe("validateRedirectUri", () => {
+  it("takes RFC 8252's three fixed forms, and refuses a scheme or host an issuer would", () => {
+    const check = (uri: unknown) => rules(validateRedirectUri(uri));
+    expect(check("https://agent.example.com/auth/acme-voice")).toEqual([]);
+    expect(check("com.example.omni:/auth/acme-voice")).toEqual([]);
+    expect(check("http://127.0.0.1:53127/auth/acme-voice")).toEqual([]);
+    expect(check("http://[::1]:53127/auth/acme-voice")).toEqual([]);
+    // A private-use scheme is a reverse domain the host controls; a bare word collides with any other app's.
+    expect(check("omni-agent://auth/acme-voice/auth-42")).toEqual(["redirectUri.scheme"]);
+    // Plain http only to the loopback literal: localhost may resolve elsewhere, and any other host is in the clear.
+    expect(check("http://localhost:53127/auth/acme-voice")).toEqual(["redirectUri.http"]);
+    expect(check("http://agent.example.com/auth/acme-voice")).toEqual(["redirectUri.http"]);
+    expect(check("https://agent.example.com/auth/acme-voice#done")).toEqual(["redirectUri.fragment"]);
+    expect(check("com.example.omni:/auth#x")).toEqual(["redirectUri.fragment"]);
+    expect(check("/auth/acme-voice")).toEqual(["redirectUri"]);
+    expect(check("")).toEqual(["redirectUri"]);
+    expect(check(undefined)).toEqual(["redirectUri"]);
+  });
 });
