@@ -428,6 +428,7 @@ type ConnectContext = {
   host: Host;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
+  transportStatus?: (update: { status: "connecting"; message?: string }) => void;
 } & (
   | { phone: "softphone"; host: { mute: HostMute } }
   | { phone?: "hardphone"; host: { mute?: never; recording?: never } }
@@ -2316,6 +2317,7 @@ Creates one live provider connection for the signed-in agent.
 | `host` | The agent application's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The agent application reports, the adapter decides** in `guide/phone.md`. |
 | `signal` | Optional cancellation signal. Stop startup promptly when aborted and do not begin new work. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
+| `transportStatus` | Optional. The `connecting` arm of **`transport-status`**, for while `connect()` is still pending: same shape, same rule that `message` is safe for the agent to see. Callable only until `connect()` settles. See **Before the connection exists**. |
 
 ### The agent's day
 
@@ -2707,6 +2709,19 @@ died; the agent application knows how to run a login. `recovery` joins the two:
   login straight back from the agent computer the agent just sat down at -- and the agent computer shows the agent
   they are signed in elsewhere, with a way to take the login back, which is a `connect()` that
   displaces the other. See **`Adapter.connect(context)`**.
+
+**Before the connection exists.** A provider can hold a sign-in back before any connection
+stands: every agent licence on the site in use, a sign-in queue. The adapter retries as
+**Patience is the agent application's** asks, but until `connect()` resolves the agent application
+holds no `Connection` to hear `transport-status` from, and a first sign-in to a full site would
+just hang. So the adapter reports through `ConnectContext.transportStatus` -- `{ status:
+"connecting", message }`, the same arm and the same safety rule -- and the agent application
+renders it exactly as it renders `connecting`. Only `connecting`: a sign-in that cannot succeed
+rejects `connect()`. It is callable only until `connect()` settles, and from then on the
+connection's own `transport-status` speaks; the harness names a call made later
+(`connect.transportStatus.late`), a status other than `connecting` (`connect.transportStatus.status`)
+and an empty message (`connect.transportStatus.message`). A host may omit it, so an adapter calls
+it only where it is present.
 
 **Patience is the agent application's.** An adapter in `connecting` retries for as long as it takes and never
 has to decide when to stop. Omni owns giving up: after however long it chooses to wait, it may

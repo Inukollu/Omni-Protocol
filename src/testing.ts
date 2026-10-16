@@ -439,8 +439,13 @@ export async function testAdapter<C extends Channel>(
       subscribe: listener => { consulted.subscribe = true; return context.host.subscribe(listener); },
     } as ConnectContext["host"];
 
-    const connected = { ...context, host, store: watched.store } as ConnectContext;
-    connection = await adapter.connect(connected);
+    const connecting = connectingReports({ ...context, host, store: watched.store } as ConnectContext, violations);
+    const connected = connecting.context;
+    try {
+      connection = await adapter.connect(connected);
+    } finally {
+      connecting.settled();
+    }
     // The standing client: the first connection, then the second after a hand-over. Everything the
     // harness asks of a connection it asks of the one that stands.
     let live = connection;
@@ -881,6 +886,36 @@ function refreshingCarriesOver(
     });
   }
   return found;
+}
+
+/**
+ * The host's `transportStatus`, handed on so that each report is checked: the `connecting` arm,
+ * and only while `connect()` is pending. After it settles the connection carries the status.
+ */
+function connectingReports(context: ConnectContext, violations: ProtocolViolation[]): { context: ConnectContext; settled(): void } {
+  const report = context.transportStatus;
+  if (report === undefined) return { context, settled: () => {} };
+  let settled = false;
+  return {
+    context: {
+      ...context,
+      transportStatus: (update: unknown) => {
+        const at = "connect.transportStatus";
+        if (settled) {
+          violations.push({ rule: "connect.transportStatus.late", path: at,
+            message: "reported through the context after connect() settled; the connection's own transport-status speaks from then on" });
+        }
+        if (!isRecord(update) || update.status !== "connecting") {
+          violations.push({ rule: "connect.transportStatus.status", path: `${at}.status`,
+            message: `before a connection exists the only status is connecting, not ${JSON.stringify(isRecord(update) ? update.status : update)}` });
+        } else if (update.message !== undefined && (typeof update.message !== "string" || update.message.trim() === "")) {
+          violations.push({ rule: "connect.transportStatus.message", path: `${at}.message`, message: "a message must not be empty when present" });
+        }
+        report(update as { status: "connecting"; message?: string });
+      },
+    } as ConnectContext,
+    settled: () => { settled = true; },
+  };
 }
 
 /** Validates each state of a published sequence, and that every `refreshing` carries over the login before it. */
@@ -1698,7 +1733,13 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
         try { await restoredSession.close(); } catch { /* the session that would not restore is closed as far as it can be */ }
         return;
       }
-      const second = await again.connect(call.context);
+      const reconnecting = connectingReports(call.context, found);
+      let second: Connection<C>;
+      try {
+        second = await again.connect(reconnecting.context);
+      } finally {
+        reconnecting.settled();
+      }
       // From here the second client is the run's connection, held to everything the first was on
       // connect: what it publishes is validated as before.
       await call.handOver.up(restoredSession, second);

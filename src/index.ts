@@ -693,6 +693,12 @@ export type ConnectContext = {
   host: Host;
   signal?: AbortSignal;
   log?: (entry: unknown) => void;
+  /**
+   * The transport-status `connecting` arm, for while `connect()` is still pending and there is no
+   * Connection to carry it: a seat limit, a sign-in queue. Callable only until `connect()` settles;
+   * from then on the Connection's own `transport-status` speaks. Optional for hosts.
+   */
+  transportStatus?: (update: { status: "connecting"; message?: string }) => void;
 } & (
   /**
    * On a softphone the host holds the microphone and states what its Mute does; on a hardphone,
