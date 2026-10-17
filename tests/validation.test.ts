@@ -20,6 +20,7 @@ import {
   validateTask,
   validateTaskCommand,
   validateTeamCommand,
+  validateLanguages,
   validateTimeZone,
   validatePhone,
   isTimeZone,
@@ -2509,6 +2510,17 @@ describe("the agent's day", () => {
     expect(identity("+05:30")).toEqual(["authentication.identity.timeZone"]);
     expect(identity("Mars/Olympus")).toEqual(["authentication.identity.timeZone"]);
     expect(identity("")).toEqual(["authentication.identity.timeZone"]);
+  });
+
+  it("requires the host to state the agent's languages: at least one well-formed tag, none twice", () => {
+    expect(rules(validateLanguages(["hi-IN", "en"]))).toEqual([]);
+    expect(rules(validateLanguages(["zh-Hant-TW"]))).toEqual([]);
+    expect(rules(validateLanguages(undefined))).toEqual(["context.languages"]);
+    expect(rules(validateLanguages([]))).toEqual(["context.languages"]);
+    expect(rules(validateLanguages("en"))).toEqual(["context.languages"]);
+    expect(rules(validateLanguages(["en", "hi_IN"]))).toEqual(["context.languages.tag"]);
+    expect(rules(validateLanguages(["en", ""]))).toEqual(["context.languages.tag"]);
+    expect(rules(validateLanguages(["en-GB", "EN-gb"]))).toEqual(["context.languages.unique"]);
   });
 
   it("holds the host's connect-time zone to the same rule, and requires one", () => {

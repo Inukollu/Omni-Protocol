@@ -43,6 +43,7 @@ import {
   validateResult,
   validateSnapshot,
   validateTask,
+  validateLanguages,
   validateTimeZone,
   validatePhone,
   validateTaskCommand,
@@ -404,6 +405,8 @@ export async function testAdapter<C extends Channel>(
     violations.push(...validateHostGuarantees(context.host.guarantees, "context.host.guarantees", adapter.manifest.channel === "voice" ? context.phone : undefined));
     // The zone is the host's to state, so a context without one is a host that cannot exist.
     violations.push(...validateTimeZone(context.timeZone, "context.timeZone"));
+    // So are the languages: what the agent reads is stated, never assumed.
+    violations.push(...validateLanguages(context.languages, "context.languages"));
     // How the agent hears the call decides what the host owns: on a softphone the host has the
     // audio and reports it; on a hardphone, or off voice, there is none for it to report.
     violations.push(...validatePhone(context.phone, adapter.manifest, "context.phone"));

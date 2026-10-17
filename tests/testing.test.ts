@@ -825,7 +825,7 @@ describe("browser isolation", () => {
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
 const speaking: HostReport = { online: true, audio: { input: { status: "available", localAudio: {} as MediaStream, flowing: true }, output: { status: "available" } } };
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, phone: "softphone" as const, host: stillHost(speaking, { muteUnavailableOnHold: true }, "stream"), store: memoryStore() };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", languages: ["hi-IN", "en"], autoAcceptTasks: true, phone: "softphone" as const, host: stillHost(speaking, { muteUnavailableOnHold: true }, "stream"), store: memoryStore() };
 /** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
 
 const conformingManifest = {
@@ -1091,6 +1091,19 @@ describe("testAdapter", () => {
     // An identity without a zone is not an identity on this wire; one with somebody else's day is told so.
     expect(await rules({ identityTimeZone: false })).toContain("authentication.identity.timeZone");
     expect(await rules({ identityTimeZone: "America/Chicago" })).toEqual(["authentication.identity.timeZone.republished"]);
+  });
+
+  it("requires the host to state the agent's languages, and passes them to the adapter", async () => {
+    let seen: unknown;
+    const { adapter } = makeAdapter();
+    const observing = { ...adapter, connect: async (connectContext: ConnectContext) => { seen = connectContext.languages; return adapter.connect(connectContext); } } as typeof adapter;
+    expect((await testAdapter(observing, context, { collectOnly: true })).violations).toEqual([]);
+    expect(seen).toEqual(["hi-IN", "en"]);
+    const run = async (languages: unknown) =>
+      (await testAdapter(makeAdapter().adapter, { ...context, languages } as unknown as ConnectContext, { collectOnly: true })).violations.map(v => v.rule);
+    expect(await run(undefined)).toEqual(["context.languages"]);
+    expect(await run([])).toEqual(["context.languages"]);
+    expect(await run(["hindi"])).toEqual(["context.languages.tag"]);
   });
 
   it("catches a preview task that leaves preview still carrying its deadline, through the full run", async () => {

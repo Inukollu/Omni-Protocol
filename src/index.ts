@@ -350,6 +350,13 @@ export interface AuthenticationContext {
    */
   timeZone: TimeZone;
   /**
+   * The languages the agent reads, as BCP 47 tags, most preferred first, from the host's own
+   * setting. Never empty: the host states at least one. The provider words what the agent reads
+   * -- failure and transport messages -- by it, looked up as `localizedText()` does. The same
+   * value arrives later as `ConnectContext.languages`.
+   */
+  languages: readonly LanguageTag[];
+  /**
    * How this login hears its calls, chosen by the host from the manifest's `phones`. Required for
    * a voice provider and absent for any other. The same value arrives later as `ConnectContext.phone`.
    */
@@ -681,6 +688,8 @@ export type ConnectContext = {
    * identity; a roaming agent corrects it by signing in.
    */
   timeZone: TimeZone;
+  /** The same value passed as `AuthenticationContext.languages`: what the agent reads, most preferred first. */
+  languages: readonly LanguageTag[];
   /** Where the adapter keeps this login's operational state across a reload of the host. */
   store: LoginStore;
   /** The same value passed as `AuthenticationContext.phone`: how this login hears its calls. Narrowed by the arms below. */
