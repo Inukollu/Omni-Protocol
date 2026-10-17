@@ -668,6 +668,26 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
 /** Language tags as BCP 47 writes them: a language, then subtags of up to eight letters or digits. */
 const LANGUAGE_TAG = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*$/;
 
+/** The agent's languages, as a host states them on both contexts: BCP 47 tags, most preferred first, at least one. */
+export function validateLanguages(value: unknown, path = "context.languages"): ProtocolViolation[] {
+  const into = new Collector();
+  if (!Array.isArray(value) || value.length === 0) {
+    into.add("context.languages", path, "the host states the languages the agent reads: at least one BCP 47 tag, most preferred first");
+    return into.violations;
+  }
+  const seen = new Set<string>();
+  value.forEach((tag: unknown, index) => {
+    if (typeof tag !== "string" || !LANGUAGE_TAG.test(tag)) {
+      into.add("context.languages.tag", `${path}[${index}]`, `${describeValue(tag)} is not a BCP 47 language tag`);
+      return;
+    }
+    const key = tag.toLowerCase();
+    into.require(!seen.has(key), "context.languages.unique", `${path}[${index}]`, `${tag} is listed twice`);
+    seen.add(key);
+  });
+  return into.violations;
+}
+
 /** The customer's own words, as `Snapshot.labels` and `labels-updated` carry them. */
 export function validateLabels(value: unknown, path = "labels"): ProtocolViolation[] {
   const into = new Collector();

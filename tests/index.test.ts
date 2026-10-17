@@ -228,7 +228,7 @@ describe("localizedText", () => {
       },
     });
 
-    const result = await testAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", autoAcceptTasks: true, host: stillHost(), store: memoryStore() });
+    const result = await testAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, host: stillHost(), store: memoryStore() });
     expect(result.violations).toEqual([]);
     expect(result.events.map(item => item.event)).toEqual([{ type: "transport-status", status: "active" }]);
     expect(disconnect).toHaveBeenCalledOnce();

@@ -289,6 +289,7 @@ type AuthenticationContext = {
   protocolVersion: number;
   loginId: string;
   timeZone: TimeZone;
+  languages: readonly LanguageTag[];
   phone?: Phone;
   redirectUri?: string;
   secrets: SecretStore;
@@ -423,6 +424,7 @@ type ConnectContext = {
   loginId: string;
   autoAcceptTasks: boolean;
   timeZone: TimeZone;
+  languages: readonly LanguageTag[];
   store: LoginStore;
   phone?: Phone;
   host: Host;
@@ -2051,6 +2053,7 @@ Creates the provider-scoped authentication session.
 | `protocolVersion` | The negotiated version, fixed for this login. |
 | `loginId` | Omni-generated identity for this login. The same value Omni later passes as `ConnectContext.loginId`, and how an adapter ties a connection back to the session that authenticated it. |
 | `timeZone` | The zone the agent's day is reckoned in, as an IANA name from the agent application's clock, stated before any identity exists so the first `authenticated` state already carries it. The same value Omni later passes as `ConnectContext.timeZone`. See **The agent's day**. |
+| `languages` | The languages the agent reads, as BCP 47 tags, most preferred first, from the agent application's own setting: `["hi-IN", "en"]`. Never empty (`context.languages`), each a well-formed tag (`context.languages.tag`), none twice (`context.languages.unique`). The same value Omni later passes as `ConnectContext.languages`. See **The agent's languages**. |
 | `phone` | How this login hears its calls, chosen by the agent application from the manifest's `phones`: required for a voice provider, absent for any other. The same value Omni later passes as `ConnectContext.phone`. See **How the agent hears the call** in `guide/phone.md`. |
 | `secrets` | Omni-provided `SecretStore`, scoped to this provider's manifest id. |
 | `signal` | Optional cancellation signal. |
@@ -2323,6 +2326,7 @@ Creates one live provider connection for the signed-in agent.
 | `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
 | `autoAcceptTasks` | Agent local policy policy relayed to the provider at login, stated by the agent application on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
+| `languages` | The same value passed as `AuthenticationContext.languages`. See **The agent's languages**. |
 | `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's agent application states what its Mute does, and a hardphone or conversation login's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's** in `guide/phone.md`. |
 | `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A login-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`test.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`test.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.assignment-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
 | `host` | The agent application's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The agent application reports, the adapter decides** in `guide/phone.md`. |
@@ -2359,6 +2363,17 @@ An adapter that echoes the stated zone back onto the identity passes that check 
 and a lead reading a colleague's day would still get the wrong one. What proves the store is a zone
 the run never sent: a colleague's `User` from `getUserDetails()` carrying theirs. A provider's own
 tests are where that is shown, with a second agent whose zone arrived through another session.
+
+### The agent's languages
+
+Everything the provider writes for the agent to read -- a failure's `message`, a transport
+`message`, a refusal's reason -- is written for one person, and the agent application says which
+languages that person reads: `languages`, BCP 47 tags in order of preference, on both contexts and
+the same value in each. It is stated, never assumed, as the zone is: never empty, because an empty
+list would be a default nobody chose, and the provider's own default is what the agent application
+falls back to only when no tag it was given matches. The provider picks a language the way
+`localizedText()` does -- each tag whole, then without its last subtag, in the agent's order -- and
+words its messages in the first it has. The harness holds the host to the shape (`validateLanguages`).
 
 ### Who the agent is
 
@@ -3082,6 +3097,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateLabels(value, path?)` | The customer's words on their own, as `labels-updated` and `Snapshot.labels` carry them: renames of the protocol's phases and steps only, and every word one text per well-formed language tag (`labels.*`). |
 | `validatePhoneState(value, path?, context?)` | The phone as the platform sees it, on its own as `phone-updated` and `Snapshot.phone` carry it: its status, its one active channel, its mute where a hardphone's is observed (`phone.*`). |
 | `validateHostMute(mute, softphone)` | What the agent application's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the agent application holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
+| `validateLanguages(languages)` | The agent's languages a host states on both contexts: a non-empty list (`context.languages`) of well-formed BCP 47 tags (`context.languages.tag`), none twice ignoring case (`context.languages.unique`). The harness holds `ConnectContext.languages` to it. |
 | `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
 | `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
 | `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
