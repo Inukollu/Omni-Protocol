@@ -361,7 +361,9 @@ export const bareStepsTask = { ...emailTask, assignmentId: "email-15", history: 
 export const arrayRecordTask = { ...emailTask, assignmentId: "email-16",
   // @ts-expect-error The record is an object carrying its steps and what they add up to, not a bare array.
   history: [{ step: "answered", at: "2026-08-21T00:59:41Z" }] } satisfies Task<"email">;
-export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
+export const revivableError = { type: "transport-status", status: "error", recovery: "reconnect", message: "The session ended on the server." } satisfies ProviderEvent<"voice">;
+// @ts-expect-error An error says why; the type does not let it go without words for the agent.
+export const unexplainedError = { type: "transport-status", status: "error", recovery: "reconnect" } satisfies ProviderEvent<"voice">;
 // @ts-expect-error An error names its recovery; the type does not let it stay silent.
 export const silentError = { type: "transport-status", status: "error" } satisfies ProviderEvent<"voice">;
 export const plainActive = { type: "transport-status", status: "active",

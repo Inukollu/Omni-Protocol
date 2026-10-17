@@ -2297,7 +2297,12 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
         into.require(event.recovery === undefined, "event.transportStatus.recovery.unexpected", `${at}.recovery`,
           "recovery goes with an error; nothing needs reviving here");
       }
-      if (event.message !== undefined) {
+      if (event.status === "error") {
+        if (into.require(event.message !== undefined, "event.transportStatus.message.required", `${at}.message`,
+          "an error says why, in words the agent sees")) {
+          into.filled(event.message, "event.transportStatus.message", `${at}.message`, "a message must not be empty");
+        }
+      } else if (event.message !== undefined) {
         into.filled(event.message, "event.transportStatus.message", `${at}.message`, "a message must not be empty when present");
       }
       break;
