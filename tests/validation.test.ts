@@ -901,7 +901,7 @@ describe("validateTeamMembers", () => {
     expect(labels({ historySteps: { arrived: "Entered" } })).toEqual(["labels.historySteps.label"]);
     expect(labels({ phases: { pending: {} } })).toEqual(["labels.phases.label"]);
     expect(labels({ phases: { pending: { en: "" } } })).toEqual(["labels.phases.label.text"]);
-    expect(labels({ phases: { pending: { english: "Ringing" } } })).toEqual(["labels.phases.label.language"]);
+    expect(labels({ phases: { pending: { en_US: "Ringing" } } })).toEqual(["labels.phases.label.language"]);
     expect(labels({ phases: { pending: { "en-IN": "Ringing", "en-in": "Ringing" } } })).toEqual(["labels.phases.label.language.unique"]);
     expect(labels({ taskTypes: { Support: "call" } })).toEqual(["labels.taskTypes.entry"]);
     expect(labels({ taskTypes: { Support: { plural } } })).toEqual(["labels.taskTypes.singular"]);
@@ -2515,6 +2515,11 @@ describe("the agent's day", () => {
   it("requires the host to state the agent's languages: at least one well-formed tag, none twice", () => {
     expect(rules(validateLanguages(["hi-IN", "en"]))).toEqual([]);
     expect(rules(validateLanguages(["zh-Hant-TW"]))).toEqual([]);
+    // Every well-formed BCP 47 tag, by its spelling: extensions, private use, a long language subtag.
+    expect(rules(validateLanguages(["en-US-u-ca-gregory", "de-x-private", "english"]))).toEqual([]);
+    expect(rules(validateLanguages(["en-"]))).toEqual(["context.languages.tag"]);
+    // A bare private-use tag names no language for anyone else to match.
+    expect(rules(validateLanguages(["x-private"]))).toEqual(["context.languages.tag"]);
     expect(rules(validateLanguages(undefined))).toEqual(["context.languages"]);
     expect(rules(validateLanguages([]))).toEqual(["context.languages"]);
     expect(rules(validateLanguages("en"))).toEqual(["context.languages"]);

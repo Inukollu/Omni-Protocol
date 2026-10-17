@@ -2010,12 +2010,19 @@ export function localizedText(text: LocalizedText | undefined, languages: readon
   if (text === undefined) return undefined;
   const byTag = new Map(Object.entries(text).map(([tag, value]) => [tag.toLowerCase(), value]));
   for (const language of languages) {
-    for (let tag = language.toLowerCase(); tag !== ""; tag = tag.includes("-") ? tag.slice(0, tag.lastIndexOf("-")) : "") {
+    // RFC 4647 Lookup: drop subtags from the end, and a single-letter extension marker with the one before it.
+    for (let tag = language.toLowerCase(); tag !== ""; tag = shorterTag(tag)) {
       const found = byTag.get(tag);
       if (found !== undefined) return found;
     }
   }
   return undefined;
+}
+
+function shorterTag(tag: string): string {
+  if (!tag.includes("-")) return "";
+  const shorter = tag.slice(0, tag.lastIndexOf("-"));
+  return /-[a-z0-9]$/.test(shorter) ? shorter.slice(0, -2) : shorter;
 }
 
 // ---------------------------------------------------------------------------
