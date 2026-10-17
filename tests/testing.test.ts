@@ -1103,7 +1103,7 @@ describe("testAdapter", () => {
       (await testAdapter(makeAdapter().adapter, { ...context, languages } as unknown as ConnectContext, { collectOnly: true })).violations.map(v => v.rule);
     expect(await run(undefined)).toEqual(["context.languages"]);
     expect(await run([])).toEqual(["context.languages"]);
-    expect(await run(["hindi"])).toEqual(["context.languages.tag"]);
+    expect(await run(["hi_IN"])).toEqual(["context.languages.tag"]);
   });
 
   it("catches a preview task that leaves preview still carrying its deadline, through the full run", async () => {

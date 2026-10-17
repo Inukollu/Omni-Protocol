@@ -665,8 +665,15 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
   return into.violations;
 }
 
-/** Language tags as BCP 47 writes them: a language, then subtags of up to eight letters or digits. */
-const LANGUAGE_TAG = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*$/;
+/** A well-formed BCP 47 tag as ECMA-402 reads one, a Unicode locale identifier: judged by its spelling, never by what the machine has installed. */
+function isLanguageTag(value: unknown): value is string {
+  if (typeof value !== "string" || value === "") return false;
+  try {
+    return Intl.getCanonicalLocales(value).length === 1;
+  } catch {
+    return false;
+  }
+}
 
 /** The agent's languages, as a host states them on both contexts: BCP 47 tags, most preferred first, at least one. */
 export function validateLanguages(value: unknown, path = "context.languages"): ProtocolViolation[] {
@@ -677,7 +684,7 @@ export function validateLanguages(value: unknown, path = "context.languages"): P
   }
   const seen = new Set<string>();
   value.forEach((tag: unknown, index) => {
-    if (typeof tag !== "string" || !LANGUAGE_TAG.test(tag)) {
+    if (!isLanguageTag(tag)) {
       into.add("context.languages.tag", `${path}[${index}]`, `${describeValue(tag)} is not a BCP 47 language tag`);
       return;
     }
@@ -740,7 +747,7 @@ function validateLocalizedText(value: unknown, rule: string, path: string, into:
   }
   const seen = new Set<string>();
   for (const [tag, text] of Object.entries(value)) {
-    if (!into.require(LANGUAGE_TAG.test(tag), `${rule}.language`, `${path}.${tag}`, `${describeValue(tag)} is not a language tag such as en, hi or en-IN`)) continue;
+    if (!into.require(isLanguageTag(tag), `${rule}.language`, `${path}.${tag}`, `${describeValue(tag)} is not a language tag such as en, hi or en-IN`)) continue;
     into.require(!seen.has(tag.toLowerCase()), `${rule}.language.unique`, `${path}.${tag}`, "language tags are case-insensitive, and each language is stated once");
     seen.add(tag.toLowerCase());
     into.filled(text, `${rule}.text`, `${path}.${tag}`, "a label must not be empty in any language it is given in");

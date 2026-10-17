@@ -100,6 +100,13 @@ describe("localizedText", () => {
     expect(localizedText(label, ["ta", "hi", "en"])).toBe("कॉल आई");
   });
 
+  it("looks up as RFC 4647 does, dropping an extension's single-letter marker with it", () => {
+    const marked = { "en-us-u": "never matched", "en-US": "American", en: "English" };
+    expect(localizedText(marked, ["en-US-u-ca-gregory"])).toBe("American");
+    expect(localizedText(marked, ["en-u-ca-gregory"])).toBe("English");
+    expect(localizedText({ "zh-Hant": "繁體" }, ["zh-Hant-TW-x-private"])).toBe("繁體");
+  });
+
   it("finds nothing rather than another language, so the agent application uses its own word", () => {
     expect(localizedText(label, ["ta"])).toBeUndefined();
     expect(localizedText(label, [])).toBeUndefined();
