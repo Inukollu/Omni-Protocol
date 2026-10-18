@@ -2544,7 +2544,7 @@ describe("testAdapter requires each method the declarations call for", () => {
   });
 
   it("holds who-decided to the manifest's declared ladder, on the login and on the snapshot", async () => {
-    const laddered = { ...conformingManifest, orgLevels: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] } satisfies Manifest<"voice">;
+    const laddered = { ...conformingManifest, orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "region", label: { en: "Your region" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }] } satisfies Manifest<"voice">;
     const of = (setBy: string) => ({ preferences: [{ id: "hold" as const, label: "Hold", enabled: true, setBy }] });
     expect(await rules({ manifest: laddered, capabilities: of("region") })).toEqual([]);
     // The ladder is the whole ladder: the default the manifest left out is refused.

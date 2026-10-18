@@ -72,16 +72,16 @@ export const chatManifest = {
 export const ladderedManifest = {
   ...voiceManifest,
   orgLevels: [
-    { id: "org", label: "Your organisation" },
-    { id: "team", label: "Your queue group" },
-    { id: "person", label: "You" },
+    { id: "org", label: { en: "Your organisation" } },
+    { id: "team", label: { en: "Your queue group" } },
+    { id: "person", label: { en: "You" } },
   ],
 } satisfies Manifest<"voice">;
 
 export const mergedTiersManifest = {
   ...voiceManifest,
   // @ts-expect-error The field is orgLevels: a fixture keeping the old `levels` key must fail the build.
-  levels: [{ id: "org", label: "Your organisation" }],
+  levels: [{ id: "org", label: { en: "Your organisation" } }],
 } satisfies Manifest<"voice">;
 
 export const emailTask = {
@@ -285,7 +285,7 @@ export const staleBreak = { transport: "active", loginId: "login-1", tasks: [], 
   break: { status: "not-requested", accepting: true } } satisfies Snapshot<"voice">;
 export const staleLadder = { ...voiceManifest,
   // @ts-expect-error The org's ladder is orgLevels.
-  orgTiers: [{ id: "org", label: "Your organisation" }] } satisfies Manifest<"voice">;
+  orgTiers: [{ id: "org", label: { en: "Your organisation" } }] } satisfies Manifest<"voice">;
 export const staleWrap = { ...emailTask, assignmentId: "email-10",
   // @ts-expect-error The wrap allowance is wrapAllowance.
   completionAllowance: 30 } satisfies Task<"email">;

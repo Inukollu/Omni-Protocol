@@ -199,17 +199,23 @@ describe("validateManifest", () => {
   it("takes the typical four levels by default, or exactly the ladder the manifest states", () => {
     expect(effectiveLevels(undefined).map(level => level.id)).toEqual(["org", "site", "team", "person"]);
     // A declared ladder is the whole ladder: what it leaves out does not exist.
-    const levels = effectiveLevels([{ id: "org", label: "Your organisation" }, { id: "team", label: "Your queue group" }, { id: "person", label: "You" }]);
-    expect(levels.map(level => `${level.id}=${level.label}`)).toEqual(["org=Your organisation", "team=Your queue group", "person=You"]);
+    const levels = effectiveLevels([{ id: "org", label: { en: "Your organisation" } }, { id: "team", label: { en: "Your queue group" } }, { id: "person", label: { en: "You" } }]);
+    expect(levels.map(level => `${level.id}=${level.label.en}`)).toEqual(["org=Your organisation", "team=Your queue group", "person=You"]);
     const m = (orgLevels: unknown) => rules(validateManifest(manifest({ orgLevels })));
-    expect(m([{ id: "region", label: "Your region" }, { id: "person", label: "You" }])).toEqual([]);
+    expect(m([{ id: "region", label: { en: "Your region" } }, { id: "person", label: { en: "You" } }])).toEqual([]);
     expect(m("region")).toEqual(["manifest.orgLevels.shape"]);
     expect(m(["region"])).toEqual(["manifest.orgLevel.shape"]);
-    expect(m([{ label: "Your region" }])).toEqual(["manifest.orgLevel.id"]);
+    expect(m([{ label: { en: "Your region" } }])).toEqual(["manifest.orgLevel.id"]);
     expect(m([{ id: "region" }])).toEqual(["manifest.orgLevel.label"]);
-    expect(m([{ id: "region", label: "A" }, { id: "region", label: "B" }])).toEqual(["manifest.orgLevel.unique"]);
+    // One text per language, as every label: the agent application picks the agent's own.
+    expect(m([{ id: "region", label: { en: "Your region", hi: "आपका क्षेत्र" } }, { id: "person", label: { en: "You" } }])).toEqual([]);
+    expect(m([{ id: "region", label: "Your region" }, { id: "person", label: { en: "You" } }])).toEqual(["manifest.orgLevel.label"]);
+    expect(m([{ id: "region", label: {} }, { id: "person", label: { en: "You" } }])).toEqual(["manifest.orgLevel.label"]);
+    expect(m([{ id: "region", label: { en_US: "Your region" } }, { id: "person", label: { en: "You" } }])).toEqual(["manifest.orgLevel.label.language"]);
+    expect(m([{ id: "region", label: { en: "" } }, { id: "person", label: { en: "You" } }])).toEqual(["manifest.orgLevel.label.text"]);
+    expect(m([{ id: "region", label: { en: "A" } }, { id: "region", label: { en: "B" } }])).toEqual(["manifest.orgLevel.unique"]);
     // The subject of every resolution cannot be declared away.
-    expect(m([{ id: "org", label: "Your organisation" }, { id: "team", label: "Your team" }])).toEqual(["manifest.orgLevels.person"]);
+    expect(m([{ id: "org", label: { en: "Your organisation" } }, { id: "team", label: { en: "Your team" } }])).toEqual(["manifest.orgLevels.person"]);
   });
 
   it("accepts a conforming manifest", () => {
@@ -280,7 +286,7 @@ describe("validateTask", () => {
     expect(caps({ recording: { lockedBy: "region" } })).toEqual(["task.capability.locked.lockedBy.unknown"]);
     // The control: a manifest that declares no ladder has all four defaults in force.
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })] }), manifest()))).toEqual([]);
-    const regional = manifest({ orgLevels: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] });
+    const regional = manifest({ orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "region", label: { en: "Your region" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }] });
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "region" } } })] }), regional))).toEqual([]);
     // The ladder is the whole ladder: a default the manifest left out is not in force.
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
@@ -548,7 +554,7 @@ describe("validateTask", () => {
     expect(attribute({ key: "caller", type: "contact", contact: { name: "Maya" } })).toEqual(["contact.shape"]);
     // The manifest's ladder reaches the attribute's contact, as it reaches the task's party.
     expect(attribute({ key: "caller", type: "contact", party: { number: { lockedBy: "region" } } })).toEqual(["contact.number.locked.lockedBy.unknown"]);
-    const regional = manifest({ orgLevels: [{ id: "org", label: "Org" }, { id: "region", label: "Region" }, { id: "team", label: "Team" }, { id: "person", label: "You" }] });
+    const regional = manifest({ orgLevels: [{ id: "org", label: { en: "Org" } }, { id: "region", label: { en: "Region" } }, { id: "team", label: { en: "Team" } }, { id: "person", label: { en: "You" } }] });
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ attributes: [{ key: "caller", type: "contact", party: { number: { lockedBy: "region" } } }] })] }), regional))).toEqual([]);
     const directory = (m: unknown) => rules(validateSnapshot(snapshot({ contacts: [{ name: "Maya", number: { lockedBy: "region" } }] }), { ...(m as object), idleCapabilities: { contacts: true } }));
     expect(directory(regional)).toEqual([]);

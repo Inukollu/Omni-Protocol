@@ -1054,10 +1054,10 @@ export interface TaskTakenOver {
  */
 export type Level = string;
 
-/** A level the structure has, with the label an agent computer shows for "who decided". */
+/** A level the structure has, with the label an agent computer shows for "who decided", per language: the agent application picks with `localizedText()`. */
 export interface LevelDeclaration {
   id: Level;
-  label: string;
+  label: LocalizedText;
 }
 
 /**
@@ -1065,10 +1065,10 @@ export interface LevelDeclaration {
  * `orgLevels`. A manifest that declares any states its whole ladder outright.
  */
 export const DEFAULT_LEVELS = [
-  { id: "org", label: "Your organisation" },
-  { id: "site", label: "Your site" },
-  { id: "team", label: "Your team" },
-  { id: "person", label: "You" },
+  { id: "org", label: { en: "Your organisation" } },
+  { id: "site", label: { en: "Your site" } },
+  { id: "team", label: { en: "Your team" } },
+  { id: "person", label: { en: "You" } },
 ] as const satisfies readonly LevelDeclaration[];
 
 /** The ladder in force for a manifest: exactly what it declares, or the defaults when it declares none. */

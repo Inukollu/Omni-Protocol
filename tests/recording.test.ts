@@ -233,7 +233,7 @@ it("keeps recording capability withdrawal conformance scoped to the provider's l
   const manifest = {
     id: "voice", displayName: "Voice", channel: "voice" as const,
     supportedProtocolVersions: [1], authenticationMethods: ["credentials" as const], settleMs: 150,
-    orgLevels: [{ id: "region", label: "Region" }, { id: "person", label: "Person" }],
+    orgLevels: [{ id: "region", label: { en: "Region" } }, { id: "person", label: { en: "Person" } }],
   };
   expect(() => assertTaskCapabilityWithdrawal([first, last], manifest, command("pause"))).not.toThrow();
 });

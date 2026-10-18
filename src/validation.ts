@@ -653,7 +653,9 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
           }
           ids.add(level.id as string);
         } else wellFormed = false;
-        if (!into.filled(level.label, "manifest.orgLevel.label", `${at}.label`, "a level needs the label an agent computer shows for it")) wellFormed = false;
+        const before = into.violations.length;
+        validateLocalizedText(level.label, "manifest.orgLevel.label", `${at}.label`, into);
+        if (into.violations.length !== before) wellFormed = false;
       });
       if (wellFormed && !ids.has("person")) {
         into.add("manifest.orgLevels.person", `${path}.orgLevels`,
@@ -950,7 +952,7 @@ function validateResolvedInto(value: Record<string, unknown>, rule: string, path
 function manifestLevels(manifest: unknown): readonly string[] | undefined {
   if (!isPlainObject(manifest)) return undefined;
   const declared = Array.isArray(manifest.orgLevels)
-    ? manifest.orgLevels.filter((level: unknown): level is { id: string; label: string } => isPlainObject(level) && typeof level.id === "string")
+    ? manifest.orgLevels.filter((level: unknown): level is { id: string; label: Readonly<Record<string, string>> } => isPlainObject(level) && typeof level.id === "string")
     : undefined;
   return effectiveLevels(declared).map(level => level.id);
 }

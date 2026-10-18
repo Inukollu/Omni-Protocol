@@ -765,7 +765,7 @@ type Level = string;
 
 type LevelDeclaration = {
   id: Level;
-  label: string;
+  label: LocalizedText;
 };
 
 type Locked = {
@@ -1320,10 +1320,10 @@ const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as
 type IdleCapability = (typeof IDLE_CAPABILITIES)[number];
 
 const DEFAULT_LEVELS = [
-  { id: "org", label: "Your organisation" },
-  { id: "site", label: "Your site" },
-  { id: "team", label: "Your team" },
-  { id: "person", label: "You" },
+  { id: "org", label: { en: "Your organisation" } },
+  { id: "site", label: { en: "Your site" } },
+  { id: "team", label: { en: "Your team" } },
+  { id: "person", label: { en: "You" } },
 ] as const satisfies readonly LevelDeclaration[];
 
 const IDLE_CAPABILITY_UI = {
@@ -1791,7 +1791,7 @@ compile time.
 | `supportedProtocolVersions` | Required non-empty list of versions this adapter can speak. Must share at least one with Omni. |
 | `authenticationMethods` | Required non-empty list of supported login methods. |
 | `idleCapabilities` | Declares actions Omni may offer while the agent has no active task, such as voice dialing. Task controls do not belong here. |
-| `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label an agent computer shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
+| `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label an agent computer shows for "who decided", one text per language as `{ en: "Your region", hi: "आपका क्षेत्र" }`, from which the agent application picks with `localizedText()` (`manifest.orgLevel.label`, `.language`, `.text`). Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `hardphone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call** in `guide/phone.md`. |
 | `phoneStatus` | Voice only, declared by presence as `true`: the platform sees the phone itself -- its registration, its do-not-disturb, its hook, its calls -- and publishes it as `Snapshot.phone` and `phone-updated`. A platform that cannot see the phone omits it, and then publishes no phone (`manifest.phoneStatus`). See **The phone's own view** in `guide/phone.md`. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome** in `guide/voice.md`. |
