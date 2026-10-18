@@ -671,13 +671,13 @@ type TaskBrowser = Browser & {
   purpose: string;
   urlVisibility?: UrlVisibility;
 } & (
-  | { sharedSession: false; isolationScheme?: never }
-  | { sharedSession: true; isolationScheme: BrowserIsolationScheme }
+  | { sharedProfile: false; isolationScheme?: never }
+  | { sharedProfile: true; isolationScheme: BrowserIsolationScheme }
 );
 
 type PersonalBrowser = Browser;
 
-type BrowserSessionKeyInput = {
+type BrowserProfileKeyInput = {
   providerId: string;
   assignmentId: AssignmentId;
   taskType: string;
@@ -3336,8 +3336,8 @@ cannot be established from TypeScript structure alone.
 | `assertForcedBreakStopsTheRest(forcedOn, candidates, stopped)` | A forced break on one provider stops the agent everywhere else: capacity zero stated on every other usable provider holding capacity, nothing on the forcing one, nothing on a dead session. See **Forced breaks** in `guide/breaks.md`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `on-break` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
-| `assertBrowserSessionIsolation(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |
-| `assertNoBrowserSessionKeyCollisions(scenarios)` | No two distinct scenarios derive the same session key. Feed it adversarial names. |
+| `assertBrowserProfileIsolation(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |
+| `assertNoBrowserProfileKeyCollisions(scenarios)` | No two distinct scenarios derive the same profile key. Feed it adversarial names. |
 
 Adapters should run the relevant scenarios against deterministic test state before publishing.
 

@@ -18,7 +18,7 @@ import {
   OMNI_FAILURE_CODES,
   OMNI_PROTOCOL_VERSION,
   OMNI_SUPPORTED_PROTOCOL_VERSIONS,
-  browserSessionKey,
+  browserProfileKey,
   sameCapabilities,
   defineAdapter,
   historyStepExpectsAPerson,
@@ -30,7 +30,7 @@ import {
   normalizeContactNumber,
   assignmentKey,
   userKey,
-  type BrowserSessionKeyInput,
+  type BrowserProfileKeyInput,
   type HistoryStep,
   type TaskHistoryStep,
   type ProviderEvent,
@@ -263,44 +263,44 @@ describe("sameCapabilities", () => {
   });
 });
 
-describe("browserSessionKey", () => {
+describe("browserProfileKey", () => {
   // The guide's own example: provider `mailflow`, task `EMAIL-829102`, type `Support`, tab `CRM`.
   const base = { id: "crm", name: "CRM", purpose: "Contact record", url: "https://crm.example.com/contact/42" };
-  const input = (browser: TaskBrowser): BrowserSessionKeyInput =>
+  const input = (browser: TaskBrowser): BrowserProfileKeyInput =>
     ({ providerId: "mailflow", assignmentId: "EMAIL-829102.a1", taskType: "Support", browser });
   const reusing = (isolationScheme: TaskBrowser["isolationScheme"]) =>
-    ({ ...base, sharedSession: true, isolationScheme } as TaskBrowser);
+    ({ ...base, sharedProfile: true, isolationScheme } as TaskBrowser);
 
   it("keys each scheme exactly as the guide documents it", () => {
-    expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME)))).toBe("mailflow.EMAIL-829102%2Ea1.CRM");
-    expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.TAB_NAME)))).toBe("CRM");
-    expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME)))).toBe("mailflow.Support.CRM");
-    expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TAB_NAME)))).toBe("mailflow.CRM");
-    expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME)))).toBe("mailflow.Support");
-    expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.TASK_TYPE_NAME__TAB_NAME)))).toBe("Support.CRM");
+    expect(browserProfileKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME)))).toBe("mailflow.EMAIL-829102%2Ea1.CRM");
+    expect(browserProfileKey(input(reusing(BROWSER_ISOLATION_SCHEMES.TAB_NAME)))).toBe("CRM");
+    expect(browserProfileKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME)))).toBe("mailflow.Support.CRM");
+    expect(browserProfileKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TAB_NAME)))).toBe("mailflow.CRM");
+    expect(browserProfileKey(input(reusing(BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME)))).toBe("mailflow.Support");
+    expect(browserProfileKey(input(reusing(BROWSER_ISOLATION_SCHEMES.TASK_TYPE_NAME__TAB_NAME)))).toBe("Support.CRM");
   });
 
   it("fails closed: a browser that does not reuse, or reuses under no declared scheme, shares nothing", () => {
-    expect(browserSessionKey(input({ ...base, sharedSession: false }))).toBeUndefined();
+    expect(browserProfileKey(input({ ...base, sharedProfile: false }))).toBeUndefined();
     // The type forbids these, but an adapter compiled against another version can still send
     // them, and the safe reading is "do not share", never "share with everyone named the same".
-    expect(browserSessionKey(input(reusing(undefined)))).toBeUndefined();
-    expect(browserSessionKey(input(reusing("ProviderName.Whatever" as TaskBrowser["isolationScheme"])))).toBeUndefined();
+    expect(browserProfileKey(input(reusing(undefined)))).toBeUndefined();
+    expect(browserProfileKey(input(reusing("ProviderName.Whatever" as TaskBrowser["isolationScheme"])))).toBeUndefined();
     // The control that makes the three above meaningful: a declared scheme does share.
-    expect(browserSessionKey(input(reusing(BROWSER_ISOLATION_SCHEMES.TAB_NAME)))).toBe("CRM");
+    expect(browserProfileKey(input(reusing(BROWSER_ISOLATION_SCHEMES.TAB_NAME)))).toBe("CRM");
   });
 
   it("does not let a value containing the separator forge another key", () => {
     // `encodeURIComponent` leaves `.` unescaped, so a raw join once made provider "Acme.Voice"
     // with type "Support" collide with "Acme" and "Voice.Support".
     const scheme = BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME;
-    const left = browserSessionKey({ providerId: "Acme.Voice", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) });
-    const right = browserSessionKey({ providerId: "Acme", assignmentId: "t1-a", taskType: "Voice.Support", browser: reusing(scheme) });
+    const left = browserProfileKey({ providerId: "Acme.Voice", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) });
+    const right = browserProfileKey({ providerId: "Acme", assignmentId: "t1-a", taskType: "Voice.Support", browser: reusing(scheme) });
     expect(left).not.toBe(right);
     // And the same two inputs do collide when they genuinely are the same, or the test above
     // would pass for a function that returned something different every time.
-    expect(browserSessionKey({ providerId: "Acme", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) }))
-      .toBe(browserSessionKey({ providerId: "Acme", assignmentId: "t2-a", taskType: "Support", browser: reusing(scheme) }));
+    expect(browserProfileKey({ providerId: "Acme", assignmentId: "t1-a", taskType: "Support", browser: reusing(scheme) }))
+      .toBe(browserProfileKey({ providerId: "Acme", assignmentId: "t2-a", taskType: "Support", browser: reusing(scheme) }));
   });
 });
 

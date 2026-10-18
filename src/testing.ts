@@ -1,5 +1,5 @@
 import {
-  browserSessionKey,
+  browserProfileKey,
   sameCapabilities,
   type Adapter,
   type AuthenticationState,
@@ -9,7 +9,7 @@ import {
   type Task,
   type TaskHistoryStep,
   type BreakStatus,
-  type BrowserSessionKeyInput,
+  type BrowserProfileKeyInput,
   type Channel,
   type ConnectContext,
   type Host,
@@ -2575,25 +2575,25 @@ export function assertBreakBeginsAfterTask(steps: readonly BreakOnTaskStep[]): v
 
 
 /** One browser in one task of one provider. `providerId` is `Manifest.id`, never `displayName`. */
-export type BrowserIsolationScenario = BrowserSessionKeyInput;
+export type BrowserIsolationScenario = BrowserProfileKeyInput;
 
 /** The session key one scenario derives, or `undefined` where the browser shares nothing. */
-const sessionKeyFor = (scenario: BrowserIsolationScenario): string | undefined => browserSessionKey(scenario);
+const profileKeyFor = (scenario: BrowserIsolationScenario): string | undefined => browserProfileKey(scenario);
 
-/** Validates whether two task-browser definitions should share one browser session. */
-export function assertBrowserSessionIsolation(
+/** Validates whether two task-browser definitions should share one browser profile. */
+export function assertBrowserProfileIsolation(
   left: BrowserIsolationScenario,
   right: BrowserIsolationScenario,
   expectedReuse: boolean,
 ): void {
-  const leftKey = sessionKeyFor(left);
-  const rightKey = sessionKeyFor(right);
+  const leftKey = profileKeyFor(left);
+  const rightKey = profileKeyFor(right);
   // A browser that does not share its session has no session key at all, so two of them never share one.
   // Treating "no key" as a match would report sharing nobody asked for.
   const actualReuse = leftKey !== undefined && leftKey === rightKey;
   if (actualReuse !== expectedReuse) {
     throw new Error(
-      `Browser session sharing mismatch: expected ${expectedReuse}, received ${actualReuse} (${String(leftKey)} vs ${String(rightKey)})`,
+      `Browser profile sharing mismatch: expected ${expectedReuse}, received ${actualReuse} (${String(leftKey)} vs ${String(rightKey)})`,
     );
   }
 }
@@ -2604,15 +2604,15 @@ export function assertBrowserSessionIsolation(
  * `B`, casing variants, separators — because a collision silently shares cookies,
  * storage, and permissions between two backends.
  */
-export function assertNoBrowserSessionKeyCollisions(scenarios: readonly BrowserIsolationScenario[]): void {
+export function assertNoBrowserProfileKeyCollisions(scenarios: readonly BrowserIsolationScenario[]): void {
   const byKey = new Map<string, BrowserIsolationScenario>();
   for (const scenario of scenarios) {
-    const key = sessionKeyFor(scenario);
+    const key = profileKeyFor(scenario);
     if (key === undefined) continue;
     const existing = byKey.get(key);
     if (existing) {
       throw new Error(
-        `Browser session key collision on '${key}': ` +
+        `Browser profile key collision on '${key}': ` +
         `${JSON.stringify({ provider: existing.providerId, taskType: existing.taskType, tab: existing.browser.name })} and ` +
         `${JSON.stringify({ provider: scenario.providerId, taskType: scenario.taskType, tab: scenario.browser.name })}`,
       );

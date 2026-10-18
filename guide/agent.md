@@ -225,7 +225,7 @@ ending, a history report, a command -- would land on whichever assignment is ope
 So the assignment id is unique within the provider and never reused: where the platform's handle
 never comes back, the adapter passes it through; where it does, the adapter mints the assignment id
 and keeps the mapping, and the agent computer never learns which. A late event finds the assignment it
-belongs to or is refused, and a task-scoped browser session (`PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME`)
+belongs to or is refused, and a task-scoped browser profile (`PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME`)
 lives one assignment, never the next customer's cookies. A dial the agent application placed was
 already safe, since its outcome is placed by the agent application's own `dialId`; where the
 assignment earns its place is everything the agent application does not mint --
@@ -689,23 +689,23 @@ Each `TaskBrowser` defines one named browser in the task workspace.
 | `name` | Agent-facing tab label, unique within the task, and an input to schemes containing `TAB_NAME`. |
 | `purpose` | Human-readable explanation of the browser's role. |
 | `url` | Initial URL. Must use `http:` or `https:`; see below. Later navigation comes from Chromium. |
-| `sharedSession` | Required. `false` creates a task-specific browser session. |
-| `isolationScheme` | **Required when `sharedSession` is `true`**, and rejected when it is `false`. There is no default: see below. |
+| `sharedProfile` | Required. `false` creates a task-specific browser profile. |
+| `isolationScheme` | **Required when `sharedProfile` is `true`**, and rejected when it is `false`. There is no default: see below. |
 | `urlVisibility` | What the agent sees of this tab's URL in Omni's chrome: `hidden`, `domain`, or `full`. Omitted, the URL shows as any browser's does; a provider says `hidden` where the URL carries what the agent may not read — a caller's number, a CRM token. Per browser, on the provider's word; an agent application that declares `guarantees.browserUrlVisibility` honours it tab by tab, and a provider checks that guarantee before it sends such a URL at all. |
 
 ##### Choosing an isolation scheme
 
 Every scheme is supported and the provider picks the one its deployment needs. There is no
-default, and a `sharedSession: true` browser that declares none is invalid — the type will not compile
+default, and a `sharedProfile: true` browser that declares none is invalid — the type will not compile
 it and `validateSnapshot` reports `task.browser.isolationScheme.required`.
 
-That is deliberate. Sharing a signed-in session decides **who else may see those credentials**,
+That is deliberate. Sharing a signed-in profile decides **who else may see those credentials**,
 and it is not a decision to inherit from whichever value happened to be the default. `TAB_NAME`
 keys on the tab label alone, so two providers that each publish a browser named "CRM" share one
-signed-in session — legitimate where a deployment wants exactly that, and a silent credential
+signed-in profile — legitimate where a deployment wants exactly that, and a silent credential
 leak where it does not. It remains available; it has to be asked for.
 
-`browserSessionKey` fails closed: given a reusing browser with no scheme it returns `undefined`
+`browserProfileKey` fails closed: given a reusing browser with no scheme it returns `undefined`
 and the browser is isolated. The safe reading of an invalid declaration is "do not share", never
 "share with everyone named the same".
 
@@ -718,7 +718,7 @@ page rather than following a disallowed URL, and `isAllowedBrowserUrl()` is the 
 
 ##### Reuse and isolation
 
-With `sharedSession: true`, definitions producing the same isolation key share one **storage profile**:
+With `sharedProfile: true`, definitions producing the same isolation key share one **storage profile**:
 cookies, local storage, session storage, permissions, and cached credentials. Different keys are
 isolated from one another.
 
@@ -727,7 +727,7 @@ own visible label, and their own navigation state and history even when their ke
 scheme that omits `TAB_NAME`, such as `PROVIDER_NAME__TASK_TYPE_NAME`, deliberately places every
 named browser of that task type in one signed-in profile without merging them into one page.
 
-`browserSessionKey()` derives the key. Every part is escaped before the `.` separator is applied,
+`browserProfileKey()` derives the key. Every part is escaped before the `.` separator is applied,
 because `encodeURIComponent` leaves `.` untouched and a raw join would let one value forge
 another key: provider `Acme.Voice` with task type `Support` would otherwise produce the same key
 as provider `Acme` with task type `Voice.Support`, silently placing two providers in one cookie
@@ -742,7 +742,7 @@ browsers: [
     name: "CRM",
     purpose: "Contact record",
     url: "https://crm.example.com/contact/42",
-    sharedSession: true,
+    sharedProfile: true,
     isolationScheme: BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME,
   }
 ]
@@ -765,7 +765,7 @@ reused.
 
 **`PROVIDER_NAME` is `manifest.id`, never `manifest.displayName`.** Only the id is required unique
 across an installation; two providers may legitimately share a display label, and keying a cookie
-jar on one would put them in the same signed-in session. The id is also stable across launches,
+jar on one would put them in the same signed-in profile. The id is also stable across launches,
 where a display name may be re-worded — and a changed key silently signs the agent out of every
 browser that used it.
 

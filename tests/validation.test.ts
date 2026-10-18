@@ -131,7 +131,7 @@ const task = (over: Record<string, unknown> = {}) => {
     capabilitySource: "queue",
     assignmentId: "alloc-42",
     // A task supplies browsers only under the capability that shows them.
-    browsers: capabilities.browsers === true ? [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false }] : [],
+    browsers: capabilities.browsers === true ? [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedProfile: false }] : [],
     phase: "in-progress",
     completionMode: "agent-command",
     wrapAllowance: 15,
@@ -258,7 +258,7 @@ describe("validateTask", () => {
   const check = (over: Record<string, unknown> = {}, channel = "voice") => rules(validateTask(task(over), { levels: LEVELS, channel }));
 
   it("lets each task browser say what the agent sees of its URL, in one of three words", () => {
-    const browser = (extra: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedSession: false, ...extra }] }), { levels: LEVELS, channel: "voice" }));
+    const browser = (extra: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedProfile: false, ...extra }] }), { levels: LEVELS, channel: "voice" }));
     expect(browser({})).toEqual([]);
     expect(browser({ urlVisibility: "hidden" })).toEqual([]);
     expect(browser({ urlVisibility: "domain" })).toEqual([]);
@@ -423,7 +423,7 @@ describe("validateTask", () => {
     // A contact attribute carries a party of its own: its number is held like any other text, and a locked one is no leak.
     expect(withLocked({ attributes: [{ key: "caller", type: "contact", party: { name: "Asha", number: "+919876543210" } }] })).toEqual(["task.locked.leak"]);
     expect(withLocked({ attributes: [{ key: "caller", type: "contact", party: { name: "Asha", number: { lockedBy: "team" } } }] })).toEqual([]);
-    const crm = { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/?ani=919876543210", sharedSession: false };
+    const crm = { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/?ani=919876543210", sharedProfile: false };
     expect(withLocked({ browsers: [crm] })).toEqual(["task.locked.leak"]);
     expect(withLocked({ browsers: [{ ...crm, urlVisibility: "hidden" }] })).toEqual([]);
     // Nothing locked, nothing held: the same title on a task whose number the agent may see is content. And a caller
@@ -438,9 +438,9 @@ describe("validateTask", () => {
     expect(audio("started")).toEqual([]);
     expect(audio("ready")).toEqual(["task.audio"]);
     const tab = (browser: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/", ...browser }] }), { levels: LEVELS, channel: "voice" }));
-    expect(tab({ sharedSession: false })).toEqual([]);
+    expect(tab({ sharedProfile: false })).toEqual([]);
     // renamed away: a browser still saying reuse has not said whether its session is shared.
-    expect(tab({ reuse: false })).toEqual(["task.browser.sharedSession"]);
+    expect(tab({ reuse: false })).toEqual(["task.browser.sharedProfile"]);
     const notes = (value: string) => rules(validateTask(task({ capabilities: { outcomes: { required: true, notes: value, codes: [{ id: "resolved", label: "Resolved" }] } } }), { levels: LEVELS, channel: "voice" }));
     expect(notes("none")).toEqual([]);
     // renamed away: no notes field is none; hidden is what a URL can be.
@@ -484,7 +484,7 @@ describe("validateTask", () => {
     expect(rules(validateTask(task({ taskType: "" }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.taskType"]);
     expect(rules(validateTask(task({ reference: "" }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.reference"]);
     expect(rules(validateTask(task({ reference: "ORD-7" }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
-    const browser = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false };
+    const browser = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedProfile: false };
     expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [browser, { ...browser, name: "CRM 2" }] }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.browser.unique"]);
     expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [browser, { ...browser, id: "kb", name: "KB" }] }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
     expect(rules(validateManifest(manifest({ displayName: "" })))).toEqual(["manifest.displayName"]);
@@ -512,18 +512,18 @@ describe("validateTask", () => {
     const browser = (over: Record<string, unknown>) =>
       check({ browsers: [{ id: "b", name: "B", purpose: "P", url: "https://x.example.com", ...over }] });
     // The guide names the rule for a reusing browser that declares no scheme.
-    expect(browser({ sharedSession: true })).toContain("task.browser.isolationScheme.required");
-    expect(browser({ sharedSession: true })).not.toContain("task.browser.isolationScheme");
-    expect(browser({ sharedSession: true, isolationScheme: "Nonsense" })).toContain("task.browser.isolationScheme");
-    expect(browser({ sharedSession: false, isolationScheme: "TabName" })).toContain("task.browser.isolationScheme.unexpected");
-    expect(browser({})).toContain("task.browser.sharedSession");
+    expect(browser({ sharedProfile: true })).toContain("task.browser.isolationScheme.required");
+    expect(browser({ sharedProfile: true })).not.toContain("task.browser.isolationScheme");
+    expect(browser({ sharedProfile: true, isolationScheme: "Nonsense" })).toContain("task.browser.isolationScheme");
+    expect(browser({ sharedProfile: false, isolationScheme: "TabName" })).toContain("task.browser.isolationScheme.unexpected");
+    expect(browser({})).toContain("task.browser.sharedProfile");
     // Controls: both legal shapes pass.
-    expect(browser({ sharedSession: true, isolationScheme: "TabName" })).toEqual([]);
-    expect(browser({ sharedSession: false })).toEqual([]);
+    expect(browser({ sharedProfile: true, isolationScheme: "TabName" })).toEqual([]);
+    expect(browser({ sharedProfile: false })).toEqual([]);
   });
 
   it("allows only http and https for a browser url", () => {
-    const url = (value: string) => check({ browsers: [{ id: "b", name: "B", purpose: "P", url: value, sharedSession: false }] });
+    const url = (value: string) => check({ browsers: [{ id: "b", name: "B", purpose: "P", url: value, sharedProfile: false }] });
     expect(url("file:///etc/passwd")).toContain("task.browser.url.scheme");
     expect(url("javascript:alert(1)")).toContain("task.browser.url.scheme");
     expect(url("https://ok.example.com")).toEqual([]);
@@ -1528,7 +1528,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("keeps browser names and attribute keys unique within a task", () => {
-    const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false };
+    const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedProfile: false };
     expect(rules(validateTask(task({ browsers: [crm, { ...crm, id: "kb", name: "Knowledge" }] }), { ...voice, levels: LEVELS }))).toEqual([]);
     expect(rules(validateTask(task({ browsers: [crm, { ...crm, id: "kb" }] }), { ...voice, levels: LEVELS }))).toEqual(["task.browser.name.unique"]);
     const order = { type: "text", key: "order", value: "42" };
@@ -1578,7 +1578,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("declares the capability that shows a task's browsers", () => {
-    const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false };
+    const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedProfile: false };
     expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [crm] }), { ...voice, levels: LEVELS }))).toEqual([]);
     expect(rules(validateTask(task({ capabilities: {}, browsers: [] }), { ...voice, levels: LEVELS }))).toEqual([]);
     expect(rules(validateTask(task({ capabilities: {}, browsers: [crm] }), { ...voice, levels: LEVELS }))).toEqual(["task.browsers.capability"]);
@@ -1935,7 +1935,7 @@ describe("the validators accept exactly what the contract publishes", () => {
   // suite that only ever fed it published values.
   it("every published isolation scheme, and no unpublished one", () => {
     const reusing = (isolationScheme: unknown) =>
-      task({ browsers: [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: true, isolationScheme }] });
+      task({ browsers: [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedProfile: true, isolationScheme }] });
     for (const scheme of Object.values(BROWSER_ISOLATION_SCHEMES)) {
       expect(rules(validateTask(reusing(scheme), { levels: LEVELS, channel: "voice" }))).toEqual([]);
     }
