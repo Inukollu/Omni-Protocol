@@ -1,6 +1,5 @@
 import {
   browserSessionKey,
-  effectiveLevels,
   sameCapabilities,
   type Adapter,
   type AuthenticationState,
@@ -116,6 +115,10 @@ const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
 // here assumes its shape; a subject is reached only by something the element rules would see.
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 const some = (value: unknown): boolean => Array.isArray(value) && value.length > 0;
+const declaredLevels = (manifest: unknown): readonly string[] | undefined =>
+  isRecord(manifest) && Array.isArray(manifest.orgLevels)
+    ? manifest.orgLevels.filter(isRecord).map(level => level.id).filter((id): id is string => typeof id === "string")
+    : undefined;
 
 function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (!isRecord(value)) return;
@@ -310,7 +313,7 @@ export async function testAdapter<C extends Channel>(
 
   try {
     authenticationState = await authentication.state();
-    const levels = effectiveLevels(adapter.manifest.orgLevels).map(level => level.id);
+    const levels = declaredLevels(adapter.manifest);
     violations.push(...validateAuthenticationState(authenticationState, "authentication", { levels }));
     if (authenticationState.status !== "authenticated") {
       throw new Error(
@@ -1103,7 +1106,7 @@ export function assertTaskCapabilityWithdrawal(
   }
   const context = {
     channel: manifest.channel,
-    levels: effectiveLevels(manifest.orgLevels).map(level => level.id),
+    levels: declaredLevels(manifest),
     dialOutcomesDeclared: manifest.dialOutcomes !== undefined,
   };
   tasks.forEach((task, index) => {
@@ -1886,7 +1889,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
   ruleTested("test.timeout");
   const send = async (command: Record<string, unknown>, dialId?: string): Promise<Record<string, unknown> | undefined> => {
     const own = validateTaskCommand(command, latestTask(), `test.command.${String(command.type)}`, {
-      levels: effectiveLevels(call.manifest.orgLevels).map(level => level.id),
+      levels: declaredLevels(call.manifest),
       dialOutcomesDeclared: call.manifest.dialOutcomes !== undefined,
       calendarDeclared: call.manifest.idleCapabilities?.calendar === true,
       autoAcceptTasks: call.context.autoAcceptTasks,

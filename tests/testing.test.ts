@@ -74,6 +74,7 @@ describe("assertCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
     supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 150,
+    orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }],
   } satisfies Manifest<"voice">;
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, lead: true as const } } satisfies AuthenticationState;
@@ -133,6 +134,7 @@ describe("assertTaskCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
     supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 150,
+    orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }],
   } satisfies Manifest<"voice">;
   const withHold = { ...voiceTask, capabilities: { hold: true, endCall: true } } satisfies Task<"voice">;
   const withoutHold = { ...voiceTask, capabilities: { endCall: true } } satisfies Task<"voice">;
@@ -835,6 +837,7 @@ const conformingManifest = {
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
   authenticationMethods: ["browser-sso"],
   settleMs: 150,
+  orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }],
   timeCheck: true,
   idleCapabilities: {
     dial: { destinations: "any-number" },

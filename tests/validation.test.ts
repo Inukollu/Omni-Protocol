@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BREAK_KINDS, BROWSER_ISOLATION_SCHEMES, IDLE_CAPABILITIES, effectiveLevels } from "../src/index.js";
+import { BREAK_KINDS, BROWSER_ISOLATION_SCHEMES, IDLE_CAPABILITIES } from "../src/index.js";
 import {
   assertNoViolations,
   ProtocolConformanceError,
@@ -111,6 +111,7 @@ const manifest = (over: Record<string, unknown> = {}) => ({
   supportedProtocolVersions: [1],
   authenticationMethods: ["credentials"],
   settleMs: 5000,
+  orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }],
   // A voice manifest says which phones it supports; any other channel says nothing.
   ...(over.channel !== undefined && over.channel !== "voice" ? {} : { phones: ["softphone"] }),
   ...over,
@@ -196,12 +197,10 @@ describe("timestamps", () => {
 });
 
 describe("validateManifest", () => {
-  it("takes the typical four levels by default, or exactly the ladder the manifest states", () => {
-    expect(effectiveLevels(undefined).map(level => level.id)).toEqual(["org", "site", "team", "person"]);
-    // A declared ladder is the whole ladder: what it leaves out does not exist.
-    const levels = effectiveLevels([{ id: "org", label: { en: "Your organisation" } }, { id: "team", label: { en: "Your queue group" } }, { id: "person", label: { en: "You" } }]);
-    expect(levels.map(level => `${level.id}=${level.label.en}`)).toEqual(["org=Your organisation", "team=Your queue group", "person=You"]);
+  it("requires the whole ladder the manifest states, each level labelled per language", () => {
     const m = (orgLevels: unknown) => rules(validateManifest(manifest({ orgLevels })));
+    // There is no ladder by default: every provider states its own, in its agents' languages.
+    expect(m(undefined)).toEqual(["manifest.orgLevels.required"]);
     expect(m([{ id: "region", label: { en: "Your region" } }, { id: "person", label: { en: "You" } }])).toEqual([]);
     expect(m("region")).toEqual(["manifest.orgLevels.shape"]);
     expect(m(["region"])).toEqual(["manifest.orgLevel.shape"]);
@@ -277,18 +276,20 @@ describe("validateTask", () => {
     expect(audio("ready", "chat")).toEqual(["task.audio.channel"]);
   });
   it("lets a control stand locked in its place, naming the level, and never a queue's own content", () => {
-    const caps = (capabilities: unknown) => rules(validateTask(task({ capabilities }), { channel: "voice" }));
+    const caps = (capabilities: unknown) => rules(validateTask(task({ capabilities }), { channel: "voice", levels: ["org", "site", "team", "person"] }));
     expect(caps({ hold: true, recording: { lockedBy: "team", reason: "Nobody on this team records" }, endCall: { lockedBy: "site" } })).toEqual([]);
     expect(caps({ conference: { lockedBy: "org" } })).toEqual([]);
     expect(caps({ recording: { lockedBy: "person" } })).toEqual(["task.capability.locked.lockedBy.person"]);
-    // A level is one of the four defaults when the manifest declares no ladder.
+    // A level is one the manifest declares.
     expect(caps({ recording: { lockedBy: "org" } })).toEqual([]);
     expect(caps({ recording: { lockedBy: "region" } })).toEqual(["task.capability.locked.lockedBy.unknown"]);
-    // The control: a manifest that declares no ladder has all four defaults in force.
+    // Without the manifest's levels, any level is taken: there is no ladder but the manifest's.
+    expect(rules(validateTask(task({ capabilities: { recording: { lockedBy: "region" } } }), { channel: "voice" }))).toEqual([]);
+    // The manifest's ladder is in force on its wire.
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })] }), manifest()))).toEqual([]);
     const regional = manifest({ orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "region", label: { en: "Your region" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }] });
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "region" } } })] }), regional))).toEqual([]);
-    // The ladder is the whole ladder: a default the manifest left out is not in force.
+    // The ladder is the whole ladder: a level the manifest left out is not in force.
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "district" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
     expect(caps({ recording: { lockedBy: "team", reason: "" } })).toEqual(["task.capability.locked.reason"]);
@@ -553,7 +554,7 @@ describe("validateTask", () => {
     // The field is party, as the type says; the old key carried nothing the validator read.
     expect(attribute({ key: "caller", type: "contact", contact: { name: "Maya" } })).toEqual(["contact.shape"]);
     // The manifest's ladder reaches the attribute's contact, as it reaches the task's party.
-    expect(attribute({ key: "caller", type: "contact", party: { number: { lockedBy: "region" } } })).toEqual(["contact.number.locked.lockedBy.unknown"]);
+    expect(rules(validateTask(task({ attributes: [{ key: "caller", type: "contact", party: { number: { lockedBy: "region" } } }] }), { channel: "voice", levels: ["team", "person"] }))).toEqual(["contact.number.locked.lockedBy.unknown"]);
     const regional = manifest({ orgLevels: [{ id: "org", label: { en: "Org" } }, { id: "region", label: { en: "Region" } }, { id: "team", label: { en: "Team" } }, { id: "person", label: { en: "You" } }] });
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ attributes: [{ key: "caller", type: "contact", party: { number: { lockedBy: "region" } } }] })] }), regional))).toEqual([]);
     const directory = (m: unknown) => rules(validateSnapshot(snapshot({ contacts: [{ name: "Maya", number: { lockedBy: "region" } }] }), { ...(m as object), idleCapabilities: { contacts: true } }));
@@ -1811,7 +1812,7 @@ describe("validateAuthenticationState", () => {
 
   it("declares what the team left to the person on the login, with who set it", () => {
     const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
-    const prefs = (value: unknown) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: value } }));
+    const prefs = (value: unknown) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: value } }, "authentication", { levels: ["org", "site", "team", "person"] }));
     const hold = { id: "hold", label: "Hold", enabled: true, setBy: "team" };
     expect(prefs([hold, { id: "skill:tier2", label: "Tier 2", enabled: false, setBy: "person" }, { id: "skill:billing", label: "Billing", enabled: true, setBy: "provider" }])).toEqual([]);
     // Nothing is hidden: a preference a level above has since locked is listed, locked.
@@ -1832,6 +1833,9 @@ describe("validateAuthenticationState", () => {
     const declared = { levels: ["org", "region", "team", "person"] };
     expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, setBy: "region" }] } }, "authentication", declared))).toEqual([]);
     expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, setBy: "site" }] } }, "authentication", declared))).toEqual(["preference.setBy.unknown"]);
+    // Without them, any level is taken: the ladder is the manifest's, and there is no other.
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, setBy: "site" }] } }))).toEqual([]);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, lockedBy: "person" }] } }))).toEqual(["preference.lockedBy.person"]);
     expect(prefs([{ ...hold, reason: "Because" }])).toEqual(["preference.reason.unexpected"]);
     expect(prefs(["hold"])).toEqual(["preference.shape"]);
     expect(prefs("hold")).toEqual(["preferences.shape"]);
@@ -1839,7 +1843,7 @@ describe("validateAuthenticationState", () => {
   it("refuses provisioning as a setBy beside provider, which replaced it", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
     const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
-    const prefs = (setBy: string) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ id: "hold", label: "Hold", enabled: true, setBy }] } }));
+    const prefs = (setBy: string) => rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ id: "hold", label: "Hold", enabled: true, setBy }] } }, "authentication", { levels: ["team", "person"] }));
     expect(prefs("provider")).toEqual([]);
     expect(prefs("provisioning")).toEqual(["preference.setBy.unknown"]);
   });

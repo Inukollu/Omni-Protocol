@@ -208,8 +208,9 @@ describe("recording validation context and direct permission checks", () => {
     expect(validateTask(current, { ...taskContext, channel: "voice" })).toEqual([]);
     expect(validateTaskCommand(command("pause"), current, "command", taskContext)).toEqual([]);
     expect(check("pause", "recording", "provider", {}, { taskContext }, current)).toEqual([]);
-    expect(validateTaskCommand(command("pause"), current)).not.toEqual([]);
-    expect(check("pause", "recording", "provider", {}, {}, current)).not.toEqual([]);
+    const teamOnly = { levels: ["team", "person"] };
+    expect(validateTaskCommand(command("pause"), current, "command", teamOnly)).not.toEqual([]);
+    expect(check("pause", "recording", "provider", {}, { taskContext: teamOnly }, current)).not.toEqual([]);
   });
 
   it("carries known task restrictions through to recording dispatch", () => {

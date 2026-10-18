@@ -36,8 +36,6 @@ import {
   type BrowserAccess,
   type HostAudioUnavailableReason,
   type UrlVisibility,
-  DEFAULT_LEVELS,
-  effectiveLevels,
   type TeamPolicySetting,
   type TaskAudioState,
   type TransportRecovery,
@@ -633,9 +631,11 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
   into.require(typeof manifest.settleMs === "number" && Number.isInteger(manifest.settleMs) && manifest.settleMs > 0,
     "manifest.settleMs", `${path}.settleMs`,
     "settleMs is how long after applied the wire shows what the provider did -- the task-ended after a complete, the calendar-updated after a schedule -- a positive whole number of milliseconds, stated by every provider");
-  if (manifest.orgLevels !== undefined) {
+  if (manifest.orgLevels === undefined) {
+    into.add("manifest.orgLevels.required", `${path}.orgLevels`, "orgLevels is required: the organisation's whole ladder, person included, each level labelled in the languages its agents read");
+  } else {
     if (!Array.isArray(manifest.orgLevels)) {
-      into.add("manifest.orgLevels.shape", `${path}.orgLevels`, "orgLevels must be an array when present");
+      into.add("manifest.orgLevels.shape", `${path}.orgLevels`, "orgLevels must be an array");
     } else {
       const ids = new Set<string>();
       let wellFormed = true;
@@ -869,16 +869,12 @@ function validateCustomCapabilities(value: unknown, path: string, into: Collecto
   });
 }
 
-const DEFAULT_LEVEL_IDS: readonly string[] = DEFAULT_LEVELS.map(level => level.id);
 const POLICY_SETTINGS = membersOf<TeamPolicySetting>({ on: true, off: true, person: true });
 const POLICY_KEYS = new Set<string>([
   ...TASK_CAPABILITIES.voice, ...TASK_CAPABILITIES.chat, ...TASK_CAPABILITIES.email, "dial",
 ].filter(name => name !== "browsers" && name !== "outcomes" && name !== "custom"));
 const PERSON_SETTABLE = /^(hold|skill:.+)$/;
 const isLocked = (value: unknown): value is Record<string, unknown> => isPlainObject(value) && value.lockedBy !== undefined;
-
-/** The level ids in force: the manifest's, or the defaults when the caller holds no manifest. */
-const levelIds = (levels: readonly string[] | undefined): readonly string[] => levels ?? DEFAULT_LEVEL_IDS;
 
 /**
  * What the queue locks is locked on the whole task. Given the locked values, every other field an
@@ -921,12 +917,12 @@ function validateNothingLeaksInto(task: Record<string, unknown>, locked: readonl
   }
 }
 
-/** `lockedBy`: a declared level other than `person`, who never locks their own value. */
+/** `lockedBy`: a declared level other than `person`, who never locks their own value. Without the manifest's levels, any level is taken. */
 function validateLockedByInto(value: unknown, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
   if (!into.filled(value, rule, path, "lockedBy names the level that locked it")) return;
   into.require(value !== "person", `${rule}.person`, path, "a person never locks their own value");
-  into.require(levelIds(levels).includes(value as string), `${rule}.unknown`, path,
-    `${describeValue(value)} is not a level this manifest declares: in force are ${levelIds(levels).join(", ")}`);
+  if (levels !== undefined) into.require(levels.includes(value as string), `${rule}.unknown`, path,
+    `${describeValue(value)} is not a level this manifest declares: in force are ${levels.join(", ")}`);
 }
 
 /** `{ lockedBy, reason? }` standing in for a value: who locked it, and a reason if given. */
@@ -938,7 +934,7 @@ function validateLockedInto(value: Record<string, unknown>, rule: string, path: 
 /** What every resolved value carries: who set it, and who locked it if anyone. */
 function validateResolvedInto(value: Record<string, unknown>, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
   if (into.filled(value.setBy, `${rule}.setBy`, `${path}.setBy`, "setBy names who stated the value: a level, or provider")) {
-    into.require(value.setBy === "provider" || levelIds(levels).includes(value.setBy as string), `${rule}.setBy.unknown`, `${path}.setBy`,
+    into.require(value.setBy === "provider" || levels === undefined || levels.includes(value.setBy as string), `${rule}.setBy.unknown`, `${path}.setBy`,
       `${describeValue(value.setBy)} is neither provider nor a level this manifest declares`);
   }
   if (value.lockedBy !== undefined) validateLockedByInto(value.lockedBy, `${rule}.lockedBy`, `${path}.lockedBy`, levels, into);
@@ -948,13 +944,12 @@ function validateResolvedInto(value: Record<string, unknown>, rule: string, path
   }
 }
 
-/** The level ids a manifest puts in force, for validators that receive one. */
+/** The level ids a manifest declares, for validators that receive one. A manifest without a ladder is reported by `validateManifest`, and levels then go unchecked. */
 function manifestLevels(manifest: unknown): readonly string[] | undefined {
-  if (!isPlainObject(manifest)) return undefined;
-  const declared = Array.isArray(manifest.orgLevels)
-    ? manifest.orgLevels.filter((level: unknown): level is { id: string; label: Readonly<Record<string, string>> } => isPlainObject(level) && typeof level.id === "string")
-    : undefined;
-  return effectiveLevels(declared).map(level => level.id);
+  if (!isPlainObject(manifest) || !Array.isArray(manifest.orgLevels)) return undefined;
+  return manifest.orgLevels
+    .filter((level: unknown): level is { id: string } => isPlainObject(level) && typeof level.id === "string")
+    .map(level => level.id);
 }
 const CUSTOM_RENDERS = membersOf<NonNullable<CustomCapability["ui"]["render"]>>({ inline: true, page: true });
 const CREDENTIAL_FIELD_TYPES = membersOf<CredentialField["type"]>({ text: true, password: true });
@@ -1273,7 +1268,7 @@ function validateTakenOver(value: unknown, channel: string, path: string, into: 
 export interface TaskValidationContext {
   /** The provider's channel, from its manifest. A task must agree with it. */
   channel: string;
-  /** The level ids in force, from the manifest. The defaults when absent. */
+  /** The level ids the manifest declares. Unknown to a caller without the manifest, and then any level is taken. */
   levels?: readonly string[];
   /** `ConnectContext.autoAcceptTasks` as sent: whether a pending task states its `acceptance`. Unknown to a caller without the context, and then unchecked. */
   autoAcceptTasks?: boolean;
@@ -1875,7 +1870,7 @@ export interface ReaderContext {
    * snapshot carries a team member list, nobody else's does, and `requests` need `team.leadAssistControl`.
    */
   capabilities?: UserCapabilities;
-  /** The level ids in force. Filled from the manifest by `validateSnapshot` and `validateEventEnvelope`; the defaults otherwise. */
+  /** The level ids the manifest declares. Filled from the manifest by `validateSnapshot` and `validateEventEnvelope`; unknown otherwise, and then any level is taken. */
   levels?: readonly string[];
   /** The login's `loginId`. A snapshot or event naming another belongs to a login that is gone. */
   loginId?: string;
@@ -3335,7 +3330,7 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
 
 /** What a login is validated against beyond its own shape. */
 export interface LoginValidationContext {
-  /** The level ids in force, from the manifest. The defaults when absent. */
+  /** The level ids the manifest declares. Unknown to a caller without the manifest, and then any level is taken. */
   levels?: readonly string[];
 }
 

@@ -233,7 +233,7 @@ type Manifest<C extends Channel = Channel> = {
   idleCapabilities?: IdleCapabilities<C>;
   timeCheck?: true;
   timestampAuthority?: "provider";
-  orgLevels?: LevelDeclaration[];
+  orgLevels: LevelDeclaration[];
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   phones?: C extends "voice" ? Phone[] : never;
   phoneStatus?: C extends "voice" ? true : never;
@@ -913,13 +913,13 @@ are the provider's ladder: each level states only what it sets, an enforcing pol
 the person settles the value for everyone below it, and where nothing enforces the most specific
 level that says anything wins. The protocol names a level by the id the manifest declares for it and
 never describes the chain between them: which levels a person passes through is the structure's to
-know. A typical organisation has four, and they are the defaults — `DEFAULT_LEVELS`: `org`, `site`,
-`team`, `person`, each with the label an agent computer shows. A structure that differs states its whole
-ladder in `Manifest.orgLevels`, `person` included: what the list carries is in force, and what it
+know. Every provider states its whole ladder in `Manifest.orgLevels` — a typical organisation's is
+`org`, `site`, `team`, `person` — each level with the label an agent computer shows, in the languages
+its agents read. There is no ladder by default: a default would carry its labels in one language
+only. The ladder includes `person`, and it is the whole ladder: what the list carries is in force, and what it
 leaves out does not exist — a structure with no site level declares `org`, `team`, `person`, and
 `site` is refused on its wire. A declared level is one the provider's own store actually resolves
-at: a label with no policy behind it decides nothing. A manifest that declares none has exactly
-the four. `lockedBy` is any level in force except `person`, who never locks their own value;
+at: a label with no policy behind it decides nothing. `lockedBy` is any level in force except `person`, who never locks their own value;
 `setBy` is any level in force, or `provider`, the protocol's word for "no level has said
 anything and the provider's own configuration supplied the value". An agent application renders "who decided" from the
 declared labels and needs no others, and validates every republished `authenticated` state
@@ -1318,13 +1318,6 @@ const ALLOWED_BROWSER_URL_SCHEMES = ["http:", "https:"] as const;
 
 const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;
 type IdleCapability = (typeof IDLE_CAPABILITIES)[number];
-
-const DEFAULT_LEVELS = [
-  { id: "org", label: { en: "Your organisation" } },
-  { id: "site", label: { en: "Your site" } },
-  { id: "team", label: { en: "Your team" } },
-  { id: "person", label: { en: "You" } },
-] as const satisfies readonly LevelDeclaration[];
 
 const IDLE_CAPABILITY_UI = {
   dial: "Dialpad",
@@ -1762,6 +1755,12 @@ export default defineAdapter({
     supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
     authenticationMethods: ["browser-sso"],
     settleMs: 5000,
+    orgLevels: [
+      { id: "org", label: { en: "Your organisation", hi: "आपका संगठन" } },
+      { id: "site", label: { en: "Your site", hi: "आपकी साइट" } },
+      { id: "team", label: { en: "Your team", hi: "आपकी टीम" } },
+      { id: "person", label: { en: "You", hi: "आप" } },
+    ],
     idleCapabilities: {
       dial: { destinations: "any-number" },
     },
@@ -1791,7 +1790,7 @@ compile time.
 | `supportedProtocolVersions` | Required non-empty list of versions this adapter can speak. Must share at least one with Omni. |
 | `authenticationMethods` | Required non-empty list of supported login methods. |
 | `idleCapabilities` | Declares actions Omni may offer while the agent has no active task, such as voice dialing. Task controls do not belong here. |
-| `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label an agent computer shows for "who decided", one text per language as `{ en: "Your region", hi: "आपका क्षेत्र" }`, from which the agent application picks with `localizedText()` (`manifest.orgLevel.label`, `.language`, `.text`). Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
+| `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label an agent computer shows for "who decided", one text per language as `{ en: "Your region", hi: "आपका क्षेत्र" }`, from which the agent application picks with `localizedText()` (`manifest.orgLevel.label`, `.language`, `.text`). Required of every provider (`manifest.orgLevels.required`), stated outright, `person` included: what it leaves out does not exist. There is no default ladder. See **Who decides what an agent may do**. |
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `hardphone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call** in `guide/phone.md`. |
 | `phoneStatus` | Voice only, declared by presence as `true`: the platform sees the phone itself -- its registration, its do-not-disturb, its hook, its calls -- and publishes it as `Snapshot.phone` and `phone-updated`. A platform that cannot see the phone omits it, and then publishes no phone (`manifest.phoneStatus`). See **The phone's own view** in `guide/phone.md`. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome** in `guide/voice.md`. |
