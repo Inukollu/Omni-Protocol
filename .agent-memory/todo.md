@@ -3,9 +3,9 @@
 Last updated 2026-10-18.
 
 - **Gap review, reworked with Vasu on 2026-10-18.** Each change below gets wire samples before it is built.
-  - **Small batch, built as PR `calls/conference-lead-coaching`:**
+  - **Small batch, built as PR #158:**
     - **Contacts:** each contact carries a unique `id`.
-    - **Conference:** `conference: { destinations: "contacts-only" | "any-number" }`; an add carries `contactId` or a typed `number`; the call, the history, the dial outcome and the remove name `contactId`.
+    - **Add to call (was conference):** the `addToCall` capability says `destinations: "contacts-only" | "any-number"` and may narrow to `contactIds`. The commands are `add-to-call` (`contactId` or `number`) and `remove-from-call`. The role and history step are `added`, and the wire names `contactId`.
     - **Hold:** the hold sentence.
     - **Lead capabilities:** `LeadCapabilities`.
     - **Coaching:** shown on `onCall`.

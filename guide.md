@@ -21,7 +21,7 @@ every cross-reference names the file it points into.
 | File | |
 | --- | --- |
 | `guide/agent.md` | **The agent's work.** What an agent does on any channel: the assignment from offer to wrap, the task and its record, the controls a task offers, the commands the agent computer sends. |
-| `guide/voice.md` | **Voice.** What is true of a call and of nothing else: preview, connecting back, ending a call, conference, every dial and its outcome, recording. |
+| `guide/voice.md` | **Voice.** What is true of a call and of nothing else: preview, connecting back, ending a call, adding to a call, every dial and its outcome, recording. |
 | `guide/phone.md` | **The phone.** How the agent hears the call: softphone and hardphone, the station and its headset, opening the audio, the microphone and the record. |
 | `guide/chat.md` | **Chat.** What is true of a chat and of nothing else. |
 | `guide/email.md` | **Email.** What is true of an email and of nothing else. |
@@ -40,7 +40,7 @@ are used precisely throughout and mean nothing looser here.
 | **Agent application** | The software the agent uses, such as Omni, whether web or desktop. It presents provider tasks and controls and manages local audio where supported. Existing API names use `Host` and `host` for this role. |
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
-| **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; the provider's contacts may include an agent, whom a conference then names by contact id. |
+| **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; the provider's contacts may include an agent, whom an add to the call then names by contact id. |
 | **Lead** | An agent whose session declares `capabilities.lead`, the lead capabilities it holds. Its presence lets the agent application offer the team feature; the application switches it on with `lead-features` on every connect, and only then does the provider publish the team -- whole on `team-updated`, then one member at a time -- to that login and to nobody else: **the login is the permission**. The lead sees their members with their tasks and stats, and acts on them with the lead capabilities the session holds. |
 | **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and local policy disagree, the stricter wins. |
 | **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. The protocol never describes the IVR or the queue; it carries the call's history and details to whichever agent holds it now. |
@@ -58,9 +58,9 @@ are used precisely throughout and mean nothing looser here.
 | **Event** | One completed transaction reported after a snapshot established the baseline. |
 | **Break** | A reported, supervised state in which the agent is not working — one with a reason, a decision behind it and a return. It covers what a platform may call *not-ready*, including equipment trouble. An agent who is merely at capacity is not on a break. |
 | **Workspace** | What Omni shows the agent. The **task workspace** holds the selected task, its controls and its browsers; the **idle workspace** holds what a provider contributes when no task is selected — dialpad, contacts, calendar, team member list. |
-| **Dial** | One outbound call the agent application asks a provider to place — from the idle dialpad, a preview's Call, a conference add, or a connect-back. Identified by the agent application's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome** in `guide/voice.md`. |
+| **Dial** | One outbound call the agent application asks a provider to place — from the idle dialpad, a preview's Call, an add to the call, or a connect-back. Identified by the agent application's `dialId`, accepted as `dialling`, and ended by exactly one `dial-outcome`. See **Every dial has an outcome** in `guide/voice.md`. |
 | **Listen** | A lead's channel in a member's call, unasked, from the team member list: `listen` in silence, `coach` heard by the agent alone, `join-call` heard by everyone. It is a team act naming the member, never a task on the lead's computer; `listen` and `coach` leave no trace on the member's task, while a lead heard by everyone is on its `onCall` as an `agent`. Every lead sees every lead on the call. A lead who wants the call takes it over. See **Listening to a call** in `guide/lead.md`. |
-| **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone conferenced in from the moment their dial is placed. |
+| **On the call** | Who a voice task's audio joins, or is bringing in, as the provider states it on `Task.onCall`: the party, the agents, and anyone added from the moment their dial is placed. |
 
 These fields describe state within their containing objects. Both authentication and break
 state use `status`; name the object when discussing them to avoid ambiguity.
@@ -604,8 +604,9 @@ type OutcomeRules = {
   codes?: OutcomeCode[];
 };
 
-type ConferenceCapability = {
+type AddToCallCapability = {
   destinations: DialDestinations;
+  contactIds?: string[];
 };
 
 type CustomCapability = {
@@ -635,7 +636,7 @@ type TaskCapabilities<C extends Channel = Channel> =
         connectBack?: Lockable<true>;
         schedule?: Lockable<true>;
         leadAssist?: Lockable<true>;
-        conference?: Lockable<ConferenceCapability>;
+        addToCall?: Lockable<AddToCallCapability>;
         recording?: Lockable<TaskRecordingPolicy>;
       }
     : C extends "chat"
@@ -720,7 +721,7 @@ type HistoryStep =
   | "held"
   | "muted"
   | "transferred"
-  | "conferenced"
+  | "added"
   | "unanswered"
   | "callback-requested";
 
@@ -753,7 +754,7 @@ type TaskCompletion =
   | { completionMode: "agent-command"; wrapAllowance?: DurationSeconds }
   | { completionMode: "provider-automatic"; wrapAllowance: DurationSeconds };
 
-type OnCallRole = "party" | "agent" | "conferenced";
+type OnCallRole = "party" | "agent" | "added";
 
 type OnCallStage = "ringing" | "joined";
 
@@ -761,7 +762,7 @@ type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party"; dialId?: never; stage?: never }
   | { role: "party"; stage: OnCallStage; dialId?: DialId }
   | { role: "agent"; userId: UserId; coaching?: true }
-  | { role: "conferenced"; contactId: string; stage: OnCallStage; dialId?: DialId; label?: string }
+  | { role: "added"; contactId: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );
 
 type TaskLeadAssist = { note?: string; since: IsoTimestamp } & (
@@ -845,7 +846,8 @@ const TASK_COMMAND_NAMES = {
     "terminate-call",
     "connect-back",
     "lead-assist",
-    "conference",
+    "add-to-call",
+    "remove-from-call",
     "recording",
     "schedule",
     "complete",
@@ -871,10 +873,10 @@ type VoiceTaskCommand =
   | ScheduleCommand
   | { type: "lead-assist"; action: "request"; note?: string }
   | { type: "lead-assist"; action: "cancel" }
-  | { type: "conference"; action: "add"; dialId: DialId; contactId: string; number?: never }
-  | { type: "conference"; action: "add"; dialId: DialId; number: string; contactId?: never }
-  | { type: "conference"; action: "remove"; contactId: string; party?: never }
-  | { type: "conference"; action: "remove"; party: true; contactId?: never }
+  | { type: "add-to-call"; dialId: DialId; contactId: string; number?: never }
+  | { type: "add-to-call"; dialId: DialId; number: string; contactId?: never }
+  | { type: "remove-from-call"; contactId: string; party?: never }
+  | { type: "remove-from-call"; party: true; contactId?: never }
   | (RecordingCommand & { source: "provider" })
   | ({ type: "complete" } & OutcomePayload);
 
@@ -914,7 +916,7 @@ type TaskCommandResult =
 ### Who decides what an agent may do
 
 An agent agent computer has two managers, not one. **The queue** — a process, a work type — is owned by a
-process manager and **allows** a set of capabilities: hold, connect back, dial, conference,
+process manager and **allows** a set of capabilities: hold, connect back, dial, add to call,
 whether the number is visible, the actions it offers, the skills it needs. **The people** are
 managed through the organisation's structure — a team, a location, the organisation itself, in
 whatever combination the structure defines for a person — and **decide** per capability within
@@ -1361,7 +1363,7 @@ const HISTORY_STEPS_WITH_A_PERSON = [
   "held",
   "muted",
   "transferred",
-  "conferenced",
+  "added",
   "unanswered",
 ] as const;
 
@@ -1471,7 +1473,7 @@ const DEFAULT_HISTORY_STEP_LABELS = {
   held: "On hold",
   muted: "Muted",
   transferred: "Transferred",
-  conferenced: "Conferenced",
+  added: "Added",
   unanswered: "Unanswered",
   "callback-requested": "Callback requested",
 } as const satisfies Readonly<Record<HistoryStep, string>>;
@@ -1807,7 +1809,7 @@ compile time.
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label an agent computer shows for "who decided", one text per language as `{ en: "Your region", hi: "आपका क्षेत्र" }`, from which the agent application picks with `localizedText()` (`manifest.orgLevel.label`, `.language`, `.text`). Required of every provider (`manifest.orgLevels.required`), stated outright, `person` included: what it leaves out does not exist. There is no default ladder. See **Who decides what an agent may do**. |
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `hardphone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call** in `guide/phone.md`. |
 | `phoneStatus` | Voice only, declared by presence as `true`: the platform sees the phone itself -- its registration, its do-not-disturb, its hook, its calls -- and publishes it as `Snapshot.phone` and `phone-updated`. A platform that cannot see the phone omits it, and then publishes no phone (`manifest.phoneStatus`). See **The phone's own view** in `guide/phone.md`. |
-| `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome** in `guide/voice.md`. |
+| `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that add to the call or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome** in `guide/voice.md`. |
 | `timeCheck` | `true`: implements `checkTime` and states `providerTime` on every snapshot. Required of a provider that publishes an instant the agent computer renders as a running duration -- a member's `since`, a `listening[].since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts from the provider's clock (`manifest.timeCheck.required`); agent application polling is independently opt-in. See **Every screen counts from the provider's clock**. |
 | `timestampAuthority` | Optional `"provider"`: provider timestamps are final; agent application instants are advisory. Omission makes no trust promise. |
 | `runningStepReports` | The provider takes running reports of an agent application-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the agent application sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The agent application records what it performs** in `guide/agent.md`. |
@@ -1987,7 +1989,7 @@ idleCapabilities: { contacts: true }
 Omit `contacts` to make no contact contribution. When declared, the provider
 publishes its authoritative list through `Snapshot.contacts` and replaces it with a
 `contacts-updated` event when it changes. The list is the agent computer's directory: each entry
-carries a unique `id`, which is how the wire names that contact -- in a conference, on the call, in
+carries a unique `id`, which is how the wire names that contact -- in an add to the call, on the call, in
 its history and on a dial's outcome -- and the agent computer shows the name it holds for an id.
 Every other field is optional:
 
@@ -3119,7 +3121,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
 | `validateAuthenticationResult(result, method, path, { levels })` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
 | `validateRedirectUri(uri, path?)` | A host's fixed redirect URI in one of RFC 8252's forms: `https`, a reverse-domain private-use scheme, or loopback http to `127.0.0.1` or `[::1]`, with no fragment (`redirectUri.*`). |
-| `validateTaskCommand(command, task?, path, { levels })` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a conference's item, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.conference.remove.alone`), the caller off hold before the agent's part ends (`command.endCall.held`). An agent application validates before sending and an adapter before acting. |
+| `validateTaskCommand(command, task?, path, { levels })` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, an add's contact or number, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.removeFromCall.alone`), the caller off hold before the agent's part ends (`command.endCall.held`). An agent application validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
 | `validateAuthenticationState(state, path, { levels })` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
 

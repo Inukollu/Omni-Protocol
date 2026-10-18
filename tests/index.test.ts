@@ -81,7 +81,7 @@ describe("Omni protocol", () => {
   });
 
   it("names every history step, the call's arrival as the agent says it", () => {
-    const steps: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered", "callback-requested"];
+    const steps: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "added", "unanswered", "callback-requested"];
     expect(Object.keys(DEFAULT_HISTORY_STEP_LABELS).sort()).toEqual([...steps].sort());
     for (const label of Object.values(DEFAULT_HISTORY_STEP_LABELS)) expect(label.trim()).not.toBe("");
     expect(DEFAULT_HISTORY_STEP_LABELS.arrived).toBe("Incoming call");
@@ -337,7 +337,7 @@ describe("historyStepExpectsAPerson", () => {
     for (const step of nobody) expect(historyStepExpectsAPerson(step)).toBe(false);
     // The control that matters: every other step does expect one, so an absent agent on any
     // of them means "handled, could not attribute" rather than "nobody involved".
-    const everyStep: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"];
+    const everyStep: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "added", "unanswered"];
     for (const step of everyStep.filter(step => !nobody.includes(step))) {
       expect(historyStepExpectsAPerson(step)).toBe(true);
     }
@@ -349,11 +349,11 @@ describe("every dial has an outcome", () => {
   it("names the dial a command places, and none for a command that dials nothing", () => {
     expect(commandDialId({ type: "connect-back", dialId: "dial-1" })).toBe("dial-1");
     expect(commandDialId({ type: "dial", dialId: "dial-5" })).toBe("dial-5");
-    expect(commandDialId({ type: "conference", action: "add", dialId: "dial-4", contactId: "tier2" })).toBe("dial-4");
+    expect(commandDialId({ type: "add-to-call", dialId: "dial-4", contactId: "tier2" })).toBe("dial-4");
     // The control: a remove, a schedule, a hold dial nowhere.
     expect(commandDialId({ type: "schedule", at: "2026-08-22T10:00:00Z" })).toBeUndefined();
-    expect(commandDialId({ type: "conference", action: "remove", contactId: "tier2" })).toBeUndefined();
-    expect(commandDialId({ type: "conference", action: "remove", party: true })).toBeUndefined();
+    expect(commandDialId({ type: "remove-from-call", contactId: "tier2" })).toBeUndefined();
+    expect(commandDialId({ type: "remove-from-call", party: true })).toBeUndefined();
     expect(commandDialId({ type: "end-call" })).toBeUndefined();
     expect(commandDialId({ type: "hold" })).toBeUndefined();
   });
@@ -363,7 +363,7 @@ describe("every dial has an outcome", () => {
     expect(CAPABILITY_SOURCES).toEqual(["queue", "dialer", "nobody", "not-yet-read"]);
     expect(HOST_MUTES).toEqual(["stream", "station"]);
     expect(MUTED_BY).toEqual(["host", "station"]);
-    expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);
+    expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "added", "unanswered"]);
     for (const step of HISTORY_STEPS_THAT_DIAL) expect(historyStepDials(step)).toBe(true);
     for (const step of ["arrived", "self-service", "queued", "offered", "answered", "held", "muted"] as const) expect(historyStepDials(step)).toBe(false);
   });

@@ -186,13 +186,13 @@ export const offerWithDeadline: ProviderEvent<"email"> = { type: "task-offered",
 export const expiredPreview: TaskOutcome = { type: "expired", phase: "preview" };
 export const expiredConfirmed: TaskOutcome = { type: "expired", phase: "confirmed" };
 // Who is on the call is voice-only, like the commands that bring people onto it.
-export const conferencingVoiceTask = { ...emailTask, assignmentId: "call-10", channel: "voice", capabilities: { conference: { destinations: "contacts-only" } }, phase: "paused", onCall: [{ role: "conferenced", contactId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
+export const addingVoiceTask = { ...emailTask, assignmentId: "call-10", channel: "voice", capabilities: { addToCall: { destinations: "contacts-only" } }, phase: "paused", onCall: [{ role: "added", contactId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
 // @ts-expect-error A dialled entry says where it stands: ringing or joined.
-export const unstagedConferenced: OnCall = { role: "conferenced", contactId: "tier2", since: "2026-08-21T09:05:00Z" };
-// @ts-expect-error renamed away: nobody is consulted on a call; a colleague dialled in is conferenced.
+export const unstagedAdded: OnCall = { role: "added", contactId: "tier2", since: "2026-08-21T09:05:00Z" };
+// @ts-expect-error renamed away: nobody is consulted on a call; a colleague dialled in is added.
 export const consultedEntry: OnCall = { role: "consulted", contactId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error Email has nobody on a call.
-export const conferencingEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-6", onCall: [{ role: "conferenced", contactId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
+export const addingEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-6", onCall: [{ role: "added", contactId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
 // @ts-expect-error A party was dialled from nowhere and names no destination.
 export const misplacedParty: OnCall = { role: "party", contactId: "tier2", since: "2026-08-21T09:05:00Z" };
 // The party being connected back carries the host's dial and its stage, together and only together.
@@ -204,21 +204,23 @@ export const partyDialledStageless: OnCall = { role: "party", dialId: "dial-9", 
 // @ts-expect-error An agent on the call is named by user id, not by a destination.
 export const misplacedAgent: OnCall = { role: "agent", contactId: "tier2", since: "2026-08-21T09:05:00Z" };
 
-// A conference add dials and carries the host's dialId; a remove names who leaves, as the room names them.
-export const addToConference: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", contactId: "tier2" };
-export const removeFromConference: TaskCommand<"voice"> = { type: "conference", action: "remove", contactId: "tier2" };
-export const removeTheCustomer: TaskCommand<"voice"> = { type: "conference", action: "remove", party: true };
+// An add to the call dials and carries the host's dialId; a remove names who leaves, as the room names them.
+export const addToTheCall: TaskCommand<"voice"> = { type: "add-to-call", dialId: "dial-4", contactId: "tier2" };
+export const removeFromTheCall: TaskCommand<"voice"> = { type: "remove-from-call", contactId: "tier2" };
+export const removeTheCustomer: TaskCommand<"voice"> = { type: "remove-from-call", party: true };
 // @ts-expect-error A remove names one person: the party, or a directory item, never both.
-export const removeEverybody: TaskCommand<"voice"> = { type: "conference", action: "remove", party: true, contactId: "tier2" };
+export const removeEverybody: TaskCommand<"voice"> = { type: "remove-from-call", party: true, contactId: "tier2" };
 // @ts-expect-error A remove names one person; naming nobody is end-call.
-export const removeNobody: TaskCommand<"voice"> = { type: "conference", action: "remove" };
+export const removeNobody: TaskCommand<"voice"> = { type: "remove-from-call" };
+// @ts-expect-error renamed away: adding to the call is not conferencing.
+export const conferenceTheCall: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", contactId: "tier2" };
 export const endTheCall: TaskCommand<"voice"> = { type: "end-call" };
 // @ts-expect-error renamed away: the agent ends the call; disconnect was the engineer's word.
 export const disconnectTheCall: TaskCommand<"voice"> = { type: "disconnect" };
-// @ts-expect-error A conference add is a dial, so it carries the host's dialId.
-export const unplacedConferenceAdd: TaskCommand<"voice"> = { type: "conference", action: "add", contactId: "tier2" };
-// @ts-expect-error renamed away: the address a conference dials is its destination, as on every other dial.
-export const conferenceParticipant: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", participant: "+14155550111" };
+// @ts-expect-error An add to the call is a dial, so it carries the host's dialId.
+export const unplacedAdd: TaskCommand<"voice"> = { type: "add-to-call", contactId: "tier2" };
+// @ts-expect-error renamed away: an add names a contact or a typed number, nothing else.
+export const addParticipant: TaskCommand<"voice"> = { type: "add-to-call", dialId: "dial-4", participant: "+14155550111" };
 
 // A dial ends one way or another, and only voice has dials to end.
 export const voiceDialOutcomes: Manifest<"voice">["dialOutcomes"] = ["answered", "no-answer"];

@@ -135,7 +135,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (value.acceptance !== undefined) seen.add("task.acceptance");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
   if (isRecord(capabilities.outcomes)) seen.add("task.outcomes");
-  if (isRecord(capabilities.conference) && typeof capabilities.conference.destinations === "string") seen.add("task.destinations");
+  if (isRecord(capabilities.addToCall) && typeof capabilities.addToCall.destinations === "string") seen.add("task.destinations");
   if (some(capabilities.custom)) seen.add("task.custom");
   if (Object.values(capabilities).some(declared => isRecord(declared) && declared.lockedBy !== undefined)) seen.add("task.locked");
 }

@@ -215,7 +215,7 @@ describe("recording validation context and direct permission checks", () => {
 
   it("carries known task restrictions through to recording dispatch", () => {
     const current = task();
-    current.capabilities.conference = { destinations: "contacts-only" };
+    current.capabilities.addToCall = { destinations: "contacts-only" };
     expect(check("pause", "recording", "provider", {}, { taskContext: { dialOutcomesDeclared: false } }, current)).not.toEqual([]);
     expect(check("pause", "recording", "provider", {}, { taskContext: { dialOutcomesDeclared: true } }, current)).toEqual([]);
   });

@@ -58,7 +58,7 @@ for orientation only: each platform's own documentation is the authority on its 
 | **Mute** | Silence the agent's microphone. The caller hears nothing from the agent. | The same everywhere. |
 | **End call** | End the agent's part. The caller carries on to wherever the provider sends them, such as a survey. | *Leave*, *drop*, *hang up* (agent leg only). |
 | **Terminate call** | End the whole call for everyone. | *Disconnect all*, *end conversation*. |
-| **Conference** | Bring a colleague into the call. | *Conference*, *add participant*, *three-way call*. |
+| **Add to call** | Bring someone onto the call while the agent stays; they leave when the agent ends their part. | *Conference*, *add participant*, *three-way call*. |
 | **Connect back** | Call the customer again after the call has ended, during the wrap. | *Callback from wrap*, *re-dial*. |
 | **Schedule** | Put a follow-up with this customer on the calendar. | *Scheduled callback* (Amazon Connect, Genesys Cloud), *personal callback* (Five9). |
 | **Callback requested** | The customer asked to be called back, or an agent arranged it. | *Queued callback* (Amazon Connect), *callback* (Genesys Cloud), *virtual hold*. |

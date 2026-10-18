@@ -169,7 +169,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `wrapEndsInSeconds` | In `completing`, wherever `wrapAllowance` is stated: how much of the wrap is left, in whole seconds from this publication, restated on every publication that carries it (`task.completing.wrapEndsInSeconds`, `.required`, `.unexpected`). A reloaded agent computer and a lead's screen count down the same number. See **Completion timing**. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
 | `history` | The call record: `steps` — the ordered interaction history of this open task, one entry per occurrence, oldest first — and what they add up to before this agent, `interactionSeconds`, `holdSeconds`, `queueSeconds`, `transfers`, each present when the provider knows it. Live task data restated with the task, not a permanent archive. See **Interaction history**. |
-| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the agent application's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id -- marked `coaching: true` while a lead coaches the agent, heard by the agent alone --, `conferenced` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `contactId` of the contact dialled, a typed number's included, the `dialId` where an agent application placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. `label` names a destination -- a person, a queue -- not a phrase; the agent application supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome** in `guide/voice.md`. |
+| `onCall` | Voice only. Who is on the call, or being brought onto it, as the provider states it, replaced whole with the task: `party` is the customer -- carrying a `stage` while being dialled again on the same task, a connect-back with the agent application's `dialId` or a platform's callback without, ringing from the moment the dial is placed and joined on its answered outcome --, `agent` a person by user id -- marked `coaching: true` while a lead coaches the agent, heard by the agent alone --, `added` somebody a dial is bringing in, listed from the moment the dial is placed -- with the `contactId` of the contact dialled, a typed number's included, the `dialId` where an agent application placed it, the `stage` reached (`ringing` until answered, `joined` after), and `held: true` on anyone joined and parked. `label` names a destination -- a person, a queue -- not a phrase; the agent application supplies the verb. Present when the provider knows the room, absent when it does not. See **Every dial has an outcome** in `guide/voice.md`. |
 | `leadAssist` | Voice only. Present from the agent's request for a lead until the lead leaves or the request ends: `requested` while nobody has joined, `joined` with the lead's `leadId` once somebody has. See **Lead assist** in `guide/lead.md`. |
 | `takenOver` | Voice only, on a task that reached this agent by a lead's take-over: which member the call was taken from, and when. It is an ordinary assignment with the call's history, offered whatever break the lead is on and counted against their capacity like any other call. See **Lead assist** in `guide/lead.md`. |
 
@@ -431,7 +431,7 @@ something else, which will arrive under its own name and must not be folded in h
 
 It rides in the snapshot and is replaced whole like everything else there.
 
-Steps are `arrived`, `self-service`, `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `conferenced`,
+Steps are `arrived`, `self-service`, `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `added`,
 `unanswered`, `callback-requested`, and each is defined on `TaskHistoryStep`.
 
 **The record starts where the call started.** `arrived` is the instant the call reached the
@@ -543,7 +543,7 @@ account of a period the agent could not be heard. Each `muted` entry carries `mu
 reported it: `host` for the agent's own Mute, `station` for a headset or system mute the agent application
 observed. No other step has it (`task.history.mutedBy`, `.mutedBy.unexpected`).
 
-**A step that dialled says which dial and where.** `conferenced` and `unanswered` each end a dial,
+**A step that dialled says which dial and where.** `added` and `unanswered` each end a dial,
 and `transferred` a hand-over on the platform's own routing, so the entry carries the `contactId`
 it went to and, where an agent application placed the dial, the `dialId` the agent application minted; no other step dialled, and either field on one is refused
 (`task.history.dialId.unexpected`). This is how a dial made before a take-over is placeable
@@ -560,7 +560,7 @@ Four rules a provider has to keep:
 - **Omit `seconds` while it is unknown. Never send `0`.** A leg still talking is not a zero-second
   conversation, and on live data that is the ordinary case rather than an edge. A zero is rejected.
 - **`by` is a bare `UserId`, and not necessarily an agent.** A lead or a manager takes part
-  during an interaction too — a call taken over, a call conferenced in — so the field names whoever it was,
+  during an interaction too — a call taken over, someone added to a call — so the field names whoever it was,
   from the same directory `ForcedBreak.by` names a lead from. It comes from this provider's own directory, the same
   namespace as `AuthenticationState.identity.id` and the team member list, so entries pair
   within a provider and never across one.
@@ -897,7 +897,7 @@ See **Which commands need a capability**.
 
 Two capabilities accept an object when the provider wants Omni to render real choices. For
 `outcomes`, `true` remains valid and means "offer the control with nothing published"; the one
-directory control, `conference`, carries its directory or is refused, since once nothing is typed
+directory control, `addToCall`, carries its directory or is refused, since once nothing is typed
 the directory is the control.
 
 #### `outcomes`
@@ -1033,7 +1033,7 @@ capability's `notes` setting. A task publishing no codes still receives `complet
 ### Where a command executes
 
 Every command reaches the provider through `execute`, with no branch at the call site, and every
-command asks the provider to **perform** something: `hold`, `conference`, `schedule`, `end-call`,
+command asks the provider to **perform** something: `hold`, `addToCall`, `schedule`, `end-call`,
 Provider-targeted `recording` commands and the rest act on the platform's own call leg, its bridge, or its record of the
 task. Nothing has happened until the provider applies them, and `failed` means nothing happened.
 
@@ -1057,19 +1057,19 @@ declared:
 | `answer`, `accept` | Nothing. A task that was offered can be accepted, or offering it meant nothing. |
 | `end-call` | The `endCall` capability: ends my part, the caller continues. Never from hold: a `paused` task is resumed first (`command.endCall.held`), or the caller is left in the hold. |
 | `terminate-call` | The `terminateCall` capability: ends the whole call, every channel on it. |
-| `conference` with `action: "remove"` | The `conference` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
+| `addToCall` with `action: "remove"` | The `addToCall` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
 | `decline` | The `decline` capability on any channel, **and** Omni local policy permitting it. One word for refusing an offer, whatever the channel. |
 | `dial` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
 | `complete` | A wrap to cut short: any task but a `provider-automatic` one with `wrapAllowance: 0`, under either completion mode (`command.complete.wrapAllowance`). The `outcomes` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. What travels is what the capability published: a code from its list where it has one (`command.complete.outcome.unknown`), a code at all where it requires one (`.outcome.required`), notes as it said (`.notes.required`, `.notes.unexpected`), and neither where the task declares no outcomes (`.outcome.unexpected`). |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | `schedule` | The `schedule` capability, on any channel, in `in-progress`, `paused` or `completing`: a follow-up is promised on the call and written up in wrap alike. The manifest declares `calendar` for it to land on. |
 | `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with `stage: "requested"`. |
-| `conference` with `action: "add"` | Its capability, and a `contactId` from the provider's contacts, or a typed `number` where the capability says `any-number` (`command.conference.number.contactsOnly`), never both (`command.conference.number.both`). |
+| `addToCall` with `action: "add"` | Its capability, and a `contactId` from the provider's contacts, or a typed `number` where the capability says `any-number` (`command.addToCall.number.contactsOnly`), never both (`command.addToCall.number.both`). |
 | `custom` | A control the task published under `capabilities.custom`, by its `id` (`command.capability.custom`), carrying a non-empty string for each `required` prompt field and strings for any optional fields supplied (`command.custom.prompt`). A toggle carries its target `on` boolean (`command.custom.on`). |
 | Everything else | Its own named capability. |
 
 **A control on the contact belongs to the interaction phases**, `in-progress` and `paused`:
-`hold`, `resume` and `pause`, `end-call` and `terminate-call`, every `conference` action, and
+`hold`, `resume` and `pause`, `end-call` and `terminate-call`, every `addToCall` action, and
 every `lead-assist` action; `schedule` alone reaches into `completing`, and `end-call` alone stops
 short of `paused` (`command.endCall.held`), since ending my part from hold leaves the caller in it. These controls act within this agent's current interaction.
 In `completing`, that interaction has ended and its wrap work remains. The caller may still be in

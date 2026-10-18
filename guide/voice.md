@@ -1,6 +1,6 @@
 # `@xema/omni-protocol`: Voice
 
-What is true of a call and of nothing else: preview, connecting back, ending a call, conference, every dial and its outcome, recording. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
+What is true of a call and of nothing else: preview, connecting back, ending a call, adding to a call, every dial and its outcome, recording. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
 
 ## Preview: the agent presses Call
 
@@ -87,7 +87,7 @@ provider is told through `refused` exactly which rule, so the state that looked 
 is named on its side. The task past preview has no deadline to wait for, so it carries neither
 field.
 
-**Provider execution and agent application controls are distinct.** Answer, hold/resume, conference,
+**Provider execution and agent application controls are distinct.** Answer, hold/resume, add to call,
 lead assist and interaction completion are executed by the provider
 through the adapter. The task's applicable capability, phase, completion mode and command-specific
 prerequisites decide which controls are offered. Caller disconnect also executes at the provider. Microphone mute is agent application-owned, never a provider
@@ -107,7 +107,7 @@ and active interactions; task completion is not caller hangup.
 
 **Voice describes the agent's interaction within the wider call.** The task defines that agent's
 workspace, tools, permissions, audio participation and completion work. The caller's channel may
-continue through IVR, queues, other agents, holds or conferences while this interaction ends or wraps.
+continue through IVR, queues, other agents, holds or people added while this interaction ends or wraps.
 Completing this task ends this interaction responsibility; it is not evidence that the caller's channel
 or journey ended. Task audio describes this agent's attachment, not the lifetime of every party's
 connection. Commands retain their explicit targets and effects; task completion must not silently
@@ -116,7 +116,7 @@ become a caller-disconnect operation.
 **A task is never its audio.** A voice task represents the agent’s interaction: the call is offered when it is
 routed to the agent and accepted as its `acceptance` dictates, and its presence and phase follow
 the provider's reports about the work — never the audio. Wherever audio moves — an offer, a hold, a
-conference leg joining or leaving, a lead joining, a take-over, a connect-back — the audio follows
+someone added joining or leaving, a lead joining, a take-over, a connect-back — the audio follows
 separately, arriving on `task-audio-started`, attaching through `openAudio` and ending with
 `task-audio-ended`. Omni does not ring,
 bridge, or hold a line. How the phone rings, whether it rings at all, and where legs join and leave
@@ -154,7 +154,7 @@ deadline.
 
 **The room shows the party being dialled.** From the moment any agent application dial places the party -- a
 dialpad call, a preview Call, a connect-back -- the `party` entry carries `stage: "ringing"` and
-the agent application's `dialId`, exactly as a conferenced entry does from its dial; `joined` on
+the agent application's `dialId`, exactly as an added entry does from its dial; `joined` on
 the publication that follows the answered `dial-outcome` and never before it
 (`stream.taskUpdated.stage`); and no stage from the next publication on, so `joined` is transient
 and a later copy still carrying it is stale (`stream.taskUpdated.stage.lingering`). An agent application shows a
@@ -199,27 +199,28 @@ const immediateProviderCompletion = {
 | Capability | Omni UI | Contract |
 | --- | --- | --- |
 | `decline` | Pending-task button: Decline | The provider can decline a pending voice offer. Omni shows it only when local policy also permits declining. |
-| `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. Hold holds the caller: while the task is `paused` the party waits on hold and the agent keeps talking with everyone else on the call -- a conferenced colleague, a lead who joined -- and `onCall` marks the party `held: true`. |
+| `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. Hold holds the caller: while the task is `paused` the party waits on hold and the agent keeps talking with everyone else on the call -- an added colleague, a lead who joined -- and `onCall` marks the party `held: true`. |
 | `endCall` | Primary button: End call | The provider ends the agent's channel and every channel the agent added; the caller continues on the provider's path. The task goes to its wrap. See **Ending a call, and removing one person from it**. |
 | `terminateCall` | Primary button: Terminate call | The provider ends the whole call: every channel on it, the agent's, the caller's, any colleague's and anyone else's. The task goes to its wrap. See **Ending a call, and removing one person from it**. |
 | `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance completes the task at provider end. See **Connecting back during completion**. |
 | `schedule` | Secondary menu item: Schedule | Omni may put a follow-up for this party on the calendar, from the call or from its wrap: a time, and a note. See **Scheduling a follow-up** in `guide/agent.md`. |
 | `leadAssist` | Secondary menu item: Lead assist | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.leadAssist`. See **Lead assist** in `guide/lead.md`. |
-| `conference` | Secondary button: Conference | Omni may dial a destination into the active call, and remove one person from it -- a conferenced entry, one still ringing included, which calls the dial off, or the party, leaving the agent with the colleague. See **Ending a call, and removing one person from it**. |
+| `addToCall` | Secondary button: Add to call | Omni may dial a contact or a typed number into the active call (`add-to-call`), and remove one person from it (`remove-from-call`) -- an added entry, one still ringing included, which calls the dial off, or the party, leaving the agent with the colleague. See **Ending a call, and removing one person from it**. |
 | `recording` | Overflow menu item: Recording | Per-task provider and agent application policies expose only their permitted recording actions; each has independent state and routing. |
 | `outcomes` | Primary button: Complete | Omni may request task completion with a provider outcome and notes. |
 
-## `conference`
+## `addToCall`
 
 ```ts
 capabilities: {
-  conference: { destinations: "any-number" },
+  addToCall: { destinations: "any-number", contactIds: ["c-17", "c-20"] },
 }
 ```
 
 | Field | Contract |
 | --- | --- |
-| `destinations` | Whom the agent may bring in, in the dialpad's own words (`task.conference.destinations`): `contacts-only`, an entry of this provider's contacts; `any-number`, a number the agent types as well. |
+| `destinations` | Whom the agent may bring in, in the dialpad's own words (`task.addToCall.destinations`): `contacts-only`, an entry of this provider's contacts; `any-number`, a number the agent types as well. |
+| `contactIds` | Optional. The contacts this task offers, by id: a billing call may offer Billing escalation and Tier 2 and nothing else (`task.addToCall.contactIds`, `.unique`). Omitted, every contact is offered. Ids only -- the agent computer shows the names it holds -- and an add naming another contact is refused before it is sent (`command.addToCall.contactId.unlisted`). |
 
 **The directory is the provider's contacts, at the agent computer.** It reaches the agent
 computer once, with the snapshot, and again whenever it changes (`contacts-updated`), never on a
@@ -235,19 +236,19 @@ const contacts: ContactEntry[] = [
 ];
 ```
 
-**A conference adds a contact by its id, or a typed number where the task allows any number.**
+**Adding to the call names a contact by its id, or a typed number where the task allows any number.**
 
 ```ts
-{ type: "conference", action: "add", dialId: "dial-7f2", contactId: "c-17" }          // from the contacts
-{ type: "conference", action: "add", dialId: "dial-9b4", number: "+914023456789" }    // typed
+{ type: "add-to-call", dialId: "dial-7f2", contactId: "c-17" }          // from the contacts
+{ type: "add-to-call", dialId: "dial-9b4", number: "+914023456789" }    // typed
 ```
 
 A typed number on a `contacts-only` task is refused before it is sent
-(`command.conference.number.contactsOnly`), and an add names one of the two, never both
-(`command.conference.number.both`). The provider rechecks either and may refuse it
+(`command.addToCall.number.contactsOnly`), and an add names one of the two, never both
+(`command.addToCall.number.both`). The provider rechecks either and may refuse it
 (`omni.destination-not-permitted`). A typed number becomes a contact: the provider enters it in its
 contacts under an id of its own, publishes the entry, and names the person by that id from then
-on -- on `onCall`, in the `conferenced` step, on the dial's outcome and on a remove -- as it names
+on -- on `onCall`, in the `added` step, on the dial's outcome and on a remove -- as it names
 everyone else. Returning to an IVR or queue does not end the caller journey; a later assignment to
 the same agent is a new interaction.
 
@@ -259,12 +260,12 @@ provider. Two of them end the agent's part; they differ in what happens to the c
 ```ts
 { type: "end-call" }                                             // the agent's channel and the channels the agent added end; the caller continues
 { type: "terminate-call" }                                       // every channel on the call ends
-{ type: "conference", action: "remove", party: true }            // the customer leaves; the agent stays with the colleague
-{ type: "conference", action: "remove", contactId: "c-17" }     // the conferenced person leaves; ringing, this calls the dial off
+{ type: "remove-from-call", party: true }            // the customer leaves; the agent stays with the colleague
+{ type: "remove-from-call", contactId: "c-17" }     // the added person leaves; ringing, this calls the dial off
 ```
 
 **`end-call` ends my part.** The agent's channel and every channel the agent added -- a
-conferenced colleague, a lead who joined -- end, and the caller continues on the path the
+added colleague, a lead who joined -- end, and the caller continues on the path the
 provider decides: another IVR, a queue, a survey, or the end of the call. Gated by `endCall`.
 
 **Never from hold.** An `end-call` while the task is `paused` would leave the caller in the hold
@@ -289,8 +290,8 @@ capabilities** sets out. The provider knows which channels are the agent's and w
 the agent application sends the command and no channel list, and the provider rechecks ownership
 when it acts.
 
-`conference` `remove` takes one person off, named as the room names them, and the call goes on
-for the rest; it is gated by `conference`, since it only means something with a third person on
+`addToCall` `remove` takes one person off, named as the room names them, and the call goes on
+for the rest; it is gated by `addToCall`, since it only means something with a third person on
 the line. Removing the party leaves the agent with the colleague, a warm hand-over in reverse. A
 remove that would leave the agent alone is not a remove but an `end-call`, and a provider answers
 it `failed`.
@@ -323,7 +324,7 @@ inside Omni.
 ## Every dial has an outcome
 
 Four commands place a call: `dial()` from the idle dialpad, the `dial` command from preview, a
-`conference` `add`, and `connect-back`. Each is accepted or refused at once, and each then ends later
+`addToCall` `add`, and `connect-back`. Each is accepted or refused at once, and each then ends later
 and apart from its answer -- the destination picks up, is busy, or never does -- and a dial placed
 late in a call routinely outlives the call. Nothing in between is reported: the wire says
 `dialling`, then says how it ended, once.
@@ -336,7 +337,7 @@ declare const connection: Connection<"voice">;
 declare const assignmentId: AssignmentId;
 
 // 1. Out, minted by the agent application.
-const result = await connection.execute({ assignmentId, command: { type: "conference", action: "add", dialId: "dial-7f2", contactId: "c-17" } });
+const result = await connection.execute({ assignmentId, command: { type: "add-to-call", dialId: "dial-7f2", contactId: "c-17" } });
 
 // 2. Back on the result, restated, so the agent application compares and confirms.
 expect(result).toEqual({ status: "dialling", dialId: "dial-7f2" });
@@ -365,7 +366,7 @@ there was one, the contact it went to where there was one, and how the dial ende
 set: `answered`, `busy`, `no-answer`, `unreachable`, `rejected`, `cancelled`, `unexplained`.
 `answered` is stated rather than read off somebody appearing on the call, because an agent application that infers
 success cannot tell "reached" from "still ringing". `cancelled` is the dialler calling the dial off
-before anyone answered -- the agent hanging up while a conferenced colleague still rings -- which is not a
+before anyone answered -- the agent hanging up while an added colleague still rings -- which is not a
 `no-answer` the destination never gave. `unexplained` is the switch dropping the call with no cause among
 those named here: a statement about the switch, sent instead of the nearest cause it did not give.
 `reason` is the switch's own words, optional, and shown to the agent attributed to the switch rather
@@ -402,7 +403,7 @@ provider does report -- `busy`, `no-answer`, `unreachable`, `rejected` or `cance
 switch gave none, while one that reports none would be sending the generic failure this set exists
 to refuse. A provider that dials at all declares it: an idle
 dialpad requires it (`manifest.dialOutcomes.required`), and a task that declares `connectBack`
-or `conference` under a manifest without it is refused
+or `addToCall` under a manifest without it is refused
 (`task.capability.dialOutcomes.required`). Off voice nothing dials, and the field is a compile
 error there.
 
@@ -414,13 +415,13 @@ knows the room:
 const onCall: OnCall[] = [
   { role: "party", since: "2026-08-21T09:12:00Z" },
   { role: "agent", userId: "A-12", since: "2026-08-21T09:12:04Z" },
-  { role: "conferenced", contactId: "c-17", dialId: "dial-7f2", stage: "joined", held: true, since: "2026-08-21T09:15:30Z" },
-  { role: "conferenced", contactId: "c-20", dialId: "dial-3c9", stage: "ringing", since: "2026-08-21T09:16:02Z" },
+  { role: "added", contactId: "c-17", dialId: "dial-7f2", stage: "joined", held: true, since: "2026-08-21T09:15:30Z" },
+  { role: "added", contactId: "c-20", dialId: "dial-3c9", stage: "ringing", since: "2026-08-21T09:16:02Z" },
 ];
 ```
 
 `party` is the customer and `agent` a person by user id; neither was dialled from anywhere, so
-neither carries a destination. A `conferenced` colleague was, so the entry carries the
+neither carries a destination. A `added` colleague was, so the entry carries the
 `contactId` of its entry in the provider's contacts, a typed number's included, and, where an agent application's dial brought them, its `dialId`; a person
 the platform added itself carries none. `held: true` is presence as claim. A snapshot establishes state, so an agent application that attaches
 after a take-over reads the room from here rather than inferring it from a sequence of outcomes it
@@ -445,9 +446,9 @@ describing the room live was never followed by one saying it had emptied, and ev
 derived anything from it was wrong in a way that looked like its own bug.
 
 **A dialled entry is listed from the moment the dial is placed, not from the answer.** The entry is
-what `conference` `remove` names, and a destination the agent cannot call off while it rings is a
+what `addToCall` `remove` names, and a destination the agent cannot call off while it rings is a
 customer kept waiting with no way back -- which is the very case `cancelled` exists for. The
-`conferenced` entry appears with its `dialId` when the dial is placed, and a `conference` `remove`
+`added` entry appears with its `dialId` when the dial is placed, and a `addToCall` `remove`
 naming a still-ringing `contactId` calls that dial off, with `cancelled` as its outcome.
 
 **The entry says where it stands.** A dialled entry carries `stage`: `ringing` until its dial is

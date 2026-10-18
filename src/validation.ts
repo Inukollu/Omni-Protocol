@@ -130,7 +130,7 @@ const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
   ready: true, "on-task": true, "on-break": true, elsewhere: true, "signed-out": true,
 });
 const HISTORY_STEPS = membersOf<HistoryStep>({
-  arrived: true, "self-service": true, queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, conferenced: true, unanswered: true,
+  arrived: true, "self-service": true, queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, added: true, unanswered: true,
   "callback-requested": true,
 });
 const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
@@ -144,10 +144,10 @@ const DIAL_DESTINATION_POLICIES = membersOf<DialDestinations>({ "contacts-only":
 const DIAL_OUTCOMES = membersOf<DialOutcome>({ answered: true, busy: true, "no-answer": true, unreachable: true, rejected: true, cancelled: true, unexplained: true });
 /** The outcomes that name a cause. `unexplained` is declarable only beside one of these. */
 const EXPLAINED_FAILURES: readonly DialOutcome[] = ["busy", "no-answer", "unreachable", "rejected", "cancelled"];
-const ON_CALL_ROLES = membersOf<OnCallRole>({ party: true, agent: true, conferenced: true });
+const ON_CALL_ROLES = membersOf<OnCallRole>({ party: true, agent: true, added: true });
 const ON_CALL_STAGES = membersOf<OnCallStage>({ ringing: true, joined: true });
 /** The task capabilities under which a command dials, and so need the manifest to say how a dial ends. */
-const DIALLING_CAPABILITIES = ["connectBack", "conference"] as const;
+const DIALLING_CAPABILITIES = ["connectBack", "addToCall"] as const;
 const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>["reason"]>({
   reconnected: true, "provider-requested": true,
 });
@@ -176,7 +176,7 @@ const ISOLATION_SCHEME_VALUES: readonly string[] = Object.values(BROWSER_ISOLATI
 const TASK_CAPABILITIES: Readonly<Record<Channel, readonly string[]>> = {
   voice: membersOf<keyof TaskCapabilities<"voice">>({
     browsers: true, outcomes: true, custom: true, decline: true, hold: true,
-    endCall: true, terminateCall: true, connectBack: true, schedule: true, leadAssist: true, conference: true, recording: true,
+    endCall: true, terminateCall: true, connectBack: true, schedule: true, leadAssist: true, addToCall: true, recording: true,
   }),
   chat: membersOf<keyof TaskCapabilities<"chat">>({ browsers: true, outcomes: true, custom: true, decline: true, hold: true, schedule: true }),
   email: membersOf<keyof TaskCapabilities<"email">>({ browsers: true, outcomes: true, custom: true, decline: true, schedule: true }),
@@ -762,12 +762,24 @@ function validateLocalizedText(value: unknown, rule: string, path: string, into:
 // Task.
 // ---------------------------------------------------------------------------
 
-function validateConferenceCapability(value: unknown, path: string, into: Collector): void {
+function validateAddToCallCapability(value: unknown, path: string, into: Collector): void {
   if (!isPlainObject(value)) {
-    into.add("task.conference.shape", path, "a conference control says whom it may bring in, as the dialpad does: { destinations: \"contacts-only\" | \"any-number\" }");
+    into.add("task.addToCall.shape", path, "addToCall says whom the agent may add to the call, as the dialpad does: { destinations: \"contacts-only\" | \"any-number\" }");
     return;
   }
-  into.oneOf(value.destinations, DIAL_DESTINATION_POLICIES, "task.conference.destinations", `${path}.destinations`);
+  into.oneOf(value.destinations, DIAL_DESTINATION_POLICIES, "task.addToCall.destinations", `${path}.destinations`);
+  if (value.contactIds === undefined) return;
+  if (!Array.isArray(value.contactIds) || value.contactIds.length === 0) {
+    into.add("task.addToCall.contactIds", `${path}.contactIds`, "contactIds narrows the contacts offered: a non-empty list of ids, or omitted for every contact");
+    return;
+  }
+  const seen = new Set<string>();
+  value.contactIds.forEach((id: unknown, index: number) => {
+    if (into.filled(id, "task.addToCall.contactIds", `${path}.contactIds[${index}]`, "each contact id is a non-empty string")) {
+      into.require(!seen.has(id as string), "task.addToCall.contactIds.unique", `${path}.contactIds[${index}]`, `${describeValue(id)} is listed twice`);
+      seen.add(id as string);
+    }
+  });
 }
 
 /** The provider's contacts, the agent computer's directory: each entry a contact with a unique id. */
@@ -1142,7 +1154,7 @@ function validateHistory(value: unknown, path: string, into: Collector, task: { 
       if (entry[field] === undefined) continue;
       if (into.filled(entry[field], `task.history.${field}`, `${at}.${field}`, `${field} must not be empty when present`)) {
         into.require(dialled, `task.history.${field}.unexpected`, `${at}.${field}`,
-          `${describeValue(entry.step)} dialled nothing; ${field} belongs on transferred, conferenced, or unanswered`);
+          `${describeValue(entry.step)} dialled nothing; ${field} belongs on transferred, added, or unanswered`);
       }
     }
   });
@@ -1176,7 +1188,7 @@ const WORK_NOT_BEGUN = ["pending", "confirmed", "preview"] as const;
 /**
  * Who is on the call, as the provider states it. Voice only. Each entry is a role with what that
  * role needs and nothing another role would: a party or an agent dialled nowhere, so neither
- * carries a destination; somebody conferenced came from one, so they do.
+ * carries a destination; somebody added came from one, so they do.
  */
 function validateOnCall(value: unknown, channel: string, path: string, into: Collector): void {
   if (value === undefined) return;
@@ -1208,7 +1220,7 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
     } else {
       into.require(entry.userId === undefined, "task.onCall.userId.unexpected", `${at}.userId`, `a ${role} is not named by a user id`);
     }
-    if (role === "conferenced") {
+    if (role === "added") {
       into.filled(entry.contactId, "task.onCall.contactId", `${at}.contactId`, `a ${role} entry names the contact that was dialled, by its id in the provider's contacts`);
       // Stated, so a snapshot says who is present without anyone having seen the dial's outcome.
       if (into.oneOf(entry.stage, ON_CALL_STAGES, "task.onCall.stage", `${at}.stage`)) {
@@ -1230,12 +1242,12 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
       }
       for (const field of ["contactId", "label"] as const) {
         into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
-          `a party is not a directory item; ${field} belongs on conferenced`);
+          `a party is not a directory item; ${field} belongs on added`);
       }
     } else {
       for (const field of ["contactId", "dialId", "label", "stage"] as const) {
         into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
-          role === "party" ? `a party carries ${field} on a connect-back alone, with its dial and stage together` : `a ${role} was dialled from nowhere; ${field} belongs on conferenced`);
+          role === "party" ? `a party carries ${field} on a connect-back alone, with its dial and stage together` : `a ${role} was dialled from nowhere; ${field} belongs on added`);
       }
     }
   });
@@ -1526,7 +1538,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
       case "recording": into.violations.push(...validateRecordingPolicy(declared, `${path}.capabilities.recording`)); break;
       case "outcomes": validateOutcomes(declared, `${path}.capabilities.outcomes`, into); break;
       case "custom": validateCustomCapabilities(declared, `${path}.capabilities.custom`, into); break;
-      case "conference": validateConferenceCapability(declared, `${path}.capabilities.${name}`, into); break;
+      case "addToCall": validateAddToCallCapability(declared, `${path}.capabilities.${name}`, into); break;
       default:
         // Presence is the permission: the flag capabilities carry no payload, so anything but
         // true is a value a host would have to interpret.
@@ -2911,7 +2923,6 @@ export function validateHostReport(report: unknown, path = "host"): ProtocolViol
 // ---------------------------------------------------------------------------
 
 const LEAD_ASSIST_ACTIONS = ["request", "cancel"] as const;
-const CONFERENCE_ACTIONS = ["add", "remove"] as const;
 
 
 /** Validate the exact interaction/assignment target before provider command dispatch. */
@@ -2970,10 +2981,8 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
         fields.push("action");
         if (command.action === "request") fields.push("note");
         break;
-      case "conference":
-        fields.push("action", "contactId", "number");
-        fields.push(command.action === "add" ? "dialId" : "party");
-        break;
+      case "add-to-call": fields.push("dialId", "contactId", "number"); break;
+      case "remove-from-call": fields.push("contactId", "party"); break;
     }
     for (const key of Object.keys(command)) into.require(fields.includes(key), "command.field", `${path}.${key}`,
       "field is not supported for this command");
@@ -2994,24 +3003,22 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       into.oneOf(command.action, LEAD_ASSIST_ACTIONS, "command.leadAssist.action", `${path}.action`);
       if (command.note !== undefined) into.filled(command.note, "command.leadAssist.note", `${path}.note`, "a note must not be empty when present");
       break;
-    case "conference":
-      if (into.oneOf(command.action, CONFERENCE_ACTIONS, "command.conference.action", `${path}.action`)) {
-        if (command.action === "add") {
-          dial("command.conference.dialId");
-          if (command.number === undefined) {
-            into.filled(command.contactId, "command.conference.contactId", `${path}.contactId`, "a conference names the contact it dials in, or the number typed");
-          } else {
-            into.filled(command.number, "command.conference.number", `${path}.number`, "a typed number must not be empty");
-            into.require(command.contactId === undefined, "command.conference.number.both", path, "an add names a contact or a typed number, never both");
-          }
-        } else {
-          const party = command.party === true;
-          const contact = isFilled(command.contactId);
-          into.require(party !== contact, "command.conference.remove.target", path,
-            "a remove names one person: the party, or a conferenced entry by its contactId, never both and never neither");
-        }
+    case "add-to-call":
+      dial("command.addToCall.dialId");
+      if (command.number === undefined) {
+        into.filled(command.contactId, "command.addToCall.contactId", `${path}.contactId`, "an add names the contact it dials in, or the number typed");
+      } else {
+        into.filled(command.number, "command.addToCall.number", `${path}.number`, "a typed number must not be empty");
+        into.require(command.contactId === undefined, "command.addToCall.number.both", path, "an add names a contact or a typed number, never both");
       }
       break;
+    case "remove-from-call": {
+      const party = command.party === true;
+      const contact = isFilled(command.contactId);
+      into.require(party !== contact, "command.removeFromCall.target", path,
+        "a remove names one person: the party, or an added entry by its contactId, never both and never neither");
+      break;
+    }
     case "recording":
       into.violations.push(...validateRecordingCommandShape(command, "provider", path));
       break;
@@ -3123,23 +3130,29 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
           "cancel needs a request standing: leadAssist with stage requested");
       }
       break;
-    case "conference": {
+    case "add-to-call": case "remove-from-call": {
       interaction();
-      const conferencing = offered("conference");
-      if (conferencing && command.action === "add" && command.number !== undefined) {
-        const declared = capabilities.conference;
-        into.require(isPlainObject(declared) && declared.destinations === "any-number", "command.conference.number.contactsOnly", `${path}.number`,
-          "the task's conference takes contacts only: a typed number needs any-number");
+      const adding = offered("addToCall");
+      if (adding && type === "add-to-call" && command.contactId !== undefined) {
+        const declared = capabilities.addToCall;
+        const narrowed = isPlainObject(declared) && Array.isArray(declared.contactIds) ? declared.contactIds : undefined;
+        into.require(narrowed === undefined || narrowed.includes(command.contactId), "command.addToCall.contactId.unlisted", `${path}.contactId`,
+          `${describeValue(command.contactId)} is not among the contacts this task offers to add`);
       }
-      if (conferencing && command.action === "remove") {
+      if (adding && type === "add-to-call" && command.number !== undefined) {
+        const declared = capabilities.addToCall;
+        into.require(isPlainObject(declared) && declared.destinations === "any-number", "command.addToCall.number.contactsOnly", `${path}.number`,
+          "this task adds contacts only: a typed number needs any-number");
+      }
+      if (adding && type === "remove-from-call") {
         const others = onCall.filter(entry => entry.role !== "agent");
         if (command.party === true) {
-          into.require(others.some(entry => entry.role !== "party"), "command.conference.remove.alone", path,
+          into.require(others.some(entry => entry.role !== "party"), "command.removeFromCall.alone", path,
             "removing the party would leave the agent alone: that is end-call");
         } else if (isFilled(command.contactId)) {
-          into.require(onCall.some(entry => entry.role === "conferenced" && entry.contactId === command.contactId), "command.conference.remove.unknown", path,
-            `no conferenced entry on onCall has contactId ${describeValue(command.contactId)}`);
-          into.require(others.length > 1, "command.conference.remove.alone", path,
+          into.require(onCall.some(entry => entry.role === "added" && entry.contactId === command.contactId), "command.removeFromCall.unknown", path,
+            `no added entry on onCall has contactId ${describeValue(command.contactId)}`);
+          into.require(others.length > 1, "command.removeFromCall.alone", path,
             "removing the last other person would leave the agent alone: that is end-call");
         }
       }

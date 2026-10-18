@@ -16,7 +16,7 @@ mode stays with the login rather than being inferred from a snapshot or a device
 
 Nor does the audio ever stand in for the task: a task's presence and
 phase follow the provider's reports about the work, and the audio — attaching, moving through a
-hold, a conference, a lead joining or a take-over, and ending — is transient beside it. See **A task is
+hold, someone added to the call, a lead joining or a take-over, and ending — is transient beside it. See **A task is
 never its audio** under **Task assignment lifecycle**.
 
 ### The agent application reports, the adapter decides
@@ -295,7 +295,7 @@ and `phone-updated`, from a manifest that declares `phoneStatus` (`snapshot.phon
 `snapshot.phone.unexpected`, `event.phone.capability`).
 
 ```ts
-// a conference in progress on alloc-42 -- one channel, since the bridge mixes -- with alloc-43 parked
+// people added to the call on alloc-42 -- one channel, since the bridge mixes -- with alloc-43 parked
 const busy: PhoneState = { phone: "hardphone", status: "ready", muted: true, channels: [
   { state: "active", since: "2026-09-12T10:30:04Z", assignmentId: "alloc-42" },
   { state: "held", since: "2026-09-12T10:35:20Z", assignmentId: "alloc-43" },
@@ -323,7 +323,7 @@ is the agent's session with the provider, and what belongs to the login is that 
 provider's clock like every duration off the active call, and omitted rather than invented.
 
 **The channels.** The phone has one active audio channel and any number held
-(`phone.channel.active.single`), and a bridge is one channel: a conference is one entry, and its
+(`phone.channel.active.single`), and a bridge is one channel: a call with people added is one entry, and its
 members are on the task's `onCall`, never repeated here. Each channel is `ringing`, `active` or
 `held`, since when, and names the task its call is where it is one. **Where a channel is a task's,
 the two views agree** (`phone.channel.task`): `active` with the task at work and its audio

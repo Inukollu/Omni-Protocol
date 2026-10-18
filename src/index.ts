@@ -177,7 +177,7 @@ export const PHONE_CHANNEL_STATES = ["ringing", "active", "held"] as const satis
 
 /**
  * One call on the phone, as the phone sees it: ringing, the one active, or held. A bridge is one
- * channel, so a conference is one entry and its members are on the task's `onCall`. Where the call
+ * channel, so a call with people added is one entry and they are on the task's `onCall`. Where the call
  * is a task's, `assignmentId` names it and the two views agree; absent, the call is the phone's
  * alone -- an internal call on the extension, a lead's listening leg.
  */
@@ -288,7 +288,7 @@ export interface Manifest<C extends Channel = Channel> {
   /**
    * The outcomes this platform distinguishes when a dial ends, `answered` and at least one way of
    * not reaching the destination. Required of a provider that dials at all -- an idle dialpad, or
-   * a task that may conference or call back -- and forbidden off voice, where nothing dials.
+   * a task that may add to the call or call back -- and forbidden off voice, where nothing dials.
    */
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   /**
@@ -815,11 +815,15 @@ export interface OutcomeRules {
 }
 
 /**
- * Whom a conference control may bring in, in the dialpad's own words: `contacts-only`, an entry of
+ * Whom the agent may add to the call, in the dialpad's own words: `contacts-only`, an entry of
  * this provider's contacts, named by its `id`; or `any-number`, a number the agent types as well.
+ * `contactIds` narrows the contacts this task offers to those ids -- a billing call offering Billing
+ * escalation and Tier 2 -- and omitted, every contact is offered. Ids only: the names are the
+ * agent computer's, from the contacts.
  */
-export interface ConferenceCapability {
+export interface AddToCallCapability {
   destinations: DialDestinations;
+  contactIds?: string[];
 }
 
 export interface CustomCapability {
@@ -860,7 +864,7 @@ export type TaskCapabilities<C extends Channel = Channel> =
         schedule?: Lockable<true>;
         /** Ask a lead to join this call, with a note. The lead's decision arrives on `Task.leadAssist`. */
         leadAssist?: Lockable<true>;
-        conference?: Lockable<ConferenceCapability>;
+        addToCall?: Lockable<AddToCallCapability>;
         recording?: Lockable<TaskRecordingPolicy>;
       }
     : C extends "chat"
@@ -976,7 +980,7 @@ export type HistoryStep =
   | "held"
   | "muted"
   | "transferred"
-  | "conferenced"
+  | "added"
   | "unanswered"
   | "callback-requested";
 
@@ -1003,7 +1007,7 @@ export interface TaskHistoryStep {
   step: HistoryStep;
   at: IsoTimestamp;
   /**
-   * On a step that dialled -- `transferred`, `conferenced`, `unanswered` -- the host's identity for
+   * On a step that dialled -- `transferred`, `added`, `unanswered` -- the host's identity for
    * that dial when a host placed it, and the contact it went to, by the contacts entry's `id`. Neither
    * belongs on any other step.
    */
@@ -1037,16 +1041,16 @@ export type TaskCompletion =
   | { completionMode: "agent-command"; wrapAllowance?: DurationSeconds }
   | { completionMode: "provider-automatic"; wrapAllowance: DurationSeconds };
 
-export type OnCallRole = "party" | "agent" | "conferenced";
+export type OnCallRole = "party" | "agent" | "added";
 
 /** Where a dialled entry stands: `ringing` until its dial is answered, `joined` after. */
 export type OnCallStage = "ringing" | "joined";
 
-export const ON_CALL_ROLES = ["party", "agent", "conferenced"] as const satisfies readonly OnCallRole[];
+export const ON_CALL_ROLES = ["party", "agent", "added"] as const satisfies readonly OnCallRole[];
 
 /**
  * Somebody on the call, or being brought onto it, as the provider states it: who, since when, and
- * whether they are held aside. `party` is the customer; `agent` a person, by user id; `conferenced`
+ * whether they are held aside. `party` is the customer; `agent` a person, by user id; `added`
  * someone a dial is bringing in -- listed from the moment the dial is placed, so the agent can call
  * it off while it rings -- carrying the dial when a host placed it, the contact either way (the
  * `contactId` of its entry in the provider's contacts, a typed number included), and the
@@ -1065,7 +1069,7 @@ export type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party"; dialId?: never; stage?: never }
   | { role: "party"; stage: OnCallStage; dialId?: DialId }
   | { role: "agent"; userId: UserId; coaching?: true }
-  | { role: "conferenced"; contactId: string; stage: OnCallStage; dialId?: DialId; label?: string }
+  | { role: "added"; contactId: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );
 
 /**
@@ -1217,7 +1221,7 @@ export type TaskOutcome =
 
 export const TASK_COMMAND_NAMES = {
   voice: ["answer", "decline", "dial", "hold", "resume", "end-call", "terminate-call",
-          "connect-back", "lead-assist", "conference", "recording", "schedule", "complete"],
+          "connect-back", "lead-assist", "add-to-call", "remove-from-call", "recording", "schedule", "complete"],
   chat: ["accept", "decline", "pause", "resume", "schedule", "complete"],
   email: ["accept", "decline", "schedule", "complete"],
 } as const;
@@ -1254,18 +1258,18 @@ export type VoiceTaskCommand =
   /**
    * Dial a contact into the call: an entry of the provider's contacts by `contactId`, or, where the
    * capability allows `any-number`, a `number` the agent typed, which the provider enters in its
-   * contacts under an id of its own. Gated by `conference`.
+   * contacts under an id of its own. Gated by `addToCall`.
    */
-  | { type: "conference"; action: "add"; dialId: DialId; contactId: string; number?: never }
-  | { type: "conference"; action: "add"; dialId: DialId; number: string; contactId?: never }
+  | { type: "add-to-call"; dialId: DialId; contactId: string; number?: never }
+  | { type: "add-to-call"; dialId: DialId; number: string; contactId?: never }
   /**
    * Remove one person from the call, named as `onCall` names them, and the call goes on for the
-   * rest: a `conferenced` entry by its `contactId`, which while it still rings calls the dial
+   * rest: a `added` entry by its `contactId`, which while it still rings calls the dial
    * off, or the `party`, leaving the agent with the colleague. A remove that would leave the agent
    * alone is `end-call`, and a provider answers it `failed`.
    */
-  | { type: "conference"; action: "remove"; contactId: string; party?: never }
-  | { type: "conference"; action: "remove"; party: true; contactId?: never }
+  | { type: "remove-from-call"; contactId: string; party?: never }
+  | { type: "remove-from-call"; party: true; contactId?: never }
   | (RecordingCommand & { source: "provider" })
   | ({ type: "complete" } & OutcomePayload);
 
@@ -1326,7 +1330,7 @@ export type TaskCommandResult =
 /** The dial a command places, by the host's identity for it; `undefined` for a command that dials nothing. */
 export function commandDialId(command: TaskCommand): DialId | undefined {
   if (command.type === "connect-back" || command.type === "dial") return command.dialId;
-  if (command.type === "conference" && command.action === "add") return command.dialId;
+  if (command.type === "add-to-call") return command.dialId;
   return undefined;
 }
 
@@ -2026,7 +2030,7 @@ export const DEFAULT_TASK_TYPE_PRESENTATION = {
 
 export const DEFAULT_HISTORY_STEP_LABELS = {
   arrived: "Incoming call", "self-service": "Self-service", queued: "Queued", offered: "Offered", answered: "Answered", held: "On hold",
-  muted: "Muted", transferred: "Transferred", conferenced: "Conferenced", unanswered: "Unanswered",
+  muted: "Muted", transferred: "Transferred", added: "Added", unanswered: "Unanswered",
   "callback-requested": "Callback requested",
 } as const satisfies Readonly<Record<HistoryStep, string>>;
 
@@ -2084,11 +2088,11 @@ export const userKey = (providerId: string, userId: UserId): string =>
  * of them is here.
  */
 export const HISTORY_STEPS_WITH_A_PERSON = [
-  "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered",
+  "offered", "answered", "held", "muted", "transferred", "added", "unanswered",
 ] as const satisfies readonly HistoryStep[];
 
 /** The steps a dial writes, and so the only ones that carry a `dialId` and a `contactId`. */
-export const HISTORY_STEPS_THAT_DIAL = ["transferred", "conferenced", "unanswered"] as const satisfies readonly HistoryStep[];
+export const HISTORY_STEPS_THAT_DIAL = ["transferred", "added", "unanswered"] as const satisfies readonly HistoryStep[];
 
 export const historyStepDials = (step: HistoryStep): boolean =>
   (HISTORY_STEPS_THAT_DIAL as readonly HistoryStep[]).includes(step);

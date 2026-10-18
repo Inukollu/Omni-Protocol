@@ -456,10 +456,10 @@ describe("TaskStream names a task by its assignment alone", () => {
   });
 
   it("lets a dial outcome name a life that has ended, since a dial placed late outlives its call", () => {
-    const s = seeded("alloc-1", { onCall: [{ role: "party", since: at }, { role: "conferenced", contactId: "tier2", dialId: "dial-1a0", stage: "ringing", since: at }] });
+    const s = seeded("alloc-1", { onCall: [{ role: "party", since: at }, { role: "added", contactId: "tier2", dialId: "dial-1a0", stage: "ringing", since: at }] });
     s.apply(ended("alloc-1"));
     expect(rulesOf(s.apply(outcome("alloc-1")))).toEqual([]);
-    const room = { onCall: [{ role: "party", since: at }, { role: "conferenced", contactId: "tier2", dialId: "dial-1a0", stage: "ringing", since: at }] };
+    const room = { onCall: [{ role: "party", since: at }, { role: "added", contactId: "tier2", dialId: "dial-1a0", stage: "ringing", since: at }] };
     expect(rulesOf(seeded("alloc-1", room).apply(outcome("alloc-9")))).toEqual(["stream.assignment.unknown"]);
     expect(rulesOf(seeded("alloc-1", room).apply(outcome("alloc-1")))).toEqual([]);
   });
@@ -499,7 +499,7 @@ describe("TaskStream holds a task to the table: it does not go backwards", () =>
     expect(rulesOf(seeded("completing").apply(update("in-progress", { onCall: callingBack })))).toEqual([]);
     // The control: the same move with nobody being dialled is a stale republish, the ending the agent never saw.
     expect(rulesOf(seeded("completing").apply(update("in-progress")))).toEqual(["stream.taskUpdated.phase"]);
-    // And the party joins only on an answered outcome for that dial, as a conferenced colleague does.
+    // And the party joins only on an answered outcome for that dial, as an added colleague does.
     const ringing = new TaskStream(); ringing.seed({ tasks: [inPhase("in-progress", { onCall: dialled })] });
     const joined = [{ ...dialled[0]!, stage: "joined" as const }, dialled[1]!];
     expect(rulesOf(ringing.apply(update("in-progress", { onCall: joined })))).toEqual(["stream.taskUpdated.stage"]);
@@ -622,7 +622,7 @@ describe("TaskStream places a dial outcome", () => {
   });
 
   it("knows a dial from the record or from who is on the call, which is how a dial made before a take-over is placed", () => {
-    const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", contactId: "tier2", dialId: "dial-3c9", stage: "joined", since: at }],
+    const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "added", contactId: "tier2", dialId: "dial-3c9", stage: "joined", since: at }],
       history: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", contactId: "tier3" }] } };
     const s = new TaskStream();
     s.seed({ tasks: [inherited] });
@@ -631,14 +631,14 @@ describe("TaskStream places a dial outcome", () => {
     // The control: the same stream, a dial neither carried.
     expect(rulesOf(s.apply(outcome("dial-000", "e3")))).toEqual(["stream.dialOutcome.unknown"]);
     // And a dial arriving on an offer or an update counts the same way.
-    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, assignmentId: "alloc-99", phase: "pending", acceptance: "consent", onCall: [{ role: "conferenced", contactId: "tier2", dialId: "dial-off", stage: "ringing", since: at }] } } };
+    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, assignmentId: "alloc-99", phase: "pending", acceptance: "consent", onCall: [{ role: "added", contactId: "tier2", dialId: "dial-off", stage: "ringing", since: at }] } } };
     expect(rulesOf(s.apply(offered))).toEqual([]);
     expect(rulesOf(s.apply(outcome("dial-off", "e5")))).toEqual([]);
   });
 
   it("lets an update restate a joined entry after its answered outcome, and refuses one that joins it alone", () => {
-    const ringing: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", contactId: "tier2", dialId: "dial-7f2", stage: "ringing", since: at }] };
-    const joined: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", contactId: "tier2", dialId: "dial-7f2", stage: "joined", since: at }] };
+    const ringing: Task<"voice"> = { ...voiceTask, onCall: [{ role: "added", contactId: "tier2", dialId: "dial-7f2", stage: "ringing", since: at }] };
+    const joined: Task<"voice"> = { ...voiceTask, onCall: [{ role: "added", contactId: "tier2", dialId: "dial-7f2", stage: "joined", since: at }] };
     const update = (task: Task<"voice">, id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task } });
     // The outcome is the transition and the stage the state: outcome first, then the room restated.
     const s = new TaskStream();
@@ -873,7 +873,7 @@ const conformingSnapshot = {
       browsers: true,
       hold: true,
       outcomes: { required: true, notes: "optional", codes: [{ id: "resolved", label: "Resolved" }, { id: "callback", label: "Callback needed" }] },
-      conference: { destinations: "contacts-only" },
+      addToCall: { destinations: "contacts-only" },
       custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary", render: "inline" } }],
     },
     capabilitySource: "queue",
@@ -1146,7 +1146,7 @@ describe("testAdapter", () => {
       "event.contacts-updated", "event.calendar-updated", "event.shift-updated", "event.phone-updated", "event.next-call", "event.lined-up",
       "event.labels-updated",
     ];
-    // The rich task carries browsers, history, an outcome policy, conference destinations and a
+    // The rich task carries browsers, history, an outcome policy, add-to-call destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
     expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
