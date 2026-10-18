@@ -45,6 +45,7 @@ export const voiceManifest = {
   channel: "voice",
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
   settleMs: 5000,
+  orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }],
   authenticationMethods: ["browser-sso"],
   idleCapabilities: {
     dial: { destinations: "any-number" },
@@ -72,16 +73,16 @@ export const chatManifest = {
 export const ladderedManifest = {
   ...voiceManifest,
   orgLevels: [
-    { id: "org", label: "Your organisation" },
-    { id: "team", label: "Your queue group" },
-    { id: "person", label: "You" },
+    { id: "org", label: { en: "Your organisation" } },
+    { id: "team", label: { en: "Your queue group" } },
+    { id: "person", label: { en: "You" } },
   ],
 } satisfies Manifest<"voice">;
 
 export const mergedTiersManifest = {
   ...voiceManifest,
   // @ts-expect-error The field is orgLevels: a fixture keeping the old `levels` key must fail the build.
-  levels: [{ id: "org", label: "Your organisation" }],
+  levels: [{ id: "org", label: { en: "Your organisation" } }],
 } satisfies Manifest<"voice">;
 
 export const emailTask = {
@@ -285,7 +286,7 @@ export const staleBreak = { transport: "active", loginId: "login-1", tasks: [], 
   break: { status: "not-requested", accepting: true } } satisfies Snapshot<"voice">;
 export const staleLadder = { ...voiceManifest,
   // @ts-expect-error The org's ladder is orgLevels.
-  orgTiers: [{ id: "org", label: "Your organisation" }] } satisfies Manifest<"voice">;
+  orgTiers: [{ id: "org", label: { en: "Your organisation" } }] } satisfies Manifest<"voice">;
 export const staleWrap = { ...emailTask, assignmentId: "email-10",
   // @ts-expect-error The wrap allowance is wrapAllowance.
   completionAllowance: 30 } satisfies Task<"email">;
@@ -415,9 +416,9 @@ export const linedUpTask: LinedUpCall = { since: "2026-08-21T09:04:30Z", assignm
 export const heldFast: LinedUpCall = { since: "2026-08-21T09:04:30Z", release: false };
 export const busyPhone: PhoneState = { phone: "hardphone", status: "ready", muted: true, channels: [{ state: "active", since: "2026-08-21T09:00:04Z", assignmentId: "alloc-42" }, { state: "held", since: "2026-08-21T09:05:20Z" }] };
 export const phoneMoved: ProviderEvent<"voice"> = { type: "phone-updated", phone: { phone: "hardphone", status: "unregistered", channels: [] } };
-export const seesThePhone: Manifest<"voice"> = { id: "acme", displayName: "Acme", channel: "voice", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, phones: ["hardphone"], phoneStatus: true };
+export const seesThePhone: Manifest<"voice"> = { id: "acme", displayName: "Acme", channel: "voice", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }], phones: ["hardphone"], phoneStatus: true };
 // @ts-expect-error A chat provider has no phone to see.
-export const chatSeesThePhone: Manifest<"chat"> = { id: "acme", displayName: "Acme", channel: "chat", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, phoneStatus: true };
+export const chatSeesThePhone: Manifest<"chat"> = { id: "acme", displayName: "Acme", channel: "chat", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }], phoneStatus: true };
 // @ts-expect-error A channel is one of ringing, active or held.
 export const parkedChannel: PhoneChannel = { state: "parked", since: "2026-08-21T09:00:00Z" };
 export const myDay: Snapshot<"voice"> = { transport: "active", loginId: "session-1", providerTime: "2026-08-21T09:00:00Z", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0, shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4210, tasksHandled: 12 } };

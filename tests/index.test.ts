@@ -206,6 +206,7 @@ describe("localizedText", () => {
         channel: "chat",
         supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
         settleMs: 5000,
+        orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }],
         authenticationMethods: ["browser-sso"],
       },
       async createAuthenticationSession() {

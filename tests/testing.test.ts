@@ -4,6 +4,8 @@ import type { LoginStore, Refusal, PhoneState, SecretStore, AuthenticationContex
 import { validateTask } from "../src/validation.js";
 import { memoryStore, assertHistoryAgreesAcrossTasks, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, testAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
+const LEVELS = ["org", "site", "team", "person"];
+
 const voiceTask = {
   title: "Customer call",
   channel: "voice",
@@ -29,21 +31,21 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
       { status: "authenticated", identity: { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" }, capabilities: {} },
       { status: "refreshing", identity: { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" }, capabilities: {} },
       { status: "expired", identity: { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" }, failure: { code: "expired", message: "Sign in again", retryable: true } },
-    ])).not.toThrow();
+    ], conformingManifest)).not.toThrow();
   });
 
   it("rejects a sequence that never expires", () => {
     expect(() => assertAuthenticationRestoreAndExpiry([
       { status: "authenticated", identity: { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" }, capabilities: {} },
       { status: "refreshing", identity: { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" }, capabilities: {} },
-    ])).toThrow(/must end in an expired state/);
+    ], conformingManifest)).toThrow(/must end in an expired state/);
   });
 
   it("rejects a sequence that does not start authenticated", () => {
     expect(() => assertAuthenticationRestoreAndExpiry([
       { status: "signed-out" },
       { status: "expired" },
-    ])).toThrow(/restored authenticated state/);
+    ], conformingManifest)).toThrow(/restored authenticated state/);
   });
 
   it("validates every state, not only their order", () => {
@@ -54,10 +56,14 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
       { status: "authenticated", identity: ada, capabilities: { breaks: true } },
       refreshing,
       { status: "expired", identity: ada },
-    ]);
+    ], conformingManifest);
     expect(sequence({ status: "refreshing", identity: ada, capabilities: { breaks: true } })).not.toThrow();
     expect(sequence({ status: "refreshing", identity: ada } as unknown as AuthenticationState)).toThrow(/capabilities/);
     expect(sequence({ status: "refreshing", identity: ada, capabilities: {} })).toThrow(/refreshing/);
+    // Each state against the manifest's ladder: a level it does not declare is refused.
+    const decidedBy = (setBy: string) => sequence({ status: "refreshing", identity: ada, capabilities: { breaks: true, preferences: [{ id: "hold", label: "Hold", enabled: true, setBy }] } });
+    expect(decidedBy("team")).toThrow(/refreshing/);
+    expect(decidedBy("teem")).toThrow(/preference.setBy.unknown/);
   });
 
   it("rejects a refresh reported after expiry", () => {
@@ -66,7 +72,7 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
       { status: "expired" },
       { status: "refreshing", identity: { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" }, capabilities: {} },
       { status: "expired" },
-    ])).toThrow(/must occur before expiry/);
+    ], conformingManifest)).toThrow(/must occur before expiry/);
   });
 });
 
@@ -74,6 +80,7 @@ describe("assertCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
     supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 150,
+    orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }],
   } satisfies Manifest<"voice">;
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, lead: true as const } } satisfies AuthenticationState;
@@ -133,6 +140,7 @@ describe("assertTaskCapabilityWithdrawal", () => {
   const manifest = {
     id: "acme-voice", displayName: "Acme Voice", channel: "voice",
     supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 150,
+    orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }],
   } satisfies Manifest<"voice">;
   const withHold = { ...voiceTask, capabilities: { hold: true, endCall: true } } satisfies Task<"voice">;
   const withoutHold = { ...voiceTask, capabilities: { endCall: true } } satisfies Task<"voice">;
@@ -835,6 +843,7 @@ const conformingManifest = {
   supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
   authenticationMethods: ["browser-sso"],
   settleMs: 150,
+  orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }],
   timeCheck: true,
   idleCapabilities: {
     dial: { destinations: "any-number" },
@@ -1886,7 +1895,7 @@ describe("testAdapter tests one call", () => {
     expect(tested.rulesTested).toContain("test.command.failed");
     expect(result.rulesTested).not.toContain("test.timeout");
     // The observer is released with the run: nothing after it is counted.
-    expect(validateTask({ ...conformingSnapshot.tasks[0]!, onCall: [{ role: "party", dialId: "dial-9", since: "2026-08-21T09:05:00Z" }] } as unknown as Task, { channel: "voice" }).map(v => v.rule)).toEqual(["task.onCall.party.dial"]);
+    expect(validateTask({ ...conformingSnapshot.tasks[0]!, onCall: [{ role: "party", dialId: "dial-9", since: "2026-08-21T09:05:00Z" }] } as unknown as Task, { levels: LEVELS, channel: "voice" }).map(v => v.rule)).toEqual(["task.onCall.party.dial"]);
     expect(result.rulesTested).not.toContain("task.onCall.party.dial");
   });
 
@@ -2486,8 +2495,8 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await run(true, offered())).toContain("task.acceptance.required");
     // A validator called without the host's word checks neither way: absence is not a value.
     const pending = { ...conformingSnapshot.tasks[0]!, phase: "pending" as const, audio: undefined };
-    expect(validateTask(pending, { channel: "voice" }).map(v => v.rule)).not.toContain("task.acceptance.required");
-    expect(validateTask({ ...pending, acceptance: "consent" }, { channel: "voice" }).map(v => v.rule)).not.toContain("task.acceptance.unexpected");
+    expect(validateTask(pending, { levels: LEVELS, channel: "voice" }).map(v => v.rule)).not.toContain("task.acceptance.required");
+    expect(validateTask({ ...pending, acceptance: "consent" }, { levels: LEVELS, channel: "voice" }).map(v => v.rule)).not.toContain("task.acceptance.unexpected");
     expect(await run(false, offered())).toEqual([]);
     expect(await run(false, offered("consent"))).toContain("task.acceptance.unexpected");
     // The word is on the task, so a reconnect snapshot says it too: a pending task carried in without it is refused the same way.
@@ -2544,7 +2553,7 @@ describe("testAdapter requires each method the declarations call for", () => {
   });
 
   it("holds who-decided to the manifest's declared ladder, on the login and on the snapshot", async () => {
-    const laddered = { ...conformingManifest, orgLevels: [{ id: "org", label: "Your organisation" }, { id: "region", label: "Your region" }, { id: "team", label: "Your team" }, { id: "person", label: "You" }] } satisfies Manifest<"voice">;
+    const laddered = { ...conformingManifest, orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "region", label: { en: "Your region" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }] } satisfies Manifest<"voice">;
     const of = (setBy: string) => ({ preferences: [{ id: "hold" as const, label: "Hold", enabled: true, setBy }] });
     expect(await rules({ manifest: laddered, capabilities: of("region") })).toEqual([]);
     // The ladder is the whole ladder: the default the manifest left out is refused.

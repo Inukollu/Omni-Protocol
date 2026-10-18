@@ -1081,7 +1081,7 @@ it no longer owns. Omni shows these controls only in the two interaction phases,
 The commands with a phase of their own -- `answer`, `accept` and `decline` in `pending`,
 `dial` in `preview`, `connect-back` in `completing`, `complete` in any -- are not among them.
 
-`validateTaskCommand(command, task)` holds a command to this table at runtime, both ways: the
+`validateTaskCommand(command, task, path, { levels })` holds a command to this table at runtime, both ways: the
 capability it needs, the phase it belongs to, and the state that has to stand. The task it wants
 is the one the provider published, not an agent application's own mapping of it: an agent application that keeps only its
 mapped shape has nothing honest to pass, and then checks shape alone, which is still worth doing

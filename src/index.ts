@@ -283,8 +283,8 @@ export interface Manifest<C extends Channel = Channel> {
   timeCheck?: true;
   /** Provider uses its own timestamps for final records; host timestamps are advisory. Omission makes no trust promise. */
   timestampAuthority?: "provider";
-  /** The organisation's whole ladder, stated outright, `person` included. Omitted for the typical four, `DEFAULT_LEVELS`. */
-  orgLevels?: LevelDeclaration[];
+  /** The organisation's whole ladder, stated outright, `person` included, each level labelled in the languages its agents read. */
+  orgLevels: LevelDeclaration[];
   /**
    * The outcomes this platform distinguishes when a dial ends, `answered` and at least one way of
    * not reaching the destination. Required of a provider that dials at all -- an idle dialpad, or
@@ -1048,32 +1048,15 @@ export interface TaskTakenOver {
 }
 
 /**
- * A level of the organisation's structure, by the id its manifest declares -- or one of the four
- * a typical organisation has, `DEFAULT_LEVELS`, when the manifest declares no ladder. The protocol
- * never describes the chain: which levels a person passes through is the structure's to know.
+ * A level of the organisation's structure, by the id its manifest declares. The protocol never
+ * describes the chain: which levels a person passes through is the structure's to know.
  */
 export type Level = string;
 
-/** A level the structure has, with the label an agent computer shows for "who decided". */
+/** A level the structure has, with the label an agent computer shows for "who decided", per language: the agent application picks with `localizedText()`. */
 export interface LevelDeclaration {
   id: Level;
-  label: string;
-}
-
-/**
- * The levels a typical organisation has: the ladder in force when a manifest declares no
- * `orgLevels`. A manifest that declares any states its whole ladder outright.
- */
-export const DEFAULT_LEVELS = [
-  { id: "org", label: "Your organisation" },
-  { id: "site", label: "Your site" },
-  { id: "team", label: "Your team" },
-  { id: "person", label: "You" },
-] as const satisfies readonly LevelDeclaration[];
-
-/** The ladder in force for a manifest: exactly what it declares, or the defaults when it declares none. */
-export function effectiveLevels(declared: readonly LevelDeclaration[] | undefined): LevelDeclaration[] {
-  return [...(declared ?? DEFAULT_LEVELS)];
+  label: LocalizedText;
 }
 
 /**

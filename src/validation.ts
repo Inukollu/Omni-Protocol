@@ -36,8 +36,6 @@ import {
   type BrowserAccess,
   type HostAudioUnavailableReason,
   type UrlVisibility,
-  DEFAULT_LEVELS,
-  effectiveLevels,
   type TeamPolicySetting,
   type TaskAudioState,
   type TransportRecovery,
@@ -311,13 +309,13 @@ function validateAttributes(value: unknown, path: string, into: Collector): void
 }
 
 /** Every field is optional, so this checks what is present rather than what is missing. */
-export function validateContact(contact: unknown, path = "contact"): ProtocolViolation[] {
+export function validateContact(contact: unknown, levels: readonly string[], path = "contact"): ProtocolViolation[] {
   const into = new Collector();
-  validateContactInto(contact, path, into);
+  validateContactInto(contact, path, into, levels);
   return into.violations;
 }
 
-function validateContactInto(contact: unknown, path: string, into: Collector, levels?: readonly string[]): void {
+function validateContactInto(contact: unknown, path: string, into: Collector, levels: readonly string[]): void {
   if (!isPlainObject(contact)) {
     into.add("contact.shape", path, "a contact must be an object");
     return;
@@ -333,13 +331,13 @@ function validateContactInto(contact: unknown, path: string, into: Collector, le
   validateAttributes(contact.attributes, `${path}.attributes`, into);
 }
 
-export function validateScheduledActivity(activity: unknown, path = "scheduledActivity"): ProtocolViolation[] {
+export function validateScheduledActivity(activity: unknown, levels: readonly string[], path = "scheduledActivity"): ProtocolViolation[] {
   const into = new Collector();
-  validateScheduledActivityInto(activity, path, into);
+  validateScheduledActivityInto(activity, path, into, levels);
   return into.violations;
 }
 
-function validateScheduledActivityInto(activity: unknown, path: string, into: Collector, levels?: readonly string[]): void {
+function validateScheduledActivityInto(activity: unknown, path: string, into: Collector, levels: readonly string[]): void {
   if (!isPlainObject(activity)) {
     into.add("activity.shape", path, "a scheduled activity must be an object");
     return;
@@ -633,9 +631,11 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
   into.require(typeof manifest.settleMs === "number" && Number.isInteger(manifest.settleMs) && manifest.settleMs > 0,
     "manifest.settleMs", `${path}.settleMs`,
     "settleMs is how long after applied the wire shows what the provider did -- the task-ended after a complete, the calendar-updated after a schedule -- a positive whole number of milliseconds, stated by every provider");
-  if (manifest.orgLevels !== undefined) {
+  if (manifest.orgLevels === undefined) {
+    into.add("manifest.orgLevels.required", `${path}.orgLevels`, "orgLevels is required: the organisation's whole ladder, person included, each level labelled in the languages its agents read");
+  } else {
     if (!Array.isArray(manifest.orgLevels)) {
-      into.add("manifest.orgLevels.shape", `${path}.orgLevels`, "orgLevels must be an array when present");
+      into.add("manifest.orgLevels.shape", `${path}.orgLevels`, "orgLevels must be an array");
     } else {
       const ids = new Set<string>();
       let wellFormed = true;
@@ -653,7 +653,9 @@ export function validateManifest(manifest: unknown, path = "manifest"): Protocol
           }
           ids.add(level.id as string);
         } else wellFormed = false;
-        if (!into.filled(level.label, "manifest.orgLevel.label", `${at}.label`, "a level needs the label an agent computer shows for it")) wellFormed = false;
+        const before = into.violations.length;
+        validateLocalizedText(level.label, "manifest.orgLevel.label", `${at}.label`, into);
+        if (into.violations.length !== before) wellFormed = false;
       });
       if (wellFormed && !ids.has("person")) {
         into.add("manifest.orgLevels.person", `${path}.orgLevels`,
@@ -867,16 +869,12 @@ function validateCustomCapabilities(value: unknown, path: string, into: Collecto
   });
 }
 
-const DEFAULT_LEVEL_IDS: readonly string[] = DEFAULT_LEVELS.map(level => level.id);
 const POLICY_SETTINGS = membersOf<TeamPolicySetting>({ on: true, off: true, person: true });
 const POLICY_KEYS = new Set<string>([
   ...TASK_CAPABILITIES.voice, ...TASK_CAPABILITIES.chat, ...TASK_CAPABILITIES.email, "dial",
 ].filter(name => name !== "browsers" && name !== "outcomes" && name !== "custom"));
 const PERSON_SETTABLE = /^(hold|skill:.+)$/;
 const isLocked = (value: unknown): value is Record<string, unknown> => isPlainObject(value) && value.lockedBy !== undefined;
-
-/** The level ids in force: the manifest's, or the defaults when the caller holds no manifest. */
-const levelIds = (levels: readonly string[] | undefined): readonly string[] => levels ?? DEFAULT_LEVEL_IDS;
 
 /**
  * What the queue locks is locked on the whole task. Given the locked values, every other field an
@@ -920,24 +918,24 @@ function validateNothingLeaksInto(task: Record<string, unknown>, locked: readonl
 }
 
 /** `lockedBy`: a declared level other than `person`, who never locks their own value. */
-function validateLockedByInto(value: unknown, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
+function validateLockedByInto(value: unknown, rule: string, path: string, levels: readonly string[], into: Collector): void {
   if (!into.filled(value, rule, path, "lockedBy names the level that locked it")) return;
   into.require(value !== "person", `${rule}.person`, path, "a person never locks their own value");
-  into.require(levelIds(levels).includes(value as string), `${rule}.unknown`, path,
-    `${describeValue(value)} is not a level this manifest declares: in force are ${levelIds(levels).join(", ")}`);
+  into.require(levels.includes(value as string), `${rule}.unknown`, path,
+    `${describeValue(value)} is not a level this manifest declares: ${inForce(levels)}`);
 }
 
 /** `{ lockedBy, reason? }` standing in for a value: who locked it, and a reason if given. */
-function validateLockedInto(value: Record<string, unknown>, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
+function validateLockedInto(value: Record<string, unknown>, rule: string, path: string, levels: readonly string[], into: Collector): void {
   validateLockedByInto(value.lockedBy, `${rule}.lockedBy`, `${path}.lockedBy`, levels, into);
   if (value.reason !== undefined) into.filled(value.reason, `${rule}.reason`, `${path}.reason`, "a reason must not be empty when present");
 }
 
 /** What every resolved value carries: who set it, and who locked it if anyone. */
-function validateResolvedInto(value: Record<string, unknown>, rule: string, path: string, levels: readonly string[] | undefined, into: Collector): void {
+function validateResolvedInto(value: Record<string, unknown>, rule: string, path: string, levels: readonly string[], into: Collector): void {
   if (into.filled(value.setBy, `${rule}.setBy`, `${path}.setBy`, "setBy names who stated the value: a level, or provider")) {
-    into.require(value.setBy === "provider" || levelIds(levels).includes(value.setBy as string), `${rule}.setBy.unknown`, `${path}.setBy`,
-      `${describeValue(value.setBy)} is neither provider nor a level this manifest declares`);
+    into.require(value.setBy === "provider" || levels.includes(value.setBy as string), `${rule}.setBy.unknown`, `${path}.setBy`,
+      `${describeValue(value.setBy)} is neither provider nor a level this manifest declares: ${inForce(levels)}`);
   }
   if (value.lockedBy !== undefined) validateLockedByInto(value.lockedBy, `${rule}.lockedBy`, `${path}.lockedBy`, levels, into);
   if (value.reason !== undefined) {
@@ -946,13 +944,23 @@ function validateResolvedInto(value: Record<string, unknown>, rule: string, path
   }
 }
 
-/** The level ids a manifest puts in force, for validators that receive one. */
-function manifestLevels(manifest: unknown): readonly string[] | undefined {
-  if (!isPlainObject(manifest)) return undefined;
-  const declared = Array.isArray(manifest.orgLevels)
-    ? manifest.orgLevels.filter((level: unknown): level is { id: string; label: string } => isPlainObject(level) && typeof level.id === "string")
-    : undefined;
-  return effectiveLevels(declared).map(level => level.id);
+/** A command context's `levels`, the manifest's level ids the login is validated against. */
+function contextLevels(context: Record<string, unknown>, rule: string, path: string, into: Collector): readonly string[] {
+  const levels = context.levels;
+  if (Array.isArray(levels) && levels.every(level => typeof level === "string")) return levels;
+  into.add(rule, `${path}.levels`, "the context carries levels, the ids of the manifest's orgLevels, to validate the login against");
+  return [];
+}
+
+const inForce = (levels: readonly string[]): string =>
+  levels.length === 0 ? "it declares no ladder" : `in force are ${levels.join(", ")}`;
+
+/** The level ids a manifest declares, for validators that receive one. A manifest without a ladder declares none, and every level is refused. */
+function manifestLevels(manifest: unknown): readonly string[] {
+  if (!isPlainObject(manifest) || !Array.isArray(manifest.orgLevels)) return [];
+  return manifest.orgLevels
+    .filter((level: unknown): level is { id: string } => isPlainObject(level) && typeof level.id === "string")
+    .map(level => level.id);
 }
 const CUSTOM_RENDERS = membersOf<NonNullable<CustomCapability["ui"]["render"]>>({ inline: true, page: true });
 const CREDENTIAL_FIELD_TYPES = membersOf<CredentialField["type"]>({ text: true, password: true });
@@ -1014,7 +1022,7 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
   });
 }
 
-function validateTaskAttributes(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
+function validateTaskAttributes(value: unknown, path: string, into: Collector, levels: readonly string[]): void {
   if (value === undefined) return;
   if (!Array.isArray(value)) {
     into.add("task.attributes.shape", path, "attributes must be an array when present");
@@ -1271,8 +1279,8 @@ function validateTakenOver(value: unknown, channel: string, path: string, into: 
 export interface TaskValidationContext {
   /** The provider's channel, from its manifest. A task must agree with it. */
   channel: string;
-  /** The level ids in force, from the manifest. The defaults when absent. */
-  levels?: readonly string[];
+  /** The level ids the manifest declares, `Manifest.orgLevels`: a level the task names must be one of them. */
+  levels: readonly string[];
   /** `ConnectContext.autoAcceptTasks` as sent: whether a pending task states its `acceptance`. Unknown to a caller without the context, and then unchecked. */
   autoAcceptTasks?: boolean;
   /** Whether the manifest declares `dialOutcomes`. A task that may dial needs it to; absent, the question is not asked. */
@@ -1594,7 +1602,7 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
     return into.violations;
   }
   const auth = isPlainObject(context.authentication) ? context.authentication : {};
-  into.violations.push(...validateAuthenticationState(auth, `${path}.authentication`));
+  into.violations.push(...validateAuthenticationState(auth, `${path}.authentication`, { levels: contextLevels(context, "team.command.levels", path, into) }));
   const caps = isPlainObject(auth.capabilities) ? auth.capabilities : {};
   into.require((auth.status === "authenticated" || auth.status === "refreshing") && context.transport === "active",
     "team.command.connection", path, "lead commands require a live login and active transport");
@@ -1694,7 +1702,7 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
     into.add("break.command.context", path, "current authentication and transport are required");
     return into.violations;
   }
-  into.violations.push(...validateAuthenticationState(context.authentication, `${path}.authentication`));
+  into.violations.push(...validateAuthenticationState(context.authentication, `${path}.authentication`, { levels: contextLevels(context, "break.command.levels", path, into) }));
   const auth = isPlainObject(context.authentication) ? context.authentication : {};
   into.require(auth.status === "authenticated" || auth.status === "refreshing", "break.command.authentication", path,
     "break commands require a live authenticated login");
@@ -1873,7 +1881,7 @@ export interface ReaderContext {
    * snapshot carries a team member list, nobody else's does, and `requests` need `team.leadAssistControl`.
    */
   capabilities?: UserCapabilities;
-  /** The level ids in force. Filled from the manifest by `validateSnapshot` and `validateEventEnvelope`; the defaults otherwise. */
+  /** The level ids the manifest declares. `validateSnapshot` and `validateEventEnvelope` take them from the manifest unless given. */
   levels?: readonly string[];
   /** The login's `loginId`. A snapshot or event naming another belongs to a login that is gone. */
   loginId?: string;
@@ -1900,13 +1908,16 @@ export interface ReaderContext {
   autoAcceptTasks?: boolean;
 }
 
-export function validateTeamMembers(teamMembers: unknown, path = "team", context: ReaderContext = {}): ProtocolViolation[] {
+/** What a team member list is validated against: the reader, and the levels the manifest declares. */
+export type TeamValidationContext = ReaderContext & { levels: readonly string[] };
+
+export function validateTeamMembers(teamMembers: unknown, path: string, context: TeamValidationContext): ProtocolViolation[] {
   const into = new Collector();
   validateTeamMembersInto(teamMembers, path, context, into);
   return into.violations;
 }
 
-function validateTeamMembersInto(teamMembers: unknown, path: string, context: ReaderContext, into: Collector): void {
+function validateTeamMembersInto(teamMembers: unknown, path: string, context: TeamValidationContext, into: Collector): void {
   if (!isPlainObject(teamMembers)) {
     into.add("team.shape", path, "a team member list must be an object");
     return;
@@ -1945,13 +1956,13 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Re
 }
 
 /** One member as the lead sees them, whole: on the list, and on `team-member-updated` alone. */
-export function validateTeamMember(member: unknown, path = "member", context: ReaderContext = {}): ProtocolViolation[] {
+export function validateTeamMember(member: unknown, path: string, context: TeamValidationContext): ProtocolViolation[] {
   const into = new Collector();
   validateTeamMemberInto(member, path, context, into);
   return into.violations;
 }
 
-function validateTeamMemberInto(member: unknown, at: string, context: ReaderContext, into: Collector): void {
+function validateTeamMemberInto(member: unknown, at: string, context: TeamValidationContext, into: Collector): void {
   if (!isPlainObject(member)) {
     into.add("team.member.shape", at, "each team member must be an object");
     return;
@@ -2462,7 +2473,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
 const PREFERENCE_ID = /^(hold|skill:.+)$/;
 
 /** The choices left to the person, each with where it stands. */
-function validatePreferencesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
+function validatePreferencesInto(value: unknown, path: string, into: Collector, levels: readonly string[]): void {
   if (!Array.isArray(value)) {
     into.add("preferences.shape", path, "preferences must be an array");
     return;
@@ -2526,13 +2537,13 @@ function validateNextCallInto(value: unknown, path: string, into: Collector): vo
 }
 
 /** A call waiting in the agent's own queue: the caller as shown to this audience, the queue, the waits, and whether the agent may let it go. */
-export function validateLinedUp(value: unknown, path = "linedUp", levels?: readonly string[]): ProtocolViolation[] {
+export function validateLinedUp(value: unknown, levels: readonly string[], path = "linedUp"): ProtocolViolation[] {
   const into = new Collector();
   validateLinedUpInto(value, path, into, levels);
   return into.violations;
 }
 
-function validateLinedUpInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
+function validateLinedUpInto(value: unknown, path: string, into: Collector, levels: readonly string[]): void {
   if (!isPlainObject(value)) { into.add("linedUp.shape", path, "a lined-up call must be an object"); return; }
   if (value.party !== undefined) validateContactInto(value.party, `${path}.party`, into, levels);
   if (value.queue !== undefined) into.filled(value.queue, "linedUp.queue", `${path}.queue`, "the queue's label must not be empty when present");
@@ -2621,7 +2632,7 @@ function validateShiftInto(value: unknown, path: string, into: Collector, rule: 
   }
 }
 
-function validateTeamPoliciesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
+function validateTeamPoliciesInto(value: unknown, path: string, into: Collector, levels: readonly string[]): void {
   if (!isPlainObject(value)) {
     into.add("team.policies.shape", path, "policies must be an object keyed by capability");
     return;
@@ -2887,8 +2898,8 @@ const CONFERENCE_ACTIONS = ["add", "remove"] as const;
 
 
 /** Validate the exact interaction/assignment target before provider command dispatch. */
-export function validateTaskCommandRequest(request: unknown, task: unknown, path = "request",
-  taskContext?: Omit<TaskValidationContext, "channel">): ProtocolViolation[] {
+export function validateTaskCommandRequest(request: unknown, task: unknown, path: string,
+  taskContext: Omit<TaskValidationContext, "channel">): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(request) || !isPlainObject(task)) {
     into.add("command.request.shape", path, "a request and the current published task are required");
@@ -2910,6 +2921,8 @@ export function validateTaskCommandRequest(request: unknown, task: unknown, path
  * own shape is checked. A host validates before sending, and an adapter before acting: a command
  * for a control the task never offered is the host's error, and this names it.
  */
+export function validateTaskCommand(command: unknown): ProtocolViolation[];
+export function validateTaskCommand(command: unknown, task: unknown, path: string, taskContext: Omit<TaskValidationContext, "channel">): ProtocolViolation[];
 export function validateTaskCommand(command: unknown, task?: unknown, path = "command", taskContext?: Omit<TaskValidationContext, "channel">): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(command)) {
@@ -2988,6 +3001,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       break;
   }
   if (task === undefined) return into.violations;
+  if (taskContext === undefined) throw new TypeError("validateTaskCommand: a task is validated against the manifest's levels; pass taskContext with it");
   // The task the command is held to has to be one the wire published. A host's own mapping of it,
   // handed in for want of the original, is not, and checking a command against it would be
   // checking against a task nobody has -- so the task is validated first, and a command is held
@@ -3308,7 +3322,7 @@ function validateUser(value: unknown, rule: string, path: string, into: Collecto
     "every identity carries the agent's time zone as an IANA name, such as Asia/Kolkata; the host stated it at authentication");
 }
 
-function validateUserCapabilitiesInto(value: unknown, path: string, into: Collector, levels?: readonly string[]): void {
+function validateUserCapabilitiesInto(value: unknown, path: string, into: Collector, levels: readonly string[]): void {
   if (!isPlainObject(value)) {
     into.add("authentication.capabilities.shape", path,
       "a usable login declares its capabilities: an object, {} when it has none");
@@ -3333,8 +3347,8 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
 
 /** What a login is validated against beyond its own shape. */
 export interface LoginValidationContext {
-  /** The level ids in force, from the manifest. The defaults when absent. */
-  levels?: readonly string[];
+  /** The level ids the manifest declares, `Manifest.orgLevels`: a level the login names must be one of them. */
+  levels: readonly string[];
 }
 
 /**
@@ -3435,7 +3449,7 @@ function validateAuthenticationChallenge(value: unknown, path: string, into: Col
  * rejection from `complete`. A rejection carries a failure the host can show, and a login is held
  * to the same rules as any `authenticated` state.
  */
-export function validateAuthenticationResult(result: unknown, method: "start" | "complete", path = "result", context: LoginValidationContext = {}): ProtocolViolation[] {
+export function validateAuthenticationResult(result: unknown, method: "start" | "complete", path: string, context: LoginValidationContext): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(result)) {
     into.add("authentication.result.shape", path, `${method} must answer an object`);
@@ -3458,7 +3472,7 @@ export function validateAuthenticationResult(result: unknown, method: "start" | 
   return into.violations;
 }
 
-export function validateAuthenticationState(state: unknown, path = "authentication", context: LoginValidationContext = {}): ProtocolViolation[] {
+export function validateAuthenticationState(state: unknown, path: string, context: LoginValidationContext): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(state)) {
     into.add("authentication.shape", path, "an authentication state must be an object");
@@ -3678,7 +3692,7 @@ export function validateRecordingRequest(request: unknown, task: unknown, contex
   hostReport?: unknown;
   softphone?: boolean;
   /** The same provider/task context used to validate the published task. */
-  taskContext?: Omit<TaskValidationContext, "channel">;
+  taskContext: Omit<TaskValidationContext, "channel">;
 }, path = "request"): ProtocolViolation[] {
   const { violations, check, keys } = collector();
   if (!object(request) || !object(task)) { check(false, "request.shape", path, "request and current task required"); return violations; }

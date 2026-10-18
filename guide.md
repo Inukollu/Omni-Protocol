@@ -233,7 +233,7 @@ type Manifest<C extends Channel = Channel> = {
   idleCapabilities?: IdleCapabilities<C>;
   timeCheck?: true;
   timestampAuthority?: "provider";
-  orgLevels?: LevelDeclaration[];
+  orgLevels: LevelDeclaration[];
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   phones?: C extends "voice" ? Phone[] : never;
   phoneStatus?: C extends "voice" ? true : never;
@@ -765,7 +765,7 @@ type Level = string;
 
 type LevelDeclaration = {
   id: Level;
-  label: string;
+  label: LocalizedText;
 };
 
 type Locked = {
@@ -913,13 +913,13 @@ are the provider's ladder: each level states only what it sets, an enforcing pol
 the person settles the value for everyone below it, and where nothing enforces the most specific
 level that says anything wins. The protocol names a level by the id the manifest declares for it and
 never describes the chain between them: which levels a person passes through is the structure's to
-know. A typical organisation has four, and they are the defaults — `DEFAULT_LEVELS`: `org`, `site`,
-`team`, `person`, each with the label an agent computer shows. A structure that differs states its whole
-ladder in `Manifest.orgLevels`, `person` included: what the list carries is in force, and what it
+know. Every provider states its whole ladder in `Manifest.orgLevels` — a typical organisation's is
+`org`, `site`, `team`, `person` — each level with the label an agent computer shows, in the languages
+its agents read. There is no ladder by default: a default would carry its labels in one language
+only. The ladder includes `person`, and it is the whole ladder: what the list carries is in force, and what it
 leaves out does not exist — a structure with no site level declares `org`, `team`, `person`, and
 `site` is refused on its wire. A declared level is one the provider's own store actually resolves
-at: a label with no policy behind it decides nothing. A manifest that declares none has exactly
-the four. `lockedBy` is any level in force except `person`, who never locks their own value;
+at: a label with no policy behind it decides nothing. `lockedBy` is any level in force except `person`, who never locks their own value;
 `setBy` is any level in force, or `provider`, the protocol's word for "no level has said
 anything and the provider's own configuration supplied the value". An agent application renders "who decided" from the
 declared labels and needs no others, and validates every republished `authenticated` state
@@ -1318,13 +1318,6 @@ const ALLOWED_BROWSER_URL_SCHEMES = ["http:", "https:"] as const;
 
 const IDLE_CAPABILITIES = ["dial", "personalBrowser", "calendar", "contacts"] as const;
 type IdleCapability = (typeof IDLE_CAPABILITIES)[number];
-
-const DEFAULT_LEVELS = [
-  { id: "org", label: "Your organisation" },
-  { id: "site", label: "Your site" },
-  { id: "team", label: "Your team" },
-  { id: "person", label: "You" },
-] as const satisfies readonly LevelDeclaration[];
 
 const IDLE_CAPABILITY_UI = {
   dial: "Dialpad",
@@ -1762,6 +1755,12 @@ export default defineAdapter({
     supportedProtocolVersions: [OMNI_PROTOCOL_VERSION],
     authenticationMethods: ["browser-sso"],
     settleMs: 5000,
+    orgLevels: [
+      { id: "org", label: { en: "Your organisation", hi: "आपका संगठन" } },
+      { id: "site", label: { en: "Your site", hi: "आपकी साइट" } },
+      { id: "team", label: { en: "Your team", hi: "आपकी टीम" } },
+      { id: "person", label: { en: "You", hi: "आप" } },
+    ],
     idleCapabilities: {
       dial: { destinations: "any-number" },
     },
@@ -1791,7 +1790,7 @@ compile time.
 | `supportedProtocolVersions` | Required non-empty list of versions this adapter can speak. Must share at least one with Omni. |
 | `authenticationMethods` | Required non-empty list of supported login methods. |
 | `idleCapabilities` | Declares actions Omni may offer while the agent has no active task, such as voice dialing. Task controls do not belong here. |
-| `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label an agent computer shows for "who decided". Stated outright, `person` included: what it leaves out does not exist. Omitted for the typical four, `DEFAULT_LEVELS`. See **Who decides what an agent may do**. |
+| `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label an agent computer shows for "who decided", one text per language as `{ en: "Your region", hi: "आपका क्षेत्र" }`, from which the agent application picks with `localizedText()` (`manifest.orgLevel.label`, `.language`, `.text`). Required of every provider (`manifest.orgLevels.required`), stated outright, `person` included: what it leaves out does not exist. There is no default ladder. See **Who decides what an agent may do**. |
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `hardphone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call** in `guide/phone.md`. |
 | `phoneStatus` | Voice only, declared by presence as `true`: the platform sees the phone itself -- its registration, its do-not-disturb, its hook, its calls -- and publishes it as `Snapshot.phone` and `phone-updated`. A platform that cannot see the phone omits it, and then publishes no phone (`manifest.phoneStatus`). See **The phone's own view** in `guide/phone.md`. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that conference or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome** in `guide/voice.md`. |
@@ -3080,11 +3079,11 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | Function | Validates |
 | --- | --- |
 | `validateManifest(manifest)` | Identity, protocol-version interoperability, authentication methods, and idle-capability shapes. |
-| `validateTask(task, { channel, locked? })` | Identity, channel agreement, phase, wrap allowance, capability shapes, custom controls, and browsers. Given `locked`, the values the queue locked, a task whose party stands locked carries none of them anywhere else (`task.locked.leak`). |
+| `validateTask(task, { channel, levels, locked? })` | Identity, channel agreement, phase, wrap allowance, capability shapes, custom controls, and browsers. Given `locked`, the values the queue locked, a task whose party stands locked carries none of them anywhere else (`task.locked.leak`). |
 | `validateSnapshot(snapshot, manifest)` | Status, break state, break reasons, team member list, the stated `taskCount` reconciled against the tasks carried, and every task, contact, and activity, including idle-capability gating both ways: a contribution the manifest never declared is refused, and one it declares is required, `[]` included. |
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
-| `validateContact(contact)` | Contact field shapes and attribute keys. Every field is optional, so this checks what is present rather than what is missing. |
-| `validateScheduledActivity(activity)` | Required activity fields and start/end ordering. |
+| `validateContact(contact, levels)` | Contact field shapes and attribute keys, and a locked number or email locked by a level `levels` names. Every field is optional, so this checks what is present rather than what is missing. |
+| `validateScheduledActivity(activity, levels)` | Required activity fields and start/end ordering, and its party as `validateContact` holds one. |
 | `validateHostGuarantees(guarantees, path?, phone?)` | What an agent application promises: only the guarantees this contract names, each declared by presence and never `false`. Given the login's phone, the mute promise is held to it: `muteUnavailableOnHold` required of a softphone login's agent application and refused of any other (`host.guarantee.muteUnavailableOnHold.required` / `.unexpected`). The harness validates the guarantees of whatever agent application a test hands the adapter, against the phone it chose. |
 | `validateProviderTimeCheckPolicy(policy)` | Explicit optional polling settings, positive safe-integer durations and round-trip/timeout/interval ordering. |
 | `validateProviderTimeCheckRequest(request)` | Fresh-request shape; the agent application enforces actual uniqueness and outstanding-request lifetime. |
@@ -3093,18 +3092,23 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateHistoryReport(report, path?, manifest?, task?)` | What the agent application reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. Given the task, the agent application's own mute beginning on a `paused` task is refused (`historyReport.muted.held`): the Mute waits for resume. |
 | `validateHostReport(report)` | The agent application's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever agent application a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateNextCall(value)` | The agent's standing ask for the next call, on its own as `next-call` and `Snapshot.nextCall` carry it: since when, and nothing else (`nextCall.since`, `nextCall.field`). |
-| `validateLinedUp(value, path?, levels?)` | A call lined up in the agent's own queue, on its own as `lined-up` and `Snapshot.linedUp` carry it: the caller under the same contact rules as a task's party, the queue's label, the waits, and `release` by presence (`linedUp.*`). |
+| `validateLinedUp(value, levels, path?)` | A call lined up in the agent's own queue, on its own as `lined-up` and `Snapshot.linedUp` carry it: the caller under the same contact rules as a task's party, the queue's label, the waits, and `release` by presence (`linedUp.*`). |
 | `validateLabels(value, path?)` | The customer's words on their own, as `labels-updated` and `Snapshot.labels` carry them: renames of the protocol's phases and steps only, and every word one text per well-formed language tag (`labels.*`). |
 | `validatePhoneState(value, path?, context?)` | The phone as the platform sees it, on its own as `phone-updated` and `Snapshot.phone` carry it: its status, its one active channel, its mute where a hardphone's is observed (`phone.*`). |
 | `validateHostMute(mute, softphone)` | What the agent application's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the agent application holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
 | `validateLanguages(languages)` | The agent's languages a host states on both contexts: a non-empty list (`context.languages`) of well-formed BCP 47 tags (`context.languages.tag`), none twice ignoring case (`context.languages.unique`). The harness holds `ConnectContext.languages` to it. |
 | `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
 | `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
-| `validateAuthenticationResult(result, method)` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
+| `validateAuthenticationResult(result, method, path, { levels })` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
 | `validateRedirectUri(uri, path?)` | A host's fixed redirect URI in one of RFC 8252's forms: `https`, a reverse-domain private-use scheme, or loopback http to `127.0.0.1` or `[::1]`, with no fragment (`redirectUri.*`). |
-| `validateTaskCommand(command, task?)` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a conference's item, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.conference.remove.alone`), the caller off hold before the agent's part ends (`command.endCall.held`). An agent application validates before sending and an adapter before acting. |
+| `validateTaskCommand(command, task?, path, { levels })` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, a conference's item, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.conference.remove.alone`), the caller off hold before the agent's part ends (`command.endCall.held`). An agent application validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
-| `validateAuthenticationState(state)` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
+| `validateAuthenticationState(state, path, { levels })` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
+
+Every check that reads a level — a `lockedBy`, a `setBy` — is given `levels`, the ids of the
+manifest's `orgLevels`, and refuses any other; `validateSnapshot` and `validateEventEnvelope` take
+them from the manifest they are given, and `validateTeamCommand` and `validateBreakCommand` from
+their context's `levels` (`team.command.levels`, `break.command.levels`). No check guesses a ladder.
 
 Each returns `ProtocolViolation[]` rather than throwing, so a caller can report every problem at
 once. A violation carries a stable `rule` id such as `task.browser.url.scheme`, the `path` it was
@@ -3301,7 +3305,7 @@ cannot be established from TypeScript structure alone.
 | `assertTaskCapabilityWithdrawal(tasks, manifest, command)` | A capability withdrawn by a republish of the task is gone from the task: every task in the sequence is validated, all carry the offer's id, at least one capability the offer declared is absent at the end (a locked control is present, not withdrawn), and `command` is clean against the first task and refused against the last for want of a withdrawn capability and nothing else. Pair it with `assertCommandRefusedAfterWithdrawal` on the provider's answer. |
 | `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. The same assertion serves a command the provider never supported under a capability it declares. |
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `testAdapter` result. |
-| `assertAuthenticationRestoreAndExpiry(states)` | A restored authenticated session can refresh and ends in expiry. Every state is validated. |
+| `assertAuthenticationRestoreAndExpiry(states, manifest)` | A restored authenticated session can refresh and ends in expiry. Every state is validated, against the manifest's levels. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
 | `stillHost(report?, guarantees?, mute?)` | An agent application that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a softphone voice adapter, and never for a hardphone. |
 | `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for an agent application that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |

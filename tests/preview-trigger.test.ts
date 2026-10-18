@@ -3,6 +3,8 @@ import type { PreviewDeadline, Task, ProviderEventEnvelope } from "../src/index.
 import { validateTask, validateTaskCommand, validateResult } from "../src/validation.js";
 import { TaskStream } from "../src/testing.js";
 
+const LEVELS = ["org", "site", "team", "person"];
+
 const at = "2026-09-11T10:00:00Z";
 const preview: Task<"voice"> = {
   assignmentId: "interaction-1", title: "Preview", channel: "voice",
@@ -14,18 +16,18 @@ const ringing = { role: "party" as const, stage: "ringing" as const, since: at }
 
 describe("preview trigger ownership", () => {
   it("accepts unlimited preparation and either fixed trigger owner, or waiting for the agent", () => {
-    expect(validateTask(preview, voice)).toEqual([]);
+    expect(validateTask(preview, { ...voice, levels: LEVELS })).toEqual([]);
     for (const atDeadline of ["provider-dials", "host-dials", "waits"] satisfies PreviewDeadline[]) {
-      expect(validateTask({ ...preview, atDeadline, previewEndsInSeconds: 120 }, voice)).toEqual([]);
+      expect(validateTask({ ...preview, atDeadline, previewEndsInSeconds: 120 }, { ...voice, levels: LEVELS })).toEqual([]);
     }
   });
   it("waits after the target without expiring the preview or disabling Call", () => {
     // Zero seconds left is a countdown that has run out, and under waits the preview stands.
     const waiting = { ...preview, atDeadline: "waits", previewEndsInSeconds: 0 };
-    expect(validateTask(waiting, voice)).toEqual([]);
-    expect(validateTaskCommand({ type: "dial", dialId: "manual-after-target" }, waiting, "voice")).toEqual([]);
+    expect(validateTask(waiting, { ...voice, levels: LEVELS })).toEqual([]);
+    expect(validateTaskCommand({ type: "dial", dialId: "manual-after-target" }, waiting, "voice", { levels: LEVELS })).toEqual([]);
     expect(waiting.phase).toBe("preview");
-    expect(validateTask({ ...waiting, atDeadline: "expires" }, voice).map(v => v.rule)).toContain("task.preview.atDeadline");
+    expect(validateTask({ ...waiting, atDeadline: "expires" }, { ...voice, levels: LEVELS }).map(v => v.rule)).toContain("task.preview.atDeadline");
   });
   it("requires a valid paired deadline, preview phase, and one declared owner", () => {
     for (const change of [
@@ -34,24 +36,24 @@ describe("preview trigger ownership", () => {
       { atDeadline: "host-dials", previewEndsInSeconds: at },
       { atDeadline: ["provider-dials", "host-dials"], previewEndsInSeconds: 120 },
       { atDeadline: "host-dials", previewEndsInSeconds: 120, phase: "in-progress" },
-    ]) expect(validateTask({ ...preview, ...change }, voice)).not.toEqual([]);
+    ]) expect(validateTask({ ...preview, ...change }, { ...voice, levels: LEVELS })).not.toEqual([]);
   });
   it("keeps manual Call available in both modes and acknowledges submission, not answer", () => {
     const command = { type: "dial", dialId: "host-dial" };
     for (const atDeadline of ["provider-dials", "host-dials"] as const) {
-      expect(validateTaskCommand(command, { ...preview, atDeadline, previewEndsInSeconds: 120 }, "voice")).toEqual([]);
+      expect(validateTaskCommand(command, { ...preview, atDeadline, previewEndsInSeconds: 120 }, "voice", { levels: LEVELS })).toEqual([]);
     }
     expect(validateResult({ status: "dialling", dialId: "host-dial" }, "execute", "result", "host-dial")).toEqual([]);
     expect(validateResult({ status: "applied" }, "execute", "result", "host-dial")).not.toEqual([]);
   });
   it("allows actual provider-triggered preview ringback without a fabricated host identity", () => {
     const task = { ...preview, atDeadline: "provider-dials", previewEndsInSeconds: 120, onCall: [ringing], audio: "started" };
-    expect(validateTask(task, voice)).toEqual([]);
+    expect(validateTask(task, { ...voice, levels: LEVELS })).toEqual([]);
     for (const atDeadline of ["host-dials", "waits", undefined]) {
       const candidate = { ...task, atDeadline, previewEndsInSeconds: atDeadline ? 120 : undefined };
-      expect(validateTask(candidate, voice).map(v => v.rule)).toContain("task.audio.beforeWork");
+      expect(validateTask(candidate, { ...voice, levels: LEVELS }).map(v => v.rule)).toContain("task.audio.beforeWork");
     }
-    expect(validateTask({ ...task, onCall: [] }, voice).map(v => v.rule)).toContain("task.audio.beforeWork");
+    expect(validateTask({ ...task, onCall: [] }, { ...voice, levels: LEVELS }).map(v => v.rule)).toContain("task.audio.beforeWork");
   });
   it("orders provider ringback start/end before non-answer completion without a host dial outcome", () => {
     const task = { ...preview, atDeadline: "provider-dials" as const, previewEndsInSeconds: 120, onCall: [ringing] };

@@ -176,6 +176,7 @@ describe("runtime break ordering", () => {
 
 const context = {
   transport: "active",
+  levels: ["org", "site", "team", "person"],
   authentication: { status: "authenticated", identity: { id: "agent", displayName: "Agent", timeZone: "UTC" }, capabilities: { breaks: true } },
 };
 describe("break prerequisites", () => {
@@ -197,6 +198,15 @@ describe("break prerequisites", () => {
       expect(found.length === 0, `${method} from ${status}`).toBe(allowed[method].includes(status));
     }
   });
+  it("validates the login against the manifest's levels, which the context carries", () => {
+    const decided = { ...context, authentication: { ...context.authentication, capabilities: { breaks: true, preferences: [{ id: "hold", label: "Hold", enabled: true, setBy: "team" }] } } };
+    const rules = (found: readonly { rule: string }[]) => found.map(violation => violation.rule);
+    expect(rules(validateBreakCommand("requestBreak", {}, state("not-requested"), decided))).toEqual([]);
+    expect(rules(validateBreakCommand("requestBreak", {}, state("not-requested"), { ...decided, levels: ["org", "person"] }))).toEqual(["preference.setBy.unknown"]);
+    expect(rules(validateBreakCommand("requestBreak", {}, state("not-requested"), { ...decided, levels: undefined }))).toContain("break.command.levels");
+    expect(rules(validateTeamCommand({ command: { type: "set-team-features", enabled: true } }, { ...decided, levels: undefined }))).toContain("team.command.levels");
+  });
+
   it("requires explicit live capability and active transport on every method", () => {
     for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak"] as const) {
       const current = state(method === "requestBreak" ? "not-requested" : method === "endBreak" ? "on-break" : "granted");
