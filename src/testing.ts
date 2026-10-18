@@ -115,10 +115,11 @@ const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
 // here assumes its shape; a subject is reached only by something the element rules would see.
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 const some = (value: unknown): boolean => Array.isArray(value) && value.length > 0;
-const declaredLevels = (manifest: unknown): readonly string[] | undefined =>
+// A manifest without a ladder has been reported on, and declares no level: every level is refused.
+const declaredLevels = (manifest: unknown): readonly string[] =>
   isRecord(manifest) && Array.isArray(manifest.orgLevels)
     ? manifest.orgLevels.filter(isRecord).map(level => level.id).filter((id): id is string => typeof id === "string")
-    : undefined;
+    : [];
 
 function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (!isRecord(value)) return;
@@ -945,12 +946,12 @@ function connectingReports(context: ConnectContext, violations: ProtocolViolatio
 }
 
 /** Validates each state of a published sequence, and that every `refreshing` carries over the login before it. */
-function assertLoginSequence(states: readonly AuthenticationState[], summary: string): void {
+function assertLoginSequence(states: readonly AuthenticationState[], levels: readonly string[], summary: string): void {
   const found: ProtocolViolation[] = [];
   let login: Login | undefined;
   states.forEach((state, index) => {
     const path = `states[${index}]`;
-    const own = validateAuthenticationState(state, path);
+    const own = validateAuthenticationState(state, path, { levels });
     found.push(...own);
     if (own.length > 0) return;
     if (state.status === "authenticated") login = state;
@@ -961,12 +962,13 @@ function assertLoginSequence(states: readonly AuthenticationState[], summary: st
 
 /**
  * Validates restored authentication followed by a refresh failure or expiry. Every state is
- * validated, and a `refreshing` state must carry over the login it refreshes.
+ * validated against the manifest's levels, and a `refreshing` state must carry over the login it refreshes.
  */
 export function assertAuthenticationRestoreAndExpiry(
   states: readonly AuthenticationState[],
+  manifest: Manifest,
 ): void {
-  assertLoginSequence(states, "Authentication scenario");
+  assertLoginSequence(states, declaredLevels(manifest), "Authentication scenario");
   if (states.length < 2 || states[0]?.status !== "authenticated") {
     throw new Error("Authentication scenario must start with a restored authenticated state");
   }
@@ -1038,7 +1040,7 @@ export function assertCapabilityWithdrawal(
   snapshot: Snapshot,
   manifest: Manifest,
 ): void {
-  assertLoginSequence(states, "Capability withdrawal");
+  assertLoginSequence(states, declaredLevels(manifest), "Capability withdrawal");
   const stray = states.findIndex(state => state.status !== "authenticated" && state.status !== "refreshing");
   if (stray >= 0) {
     throw new Error(`Capability withdrawal passes only through usable states; states[${stray}] is ${states[stray]?.status}, which ends the login`);
@@ -1749,7 +1751,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       // The reload is a restore before it is anything else: the second session stands authenticated
       // as the same person, from the secrets alone, or nothing it reads afterwards is this login's.
       const restored = await (restoredSession as unknown as { state(): Promise<unknown> }).state();
-      found.push(...validateAuthenticationState(restored, "test.reload.login"));
+      found.push(...validateAuthenticationState(restored, "test.reload.login", { levels: declaredLevels(call.manifest) }));
       ruleTested("test.reload.login");
       const same = isRecord(restored) && restored.status === "authenticated" && isRecord(restored.identity) && restored.identity.id === call.reader().self;
       if (!same) {

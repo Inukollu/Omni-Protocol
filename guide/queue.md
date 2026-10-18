@@ -91,7 +91,8 @@ carries `nextCall` and `linedUp` as the member's own snapshot does, republished 
 ### Runtime break prerequisite checks
 
 Use `validateBreakCommand(method, request, state, context)` from the validation entry point
-before any agent break dispatch. The context supplies current authentication and transport;
+before any agent break dispatch. The context supplies current authentication and transport, and
+the manifest's `levels` the login is validated against;
 all four methods require the live login's break capability and active transport. Pass the
 request object only to the request method, and undefined to the other three.
 
@@ -102,7 +103,7 @@ request object only to the request method, and undefined to the other three.
 | `cancelBreak` | `awaiting-approval` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
 | `endBreak` | `on-break` or `starting-after-task` during reconciliation; the agent may explicitly end a requested or forced break. |
 
-Use `validateTeamCommand(request, context)` before every lead act: the team feature switch, break
+Use `validateTeamCommand(request, context)` before every lead act, its context carrying the manifest's `levels` as the break check's does: the team feature switch, break
 decisions, forcing and ending a forced break, policy, and every act on a member's call. It requires
 the live `lead` flag and active transport, a current team member list for any command naming a
 member, and the target's complete break state for forcing/ending a break. Approve/deny requires an

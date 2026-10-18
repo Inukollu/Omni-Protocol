@@ -38,6 +38,8 @@ import {
   type ProtocolViolation,
 } from "../src/validation.js";
 
+const LEVELS = ["org", "site", "team", "person"];
+
 const rules = (violations: readonly ProtocolViolation[]) => violations.map(violation => violation.rule);
 
 describe("untrusted values in violation messages", () => {
@@ -45,10 +47,10 @@ describe("untrusted values in violation messages", () => {
     const bad: unknown = JSON.parse('{"toString":null}');
     for (const value of [bad, [bad]]) {
       expect(rules(validateManifest(manifest({ channel: value })))).toContain("manifest.channel");
-      expect(rules(validateTask(task({ phase: value }), { channel: "voice" }))).toContain("task.phase");
+      expect(rules(validateTask(task({ phase: value }), { levels: LEVELS, channel: "voice" }))).toContain("task.phase");
       expect(rules(validateEventEnvelope(envelope({ type: value }), manifest()))).toContain("event.type");
       expect(rules(validateResult({ status: value }, "execute"))).toContain("result.status");
-      expect(rules(validateAuthenticationResult({ status: value }, "start"))).toContain("authentication.result.status");
+      expect(rules(validateAuthenticationResult({ status: value }, "start", "result", { levels: LEVELS }))).toContain("authentication.result.status");
       expect(rules(validatePhone("softphone", manifest({ phones: [value] })))).toContain("context.phone.unsupported");
     }
   });
@@ -56,10 +58,10 @@ describe("untrusted values in violation messages", () => {
   it("keeps reporting violations when nested wire fields are replaced with malformed JSON", () => {
     const cases: [unknown, (value: unknown) => ProtocolViolation[]][] = [
       [manifest(), value => validateManifest(value)],
-      [task(), value => validateTask(value, { channel: "voice" })],
+      [task(), value => validateTask(value, { levels: LEVELS, channel: "voice" })],
       [snapshot({ tasks: [task()] }), value => validateSnapshot(value, manifest())],
       [envelope({ type: "task-updated", task: task() }), value => validateEventEnvelope(value, manifest())],
-      [{ status: "authenticated", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: {} }, value => validateAuthenticationState(value)],
+      [{ status: "authenticated", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: {} }, value => validateAuthenticationState(value, "authentication", { levels: LEVELS })],
       [{ status: "failed", failure: { code: "provider.busy", message: "Busy", retryable: true } }, value => validateResult(value, "execute")],
       [{ online: true, audio: { input: { status: "unavailable", reason: "no-device", failure: { code: "device.missing", message: "No microphone", retryable: false } }, output: { status: "available" } } }, value => validateHostReport(value)],
     ];
@@ -169,7 +171,7 @@ describe("assertNoViolations", () => {
 
 describe("timestamps", () => {
   it("rejects impossible calendar dates and hour 24 instead of normalizing them", () => {
-    const at = (startsAt: string) => rules(validateScheduledActivity({ id: "a", title: "T", startsAt }));
+    const at = (startsAt: string) => rules(validateScheduledActivity({ id: "a", title: "T", startsAt }, LEVELS));
     for (const date of ["2026-02-30", "2025-02-29", "1900-02-29", "2100-02-29", "2026-04-31", "2026-00-10", "2026-13-01", "2026-01-00"]) {
       for (const zone of ["Z", "+05:30", "-04:00"]) expect(at(`${date}T09:00:00${zone}`)).toEqual(["activity.startsAt"]);
     }
@@ -184,7 +186,7 @@ describe("timestamps", () => {
     expect(at("2026-09-09T00:00:00+05:60")).toEqual(["activity.startsAt"]);
   });
   it("requires a zone, because a timezone-less value is a different instant on every host", () => {
-    const at = (value: unknown) => rules(validateScheduledActivity({ id: "a", title: "T", startsAt: value }));
+    const at = (value: unknown) => rules(validateScheduledActivity({ id: "a", title: "T", startsAt: value }, LEVELS));
     expect(at("2026-08-21T09:00:00Z")).toEqual([]);
     expect(at("2026-08-21T09:00:00+05:30")).toEqual([]);
     expect(at("2026-08-21T09:00:00.250Z")).toEqual([]);
@@ -251,10 +253,10 @@ describe("validateManifest", () => {
 });
 
 describe("validateTask", () => {
-  const check = (over: Record<string, unknown> = {}, channel = "voice") => rules(validateTask(task(over), { channel }));
+  const check = (over: Record<string, unknown> = {}, channel = "voice") => rules(validateTask(task(over), { levels: LEVELS, channel }));
 
   it("lets each task browser say what the agent sees of its URL, in one of three words", () => {
-    const browser = (extra: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedSession: false, ...extra }] }), { channel: "voice" }));
+    const browser = (extra: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedSession: false, ...extra }] }), { levels: LEVELS, channel: "voice" }));
     expect(browser({})).toEqual([]);
     expect(browser({ urlVisibility: "hidden" })).toEqual([]);
     expect(browser({ urlVisibility: "domain" })).toEqual([]);
@@ -262,16 +264,16 @@ describe("validateTask", () => {
     expect(browser({ urlVisibility: "partial" })).toEqual(["task.browser.urlVisibility"]);
   });
   it("carries the task's audio state on voice alone, in one of two words", () => {
-    const audio = (value: unknown, channel = "voice") => rules(validateTask(task({ channel, audio: value }), { channel }));
+    const audio = (value: unknown, channel = "voice") => rules(validateTask(task({ channel, audio: value }), { levels: LEVELS, channel }));
     expect(audio("started")).toEqual([]);
     expect(audio("ended")).toEqual([]);
     expect(audio(undefined)).toEqual([]);
     expect(audio("live")).toEqual(["task.audio"]);
     // Audio names a task whose work has begun: on an offer it would open the microphone on nobody's call.
     for (const phase of ["pending", "confirmed", "preview"]) {
-      expect(rules(validateTask(task({ phase, audio: "started", ...(phase === "pending" ? { acceptance: "consent" } : {}) }), { channel: "voice", dialOutcomesDeclared: true })), phase).toEqual(["task.audio.beforeWork"]);
+      expect(rules(validateTask(task({ phase, audio: "started", ...(phase === "pending" ? { acceptance: "consent" } : {}) }), { levels: LEVELS, channel: "voice", dialOutcomesDeclared: true })), phase).toEqual(["task.audio.beforeWork"]);
     }
-    expect(rules(validateTask(task({ phase: "paused", audio: "started" }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "paused", audio: "started" }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
     // Real-time audio is a voice affair; another channel carries no state for it.
     expect(audio("ready", "chat")).toEqual(["task.audio.channel"]);
   });
@@ -283,8 +285,6 @@ describe("validateTask", () => {
     // A level is one the manifest declares.
     expect(caps({ recording: { lockedBy: "org" } })).toEqual([]);
     expect(caps({ recording: { lockedBy: "region" } })).toEqual(["task.capability.locked.lockedBy.unknown"]);
-    // Without the manifest's levels, any level is taken: there is no ladder but the manifest's.
-    expect(rules(validateTask(task({ capabilities: { recording: { lockedBy: "region" } } }), { channel: "voice" }))).toEqual([]);
     // The manifest's ladder is in force on its wire.
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })] }), manifest()))).toEqual([]);
     const regional = manifest({ orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "region", label: { en: "Your region" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }] });
@@ -302,8 +302,8 @@ describe("validateTask", () => {
     expect(caps({ schedule: { lockedBy: "team" } })).toEqual([]);
     expect(caps({ schedule: { destinations: [] } })).toEqual(["task.capability.value"]);
     // A follow-up is promised in a chat or an email as on a call: schedule is a control on every channel.
-    expect(rules(validateTask(task({ channel: "chat", capabilities: { schedule: true } }), { channel: "chat" }))).toEqual([]);
-    expect(rules(validateTask(task({ channel: "email", capabilities: { schedule: true } }), { channel: "email" }))).toEqual([]);
+    expect(rules(validateTask(task({ channel: "chat", capabilities: { schedule: true } }), { levels: LEVELS, channel: "chat" }))).toEqual([]);
+    expect(rules(validateTask(task({ channel: "email", capabilities: { schedule: true } }), { levels: LEVELS, channel: "email" }))).toEqual([]);
     // And lands on the calendar, so the manifest has to declare one; a locked schedule is still a declared one.
     const scheduling = task({ capabilities: { schedule: true } });
     expect(rules(validateSnapshot(snapshot({ tasks: [scheduling], calendar: [] }), manifest({ idleCapabilities: { calendar: true } })))).toEqual([]);
@@ -312,10 +312,10 @@ describe("validateTask", () => {
     expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: scheduling }), manifest()))).toEqual(["task.capability.calendar.required"]);
     expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: scheduling }), manifest({ idleCapabilities: { calendar: true } })))).toEqual([]);
     // A chat task has no recording to lock; the channel rule speaks first.
-    expect(rules(validateTask(task({ channel: "chat", capabilities: { recording: { lockedBy: "team" } } }), { channel: "chat" }))).toEqual(["task.capability.channel"]);
+    expect(rules(validateTask(task({ channel: "chat", capabilities: { recording: { lockedBy: "team" } } }), { levels: LEVELS, channel: "chat" }))).toEqual(["task.capability.channel"]);
   });
   it("withholds a number by locking it in place, never by a flag", () => {
-    const contact = (value: unknown) => rules(validateTask(task({ party: value }), { channel: "voice" }));
+    const contact = (value: unknown) => rules(validateTask(task({ party: value }), { levels: LEVELS, channel: "voice" }));
     expect(contact({ name: "Asha", number: "+14155550111" })).toEqual([]);
     expect(contact({ name: "Asha", number: { lockedBy: "org" } })).toEqual([]);
     expect(contact({ name: "Asha", number: { lockedBy: "person" } })).toEqual(["contact.number.locked.lockedBy.person"]);
@@ -326,7 +326,7 @@ describe("validateTask", () => {
     expect(contact({ name: "Asha", number: "" })).toEqual(["contact.number"]);
   });
   it("lets a custom action ask for what it needs and say where it renders", () => {
-    const custom = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { custom: [{ id: "transfer-out", ui: { control: "button", label: "Transfer out", placement: "secondary", render: "inline" }, ...over }] } }), { channel: "voice" }));
+    const custom = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { custom: [{ id: "transfer-out", ui: { control: "button", label: "Transfer out", placement: "secondary", render: "inline" }, ...over }] } }), { levels: LEVELS, channel: "voice" }));
     const destination = { name: "destination", label: "Number", type: "text" };
     expect(custom({})).toEqual([]);
     expect(custom({ prompt: { fields: [destination] } })).toEqual([]);
@@ -343,7 +343,7 @@ describe("validateTask", () => {
     expect(custom({ prompt: { fields: [{ ...destination, required: false, autocomplete: "tel" }] } })).toEqual([]);
   });
   it("states what the record adds up to before this agent, each total present when known", () => {
-    const record = (over: Record<string, unknown>) => rules(validateTask(task({ history: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], ...over } }), { channel: "voice" }));
+    const record = (over: Record<string, unknown>) => rules(validateTask(task({ history: { steps: [{ step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" }], ...over } }), { levels: LEVELS, channel: "voice" }));
     expect(record({ interactionSeconds: 312, holdSeconds: 95, queueSeconds: 41, transfers: 2 })).toEqual([]);
     expect(record({ interactionSeconds: 0, holdSeconds: 0, transfers: 0 })).toEqual([]);
     // Each total is present when the provider knows it: the rest are absent, never a plausible nought.
@@ -353,32 +353,32 @@ describe("validateTask", () => {
     expect(record({ queueSeconds: 1.5 })).toEqual(["task.history.queueSeconds"]);
     expect(record({ interactionSeconds: "312" })).toEqual(["task.history.interactionSeconds"]);
     expect(record({ transfers: -1 })).toEqual(["task.history.transfers"]);
-    expect(rules(validateTask(task({ history: { transfers: 2 } }), { channel: "voice" }))).toEqual(["task.history.steps.shape"]);
-    expect(rules(validateTask(task({ history: [] }), { channel: "voice" }))).toEqual(["task.history.shape"]);
+    expect(rules(validateTask(task({ history: { transfers: 2 } }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.history.steps.shape"]);
+    expect(rules(validateTask(task({ history: [] }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.history.shape"]);
     // The entries moved under steps, and a violation says where it found them.
-    const misstep = validateTask(task({ history: { steps: [{ step: "ringing", at: "2026-08-21T09:00:00Z" }] } }), { channel: "voice" });
+    const misstep = validateTask(task({ history: { steps: [{ step: "ringing", at: "2026-08-21T09:00:00Z" }] } }), { levels: LEVELS, channel: "voice" });
     expect(misstep.map(v => `${v.rule} @ ${v.path}`)).toEqual(["task.history.step @ task.history.steps[0].step"]);
   });
 
   it("records each hold as its own entry, oldest first", () => {
-    const history = (steps: unknown) => rules(validateTask(task({ history: { steps } }), { channel: "voice" }));
+    const history = (steps: unknown) => rules(validateTask(task({ history: { steps } }), { levels: LEVELS, channel: "voice" }));
     const answered = { step: "answered", at: "2026-08-21T00:59:41Z", by: "a-17" };
     // Two holds are two entries; the running one omits its seconds, and runs only while the task is paused.
-    const paused = (steps: unknown) => rules(validateTask(task({ phase: "paused", history: { steps } }), { channel: "voice" }));
+    const paused = (steps: unknown) => rules(validateTask(task({ phase: "paused", history: { steps } }), { levels: LEVELS, channel: "voice" }));
     expect(paused([answered, { step: "held", at: "2026-08-21T01:02:10Z", by: "a-17" }])).toEqual([]);
     expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", by: "a-17" }])).toEqual(["task.history.held.open"]);
     expect(history([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }])).toEqual([]);
     // A mute runs only while the audio is up: an open one on a call that is over is a leg nobody closed.
-    const over = (steps: unknown, over: Record<string, unknown>) => rules(validateTask(task({ ...over, history: { steps } }), { channel: "voice" }));
+    const over = (steps: unknown, over: Record<string, unknown>) => rules(validateTask(task({ ...over, history: { steps } }), { levels: LEVELS, channel: "voice" }));
     const openMute = { step: "muted", at: "2026-08-21T01:00:00Z", by: "a-17", mutedBy: "host" };
     expect(over([answered, openMute], { audio: "started" })).toEqual([]);
     expect(over([answered, openMute], { audio: "ended" })).toEqual(["task.history.muted.open"]);
     expect(over([answered, openMute], { phase: "completing", onCall: [] })).toEqual(["task.history.muted.open"]);
     // A completing task's audio has ended or never started: stated as started, it is a call that never ended.
-    expect(rules(validateTask(task({ phase: "completing", onCall: [], audio: "ended" }), { channel: "voice" }))).toEqual([]);
-    expect(rules(validateTask(task({ phase: "completing", onCall: [] }), { channel: "voice" }))).toEqual([]);
-    expect(rules(validateTask(task({ phase: "completing", onCall: [], audio: "started" }), { channel: "voice" }))).toEqual(["task.audio.completing"]);
-    expect(rules(validateTask(task({ phase: "in-progress", audio: "started" }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: [], audio: "ended" }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: [] }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: [], audio: "started" }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.audio.completing"]);
+    expect(rules(validateTask(task({ phase: "in-progress", audio: "started" }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
     expect(over([answered, { ...openMute, seconds: 4 }], { audio: "ended" })).toEqual([]);
     expect(paused([answered, { step: "held", at: "2026-08-21T01:02:10Z", seconds: 35, by: "a-17" }, { step: "held", at: "2026-08-21T01:06:48Z", by: "a-17" }])).toEqual([]);
     expect(history([answered, { step: "muted", at: "2026-08-21T01:00:00Z", seconds: 4, by: "a-17", mutedBy: "host" }, { step: "muted", at: "2026-08-21T01:01:00Z", seconds: 9, by: "a-17", mutedBy: "station" }])).toEqual([]);
@@ -401,17 +401,17 @@ describe("validateTask", () => {
   it("gives a task whose party the host is dialling its audio from dialling, and no other task not at work", () => {
     const ringing = { onCall: [{ role: "party", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:00:00Z" }] };
     const voice = { channel: "voice", dialOutcomesDeclared: true };
-    expect(rules(validateTask(task({ phase: "pending", acceptance: "automatic", audio: "started", ...ringing }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ phase: "preview", capabilities: {}, audio: "started", ...ringing }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "pending", acceptance: "automatic", audio: "started", ...ringing }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "preview", capabilities: {}, audio: "started", ...ringing }), { ...voice, levels: LEVELS }))).toEqual([]);
     // The controls: nobody ringing, and a platform's own callback without the host's dial, have no audio before the work begins.
-    expect(rules(validateTask(task({ phase: "pending", audio: "started" }), voice))).toEqual(["task.audio.beforeWork"]);
-    expect(rules(validateTask(task({ phase: "preview", capabilities: {}, audio: "started", onCall: [{ role: "party", stage: "ringing", since: "2026-08-21T09:00:00Z" }] }), voice))).toEqual(["task.audio.beforeWork"]);
+    expect(rules(validateTask(task({ phase: "pending", audio: "started" }), { ...voice, levels: LEVELS }))).toEqual(["task.audio.beforeWork"]);
+    expect(rules(validateTask(task({ phase: "preview", capabilities: {}, audio: "started", onCall: [{ role: "party", stage: "ringing", since: "2026-08-21T09:00:00Z" }] }), { ...voice, levels: LEVELS }))).toEqual(["task.audio.beforeWork"]);
   });
 
   it("holds a task whose party is locked to carrying the locked value nowhere else, given the values", () => {
     const locked = ["+91 98765 43210", "Asha.Rao@example.com"];
     const withLocked = (over: Record<string, unknown>) =>
-      rules(validateTask(task({ party: { name: "Asha", number: { lockedBy: "team" }, email: { lockedBy: "team" } }, ...over }), { channel: "voice", locked }));
+      rules(validateTask(task({ party: { name: "Asha", number: { lockedBy: "team" }, email: { lockedBy: "team" } }, ...over }), { levels: LEVELS, channel: "voice", locked }));
     // The digits leak whatever the formatting; the address leaks whatever the case; a hidden browser URL may carry it.
     expect(withLocked({ title: "Customer call" })).toEqual([]);
     expect(withLocked({ title: "Call from +91-98765-43210" })).toEqual(["task.locked.leak"]);
@@ -426,24 +426,24 @@ describe("validateTask", () => {
     expect(withLocked({ browsers: [{ ...crm, urlVisibility: "hidden" }] })).toEqual([]);
     // Nothing locked, nothing held: the same title on a task whose number the agent may see is content. And a caller
     // without the values -- a host -- does not ask.
-    expect(rules(validateTask(task({ party: { name: "Asha", number: "+919876543210" }, title: "Call from +91 98765 43210" }), { channel: "voice", locked }))).toEqual([]);
-    expect(rules(validateTask(task({ party: { name: "Asha", number: { lockedBy: "team" } }, title: "Call from +91 98765 43210" }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ party: { name: "Asha", number: "+919876543210" }, title: "Call from +91 98765 43210" }), { levels: LEVELS, channel: "voice", locked }))).toEqual([]);
+    expect(rules(validateTask(task({ party: { name: "Asha", number: { lockedBy: "team" } }, title: "Call from +91 98765 43210" }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
   });
 
   it("refuses the task words the contract renamed, beside the words that replaced them", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
-    const audio = (value: unknown) => rules(validateTask(task({ audio: value }), { channel: "voice" }));
+    const audio = (value: unknown) => rules(validateTask(task({ audio: value }), { levels: LEVELS, channel: "voice" }));
     expect(audio("started")).toEqual([]);
     expect(audio("ready")).toEqual(["task.audio"]);
-    const tab = (browser: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/", ...browser }] }), { channel: "voice" }));
+    const tab = (browser: Record<string, unknown>) => rules(validateTask(task({ capabilities: { browsers: true }, browsers: [{ id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/", ...browser }] }), { levels: LEVELS, channel: "voice" }));
     expect(tab({ sharedSession: false })).toEqual([]);
     // renamed away: a browser still saying reuse has not said whether its session is shared.
     expect(tab({ reuse: false })).toEqual(["task.browser.sharedSession"]);
-    const notes = (value: string) => rules(validateTask(task({ capabilities: { outcomes: { required: true, notes: value, codes: [{ id: "resolved", label: "Resolved" }] } } }), { channel: "voice" }));
+    const notes = (value: string) => rules(validateTask(task({ capabilities: { outcomes: { required: true, notes: value, codes: [{ id: "resolved", label: "Resolved" }] } } }), { levels: LEVELS, channel: "voice" }));
     expect(notes("none")).toEqual([]);
     // renamed away: no notes field is none; hidden is what a URL can be.
     expect(notes("hidden")).toEqual(["task.outcomes.notes"]);
-    const offer = (acceptance: string) => rules(validateTask(task({ phase: "pending", acceptance }), { channel: "voice" }));
+    const offer = (acceptance: string) => rules(validateTask(task({ phase: "pending", acceptance }), { levels: LEVELS, channel: "voice" }));
     expect(offer("consent")).toEqual([]);
     // renamed away: acceptance is by consent or automatic.
     expect([offer("require-agent-acceptance"), offer("manual")]).toEqual([["task.acceptance"], ["task.acceptance"]]);
@@ -468,23 +468,23 @@ describe("validateTask", () => {
   it("requires the task to agree with the provider's channel", () => {
     expect(check({ channel: "chat" })).toContain("task.channel");
     // Control: the same task on a chat provider is fine.
-    expect(rules(validateTask(task({ channel: "chat", capabilities: { hold: true } }), { channel: "chat" }))).toEqual([]);
+    expect(rules(validateTask(task({ channel: "chat", capabilities: { hold: true } }), { levels: LEVELS, channel: "chat" }))).toEqual([]);
   });
 
   it("requires a task to name this life of itself, the assignment minted per offer", () => {
-    expect(rules(validateTask(task(), { channel: "voice" }))).toEqual([]);
-    expect(rules(validateTask(task({ assignmentId: undefined }), { channel: "voice" }))).toEqual(["task.assignmentId"]);
-    expect(rules(validateTask(task({ assignmentId: "" }), { channel: "voice" }))).toEqual(["task.assignmentId"]);
+    expect(rules(validateTask(task(), { levels: LEVELS, channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ assignmentId: undefined }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.assignmentId"]);
+    expect(rules(validateTask(task({ assignmentId: "" }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.assignmentId"]);
   });
 
   it("requires the words a task and a manifest are shown by, and refuses a repeated browser id", () => {
     // Each of these was deletable with the suite green: asserted here with its control.
-    expect(rules(validateTask(task({ taskType: "" }), { channel: "voice" }))).toEqual(["task.taskType"]);
-    expect(rules(validateTask(task({ reference: "" }), { channel: "voice" }))).toEqual(["task.reference"]);
-    expect(rules(validateTask(task({ reference: "ORD-7" }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ taskType: "" }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.taskType"]);
+    expect(rules(validateTask(task({ reference: "" }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.reference"]);
+    expect(rules(validateTask(task({ reference: "ORD-7" }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
     const browser = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false };
-    expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [browser, { ...browser, name: "CRM 2" }] }), { channel: "voice" }))).toEqual(["task.browser.unique"]);
-    expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [browser, { ...browser, id: "kb", name: "KB" }] }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [browser, { ...browser, name: "CRM 2" }] }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.browser.unique"]);
+    expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [browser, { ...browser, id: "kb", name: "KB" }] }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
     expect(rules(validateManifest(manifest({ displayName: "" })))).toEqual(["manifest.displayName"]);
     expect(rules(validateManifest(manifest()))).toEqual([]);
     expect(rules(validateEventEnvelope({ id: "e1", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z", event: { type: "transport-status", status: "flaky" } }, manifest()))).toEqual(["event.transportStatus.status"]);
@@ -494,16 +494,16 @@ describe("validateTask", () => {
   it("gates capabilities by channel", () => {
     // hold is a voice control; an email task declaring one would render a button that
     // cannot work.
-    expect(rules(validateTask(task({ channel: "email", capabilities: { hold: true } }), { channel: "email" })))
+    expect(rules(validateTask(task({ channel: "email", capabilities: { hold: true } }), { levels: LEVELS, channel: "email" })))
       .toContain("task.capability.channel");
     // Mute is the host's: the microphone belongs to the station, so no channel's provider declares it.
     // The control beside it: the same task with a capability the provider does own is clean.
-    expect(rules(validateTask(task({ capabilities: { mute: true } }), { channel: "voice" }))).toEqual(["task.capability.unknown"]);
-    expect(rules(validateTask(task({ capabilities: { mute: { lockedBy: "team" } } }), { channel: "voice" }))).toEqual(["task.capability.unknown"]);
-    expect(rules(validateTask(task({ capabilities: { hold: true } }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { mute: true } }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.capability.unknown"]);
+    expect(rules(validateTask(task({ capabilities: { mute: { lockedBy: "team" } } }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.capability.unknown"]);
+    expect(rules(validateTask(task({ capabilities: { hold: true } }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
     // A name another channel owns is a channel error; one no channel owns is not a capability at all.
-    expect(rules(validateTask(task({ capabilities: { zap: true } }), { channel: "voice" }))).toEqual(["task.capability.unknown"]);
-    expect(rules(validateTask(task({ channel: "email", capabilities: { decline: true } }), { channel: "email" }))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { zap: true } }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.capability.unknown"]);
+    expect(rules(validateTask(task({ channel: "email", capabilities: { decline: true } }), { levels: LEVELS, channel: "email" }))).toEqual([]);
   });
 
   it("ties browser reuse to an isolation scheme in both directions", () => {
@@ -674,7 +674,7 @@ describe("validateTeamMembers", () => {
 
   it("carries the team's policies on the team member list, as the lead sees them", () => {
     const may = { capabilities: { lead: true as const } };
-    const policies = (value: unknown) => rules(validateTeamMembers({ members: [], policies: value }, "team", may));
+    const policies = (value: unknown) => rules(validateTeamMembers({ members: [], policies: value }, "team", { ...may, levels: LEVELS }));
     expect(policies({ endCall: { setting: "off", setBy: "team" }, hold: { setting: "person", setBy: "team" }, recording: { setting: "on", setBy: "site", lockedBy: "site", reason: "Compliance" }, dial: { setting: "on", setBy: "provider" }, "skill:billing": { setting: "person", setBy: "org" } })).toEqual([]);
     expect(policies({ telepathy: { setting: "on", setBy: "team" } })).toEqual(["team.policy.key"]);
     // Mute is the host's: no team sets a policy on the station's microphone. The control beside it stands two lines up.
@@ -687,33 +687,33 @@ describe("validateTeamMembers", () => {
     expect(policies({ hold: { setting: "off", setBy: "person" } })).toEqual(["team.policy.setBy"]);
     expect(policies("off")).toEqual(["team.policies.shape"]);
     // Present where the provider offers policy control, absent where it does not: the lead flag alone entitles the lead.
-    expect(rules(validateTeamMembers({ members: [] }, "team", may))).toEqual([]);
-    expect(rules(validateTeamMembers({ members: [], policies: {} }, "team", may))).toEqual([]);
-    expect(rules(validateTeamMembers({ members: [], policies: {} }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [] }, "team", { ...may, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [], policies: {} }, "team", { ...may, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [], policies: {} }, "team", { levels: LEVELS }))).toEqual([]);
   });
   it("refuses agent as a policy setting beside person, which replaced it", () => {
     // A rename is a refusal, not an alias: an adapter still speaking the old word is told so.
     const lead = { capabilities: { lead: true as const } };
-    const setting = (value: string) => rules(validateTeamMembers({ members: [], policies: { hold: { setting: value, setBy: "team" } } }, "team", lead));
+    const setting = (value: string) => rules(validateTeamMembers({ members: [], policies: { hold: { setting: value, setBy: "team" } } }, "team", { ...lead, levels: LEVELS }));
     expect(setting("person")).toEqual([]);
     // renamed away: what the team leaves to the individual is the person's, in the level's own word.
     expect(setting("agent")).toEqual(["team.policy.setting"]);
   });
 
   it("accepts a conforming team member list", () => {
-    expect(validateTeamMembers(teamMembers())).toEqual([]);
-    expect(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", since: "2026-08-21T09:00:00Z", break: "starting-after-task" }] })).toEqual([]);
+    expect(validateTeamMembers(teamMembers(), "team", { levels: LEVELS })).toEqual([]);
+    expect(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", since: "2026-08-21T09:00:00Z", break: "starting-after-task" }] }, "team", { levels: LEVELS })).toEqual([]);
     // Host-stopped is a stated availability of its own: signed in here, capacity held by the host for elsewhere.
-    expect(validateTeamMembers({ members: [{ id: "A-2", availability: "elsewhere", since: "2026-08-21T09:00:00Z" }] })).toEqual([]);
+    expect(validateTeamMembers({ members: [{ id: "A-2", availability: "elsewhere", since: "2026-08-21T09:00:00Z" }] }, "team", { levels: LEVELS })).toEqual([]);
     // Nobody asking is absence on each member: the list carries no request of its own, and the former one is not read.
-    expect(validateTeamMembers({ members: [] })).toEqual([]);
-    expect(validateTeamMembers({ members: [], requests: [{ memberId: "A-2", assignmentId: "" }] })).toEqual([]);
+    expect(validateTeamMembers({ members: [] }, "team", { levels: LEVELS })).toEqual([]);
+    expect(validateTeamMembers({ members: [], requests: [{ memberId: "A-2", assignmentId: "" }] }, "team", { levels: LEVELS })).toEqual([]);
   });
 
   it("carries each member's open tasks, trimmed by the provider, and the lead's own listening", () => {
     const at = "2026-08-21T09:00:00Z";
     const trimmed = { assignmentId: "alloc-7", title: "Billing call", channel: "voice", taskType: "Billing", phase: "in-progress" };
-    const withTasks = (tasks: unknown, over: Record<string, unknown> = {}) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks, ...over }] }));
+    const withTasks = (tasks: unknown, over: Record<string, unknown> = {}) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks, ...over }] }, "team", { levels: LEVELS }));
     expect(withTasks([trimmed])).toEqual([]);
     expect(withTasks([])).toEqual([]);
     // What the provider sends of the workspace is held to the task rules; what it leaves out is not asked for.
@@ -727,9 +727,9 @@ describe("validateTeamMembers", () => {
     // The lock is per audience: a copy that locks the number keeps its own lock whole.
     const locked = { ...trimmed, party: { name: "Maya Rao", number: { lockedBy: "org" } } };
     const leaking = { ...locked, title: "Call from +91 98765 43210" };
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [locked] }] }, "team", { locked: ["+919876543210"] }))).toEqual([]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [leaking] }] }, "team", { locked: ["+919876543210"] }))).toEqual(["task.locked.leak"]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [{ ...trimmed, party: { name: "Maya Rao", number: "+919876543210" } }] }] }, "team", { locked: ["+919876543210"] }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [locked] }] }, "team", { levels: LEVELS, locked: ["+919876543210"] }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [leaking] }] }, "team", { levels: LEVELS, locked: ["+919876543210"] }))).toEqual(["task.locked.leak"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [{ ...trimmed, party: { name: "Maya Rao", number: "+919876543210" } }] }] }, "team", { levels: LEVELS, locked: ["+919876543210"] }))).toEqual([]);
     expect(withTasks([{ ...trimmed, history: { steps: [{ step: "held", at, seconds: 12, by: "A-2" }] }, onCall: [{ role: "party", since: at }] }])).toEqual([]);
     expect(withTasks([{ ...trimmed, audio: "started", phase: "completing" }])).toEqual(["task.audio.completing"]);
     expect(withTasks([{ ...trimmed, phase: "ringing" }])).toEqual(["task.phase"]);
@@ -741,7 +741,7 @@ describe("validateTeamMembers", () => {
     expect(withTasks([{ ...trimmed, listening: { assignmentId: "alloc-7", mode: "listen", since: at } }])).toEqual(["task.leadState.retired"]);
     // Every lead on this member's call: who, which call, in the mode they are heard; one member's call at a time, per lead.
     const entry = (over: Record<string, unknown> = {}) => ({ leadId: "L-9", assignmentId: "alloc-7", mode: "listen", since: at, ...over });
-    const listening = (over: Record<string, unknown>, tasks?: unknown[]) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", ...(tasks === undefined ? {} : { tasks }), listening: [entry(over)] }] }));
+    const listening = (over: Record<string, unknown>, tasks?: unknown[]) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", ...(tasks === undefined ? {} : { tasks }), listening: [entry(over)] }] }, "team", { levels: LEVELS }));
     for (const mode of ["listen", "coach"]) expect(listening({ mode })).toEqual([]);
     expect(listening({ mode: "monitor" })).toEqual(["team.member.listening.mode"]);
     expect(listening({ mode: "barge" })).toEqual(["team.member.listening.mode"]);
@@ -750,20 +750,20 @@ describe("validateTeamMembers", () => {
     expect(listening({ assignmentId: undefined })).toEqual(["team.member.listening.assignmentId"]);
     expect(listening({}, [trimmed])).toEqual([]);
     expect(listening({ assignmentId: "alloc-9" }, [trimmed])).toEqual(["team.member.listening.assignment"]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: entry() }] }))).toEqual(["team.member.listening.shape"]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: [] }] }))).toEqual(["team.member.listening.empty"]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: ["L-9"] }] }))).toEqual(["team.member.listening.entry"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: entry() }] }, "team", { levels: LEVELS }))).toEqual(["team.member.listening.shape"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: [] }] }, "team", { levels: LEVELS }))).toEqual(["team.member.listening.empty"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: ["L-9"] }] }, "team", { levels: LEVELS }))).toEqual(["team.member.listening.entry"]);
     // Two leads on one member's call is ordinary; the same lead twice is not.
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: [entry(), entry({ leadId: "L-4", mode: "coach" })] }] }))).toEqual([]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: [entry(), entry({ mode: "coach" })] }] }))).toEqual(["team.member.listening.unique"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: [entry(), entry({ leadId: "L-4", mode: "coach" })] }] }, "team", { levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", listening: [entry(), entry({ mode: "coach" })] }] }, "team", { levels: LEVELS }))).toEqual(["team.member.listening.unique"]);
     expect(rules(validateTeamMembers({ members: [
       { id: "A-2", availability: "on-task", listening: [entry()] },
       { id: "A-3", availability: "on-task", listening: [entry({ assignmentId: "alloc-8", mode: "coach" })] },
-    ] }))).toEqual(["team.listening.single"]);
+    ] }, "team", { levels: LEVELS }))).toEqual(["team.listening.single"]);
     expect(rules(validateTeamMembers({ members: [
       { id: "A-2", availability: "on-task", listening: [entry()] },
       { id: "A-3", availability: "on-task", listening: [entry({ leadId: "L-4", assignmentId: "alloc-8", mode: "coach" })] },
-    ] }))).toEqual([]);
+    ] }, "team", { levels: LEVELS }))).toEqual([]);
     // A lead who is heard is in the room the member sees; a silent one leaves no trace there.
     const room = (onCall: unknown[]) => ({ ...trimmed, onCall });
     const party = { role: "party", since: at };
@@ -779,8 +779,8 @@ describe("validateTeamMembers", () => {
     ["a since without a zone", { members: [{ id: "A-2", availability: "ready", since: "2026-08-21T09:00:00" }] }, "team.member.since"],
     ["no members array", {}, "team.members.shape"],
   ])("rejects %s", (_label, value, rule) => {
-    expect(rules(validateTeamMembers(value))).toContain(rule);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "ready" }] }))).not.toContain(rule);
+    expect(rules(validateTeamMembers(value, "team", { levels: LEVELS }))).toContain(rule);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "ready" }] }, "team", { levels: LEVELS }))).not.toContain(rule);
   });
 
   it("carries the agent's own queue: the ask while an assignment is at work, the lined-up call, and the release the provider grants", () => {
@@ -823,11 +823,11 @@ describe("validateTeamMembers", () => {
     expect(check({ type: "lined-up", linedUp: lined })).toEqual([]);
     expect(check({ type: "lined-up" })).toEqual([]);
     expect(check({ type: "lined-up", linedUp: { ...lined, release: "yes" } })).toEqual(["linedUp.release"]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", nextCall: { since: at }, linedUp: lined }] }))).toEqual([]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", linedUp: { since: "then" } }] }))).toEqual(["linedUp.since"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", nextCall: { since: at }, linedUp: lined }] }, "team", { levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", linedUp: { since: "then" } }] }, "team", { levels: LEVELS }))).toEqual(["linedUp.since"]);
     // The login declares it as it declares breaks, and the three results answer as every provider method answers.
-    expect(rules(validateAuthenticationState({ status: "authenticated", identity: { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: { nextCall: true } }))).toEqual([]);
-    expect(rules(validateAuthenticationState({ status: "authenticated", identity: { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: { nextCall: "yes" } }))).toEqual(["authentication.capability.value"]);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: { nextCall: true } }, "authentication", { levels: LEVELS }))).toEqual([]);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: { nextCall: "yes" } }, "authentication", { levels: LEVELS }))).toEqual(["authentication.capability.value"]);
     expect(rules(validateResult({ status: "requested" }, "requestNextCall"))).toEqual([]);
     expect(rules(validateResult({ status: "applied" }, "requestNextCall"))).toEqual(["result.status"]);
     expect(rules(validateResult({ status: "cancelled" }, "cancelNextCall"))).toEqual([]);
@@ -880,8 +880,8 @@ describe("validateTeamMembers", () => {
     // On its own event, from a provider that declared it; and on the member, as the member's own agent computer holds it.
     expect(rules(validateEventEnvelope(envelope({ type: "phone-updated", phone: idle }), seeing, "event", { phone: "hardphone" }))).toEqual([]);
     expect(rules(validateEventEnvelope(envelope({ type: "phone-updated", phone: idle }), manifest()))).toEqual(["event.phone.capability"]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", phone: idle }] }))).toEqual([]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", phone: { ...idle, status: "busy" } }] }))).toEqual(["phone.status"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", phone: idle }] }, "team", { levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", phone: { ...idle, status: "busy" } }] }, "team", { levels: LEVELS }))).toEqual(["phone.status"]);
   });
 
   it("carries the customer's own words on the snapshot and on labels-updated, per language", () => {
@@ -929,7 +929,7 @@ describe("validateTeamMembers", () => {
     expect(check({ type: "shift-updated", shift: day })).toEqual([]);
     expect(check({ type: "shift-updated", shift: { ...day, tasksHandled: 2.5 } })).toEqual(["shift.tasksHandled"]);
     // The member's copy on the lead's list is the same shape under its own rule prefix.
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { ...day, tasksHandled: 2.5 } }] }))).toEqual(["team.member.shift.tasksHandled"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { ...day, tasksHandled: 2.5 } }] }, "team", { levels: LEVELS }))).toEqual(["team.member.shift.tasksHandled"]);
   });
 
   it("counts every duration off the active call from the provider's clock: timeCheck where a running instant is published, providerTime with it", () => {
@@ -958,11 +958,11 @@ describe("validateTeamMembers", () => {
 
   it("carries each member's own shift: sign-in, sign-out, the day's totals and its events", () => {
     const at = "2026-08-21T09:00:00Z";
-    const shift = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { signedInAt: at, ...over } }] }));
+    const shift = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { signedInAt: at, ...over } }] }, "team", { levels: LEVELS }));
     expect(shift({})).toEqual([]);
     expect(shift({ signedOutAt: "2026-08-21T17:00:00Z", talkSeconds: 5400, holdSeconds: 300, breakSeconds: 1800, tasksHandled: 42,
       events: [{ at, kind: "signed-in" }, { at: "2026-08-21T12:00:00Z", kind: "break-started" }, { at: "2026-08-21T12:30:00Z", kind: "break-ended" }] })).toEqual([]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { talkSeconds: 5 } }] }))).toEqual(["team.member.shift.signedInAt"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { talkSeconds: 5 } }] }, "team", { levels: LEVELS }))).toEqual(["team.member.shift.signedInAt"]);
     expect(shift({ signedOutAt: "2026-08-21T08:00:00Z" })).toEqual(["team.member.shift.signedOutAt.order"]);
     expect(shift({ signedOutAt: "2026-08-21T17:00:00" })).toEqual(["team.member.shift.signedOutAt"]);
     // Totals are the provider's own, present when known, never a plausible nought stated as a fraction or a negative.
@@ -972,7 +972,7 @@ describe("validateTeamMembers", () => {
     expect(shift({ events: [{ at, kind: "lunch" }] })).toEqual(["team.member.shift.event.kind"]);
     expect(shift({ events: [{ at: "2026-08-21T12:00:00Z", kind: "break-started" }, { at, kind: "signed-in" }] })).toEqual(["team.member.shift.events.order"]);
     expect(shift({ events: "none" })).toEqual(["team.member.shift.events.shape"]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: "today" }] }))).toEqual(["team.member.shift.shape"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: "today" }] }, "team", { levels: LEVELS }))).toEqual(["team.member.shift.shape"]);
   });
 
   it("rejects the agent it is published to, once told who that is", () => {
@@ -982,14 +982,14 @@ describe("validateTeamMembers", () => {
       members: [{ id: "A-2", availability: "ready" }, { id: "1042", availability: "on-task" }],
     };
     const found = (self: string) =>
-      validateTeamMembers(published, "team", { self }).map(violation => `${violation.rule} at ${violation.path}`).sort();
+      validateTeamMembers(published, "team", { levels: LEVELS, self }).map(violation => `${violation.rule} at ${violation.path}`).sort();
     expect(found("1042")).toEqual(["team.member.self at team.members[1].id"]);
     // One member alone, as team-member-updated carries them, is held to the same reader.
-    expect(rules(validateTeamMember({ id: "1042", availability: "on-task" }, "member", { self: "1042" }))).toEqual(["team.member.self"]);
-    expect(rules(validateTeamMember({ id: "A-2", availability: "on-task" }, "member", { self: "1042" }))).toEqual([]);
+    expect(rules(validateTeamMember({ id: "1042", availability: "on-task" }, "member", { levels: LEVELS, self: "1042" }))).toEqual(["team.member.self"]);
+    expect(rules(validateTeamMember({ id: "A-2", availability: "on-task" }, "member", { levels: LEVELS, self: "1042" }))).toEqual([]);
     // A colleague is not the reader, and without a reader there is nothing to compare against.
     expect(found("A-9")).toEqual([]);
-    expect(validateTeamMembers(published)).toEqual([]);
+    expect(validateTeamMembers(published, "team", { levels: LEVELS })).toEqual([]);
   });
 });
 
@@ -1057,8 +1057,8 @@ describe("validateSnapshot", () => {
     expect(rules(validateSnapshot(snapshot(), manifest(), "snapshot", lead))).toEqual([]);
     expect(rules(validateSnapshot(snapshot({ team }), manifest(), "snapshot", agent))).toEqual(["team.unentitled"]);
     // The team member list validator carries the same refusal on its own, for a caller holding just the team member list.
-    expect(rules(validateTeamMembers(team, "team", lead))).toEqual([]);
-    expect(rules(validateTeamMembers(team, "team", agent))).toEqual(["team.unentitled"]);
+    expect(rules(validateTeamMembers(team, "team", { ...lead, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTeamMembers(team, "team", { ...agent, levels: LEVELS }))).toEqual(["team.unentitled"]);
     // Without the login in hand, neither direction can be checked.
     expect(rules(validateSnapshot(snapshot(), manifest()))).toEqual([]);
     expect(rules(validateSnapshot(snapshot({ team }), manifest()))).toEqual([]);
@@ -1473,7 +1473,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("gives a directory something to offer, and keeps its ids unique", () => {
-    const directory = (over: unknown) => rules(validateTask(task({ capabilities: { conference: over } }), voice));
+    const directory = (over: unknown) => rules(validateTask(task({ capabilities: { conference: over } }), { ...voice, levels: LEVELS }));
     const tier2 = { id: "t2", label: "Tier 2" };
     expect(directory({ destinations: [tier2] })).toEqual([]);
     expect(directory({ destinations: [tier2, { id: "ivr", label: "Main menu" }] })).toEqual([]);
@@ -1489,7 +1489,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("gives a required outcome policy a code to collect", () => {
-    const policy = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { outcomes: over } }), voice));
+    const policy = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { outcomes: over } }), { ...voice, levels: LEVELS }));
     expect(policy({ required: true, codes: [{ id: "resolved", label: "Resolved" }] })).toEqual([]);
     expect(policy({ required: false })).toEqual([]);
     expect(policy({ required: true })).toEqual(["task.outcomes.required.codes"]);
@@ -1498,31 +1498,31 @@ describe("the other direction, everywhere", () => {
 
   it("gives a required outcome to the agent to complete, and a wrap to collect it in", () => {
     const codes = [{ id: "resolved", label: "Resolved" }];
-    const under = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { outcomes: { required: true, codes } }, ...over }), voice));
+    const under = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { outcomes: { required: true, codes } }, ...over }), { ...voice, levels: LEVELS }));
     // A required code is the agent's to give, so the task waits for the agent's complete.
     expect(under({ completionMode: "agent-command" })).toEqual([]);
     expect(under({ completionMode: "provider-automatic", wrapAllowance: 30 })).toEqual(["task.outcomes.required.mode"]);
     // Optional outcomes may ride on a task the provider completes itself: the agent gives one if in time.
-    expect(rules(validateTask(task({ capabilities: { outcomes: { codes } }, completionMode: "provider-automatic", wrapAllowance: 30 }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { outcomes: { codes } }, completionMode: "provider-automatic", wrapAllowance: 30 }), { ...voice, levels: LEVELS }))).toEqual([]);
     // No wrap, nowhere to take a code: provider-automatic with wrapAllowance 0 publishes no outcomes, whatever the policy.
     // Under agent-command the allowance is the expected wrap, shown and never acted on: the agent completes when done, code and all.
     expect(under({ completionMode: "agent-command", wrapAllowance: 0 })).toEqual([]);
-    expect(rules(validateTask(task({ capabilities: { outcomes: true }, completionMode: "provider-automatic", wrapAllowance: 0 }), voice))).toEqual(["task.outcomes.wrapAllowance"]);
-    expect(rules(validateTask(task({ capabilities: { hold: true }, completionMode: "provider-automatic", wrapAllowance: 0 }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ capabilities: { outcomes: true }, completionMode: "provider-automatic", wrapAllowance: 30 }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { outcomes: true }, completionMode: "provider-automatic", wrapAllowance: 0 }), { ...voice, levels: LEVELS }))).toEqual(["task.outcomes.wrapAllowance"]);
+    expect(rules(validateTask(task({ capabilities: { hold: true }, completionMode: "provider-automatic", wrapAllowance: 0 }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { outcomes: true }, completionMode: "provider-automatic", wrapAllowance: 30 }), { ...voice, levels: LEVELS }))).toEqual([]);
   });
 
   it("keeps browser names and attribute keys unique within a task", () => {
     const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false };
-    expect(rules(validateTask(task({ browsers: [crm, { ...crm, id: "kb", name: "Knowledge" }] }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ browsers: [crm, { ...crm, id: "kb" }] }), voice))).toEqual(["task.browser.name.unique"]);
+    expect(rules(validateTask(task({ browsers: [crm, { ...crm, id: "kb", name: "Knowledge" }] }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ browsers: [crm, { ...crm, id: "kb" }] }), { ...voice, levels: LEVELS }))).toEqual(["task.browser.name.unique"]);
     const order = { type: "text", key: "order", value: "42" };
-    expect(rules(validateTask(task({ attributes: [order, { ...order, key: "region" }] }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ attributes: [order, order] }), voice))).toEqual(["task.attribute.unique"]);
+    expect(rules(validateTask(task({ attributes: [order, { ...order, key: "region" }] }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ attributes: [order, order] }), { ...voice, levels: LEVELS }))).toEqual(["task.attribute.unique"]);
   });
 
   it("names nobody on an arrived, self-service or queued step", () => {
-    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ history: { steps: [{ at: "2026-08-21T09:00:00Z", ...entry }] } }), voice));
+    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ history: { steps: [{ at: "2026-08-21T09:00:00Z", ...entry }] } }), { ...voice, levels: LEVELS }));
     expect(step({ step: "answered", by: "A-1" })).toEqual([]);
     expect(step({ step: "queued" })).toEqual([]);
     expect(step({ step: "queued", by: "A-1" })).toEqual(["task.history.by.unexpected"]);
@@ -1533,7 +1533,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("starts the record where the call arrived, once", () => {
-    const history = (steps: unknown[]) => rules(validateTask(task({ history: { steps } }), voice));
+    const history = (steps: unknown[]) => rules(validateTask(task({ history: { steps } }), { ...voice, levels: LEVELS }));
     const arrived = { step: "arrived", at: "2026-08-21T08:58:40Z", seconds: 20 };
     const queued = { step: "queued", at: "2026-08-21T08:59:00Z", seconds: 41 };
     const answered = { step: "answered", at: "2026-08-21T08:59:41Z", by: "a-17" };
@@ -1555,20 +1555,20 @@ describe("the other direction, everywhere", () => {
       // Sent back to a menu after the transfer: a second visit, a second entry.
       { ...menu, at: "2026-08-21T09:00:45Z", seconds: 12 },
     ];
-    expect(rules(validateTask(task({ history: { steps } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ history: { steps } }), { ...voice, levels: LEVELS }))).toEqual([]);
     // A chat customer with a bot before a person is the same step.
     const chat = { channel: "chat" };
-    expect(rules(validateTask(task({ taskType: "Chat", history: { steps: [menu] } }), chat)).filter(rule => rule.startsWith("task.history"))).toEqual([]);
-    expect(rules(validateTask(task({ history: { steps: [{ ...menu, by: "a-17" }] } }), voice))).toEqual(["task.history.by.unexpected"]);
+    expect(rules(validateTask(task({ taskType: "Chat", history: { steps: [menu] } }), { ...chat, levels: LEVELS })).filter(rule => rule.startsWith("task.history"))).toEqual([]);
+    expect(rules(validateTask(task({ history: { steps: [{ ...menu, by: "a-17" }] } }), { ...voice, levels: LEVELS }))).toEqual(["task.history.by.unexpected"]);
   });
 
   it("declares the capability that shows a task's browsers", () => {
     const crm = { id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: false };
-    expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [crm] }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ capabilities: {}, browsers: [] }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ capabilities: {}, browsers: [crm] }), voice))).toEqual(["task.browsers.capability"]);
+    expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [crm] }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: {}, browsers: [] }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: {}, browsers: [crm] }), { ...voice, levels: LEVELS }))).toEqual(["task.browsers.capability"]);
     // And the other way: the capability puts a panel in the workspace, so there is something in it.
-    expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [] }), voice))).toEqual(["task.browsers.required"]);
+    expect(rules(validateTask(task({ capabilities: { browsers: true }, browsers: [] }), { ...voice, levels: LEVELS }))).toEqual(["task.browsers.required"]);
   });
 
   it("holds the break state's parts to its approval", () => {
@@ -1590,7 +1590,7 @@ describe("the other direction, everywhere", () => {
   });
 
   it("lets only an outstanding request appear on a team member", () => {
-    const member = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", ...over }] }));
+    const member = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", ...over }] }, "team", { levels: LEVELS }));
     for (const status of ["awaiting-approval", "granted", "starting-after-task"]) expect(member({ break: status })).toEqual([]);
     expect(member({ availability: "on-break" })).toEqual([]);
     expect(member({ break: "on-break" })).toEqual(["team.member.break"]);
@@ -1617,12 +1617,12 @@ describe("the other direction, everywhere", () => {
     expect(onBreak([task({ assignmentId: "call-2" })])).toEqual(["break.on-break.tasks"]);
     expect(onBreak([taken, task({ assignmentId: "call-2" })])).toEqual(["break.on-break.tasks"]);
     // The marker itself: who it was taken from, and when; voice only.
-    expect(rules(validateTask(task({ takenOver: { since: at } }), { channel: "voice" }))).toEqual(["task.takenOver.memberId"]);
-    expect(rules(validateTask(task({ takenOver: { memberId: "A-1" } }), { channel: "voice" }))).toEqual(["task.takenOver.since"]);
-    expect(rules(validateTask(task({ channel: "chat", capabilities: {}, takenOver: { memberId: "A-1", since: at } }), { channel: "chat" }))).toEqual(["task.takenOver.channel"]);
+    expect(rules(validateTask(task({ takenOver: { since: at } }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.takenOver.memberId"]);
+    expect(rules(validateTask(task({ takenOver: { memberId: "A-1" } }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.takenOver.since"]);
+    expect(rules(validateTask(task({ channel: "chat", capabilities: {}, takenOver: { memberId: "A-1", since: at } }), { levels: LEVELS, channel: "chat" }))).toEqual(["task.takenOver.channel"]);
     // A task carries no lead state: the former fields are refused, each beside the marker that replaced them.
     for (const retired of ["assisting", "listening", "monitoring"]) {
-      expect(rules(validateTask(task({ [retired]: { memberId: "A-1", since: at } }), { channel: "voice" }))).toEqual(["task.leadState.retired"]);
+      expect(rules(validateTask(task({ [retired]: { memberId: "A-1", since: at } }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.leadState.retired"]);
     }
   });
 
@@ -1661,7 +1661,7 @@ describe("the other direction, everywhere", () => {
     const at = "2026-08-21T09:00:00Z";
     const dialled = { onCall: [{ role: "party", dialId: "dial-3", stage: "ringing", since: at }] };
     const originated = (over: Record<string, unknown>, autoAcceptTasks?: boolean) =>
-      rules(validateTask(task({ phase: "pending", ...over }), { channel: "voice", dialOutcomesDeclared: true, ...(autoAcceptTasks === undefined ? {} : { autoAcceptTasks }) }));
+      rules(validateTask(task({ phase: "pending", ...over }), { levels: LEVELS, channel: "voice", dialOutcomesDeclared: true, ...(autoAcceptTasks === undefined ? {} : { autoAcceptTasks }) }));
     // The agent's own dial: automatic under either provisioning and with none stated; anything else, or nothing, is refused.
     expect(originated({ ...dialled, acceptance: "automatic" }, false)).toEqual([]);
     expect(originated({ ...dialled, acceptance: "automatic" }, true)).toEqual([]);
@@ -1690,9 +1690,9 @@ describe("the other direction, everywhere", () => {
   it("carries a failure only on an expired state", () => {
     const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
     const failure = { code: "expired", message: "Sign in again", retryable: true };
-    expect(rules(validateAuthenticationState({ status: "expired", identity: user, failure }))).toEqual([]);
-    expect(rules(validateAuthenticationState({ status: "signed-out", failure }))).toEqual(["authentication.failure.unexpected"]);
-    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {}, failure }))).toEqual(["authentication.failure.unexpected"]);
+    expect(rules(validateAuthenticationState({ status: "expired", identity: user, failure }, "authentication", { levels: LEVELS }))).toEqual([]);
+    expect(rules(validateAuthenticationState({ status: "signed-out", failure }, "authentication", { levels: LEVELS }))).toEqual(["authentication.failure.unexpected"]);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {}, failure }, "authentication", { levels: LEVELS }))).toEqual(["authentication.failure.unexpected"]);
   });
 });
 
@@ -1716,7 +1716,7 @@ describe("rules that had no test", () => {
   });
 
   it("outcome policies and codes", () => {
-    const policy = (over: unknown) => rules(validateTask(task({ capabilities: { outcomes: over } }), voice));
+    const policy = (over: unknown) => rules(validateTask(task({ capabilities: { outcomes: over } }), { ...voice, levels: LEVELS }));
     const resolved = { id: "resolved", label: "Resolved" };
     expect(policy({ required: false, notes: "optional", codes: [resolved] })).toEqual([]);
     expect(policy({ required: "yes" })).toEqual(["task.outcomes.required"]);
@@ -1728,7 +1728,7 @@ describe("rules that had no test", () => {
   });
 
   it("custom controls", () => {
-    const custom = (over: unknown) => rules(validateTask(task({ capabilities: { custom: over } }), voice));
+    const custom = (over: unknown) => rules(validateTask(task({ capabilities: { custom: over } }), { ...voice, levels: LEVELS }));
     const control = { id: "supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary", render: "inline" } };
     expect(custom([control])).toEqual([]);
     // Where the control's work renders is stated on every control, never defaulted.
@@ -1752,7 +1752,7 @@ describe("rules that had no test", () => {
   });
 
   it("an expired state's failure", () => {
-    const expired = (failure: unknown) => rules(validateAuthenticationState({ status: "expired", failure }));
+    const expired = (failure: unknown) => rules(validateAuthenticationState({ status: "expired", failure }, "authentication", { levels: LEVELS }));
     expect(expired({ code: "expired", message: "Sign in again", retryable: true })).toEqual([]);
     expect(expired("expired")).toEqual(["authentication.failure.shape"]);
     expect(expired({ message: "Sign in again", retryable: true })).toEqual(["authentication.failure.code"]);
@@ -1769,7 +1769,7 @@ describe("rules that had no test", () => {
     for (const bad of ["soon", "2026-08-21T09:01:00Z", 1.5, -1]) expect(check(offer({ expiresInSeconds: bad }))).toEqual(["task.pending.expiresInSeconds"]);
     expect(check({ ...offer(), expiresInSeconds: 30 })).toEqual(["event.taskOffered.expiresInSeconds.unexpected"]);
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ phase: "pending", acceptance: "consent", expiresInSeconds: 18 })] }), manifest()))).toEqual([]);
-    expect(rules(validateTask(task({ phase: "confirmed", expiresInSeconds: 18 }), { channel: "voice" }))).toEqual(["task.pending.expiresInSeconds.unexpected"]);
+    expect(rules(validateTask(task({ phase: "confirmed", expiresInSeconds: 18 }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.pending.expiresInSeconds.unexpected"]);
     const ended = (outcome: unknown) => check({ type: "task-ended", assignmentId: "alloc-42", outcome });
     expect(ended({ type: "cancelled", by: "party" })).toEqual([]);
     // A take-over names the lead who took the call, by user id: a lead is not a directory item.
@@ -1793,7 +1793,7 @@ describe("validateAuthenticationState", () => {
   const user = { id: "agent-1", displayName: "Ada", timeZone: "Asia/Kolkata" };
 
   it("tells a session ended from outside from the agent's own sign-out and from an expiry, with who ended it", () => {
-    const state = (value: Record<string, unknown>) => rules(validateAuthenticationState(value));
+    const state = (value: Record<string, unknown>) => rules(validateAuthenticationState(value, "authentication", { levels: LEVELS }));
     const reason = { code: "provider.session-terminated", message: "Your session was ended by Ravi Kumar", retryable: false };
     expect(state({ status: "terminated", by: "u-77", failure: reason })).toEqual([]);
     expect(state({ status: "terminated", by: "provider", identity: user, failure: reason })).toEqual([]);
@@ -1833,9 +1833,10 @@ describe("validateAuthenticationState", () => {
     const declared = { levels: ["org", "region", "team", "person"] };
     expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, setBy: "region" }] } }, "authentication", declared))).toEqual([]);
     expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, setBy: "site" }] } }, "authentication", declared))).toEqual(["preference.setBy.unknown"]);
-    // Without them, any level is taken: the ladder is the manifest's, and there is no other.
-    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, setBy: "site" }] } }))).toEqual([]);
-    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, lockedBy: "person" }] } }))).toEqual(["preference.lockedBy.person"]);
+    // No ladder declares no level: every level is refused, and the provider's own value stands.
+    const none = { levels: [] };
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [{ ...hold, setBy: "provider" }] } }, "authentication", none))).toEqual([]);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { preferences: [hold] } }, "authentication", none))).toEqual(["preference.setBy.unknown"]);
     expect(prefs([{ ...hold, reason: "Because" }])).toEqual(["preference.reason.unexpected"]);
     expect(prefs(["hold"])).toEqual(["preference.shape"]);
     expect(prefs("hold")).toEqual(["preferences.shape"]);
@@ -1850,7 +1851,7 @@ describe("validateAuthenticationState", () => {
 
   it("declares what the login may do by presence, on the login and nowhere else", () => {
     // Each refusal beside the shape it must accept, in one place.
-    const login = (capabilities: unknown, status = "authenticated") => rules(validateAuthenticationState({ status, identity: user, capabilities }));
+    const login = (capabilities: unknown, status = "authenticated") => rules(validateAuthenticationState({ status, identity: user, capabilities }, "authentication", { levels: LEVELS }));
     expect(login({})).toEqual([]);
     expect(login(undefined)).toEqual(["authentication.capabilities.shape"]);
     expect(login({ breaks: true })).toEqual([]);
@@ -1864,18 +1865,18 @@ describe("validateAuthenticationState", () => {
     expect(login({ telepathy: true })).toEqual(["authentication.capability.unknown"]);
     expect(login({}, "refreshing")).toEqual([]);
     expect(login({}, "expired")).toEqual(["authentication.capabilities.unexpected"]);
-    expect(rules(validateAuthenticationState({ status: "expired", identity: user }))).toEqual([]);
+    expect(rules(validateAuthenticationState({ status: "expired", identity: user }, "authentication", { levels: LEVELS }))).toEqual([]);
   });
 
   it("accepts each state with what it must carry", () => {
-    expect(validateAuthenticationState({ status: "signed-out" })).toEqual([]);
-    expect(validateAuthenticationState({ status: "authenticating" })).toEqual([]);
-    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {} })).toEqual([]);
-    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {}, expiresAt: "2026-08-21T10:00:00Z" })).toEqual([]);
-    expect(validateAuthenticationState({ status: "refreshing", identity: user, capabilities: {} })).toEqual([]);
-    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { breaks: true, lead: true as const } })).toEqual([]);
-    expect(validateAuthenticationState({ status: "expired" })).toEqual([]);
-    expect(validateAuthenticationState({ status: "expired", identity: user })).toEqual([]);
+    expect(validateAuthenticationState({ status: "signed-out" }, "authentication", { levels: LEVELS })).toEqual([]);
+    expect(validateAuthenticationState({ status: "authenticating" }, "authentication", { levels: LEVELS })).toEqual([]);
+    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {} }, "authentication", { levels: LEVELS })).toEqual([]);
+    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {}, expiresAt: "2026-08-21T10:00:00Z" }, "authentication", { levels: LEVELS })).toEqual([]);
+    expect(validateAuthenticationState({ status: "refreshing", identity: user, capabilities: {} }, "authentication", { levels: LEVELS })).toEqual([]);
+    expect(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: { breaks: true, lead: true as const } }, "authentication", { levels: LEVELS })).toEqual([]);
+    expect(validateAuthenticationState({ status: "expired" }, "authentication", { levels: LEVELS })).toEqual([]);
+    expect(validateAuthenticationState({ status: "expired", identity: user }, "authentication", { levels: LEVELS })).toEqual([]);
   });
 
   it.each([
@@ -1897,19 +1898,19 @@ describe("validateAuthenticationState", () => {
     ["an expiry on a refreshing state", { status: "refreshing", identity: user, expiresAt: "2026-08-21T10:00:00Z" }, "authentication.expiresAt.unexpected"],
     ["an expiry with no zone", { status: "authenticated", identity: user, expiresAt: "2026-08-21T10:00:00" }, "authentication.expiresAt"],
   ])("rejects %s", (_label, value, rule) => {
-    expect(rules(validateAuthenticationState(value))).toContain(rule);
-    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {} }))).not.toContain(rule);
+    expect(rules(validateAuthenticationState(value, "authentication", { levels: LEVELS }))).toContain(rule);
+    expect(rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities: {} }, "authentication", { levels: LEVELS }))).not.toContain(rule);
   });
 });
 
 describe("validateContact", () => {
   it("checks what is present rather than what is missing", () => {
     // Every field is optional, so an empty contact is legal.
-    expect(validateContact({})).toEqual([]);
-    expect(validateContact({ name: "Asha", number: "+91", email: "a@example.com" })).toEqual([]);
-    expect(rules(validateContact({ name: "  " }))).toContain("contact.name");
-    expect(rules(validateContact({ attributes: [{ key: "", value: "x" }] }))).toContain("attribute.key");
-    expect(rules(validateContact("Asha"))).toContain("contact.shape");
+    expect(validateContact({}, LEVELS)).toEqual([]);
+    expect(validateContact({ name: "Asha", number: "+91", email: "a@example.com" }, LEVELS)).toEqual([]);
+    expect(rules(validateContact({ name: "  " }, LEVELS))).toContain("contact.name");
+    expect(rules(validateContact({ attributes: [{ key: "", value: "x" }] }, LEVELS))).toContain("attribute.key");
+    expect(rules(validateContact("Asha", LEVELS))).toContain("contact.shape");
   });
 });
 
@@ -1921,9 +1922,9 @@ describe("the validators accept exactly what the contract publishes", () => {
     const reusing = (isolationScheme: unknown) =>
       task({ browsers: [{ id: "crm", name: "CRM", purpose: "Account", url: "https://crm.example.com", sharedSession: true, isolationScheme }] });
     for (const scheme of Object.values(BROWSER_ISOLATION_SCHEMES)) {
-      expect(rules(validateTask(reusing(scheme), { channel: "voice" }))).toEqual([]);
+      expect(rules(validateTask(reusing(scheme), { levels: LEVELS, channel: "voice" }))).toEqual([]);
     }
-    expect(rules(validateTask(reusing("ProviderName.Whatever"), { channel: "voice" }))).toContain("task.browser.isolationScheme");
+    expect(rules(validateTask(reusing("ProviderName.Whatever"), { levels: LEVELS, channel: "voice" }))).toContain("task.browser.isolationScheme");
   });
 
   it("every published break kind, and no unpublished one", () => {
@@ -1956,29 +1957,29 @@ describe("the wrap allowance follows the completion mode", () => {
   const voice = { channel: "voice" };
   it("may be omitted only where the provider will not act on it", () => {
     // A provider waiting for `complete` may leave the deadline open...
-    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: undefined }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: undefined }), { ...voice, levels: LEVELS }))).toEqual([]);
     // ...and one that completes the task itself must say when.
-    expect(rules(validateTask(task({ completionMode: "provider-automatic", wrapAllowance: undefined }), voice)))
+    expect(rules(validateTask(task({ completionMode: "provider-automatic", wrapAllowance: undefined }), { ...voice, levels: LEVELS })))
       .toContain("task.wrapAllowance.required");
     // The controls: stated, either mode is fine, and zero is a deadline of now, not an absence.
-    expect(rules(validateTask(task({ completionMode: "provider-automatic", wrapAllowance: 0 }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: 0 }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ completionMode: "provider-automatic", wrapAllowance: 0 }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: 0 }), { ...voice, levels: LEVELS }))).toEqual([]);
   });
 
   it("is still a duration when present, whatever the mode", () => {
-    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: 1.5 }), voice))).toContain("task.wrapAllowance");
-    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: "60" }), voice))).toContain("task.wrapAllowance");
+    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: 1.5 }), { ...voice, levels: LEVELS }))).toContain("task.wrapAllowance");
+    expect(rules(validateTask(task({ completionMode: "agent-command", wrapAllowance: "60" }), { ...voice, levels: LEVELS }))).toContain("task.wrapAllowance");
   });
 });
 
 describe("connectBack is a voice capability", () => {
   it("is accepted on voice and refused on every other channel, like the rest of the voice arm", () => {
-    expect(rules(validateTask(task({ capabilities: { connectBack: true } }), { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { connectBack: true } }), { levels: LEVELS, channel: "voice" }))).toEqual([]);
     for (const channel of ["chat", "email"]) {
-      expect(rules(validateTask(task({ channel, capabilities: { connectBack: true } }), { channel }))).toContain("task.capability.channel");
+      expect(rules(validateTask(task({ channel, capabilities: { connectBack: true } }), { levels: LEVELS, channel }))).toContain("task.capability.channel");
     }
     // Presence is the permission: the flag carries no payload.
-    expect(rules(validateTask(task({ capabilities: { connectBack: false } }), { channel: "voice" }))).toContain("task.capability.value");
+    expect(rules(validateTask(task({ capabilities: { connectBack: false } }), { levels: LEVELS, channel: "voice" }))).toContain("task.capability.value");
   });
 });
 
@@ -1989,19 +1990,19 @@ describe("a transfer is not a command", () => {
     // Help arrives by lead assist; the agent hands the call to nobody. The former controls are
     // unknown capabilities, the former role is not one, and a conference still dials a colleague in.
     for (const former of ["coldTransfer", "warmTransfer"]) {
-      expect(rules(validateTask(task({ capabilities: { [former]: { destinations: [{ id: "tier2", label: "Tier 2" }] } } }), voice))).toEqual(["task.capability.unknown"]);
+      expect(rules(validateTask(task({ capabilities: { [former]: { destinations: [{ id: "tier2", label: "Tier 2" }] } } }), { ...voice, levels: LEVELS }))).toEqual(["task.capability.unknown"]);
     }
-    expect(rules(validateTask(task({ capabilities: { conference: { destinations: [{ id: "tier2", label: "Tier 2" }] } } }), { ...voice, dialOutcomesDeclared: true }))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { conference: { destinations: [{ id: "tier2", label: "Tier 2" }] } } }), { levels: LEVELS, ...voice, dialOutcomesDeclared: true }))).toEqual([]);
     const conferenced = { role: "conferenced", destinationId: "tier2", label: "Tier 2", dialId: "dial-3", stage: "ringing", since };
-    expect(rules(validateTask(task({ onCall: [conferenced] }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ onCall: [{ ...conferenced, role: "consulted" }] }), voice))).toEqual(["task.onCall.role"]);
+    expect(rules(validateTask(task({ onCall: [conferenced] }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ onCall: [{ ...conferenced, role: "consulted" }] }), { ...voice, levels: LEVELS }))).toEqual(["task.onCall.role"]);
     // renamed away: the consultation folded into who is on the call; the old field is refused as unknown, not read.
-    expect(rules(validateTask(task({ consultation: { destinationId: "tier2" } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ consultation: { destinationId: "tier2" } }), { ...voice, levels: LEVELS }))).toEqual([]);
   });
 
   it("keeps the record of a transfer the platform made: the step and the total stay", () => {
     // A call changes hands on the platform's own routing; the record says so, and the agent commanded none of it.
-    expect(rules(validateTask(task({ history: { steps: [{ step: "transferred", at: since, destinationId: "tier2" }], transfers: 1 } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ history: { steps: [{ step: "transferred", at: since, destinationId: "tier2" }], transfers: 1 } }), { ...voice, levels: LEVELS }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" }))).toEqual(["command.type"]);
     expect(rules(validateTaskCommand({ type: "transfer", action: "complete" }))).toEqual(["command.type"]);
   });
@@ -2010,7 +2011,7 @@ describe("a transfer is not a command", () => {
 describe("who is on the call", () => {
   const voice = { channel: "voice" };
   const since = "2026-08-21T09:05:00Z";
-  const onCall = (entries: unknown) => rules(validateTask(task({ onCall: entries }), voice));
+  const onCall = (entries: unknown) => rules(validateTask(task({ onCall: entries }), { ...voice, levels: LEVELS }));
   const party = { role: "party", since };
   const agent = { role: "agent", userId: "A-1", since };
   const conferenced = { role: "conferenced", destinationId: "tier2", dialId: "dial-7f2", label: "Tier 2", stage: "joined", since };
@@ -2019,12 +2020,12 @@ describe("who is on the call", () => {
     // The last word about a call must not stay true for ever: a completing task, or one whose audio
     // ended, carries nobody on the call. Empty and absent both say so.
     const live = [party, agent];
-    expect(rules(validateTask(task({ onCall: live }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ phase: "completing", onCall: live }), voice))).toEqual(["task.onCall.ended"]);
-    expect(rules(validateTask(task({ audio: "ended", onCall: live }), voice))).toEqual(["task.onCall.ended"]);
-    expect(rules(validateTask(task({ phase: "completing", onCall: [] }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ phase: "completing" }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ audio: "started", onCall: live }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ onCall: live }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: live }), { ...voice, levels: LEVELS }))).toEqual(["task.onCall.ended"]);
+    expect(rules(validateTask(task({ audio: "ended", onCall: live }), { ...voice, levels: LEVELS }))).toEqual(["task.onCall.ended"]);
+    expect(rules(validateTask(task({ phase: "completing", onCall: [] }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ phase: "completing" }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ audio: "started", onCall: live }), { ...voice, levels: LEVELS }))).toEqual([]);
   });
 
   it("states each role with what that role needs, and refuses what another role would carry", () => {
@@ -2101,7 +2102,7 @@ describe("every dial has an outcome", () => {
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { conference: { lockedBy: "team" } } })] }), manifest()))).toEqual(["task.capability.dialOutcomes.required"]);
     expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { hold: true } })] }), manifest()))).toEqual([]);
     // Without a manifest to ask, the question is not asked.
-    expect(rules(validateTask(task({ capabilities: { conference: { destinations: [{ id: "tier2", label: "Tier 2" }] } } }), voice))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { conference: { destinations: [{ id: "tier2", label: "Tier 2" }] } } }), { ...voice, levels: LEVELS }))).toEqual([]);
   });
 
   it("carries the outcome once the manifest declared it, against a task or none, with the switch's words", () => {
@@ -2144,7 +2145,7 @@ describe("every dial has an outcome", () => {
   });
 
   it("lets a step that dialled say which dial and where, and no other step", () => {
-    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ history: { steps: [{ at: "2026-08-21T09:00:00Z", by: "A-1", ...entry }] } }), voice));
+    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ history: { steps: [{ at: "2026-08-21T09:00:00Z", by: "A-1", ...entry }] } }), { ...voice, levels: LEVELS }));
     for (const dialled of ["transferred", "conferenced", "unanswered"]) {
       expect(step({ step: dialled, dialId: "dial-7f2", destinationId: "tier2" })).toEqual([]);
       expect(step({ step: dialled, destinationId: "tier2" })).toEqual([]);
@@ -2159,22 +2160,22 @@ describe("every dial has an outcome", () => {
 describe("consulting a lead", () => {
   const voice = { channel: "voice" };
   it("is its own voice capability", () => {
-    expect(rules(validateTask(task({ capabilities: { leadAssist: true } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ capabilities: { leadAssist: false } }), voice))).toContain("task.capability.value");
+    expect(rules(validateTask(task({ capabilities: { leadAssist: true } }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ capabilities: { leadAssist: false } }), { ...voice, levels: LEVELS }))).toContain("task.capability.value");
     for (const channel of ["chat", "email"]) {
-      expect(rules(validateTask(task({ channel, capabilities: { leadAssist: true } }), { channel }))).toContain("task.capability.channel");
+      expect(rules(validateTask(task({ channel, capabilities: { leadAssist: true } }), { levels: LEVELS, channel }))).toContain("task.capability.channel");
     }
   });
 
   it("carries the request on the agent's task: requested names nobody, joined names the lead", () => {
     const since = "2026-08-21T09:04:00Z";
-    expect(rules(validateTask(task({ leadAssist: { stage: "requested", note: "Refund dispute", since } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ leadAssist: { stage: "joined", leadId: "L-9", since } }), voice))).toEqual([]);
-    expect(rules(validateTask(task({ leadAssist: { stage: "joined", since } }), voice))).toContain("task.leadAssist.leadId");
-    expect(rules(validateTask(task({ leadAssist: { stage: "requested", leadId: "L-9", since } }), voice))).toContain("task.leadAssist.leadId.unexpected");
-    expect(rules(validateTask(task({ leadAssist: { stage: "declined", since } }), voice))).toContain("task.leadAssist.stage");
-    expect(rules(validateTask(task({ leadAssist: { stage: "requested" } }), voice))).toContain("task.leadAssist.since");
-    expect(rules(validateTask(task({ channel: "chat", capabilities: {}, leadAssist: { stage: "requested", since } }), { channel: "chat" })))
+    expect(rules(validateTask(task({ leadAssist: { stage: "requested", note: "Refund dispute", since } }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ leadAssist: { stage: "joined", leadId: "L-9", since } }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ leadAssist: { stage: "joined", since } }), { ...voice, levels: LEVELS }))).toContain("task.leadAssist.leadId");
+    expect(rules(validateTask(task({ leadAssist: { stage: "requested", leadId: "L-9", since } }), { ...voice, levels: LEVELS }))).toContain("task.leadAssist.leadId.unexpected");
+    expect(rules(validateTask(task({ leadAssist: { stage: "declined", since } }), { ...voice, levels: LEVELS }))).toContain("task.leadAssist.stage");
+    expect(rules(validateTask(task({ leadAssist: { stage: "requested" } }), { ...voice, levels: LEVELS }))).toContain("task.leadAssist.since");
+    expect(rules(validateTask(task({ channel: "chat", capabilities: {}, leadAssist: { stage: "requested", since } }), { levels: LEVELS, channel: "chat" })))
       .toContain("task.leadAssist.channel");
   });
 
@@ -2185,23 +2186,23 @@ describe("consulting a lead", () => {
     const asking = (over: Record<string, unknown> = {}) => [{ id: "A-1", availability: "on-task", request: { ...request, ...over } }];
     const lead = { capabilities: { lead: true as const } };
     const agent = { capabilities: {} };
-    expect(rules(validateTeamMembers({ members: asking() }, "team", lead))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: asking() }, "team", { ...lead, levels: LEVELS }))).toEqual([]);
     // Nobody asking is absence: no request on the member, and no list to keep empty.
-    expect(rules(validateTeamMembers({ members: [{ id: "A-1", availability: "on-task" }] }, "team", lead))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-1", availability: "on-task" }] }, "team", { ...lead, levels: LEVELS }))).toEqual([]);
     // The login is the permission: nothing of the team reaches an agent who does not lead.
-    expect(rules(validateTeamMembers({ members: asking() }, "team", agent))).toEqual(["team.unentitled"]);
+    expect(rules(validateTeamMembers({ members: asking() }, "team", { ...agent, levels: LEVELS }))).toEqual(["team.unentitled"]);
     // Through the snapshot, the path adapters actually take.
     expect(rules(validateSnapshot(snapshot({ team: { members: asking() } }), manifest(), "snapshot", { ...lead, leadFeatures: true }))).toEqual([]);
     expect(rules(validateSnapshot(snapshot({ team: { members: asking() } }), manifest(), "snapshot", agent))).toEqual(["team.unentitled"]);
     // The request names one of the member's calls, where the list shows them.
-    expect(rules(validateTeamMembers({ members: [{ ...asking()[0], tasks: [trimmed] }] }, "team", lead))).toEqual([]);
-    expect(rules(validateTeamMembers({ members: [{ ...asking({ assignmentId: "alloc-43" })[0], tasks: [trimmed] }] }, "team", lead))).toEqual(["team.member.request.assignment"]);
-    expect(rules(validateTeamMembers({ members: asking({ assignmentId: "" }) }, "team", lead))).toEqual(["team.member.request.assignmentId"]);
-    expect(rules(validateTeamMembers({ members: asking({ since: "now" }) }, "team", lead))).toEqual(["team.member.request.since"]);
-    expect(rules(validateTeamMembers({ members: asking({ note: "" }) }, "team", lead))).toEqual(["team.member.request.note"]);
-    expect(rules(validateTeamMembers({ members: [{ id: "A-1", availability: "on-task", request: "help" }] }, "team", lead))).toEqual(["team.member.request.shape"]);
+    expect(rules(validateTeamMembers({ members: [{ ...asking()[0], tasks: [trimmed] }] }, "team", { ...lead, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ ...asking({ assignmentId: "alloc-43" })[0], tasks: [trimmed] }] }, "team", { ...lead, levels: LEVELS }))).toEqual(["team.member.request.assignment"]);
+    expect(rules(validateTeamMembers({ members: asking({ assignmentId: "" }) }, "team", { ...lead, levels: LEVELS }))).toEqual(["team.member.request.assignmentId"]);
+    expect(rules(validateTeamMembers({ members: asking({ since: "now" }) }, "team", { ...lead, levels: LEVELS }))).toEqual(["team.member.request.since"]);
+    expect(rules(validateTeamMembers({ members: asking({ note: "" }) }, "team", { ...lead, levels: LEVELS }))).toEqual(["team.member.request.note"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-1", availability: "on-task", request: "help" }] }, "team", { ...lead, levels: LEVELS }))).toEqual(["team.member.request.shape"]);
     // The lead's join and decline answer the member's own request, and no other member's.
-    const context = { authentication: { status: "authenticated", identity: { id: "L-9", displayName: "Lead", timeZone: "Asia/Kolkata" }, capabilities: { lead: true } }, transport: "active", team: { members: asking() } };
+    const context = { authentication: { status: "authenticated", identity: { id: "L-9", displayName: "Lead", timeZone: "Asia/Kolkata" }, capabilities: { lead: true } }, transport: "active", levels: LEVELS, team: { members: asking() } };
     expect(rules(validateTeamCommand({ command: { type: "join", memberId: "A-1" } }, context))).toEqual([]);
     expect(rules(validateTeamCommand({ command: { type: "decline", memberId: "A-1", assignmentId: "alloc-42" } }, context))).toEqual([]);
     expect(rules(validateTeamCommand({ command: { type: "join", memberId: "A-1" } }, { ...context, team: { members: [{ id: "A-1", availability: "on-task" }] } }))).toEqual(["team.command.request"]);
@@ -2219,7 +2220,7 @@ describe("consulting a lead", () => {
 describe("validateTaskCommand", () => {
   const voice = task({ capabilities: { hold: true, endCall: true, recording: { provider: { start: true } }, conference: { destinations: [{ id: "tier2", label: "Tier 2" }] }, schedule: true } });
   const since = "2026-08-21T09:05:00Z";
-  const cmd = (command: unknown, on: unknown = voice) => rules(validateTaskCommand(command, on));
+  const cmd = (command: unknown, on: unknown = voice) => rules(validateTaskCommand(command, on, "command", { levels: LEVELS }));
 
   it("checks a command's own shape with or without a task", () => {
     expect(rules(validateTaskCommand({ type: "hold" }))).toEqual([]);
@@ -2229,7 +2230,7 @@ describe("validateTaskCommand", () => {
     expect(rules(validateTaskCommand({ type: "custom", name: "" }))).toEqual(["command.custom.name"]);
     // The microphone is the host's: there is no mute command for a provider, on any channel.
     expect(rules(validateTaskCommand({ type: "mute", muted: true }))).toEqual(["command.type"]);
-    expect(rules(validateTaskCommand({ type: "mute", muted: true }, voice))).toEqual(["command.type"]);
+    expect(rules(validateTaskCommand({ type: "mute", muted: true }, voice, "command", { levels: LEVELS }))).toEqual(["command.type"]);
     expect(rules(validateTaskCommand({ type: "dial", dialId: "dial-1" }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "dial" }))).toEqual(["command.dial.dialId"]);
     expect(rules(validateTaskCommand({ type: "connect-back" }))).toEqual(["command.connectBack.dialId"]);
@@ -2240,8 +2241,8 @@ describe("validateTaskCommand", () => {
     expect(rules(validateTaskCommand({ type: "schedule", at: "tomorrow" }))).toEqual(["command.schedule.at"]);
     expect(rules(validateTaskCommand({ type: "schedule", at: since, note: "" }))).toEqual(["command.schedule.note"]);
     expect(rules(validateTaskCommand({ type: "schedule", at: since, dialId: "dial-2" }))).toEqual(["command.field"]);
-    expect(rules(validateTaskCommand({ type: "schedule", at: since }, task({ channel: "chat", capabilities: { schedule: true } })))).toEqual([]);
-    expect(rules(validateTaskCommand({ type: "schedule", at: since }, task({ channel: "email", capabilities: { schedule: true }, phase: "completing" })))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "schedule", at: since }, task({ channel: "chat", capabilities: { schedule: true } }), "command", { levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTaskCommand({ type: "schedule", at: since }, task({ channel: "email", capabilities: { schedule: true }, phase: "completing" }), "command", { levels: LEVELS }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "conference", action: "add", destinationId: "tier2" }))).toEqual(["command.conference.dialId"]);
     expect(rules(validateTaskCommand({ type: "conference", action: "remove", party: true }))).toEqual([]);
@@ -2300,8 +2301,8 @@ describe("validateTaskCommand", () => {
     const published = task({ capabilities: { custom } });
     expect(cmd({ type: "custom", name: "flag" }, published)).toEqual([]);
     expect(cmd({ type: "custom", name: "flag" }, { capabilities: { custom } })).toEqual(["command.task"]);
-    expect(rules(validateTaskCommand({ type: "custom", name: "flag" }, null))).toEqual(["command.task"]);
-    expect(rules(validateTaskCommand({ type: "hold" }, null))).toEqual(["command.task"]);
+    expect(rules(validateTaskCommand({ type: "custom", name: "flag" }, null, "command", { levels: LEVELS }))).toEqual(["command.task"]);
+    expect(rules(validateTaskCommand({ type: "hold" }, null, "command", { levels: LEVELS }))).toEqual(["command.task"]);
   });
 
   it("requires a custom toggle's target state and only requires declared mandatory fields", () => {
@@ -2429,7 +2430,7 @@ describe("an authentication refusal", () => {
     const field = { name: "username", label: "Username", type: "text", required: true, autocomplete: "username" };
     const credentials = { flowId: "flow-1", method: "credentials", fields: [field] };
     const sso = { flowId: "flow-2", method: "browser-sso", authorizationUrl: "https://identity.example.com/authorize", browser: "system" };
-    const check = (challenge: unknown) => rules(validateAuthenticationResult({ status: "interaction-required", challenge }, "start"));
+    const check = (challenge: unknown) => rules(validateAuthenticationResult({ status: "interaction-required", challenge }, "start", "result", { levels: LEVELS }));
     expect(check(credentials)).toEqual([]);
     expect(check(sso)).toEqual([]);
     expect(check({ ...sso, browser: "omni" })).toEqual([]);
@@ -2444,9 +2445,9 @@ describe("an authentication refusal", () => {
     expect(check({ ...credentials, fields: [field, field] })).toEqual(["authentication.challenge.field.unique"]);
     expect(check({ ...sso, authorizationUrl: "" })).toEqual(["authentication.challenge.authorizationUrl"]);
     expect(check({ ...sso, browser: "external" })).toEqual(["authentication.challenge.browser"]);
-    expect(rules(validateAuthenticationResult({ status: "interaction-required", challenge: credentials, failure: refusal }, "start"))).toEqual(["authentication.failure.unexpected"]);
-    expect(rules(validateAuthenticationResult({ status: "rejected", failure: refusal, challenge: credentials }, "start"))).toEqual(["authentication.challenge.unexpected"]);
-    const violations = validateAuthenticationResult({ status: "interaction-required", challenge: { ...credentials, fields: [{ ...field, type: false }] } }, "start", "login.start");
+    expect(rules(validateAuthenticationResult({ status: "interaction-required", challenge: credentials, failure: refusal }, "start", "result", { levels: LEVELS }))).toEqual(["authentication.failure.unexpected"]);
+    expect(rules(validateAuthenticationResult({ status: "rejected", failure: refusal, challenge: credentials }, "start", "result", { levels: LEVELS }))).toEqual(["authentication.challenge.unexpected"]);
+    const violations = validateAuthenticationResult({ status: "interaction-required", challenge: { ...credentials, fields: [{ ...field, type: false }] } }, "start", "login.start", { levels: LEVELS });
     expect(violations[0]?.path).toBe("login.start.challenge.fields[0].type");
   });
   it("requires a finite non-negative retry delay", () => {
@@ -2469,15 +2470,15 @@ describe("an authentication refusal", () => {
   });
 
   it("holds start and complete to their answers", () => {
-    expect(rules(validateAuthenticationResult({ status: "rejected", failure: refusal }, "start"))).toEqual([]);
-    expect(rules(validateAuthenticationResult({ status: "rejected", failure: refusal }, "complete"))).toEqual([]);
-    expect(rules(validateAuthenticationResult({ status: "rejected", failure: { ...refusal, retryable: true } }, "start"))).toEqual(["authentication.failure.phone.retryable"]);
-    expect(rules(validateAuthenticationResult({ status: "interaction-required", challenge: { flowId: "f1", method: "credentials", fields: [] } }, "start"))).toEqual([]);
-    expect(rules(validateAuthenticationResult({ status: "interaction-required" }, "start"))).toEqual(["authentication.result.challenge"]);
-    expect(rules(validateAuthenticationResult({ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" }, capabilities: {} }, "complete"))).toEqual([]);
-    expect(rules(validateAuthenticationResult({ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao" }, capabilities: {} }, "complete"))).toEqual(["authentication.identity.timeZone"]);
-    expect(rules(validateAuthenticationResult({ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" }, capabilities: {} }, "start"))).toEqual(["authentication.result.status"]);
-    expect(rules(validateAuthenticationResult("ok", "start"))).toEqual(["authentication.result.shape"]);
+    expect(rules(validateAuthenticationResult({ status: "rejected", failure: refusal }, "start", "result", { levels: LEVELS }))).toEqual([]);
+    expect(rules(validateAuthenticationResult({ status: "rejected", failure: refusal }, "complete", "result", { levels: LEVELS }))).toEqual([]);
+    expect(rules(validateAuthenticationResult({ status: "rejected", failure: { ...refusal, retryable: true } }, "start", "result", { levels: LEVELS }))).toEqual(["authentication.failure.phone.retryable"]);
+    expect(rules(validateAuthenticationResult({ status: "interaction-required", challenge: { flowId: "f1", method: "credentials", fields: [] } }, "start", "result", { levels: LEVELS }))).toEqual([]);
+    expect(rules(validateAuthenticationResult({ status: "interaction-required" }, "start", "result", { levels: LEVELS }))).toEqual(["authentication.result.challenge"]);
+    expect(rules(validateAuthenticationResult({ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" }, capabilities: {} }, "complete", "result", { levels: LEVELS }))).toEqual([]);
+    expect(rules(validateAuthenticationResult({ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao" }, capabilities: {} }, "complete", "result", { levels: LEVELS }))).toEqual(["authentication.identity.timeZone"]);
+    expect(rules(validateAuthenticationResult({ status: "authenticated", identity: { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" }, capabilities: {} }, "start", "result", { levels: LEVELS }))).toEqual(["authentication.result.status"]);
+    expect(rules(validateAuthenticationResult("ok", "start", "result", { levels: LEVELS }))).toEqual(["authentication.result.shape"]);
   });
 });
 
@@ -2510,7 +2511,7 @@ describe("how the agent hears the call", () => {
 describe("the agent's day", () => {
   const user = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
   const identity = (timeZone: unknown) =>
-    rules(validateAuthenticationState({ status: "authenticated", identity: { ...user, timeZone }, capabilities: {}, expiresAt: "2026-08-21T12:00:00Z" }));
+    rules(validateAuthenticationState({ status: "authenticated", identity: { ...user, timeZone }, capabilities: {}, expiresAt: "2026-08-21T12:00:00Z" }, "authentication", { levels: LEVELS }));
 
   it("carries an IANA zone on every identity, never absent", () => {
     expect(identity("Asia/Kolkata")).toEqual([]);
@@ -2557,9 +2558,9 @@ describe("preview: the agent presses Call", () => {
   const preview = (over: Record<string, unknown> = {}) => task({ capabilities: {}, phase: "preview", ...over });
 
   it("is a voice phase, and a dial the manifest must have an outcome for", () => {
-    expect(rules(validateTask(preview(), voice))).toEqual([]);
+    expect(rules(validateTask(preview(), { ...voice, levels: LEVELS }))).toEqual([]);
     for (const channel of ["chat", "email"]) {
-      expect(rules(validateTask(preview({ channel }), { channel }))).toEqual(["task.phase.channel"]);
+      expect(rules(validateTask(preview({ channel }), { levels: LEVELS, channel }))).toEqual(["task.phase.channel"]);
     }
     const dialling = manifest({ dialOutcomes: ["answered", "no-answer"] });
     expect(rules(validateSnapshot(snapshot({ tasks: [preview()] }), dialling))).toEqual([]);
@@ -2569,9 +2570,9 @@ describe("preview: the agent presses Call", () => {
   });
 
   it("carries the deadline and what happens at it together, and only while previewing", () => {
-    expect(rules(validateTask(preview({ previewEndsInSeconds: 120, atDeadline: "provider-dials" }), voice))).toEqual([]);
+    expect(rules(validateTask(preview({ previewEndsInSeconds: 120, atDeadline: "provider-dials" }), { ...voice, levels: LEVELS }))).toEqual([]);
     // The wrap left travels with the completing task the same way, wherever an allowance was stated.
-    const wrapping = (over: Record<string, unknown>) => rules(validateTask(task({ phase: "completing", audio: "ended", onCall: [], completionMode: "provider-automatic", wrapAllowance: 60, ...over }), voice));
+    const wrapping = (over: Record<string, unknown>) => rules(validateTask(task({ phase: "completing", audio: "ended", onCall: [], completionMode: "provider-automatic", wrapAllowance: 60, ...over }), { ...voice, levels: LEVELS }));
     expect(wrapping({ wrapEndsInSeconds: 20 })).toEqual([]);
     expect(wrapping({ wrapEndsInSeconds: 0 })).toEqual([]);
     expect(wrapping({ wrapEndsInSeconds: undefined })).toEqual(["task.completing.wrapEndsInSeconds.required"]);
@@ -2579,16 +2580,16 @@ describe("preview: the agent presses Call", () => {
     expect(wrapping({ completionMode: "agent-command", wrapAllowance: 120, wrapEndsInSeconds: 0 })).toEqual([]);
     expect(wrapping({ completionMode: "agent-command", wrapAllowance: undefined })).toEqual([]);
     expect(wrapping({ completionMode: "agent-command", wrapAllowance: undefined, wrapEndsInSeconds: 5 })).toEqual(["task.completing.wrapEndsInSeconds.unexpected"]);
-    expect(rules(validateTask(task({ phase: "in-progress", completionMode: "provider-automatic", wrapAllowance: 60, wrapEndsInSeconds: 60 }), voice))).toEqual(["task.completing.wrapEndsInSeconds.unexpected"]);
-    expect(rules(validateTask(preview({ previewEndsInSeconds: 0, atDeadline: "waits" }), voice))).toEqual([]);
-    expect(rules(validateTask(preview({ previewEndsInSeconds: 120 }), voice))).toEqual(["task.preview.atDeadline.required"]);
-    expect(rules(validateTask(preview({ atDeadline: "provider-dials" }), voice))).toEqual(["task.preview.previewEndsInSeconds.required"]);
+    expect(rules(validateTask(task({ phase: "in-progress", completionMode: "provider-automatic", wrapAllowance: 60, wrapEndsInSeconds: 60 }), { ...voice, levels: LEVELS }))).toEqual(["task.completing.wrapEndsInSeconds.unexpected"]);
+    expect(rules(validateTask(preview({ previewEndsInSeconds: 0, atDeadline: "waits" }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(preview({ previewEndsInSeconds: 120 }), { ...voice, levels: LEVELS }))).toEqual(["task.preview.atDeadline.required"]);
+    expect(rules(validateTask(preview({ atDeadline: "provider-dials" }), { ...voice, levels: LEVELS }))).toEqual(["task.preview.previewEndsInSeconds.required"]);
     // Seconds left from this publication, whole and not negative: never an instant to compare clocks against.
-    for (const bad of ["soon", at, 1.5, -1]) expect(rules(validateTask(preview({ previewEndsInSeconds: bad, atDeadline: "provider-dials" }), voice))).toEqual(["task.preview.previewEndsInSeconds"]);
-    expect(rules(validateTask(preview({ previewEndsInSeconds: 120, atDeadline: "dials" }), voice))).toEqual(["task.preview.atDeadline"]);
-    expect(rules(validateTask(task({ phase: "in-progress", previewEndsInSeconds: 120, atDeadline: "provider-dials" }), voice))).toEqual(["task.preview.deadline.unexpected"]);
+    for (const bad of ["soon", at, 1.5, -1]) expect(rules(validateTask(preview({ previewEndsInSeconds: bad, atDeadline: "provider-dials" }), { ...voice, levels: LEVELS }))).toEqual(["task.preview.previewEndsInSeconds"]);
+    expect(rules(validateTask(preview({ previewEndsInSeconds: 120, atDeadline: "dials" }), { ...voice, levels: LEVELS }))).toEqual(["task.preview.atDeadline"]);
+    expect(rules(validateTask(task({ phase: "in-progress", previewEndsInSeconds: 120, atDeadline: "provider-dials" }), { ...voice, levels: LEVELS }))).toEqual(["task.preview.deadline.unexpected"]);
     // No deadline at all: the agent has as long as they need.
-    expect(rules(validateTask(preview(), voice))).toEqual([]);
+    expect(rules(validateTask(preview(), { ...voice, levels: LEVELS }))).toEqual([]);
   });
 });
 
@@ -2596,7 +2597,7 @@ describe("the lead surface", () => {
   const user = { id: "L-9", displayName: "Lead", timeZone: "Asia/Kolkata" };
   const lead = { capabilities: { lead: true as const } };
   const login = (capabilities: unknown) =>
-    rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities, expiresAt: "2026-08-21T12:00:00Z" }));
+    rules(validateAuthenticationState({ status: "authenticated", identity: user, capabilities, expiresAt: "2026-08-21T12:00:00Z" }, "authentication", { levels: LEVELS }));
 
   it("is one flag on the login, with no per-action permission beside it", () => {
     expect(login({ lead: true as const })).toEqual([]);
@@ -2636,7 +2637,7 @@ describe("the lead surface", () => {
 
   it("has no team audio: the lead's audio follows listening on the member, and the former events are unknown", () => {
     const at = "2026-08-21T09:04:00Z";
-    const on = (members: unknown[]) => rules(validateTeamMembers({ members }, "team", lead));
+    const on = (members: unknown[]) => rules(validateTeamMembers({ members }, "team", { ...lead, levels: LEVELS }));
     // The provider's word that the lead's audio is up is `listening` on the member, naming the call to open.
     expect(on([{ id: "A-2", availability: "on-task", listening: [{ leadId: "L-9", assignmentId: "alloc-42", mode: "listen", since: at }] }])).toEqual([]);
     for (const type of ["team-audio-started", "team-audio-ended", "team-media-started"]) {
@@ -2665,7 +2666,7 @@ describe("protocol-version interoperability", () => {
 
 describe("validateTask capabilitySource", () => {
   const voice = { channel: "voice" };
-  const rules = (t: unknown) => validateTask(t, voice).map(v => v.rule);
+  const rules = (t: unknown) => validateTask(t, { ...voice, levels: LEVELS }).map(v => v.rule);
 
   it("requires the task to say where its capabilities came from, and closes the set", () => {
     for (const source of ["queue", "dialer", "nobody", "not-yet-read"]) expect(rules(task({ capabilitySource: source }))).toEqual([]);
@@ -2686,25 +2687,25 @@ describe("validateTask capabilitySource", () => {
 describe("history and assignment API migration", () => {
   it("rejects former task history fields instead of silently ignoring their facts", () => {
     const history = { steps: [], interactionSeconds: 12 };
-    expect(validateTask(task({ history: history }), { channel: "voice" })).toEqual([]);
+    expect(validateTask(task({ history: history }), { levels: LEVELS, channel: "voice" })).toEqual([]);
     for (const former of ["handlingHistory", "interactionHistory"]) {
       for (const value of [undefined, history]) {
-        expect(rules(validateTask(task({ [former]: value, history }), { channel: "voice" })), former)
+        expect(rules(validateTask(task({ [former]: value, history }), { levels: LEVELS, channel: "voice" })), former)
           .toContain("task.history.renamed");
       }
     }
-    expect(rules(validateTask(task({ history: { ...history, handleSeconds: 12 } }), { channel: "voice" })))
+    expect(rules(validateTask(task({ history: { ...history, handleSeconds: 12 } }), { levels: LEVELS, channel: "voice" })))
       .toContain("task.history.interactionSeconds.renamed");
   });
 
   it("rejects a task naming its life as an allocation, beside one naming it as an assignment", () => {
     const named = task({});
-    expect(rules(validateTask(named, { channel: "voice" }))).toEqual([]);
+    expect(rules(validateTask(named, { levels: LEVELS, channel: "voice" }))).toEqual([]);
     // renamed away: the offer's life is an assignment, and the old word is refused even beside the new one.
-    expect(rules(validateTask({ ...named, allocationId: named.assignmentId }, { channel: "voice" })))
+    expect(rules(validateTask({ ...named, allocationId: named.assignmentId }, { levels: LEVELS, channel: "voice" })))
       .toEqual(["task.assignmentId.renamed"]);
     const { assignmentId, ...unnamed } = named;
-    expect(rules(validateTask({ ...unnamed, allocationId: assignmentId }, { channel: "voice" })))
+    expect(rules(validateTask({ ...unnamed, allocationId: assignmentId }, { levels: LEVELS, channel: "voice" })))
       .toEqual(["task.assignmentId.renamed", "task.assignmentId"]);
   });
 
@@ -2724,14 +2725,14 @@ describe("outcome API migration", () => {
     const outcomes = { required: true, codes: [{ id: "resolved", label: "Resolved" }] };
     for (const channel of ["voice", "chat", "email"] as const) {
       const current = task({ channel, phase: "completing", capabilities: { outcomes } });
-      expect(validateTask(current, { channel })).toEqual([]);
-      expect(validateTaskCommand({ type: "complete", outcome: "resolved" }, current)).toEqual([]);
+      expect(validateTask(current, { levels: LEVELS, channel })).toEqual([]);
+      expect(validateTaskCommand({ type: "complete", outcome: "resolved" }, current, "command", { levels: LEVELS })).toEqual([]);
       for (const capabilities of [{ dispositions: outcomes }, { dispositions: outcomes, outcomes }]) {
-        expect(rules(validateTask(task({ channel, phase: "completing", capabilities }), { channel })))
+        expect(rules(validateTask(task({ channel, phase: "completing", capabilities }), { levels: LEVELS, channel })))
           .toContain("task.capability.unknown");
       }
       for (const command of [{ type: "complete", disposition: "resolved" }, { type: "complete", disposition: "resolved", outcome: "resolved" }]) {
-        expect(rules(validateTaskCommand(command, current))).toContain("command.field");
+        expect(rules(validateTaskCommand(command, current, "command", { levels: LEVELS }))).toContain("command.field");
       }
     }
   });
@@ -2748,14 +2749,14 @@ describe("validateNextCall, validateLinedUp and validatePhoneState, each on its 
   });
   it("takes a call lined up in the agent's own queue, its caller held to the same contact rules", () => {
     const lined = { party: { name: "Priya S" }, queue: "Billing", queuedSince: at, since: at, release: true };
-    expect(validateLinedUp(lined)).toEqual([]);
-    expect(validateLinedUp({ since: at })).toEqual([]);
-    expect(rules(validateLinedUp({ ...lined, release: false }))).toEqual(["linedUp.release"]);
-    expect(rules(validateLinedUp({ ...lined, queue: "" }))).toEqual(["linedUp.queue"]);
-    expect(rules(validateLinedUp({ ...lined, since: undefined }))).toEqual(["linedUp.since"]);
-    expect(rules(validateLinedUp({ ...lined, ringing: true }))).toEqual(["linedUp.field"]);
-    expect(rules(validateLinedUp({ ...lined, party: { name: "" } }))).toContain("contact.name");
-    expect(rules(validateLinedUp(null))).toEqual(["linedUp.shape"]);
+    expect(validateLinedUp(lined, LEVELS)).toEqual([]);
+    expect(validateLinedUp({ since: at }, LEVELS)).toEqual([]);
+    expect(rules(validateLinedUp({ ...lined, release: false }, LEVELS))).toEqual(["linedUp.release"]);
+    expect(rules(validateLinedUp({ ...lined, queue: "" }, LEVELS))).toEqual(["linedUp.queue"]);
+    expect(rules(validateLinedUp({ ...lined, since: undefined }, LEVELS))).toEqual(["linedUp.since"]);
+    expect(rules(validateLinedUp({ ...lined, ringing: true }, LEVELS))).toEqual(["linedUp.field"]);
+    expect(rules(validateLinedUp({ ...lined, party: { name: "" } }, LEVELS))).toContain("contact.name");
+    expect(rules(validateLinedUp(null, LEVELS))).toEqual(["linedUp.shape"]);
   });
   it("takes the phone as the platform sees it", () => {
     expect(validatePhoneState({ phone: "hardphone", status: "ready", channels: [] })).toEqual([]);
@@ -2768,7 +2769,7 @@ describe("validateNextCall, validateLinedUp and validatePhoneState, each on its 
 
 describe("every refusal of the wrong shape names its rule", () => {
   // One row per guard: the input with the field broken, the same input with it whole, and the rule the broken one must name.
-  const t = (over: Record<string, unknown>) => validateTask(task(over), { channel: "voice" });
+  const t = (over: Record<string, unknown>) => validateTask(task(over), { levels: LEVELS, channel: "voice" });
   const m = (over: Record<string, unknown>) => validateManifest(manifest(over));
   const snap = (over: Record<string, unknown>) => validateSnapshot(snapshot(over), manifest({ idleCapabilities: { contacts: true, calendar: true } }));
   const ev = (event: Record<string, unknown>) => validateEventEnvelope(envelope(event), manifest({ idleCapabilities: { calendar: true } }));
@@ -2776,9 +2777,9 @@ describe("every refusal of the wrong shape names its rule", () => {
   const summary = { title: "Voice", waitingCount: 0, updatedAt: at, metrics: [] };
   const breakOn = { status: "on-break", canRequestBreak: false, activeReasonId: "lunch", reasons: [{ id: "lunch", label: "Lunch", kind: "meal" }] };
   const rows: [string, () => ProtocolViolation[], () => ProtocolViolation[], string][] = [
-    ["contact attributes", () => validateContact({ name: "A", attributes: "x" }), () => validateContact({ name: "A", attributes: [] }), "attributes.shape"],
-    ["contact attribute", () => validateContact({ name: "A", attributes: ["x"] }), () => validateContact({ name: "A", attributes: [] }), "attribute.shape"],
-    ["scheduled activity", () => validateScheduledActivity("x"), () => validateScheduledActivity({ id: "cb-1", title: "Follow-up", startsAt: at, endsAt: at }), "activity.shape"],
+    ["contact attributes", () => validateContact({ name: "A", attributes: "x" }, LEVELS), () => validateContact({ name: "A", attributes: [] }, LEVELS), "attributes.shape"],
+    ["contact attribute", () => validateContact({ name: "A", attributes: ["x"] }, LEVELS), () => validateContact({ name: "A", attributes: [] }, LEVELS), "attribute.shape"],
+    ["scheduled activity", () => validateScheduledActivity("x", LEVELS), () => validateScheduledActivity({ id: "cb-1", title: "Follow-up", startsAt: at, endsAt: at }, LEVELS), "activity.shape"],
     ["idle capabilities", () => m({ idleCapabilities: "x" }), () => m({ idleCapabilities: { contacts: true } }), "manifest.idleCapabilities.shape"],
     ["personal browser", () => m({ idleCapabilities: { personalBrowser: "x" } }), () => m({ idleCapabilities: {} }), "manifest.personalBrowser.shape"],
     ["personal browser list", () => m({ idleCapabilities: { personalBrowser: { access: { mode: "allow-list", allowList: "x" } } } }),
@@ -2800,7 +2801,7 @@ describe("every refusal of the wrong shape names its rule", () => {
     ["forced break", () => snap({ break: { ...breakOn, forced: "x" } }), () => snap({ break: breakOn }), "break.forced.shape"],
     ["break reasons", () => snap({ break: { status: "not-requested", canRequestBreak: true, reasons: "x" } }), () => snap({}), "break.reasons.shape"],
     ["break reason", () => snap({ break: { status: "not-requested", canRequestBreak: true, reasons: ["x"] } }), () => snap({}), "break.reason.shape"],
-    ["team", () => validateTeamMembers("x"), () => validateTeamMembers({ members: [] }), "team.shape"],
+    ["team", () => validateTeamMembers("x", "team", { levels: LEVELS }), () => validateTeamMembers({ members: [] }, "team", { levels: LEVELS }), "team.shape"],
     ["snapshot contacts", () => snap({ contacts: "x" }), () => snap({ contacts: [] }), "snapshot.contacts.shape"],
     ["snapshot calendar", () => snap({ calendar: "x" }), () => snap({ calendar: [] }), "snapshot.calendar.shape"],
     ["task-ended outcome", () => ev({ type: "task-ended", assignmentId: "alloc-42", outcome: "x" }), () => ev({ type: "task-ended", assignmentId: "alloc-42", outcome: { type: "completed", by: "agent" } }), "event.taskEnded.outcome.shape"],

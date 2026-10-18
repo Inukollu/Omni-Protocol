@@ -1,7 +1,9 @@
 import { assertTaskCapabilityWithdrawal } from "../src/testing.js";
 import { describe, expect, it } from "vitest";
 import { type Task, type Recording, type HostRecording, type RecordingAction, type RecordingCommand, type VoiceTaskCommand } from "../src/index.js";
-import { validateRecordingOutcome, validateRecordingCommandState, validateRecordings, validateRecordingPolicy, validateRecordingRequest, validateHostRecording, validateHostGuarantees, validateHostReport, validateTask, validateTaskCommand } from "../src/validation.js";
+import { validateRecordingOutcome, validateRecordingCommandState, validateRecordings, validateRecordingPolicy, validateRecordingRequest, validateHostRecording, validateHostGuarantees, validateHostReport, validateTask, validateTaskCommand, type TaskValidationContext } from "../src/validation.js";
+
+const LEVELS = ["org", "site", "team", "person"];
 
 type Status = Recording["status"];
 const recording = (status: Status = "recording", follows: "party" | "agent" = "party", id = "capture-1"): Recording =>
@@ -26,10 +28,8 @@ const host: HostRecording = {
 /** A request against a task whose only recording, on the party's side, stands in `status` -- or none at all. */
 function check(action: RecordingAction, status: Status | "none", source: "provider" | "host" = "provider", changes: Record<string, unknown> = {}, context: Record<string, unknown> = {}, current?: Task<"voice">) {
   const list = status === "none" ? [] : [recording(status)];
-  return validateRecordingRequest({ assignmentId: "assignment-1", command: { ...command(action, source), ...changes } }, current ?? task(source === "provider" ? list : []), {
-    source, host, softphone: true,
-    hostReport: { online: true, recordings: [{ assignmentId: "assignment-1", recordings: source === "host" ? list : [] }] }, ...context,
-  });
+  return validateRecordingRequest({ assignmentId: "assignment-1", command: { ...command(action, source), ...changes } }, current ?? task(source === "provider" ? list : []), { source, host, softphone: true,
+    hostReport: { online: true, recordings: [{ assignmentId: "assignment-1", recordings: source === "host" ? list : [] }] }, ...context, taskContext: { levels: LEVELS, ...(context.taskContext as Partial<Omit<TaskValidationContext, "channel">> | undefined) } });
 }
 const rules = (v: { rule: string }[]) => v.map(i => i.rule);
 
@@ -57,9 +57,9 @@ describe("recordings as published", () => {
     expect(rules(validateRecordings([recording("recording"), recording("not-recording")]))).toEqual(["recording.id.unique"]);
   });
   it("sits on a voice task as recordings, and refuses the former recording state", () => {
-    expect(validateTask(task(), { channel: "voice" })).toEqual([]);
-    expect(rules(validateTask({ ...task(), recordings: undefined, recording: { provider: { status: "unknown" } } }, { channel: "voice" }))).toContain("recording.task.renamed");
-    expect(rules(validateTask({ ...task(), channel: "chat" }, { channel: "chat" }))).toContain("recording.task.channel");
+    expect(validateTask(task(), { levels: LEVELS, channel: "voice" })).toEqual([]);
+    expect(rules(validateTask({ ...task(), recordings: undefined, recording: { provider: { status: "unknown" } } }, { levels: LEVELS, channel: "voice" }))).toContain("recording.task.renamed");
+    expect(rules(validateTask({ ...task(), channel: "chat" }, { levels: LEVELS, channel: "chat" }))).toContain("recording.task.channel");
   });
 });
 
@@ -87,20 +87,20 @@ describe("independent recording controls", () => {
   });
   it("allows a task already recording without controls, even on arrival", () => {
     const current = { ...task(), phase: "pending", audio: undefined, capabilities: {} };
-    expect(validateTask(current, { channel: "voice" })).toEqual([]);
+    expect(validateTask(current, { levels: LEVELS, channel: "voice" })).toEqual([]);
     expect(rules(check("stop", "recording", "provider", {}, {}, current as Task<"voice">))).toContain("recording.command.permission");
   });
   it("holds a start or resume sent through validateTaskCommand to live audio, as dispatch does", () => {
     const silent = { ...task([]), audio: undefined } as Task<"voice">;
-    expect(rules(validateTaskCommand(command("start"), silent))).toContain("recording.request.phase");
-    expect(validateTaskCommand(command("start"), task([]))).toEqual([]);
+    expect(rules(validateTaskCommand(command("start"), silent, "command", { levels: LEVELS }))).toContain("recording.request.phase");
+    expect(validateTaskCommand(command("start"), task([]), "command", { levels: LEVELS })).toEqual([]);
     const paused = [recording("paused")];
-    expect(rules(validateTaskCommand(command("resume"), { ...task(paused), audio: undefined } as Task<"voice">))).toContain("recording.request.phase");
-    expect(validateTaskCommand(command("resume"), task(paused))).toEqual([]);
+    expect(rules(validateTaskCommand(command("resume"), { ...task(paused), audio: undefined } as Task<"voice">, "command", { levels: LEVELS }))).toContain("recording.request.phase");
+    expect(validateTaskCommand(command("resume"), task(paused), "command", { levels: LEVELS })).toEqual([]);
   });
   it("routes provider commands only through execute and rejects legacy commands", () => {
-    expect(validateTaskCommand(command("pause"), task())).toEqual([]);
-    expect(rules(validateTaskCommand(command("pause", "host"), task()))).toContain("recording.command.source");
+    expect(validateTaskCommand(command("pause"), task(), "command", { levels: LEVELS })).toEqual([]);
+    expect(rules(validateTaskCommand(command("pause", "host"), task(), "command", { levels: LEVELS }))).toContain("recording.command.source");
     expect(validateTaskCommand({ type: "recording", action: "start" })).not.toEqual([]);
     expect(validateRecordingPolicy(true)).not.toEqual([]);
   });
@@ -152,7 +152,7 @@ describe("host recording declarations and reports", () => {
     expect(validateHostReport({ online: true, recordings: [{ assignmentId: "assignment-1", state: { status: "unknown" } }] })).not.toEqual([]);
     expect(check("stop", "recording", "host", {}, { hostReport: { recordings: [{ ...report, assignmentId: "other" }] } })).not.toEqual([]);
     for (const bad of [null, false, [], "x", 1, {}, { toString: null }]) {
-      expect(() => validateRecordingRequest(bad, task(), { source: "provider" })).not.toThrow();
+      expect(() => validateRecordingRequest(bad, task(), { source: "provider", taskContext: { levels: LEVELS } })).not.toThrow();
       expect(() => validateRecordingPolicy({ provider: bad, host: bad })).not.toThrow();
       expect(() => validateHostRecording(bad, true)).not.toThrow();
       expect(() => validateRecordings(bad)).not.toThrow();
