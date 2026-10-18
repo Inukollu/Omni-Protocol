@@ -39,6 +39,8 @@ import {
   type TeamCommand,
 } from "../src/index.js";
 
+const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, forceBreak: true, endForcedBreak: true, setPolicy: true } as const;
+
 export const voiceManifest = {
   id: "voice-provider",
   displayName: "Voice Provider",
@@ -163,7 +165,7 @@ export const emailConnectBack: TaskCommand<"email"> = { type: "connect-back", di
 
 // The agent hands a call to nobody: lead assist is how help arrives, and a transfer is not a command.
 // @ts-expect-error renamed away: transfer, cold or warm, is gone; a lead is asked onto the call instead.
-export const coldTransfer: TaskCommand<"voice"> = { type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" };
+export const coldTransfer: TaskCommand<"voice"> = { type: "transfer", action: "cold", dialId: "dial-2", contactId: "tier2" };
 // @ts-expect-error renamed away: the consult steps went with the warm transfer.
 export const completeConsultation: TaskCommand<"voice"> = { type: "transfer", action: "complete" };
 // @ts-expect-error renamed away: no directory is offered for a transfer.
@@ -184,15 +186,15 @@ export const offerWithDeadline: ProviderEvent<"email"> = { type: "task-offered",
 export const expiredPreview: TaskOutcome = { type: "expired", phase: "preview" };
 export const expiredConfirmed: TaskOutcome = { type: "expired", phase: "confirmed" };
 // Who is on the call is voice-only, like the commands that bring people onto it.
-export const conferencingVoiceTask = { ...emailTask, assignmentId: "call-10", channel: "voice", capabilities: { conference: { destinations: [{ id: "tier2", label: "Tier 2" }] } }, phase: "paused", onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
+export const conferencingVoiceTask = { ...emailTask, assignmentId: "call-10", channel: "voice", capabilities: { conference: { destinations: "contacts-only" } }, phase: "paused", onCall: [{ role: "conferenced", contactId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
 // @ts-expect-error A dialled entry says where it stands: ringing or joined.
-export const unstagedConferenced: OnCall = { role: "conferenced", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
+export const unstagedConferenced: OnCall = { role: "conferenced", contactId: "tier2", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error renamed away: nobody is consulted on a call; a colleague dialled in is conferenced.
-export const consultedEntry: OnCall = { role: "consulted", destinationId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" };
+export const consultedEntry: OnCall = { role: "consulted", contactId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error Email has nobody on a call.
-export const conferencingEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-6", onCall: [{ role: "conferenced", destinationId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
+export const conferencingEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-6", onCall: [{ role: "conferenced", contactId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
 // @ts-expect-error A party was dialled from nowhere and names no destination.
-export const misplacedParty: OnCall = { role: "party", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
+export const misplacedParty: OnCall = { role: "party", contactId: "tier2", since: "2026-08-21T09:05:00Z" };
 // The party being connected back carries the host's dial and its stage, together and only together.
 export const partyRinging: OnCall = { role: "party", dialId: "dial-9", stage: "ringing", since: "2026-08-21T09:05:00Z" };
 // A callback the platform places on the same task: the party ringing, no host dial.
@@ -200,21 +202,21 @@ export const partyCalledBack: OnCall = { role: "party", stage: "ringing", since:
 // @ts-expect-error A dial with no stage is half a claim.
 export const partyDialledStageless: OnCall = { role: "party", dialId: "dial-9", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error An agent on the call is named by user id, not by a destination.
-export const misplacedAgent: OnCall = { role: "agent", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
+export const misplacedAgent: OnCall = { role: "agent", contactId: "tier2", since: "2026-08-21T09:05:00Z" };
 
 // A conference add dials and carries the host's dialId; a remove names who leaves, as the room names them.
-export const addToConference: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" };
-export const removeFromConference: TaskCommand<"voice"> = { type: "conference", action: "remove", destinationId: "tier2" };
+export const addToConference: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", contactId: "tier2" };
+export const removeFromConference: TaskCommand<"voice"> = { type: "conference", action: "remove", contactId: "tier2" };
 export const removeTheCustomer: TaskCommand<"voice"> = { type: "conference", action: "remove", party: true };
 // @ts-expect-error A remove names one person: the party, or a directory item, never both.
-export const removeEverybody: TaskCommand<"voice"> = { type: "conference", action: "remove", party: true, destinationId: "tier2" };
+export const removeEverybody: TaskCommand<"voice"> = { type: "conference", action: "remove", party: true, contactId: "tier2" };
 // @ts-expect-error A remove names one person; naming nobody is end-call.
 export const removeNobody: TaskCommand<"voice"> = { type: "conference", action: "remove" };
 export const endTheCall: TaskCommand<"voice"> = { type: "end-call" };
 // @ts-expect-error renamed away: the agent ends the call; disconnect was the engineer's word.
 export const disconnectTheCall: TaskCommand<"voice"> = { type: "disconnect" };
 // @ts-expect-error A conference add is a dial, so it carries the host's dialId.
-export const unplacedConferenceAdd: TaskCommand<"voice"> = { type: "conference", action: "add", destinationId: "tier2" };
+export const unplacedConferenceAdd: TaskCommand<"voice"> = { type: "conference", action: "add", contactId: "tier2" };
 // @ts-expect-error renamed away: the address a conference dials is its destination, as on every other dial.
 export const conferenceParticipant: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", participant: "+14155550111" };
 
@@ -375,7 +377,7 @@ export const emailTakenOver: Task<"email"> = { ...emailTask, assignmentId: "emai
 
 // What the login may do travels with the identity, and nowhere else.
 const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
-export const leadLogin: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, lead: true } };
+export const leadLogin: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, lead: EVERY_LEAD_CAPABILITY } };
 // @ts-expect-error The lead flag is one flag: no per-action permission rides beside it.
 export const controlledLead: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { team: { breakControl: true } } };
 export const plainLogin: AuthenticationState = { status: "refreshing", identity: asha, capabilities: {} };

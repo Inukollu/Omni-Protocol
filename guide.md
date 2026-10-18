@@ -40,8 +40,8 @@ are used precisely throughout and mean nothing looser here.
 | **Agent application** | The software the agent uses, such as Omni, whether web or desktop. It presents provider tasks and controls and manages local audio where supported. Existing API names use `Host` and `host` for this role. |
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
-| **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; a conference directory may include an agent when the provider publishes that directory item. |
-| **Lead** | An agent whose login declares `capabilities.lead`. The flag lets the agent application offer the team feature; the application switches it on with `lead-features` on every connect, and only then does the provider publish the team -- whole on `team-updated`, then one member at a time -- to that login and to nobody else: **the login is the permission**. The lead sees their members with their tasks and stats, and acts on them with the authority the flag carries. |
+| **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; the provider's contacts may include an agent, whom a conference then names by contact id. |
+| **Lead** | An agent whose session declares `capabilities.lead`, the lead capabilities it holds. Its presence lets the agent application offer the team feature; the application switches it on with `lead-features` on every connect, and only then does the provider publish the team -- whole on `team-updated`, then one member at a time -- to that login and to nobody else: **the login is the permission**. The lead sees their members with their tasks and stats, and acts on them with the lead capabilities the session holds. |
 | **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and local policy disagree, the stricter wins. |
 | **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. The protocol never describes the IVR or the queue; it carries the call's history and details to whichever agent holds it now. |
 | **Assignment** | The call routed to this agent, from the offer until the task ends. It is the one thing that crosses: the provider assigns, names the assignment with `assignmentId`, and that is the only name the agent computer ever uses back. A call that comes back is a new assignment on the same call, and a declined or lapsed offer is an assignment that became nothing more. What the platform calls its own record, and whether it reuses that name, is the adapter's business and unknown to the agent computer. |
@@ -302,8 +302,22 @@ type ListeningMode = "listen" | "coach" | "join-call";
 type UserCapabilities = {
   breaks?: true;
   preferences?: AgentPreference[];
-  lead?: true;
+  lead?: LeadCapabilities;
   nextCall?: true;
+};
+
+type LeadCapabilities = {
+  join?: true;
+  decline?: true;
+  listen?: true;
+  coach?: true;
+  joinCall?: true;
+  takeOverCall?: true;
+  decideBreakRequest?: true;
+  setBreakPolicy?: true;
+  forceBreak?: true;
+  endForcedBreak?: true;
+  setPolicy?: true;
 };
 
 type AuthenticationState =
@@ -529,7 +543,7 @@ type Snapshot = {
   break: BreakState;
   tasks: Task[];
   taskCount: number;
-  contacts?: Contact[];
+  contacts?: ContactEntry[];
   calendar?: ScheduledActivity[];
   shift?: Shift;
   phone?: PhoneState;
@@ -554,6 +568,10 @@ type Contact = {
   number?: Lockable<string>;
   email?: Lockable<string>;
   attributes?: Attribute[];
+};
+
+type ContactEntry = Contact & {
+  id: string;
 };
 
 type ScheduledActivity = {
@@ -586,13 +604,8 @@ type OutcomeRules = {
   codes?: OutcomeCode[];
 };
 
-type Destination = {
-  id: string;
-  label: string;
-};
-
-type DestinationDirectory = {
-  destinations: Destination[];
+type ConferenceCapability = {
+  destinations: DialDestinations;
 };
 
 type CustomCapability = {
@@ -622,7 +635,7 @@ type TaskCapabilities<C extends Channel = Channel> =
         connectBack?: Lockable<true>;
         schedule?: Lockable<true>;
         leadAssist?: Lockable<true>;
-        conference?: Lockable<DestinationDirectory>;
+        conference?: Lockable<ConferenceCapability>;
         recording?: Lockable<TaskRecordingPolicy>;
       }
     : C extends "chat"
@@ -723,7 +736,7 @@ type TaskHistoryStep = {
   step: HistoryStep;
   at: IsoTimestamp;
   dialId?: DialId;
-  destinationId?: string;
+  contactId?: string;
   seconds?: DurationSeconds;
   by?: UserId;
   mutedBy?: MutedBy;
@@ -747,8 +760,8 @@ type OnCallStage = "ringing" | "joined";
 type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party"; dialId?: never; stage?: never }
   | { role: "party"; stage: OnCallStage; dialId?: DialId }
-  | { role: "agent"; userId: UserId }
-  | { role: "conferenced"; destinationId: string; stage: OnCallStage; dialId?: DialId; label?: string }
+  | { role: "agent"; userId: UserId; coaching?: true }
+  | { role: "conferenced"; contactId: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );
 
 type TaskLeadAssist = { note?: string; since: IsoTimestamp } & (
@@ -858,9 +871,10 @@ type VoiceTaskCommand =
   | ScheduleCommand
   | { type: "lead-assist"; action: "request"; note?: string }
   | { type: "lead-assist"; action: "cancel" }
-  | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
-  | { type: "conference"; action: "remove"; destinationId: string; party?: never }
-  | { type: "conference"; action: "remove"; party: true; destinationId?: never }
+  | { type: "conference"; action: "add"; dialId: DialId; contactId: string; number?: never }
+  | { type: "conference"; action: "add"; dialId: DialId; number: string; contactId?: never }
+  | { type: "conference"; action: "remove"; contactId: string; party?: never }
+  | { type: "conference"; action: "remove"; party: true; contactId?: never }
   | (RecordingCommand & { source: "provider" })
   | ({ type: "complete" } & OutcomePayload);
 
@@ -1227,7 +1241,7 @@ type ProviderEvent =
   | { type: "task-audio-started"; assignmentId: AssignmentId }
   | { type: "task-audio-ended"; assignmentId: AssignmentId }
   | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
-  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; assignmentId?: AssignmentId; destinationId?: string; reason?: string }
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; assignmentId?: AssignmentId; contactId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
   | { type: "diagnostic"; expected: string; observed: string; assignmentId?: AssignmentId }
@@ -1235,7 +1249,7 @@ type ProviderEvent =
   | { type: "team-member-updated"; member: TeamMember }
   | { type: "team-member-removed"; memberId: UserId }
   | { type: "team-policies-updated"; policies: TeamPolicies }
-  | { type: "contacts-updated"; contacts: Contact[] }
+  | { type: "contacts-updated"; contacts: ContactEntry[] }
   | { type: "calendar-updated"; calendar: ScheduledActivity[] }
   | { type: "shift-updated"; shift: Shift }
   | { type: "phone-updated"; phone: PhoneState }
@@ -1972,7 +1986,10 @@ idleCapabilities: { contacts: true }
 
 Omit `contacts` to make no contact contribution. When declared, the provider
 publishes its authoritative list through `Snapshot.contacts` and replaces it with a
-`contacts-updated` event when it changes. Every field is optional:
+`contacts-updated` event when it changes. The list is the agent computer's directory: each entry
+carries a unique `id`, which is how the wire names that contact -- in a conference, on the call, in
+its history and on a dial's outcome -- and the agent computer shows the name it holds for an id.
+Every other field is optional:
 
 > **Note:** Omni derives normalized number and email keys for indexing and deduplication while
 > preserving the original values for display. A number supplied by multiple providers appears only once, with source icons indicating
@@ -1982,6 +1999,7 @@ publishes its authoritative list through `Snapshot.contacts` and replaces it wit
 
 | Field | Contract |
 | --- | --- |
+| `id` | Required on every entry of the list, unique within it (`contact.id`, `contact.id.unique`). A typed number the provider dials becomes an entry under an id of its own. A task's party is not a list entry and carries none. |
 | `name` | Optional agent-facing display name. |
 | `number` | Optional original dialable address, preserved for display. |
 | `email` | Optional original email address, preserved for display. |
@@ -2117,7 +2135,7 @@ to infer them from what arrives later.
 | --- | --- |
 | `breaks` | This login may request a break. Requires the four break methods on the connection. |
 | `nextCall` | The platform lines calls up for this agent: pressing Next call while on a call puts the next queued call in the agent's own queue, to start when their wrap ends unless somebody else takes it first. Requires `requestNextCall`, `cancelNextCall` and `releaseLinedUp` on the connection. See **The agent's own queue** in `guide/queue.md`. |
-| `lead` | This login leads a team. The flag alone turns on the team feature in the agent application, and every lead act comes with it; there is no per-action permission beside it. While the lead has the feature on, the provider publishes a `TeamMembers` object to them on every snapshot — `members: []` when nobody is in it — and to nobody else. Requires `executeTeam`. See **Team leads** in `guide/lead.md`. |
+| `lead` | This login leads a team, with the `LeadCapabilities` it holds for the whole session: one key per lead command it allows -- `join`, `decline`, `listen`, `coach`, `joinCall`, `takeOverCall`, `decideBreakRequest`, `setBreakPolicy`, `forceBreak`, `endForcedBreak`, `setPolicy` -- each by presence, at least one (`authentication.capability.lead.*`). Switching the team feature and leaving a call are every lead's and are not listed. Its presence turns on the team feature in the agent application, which offers only the lead commands the lead holds; any other is refused before it is sent (`team.command.notGranted`). A team lead may hold listen, coach and break decisions, a floor manager all of them. While the lead has the feature on, the provider publishes a `TeamMembers` object to them on every snapshot — `members: []` when nobody is in it — and to nobody else. Requires `executeTeam`. See **Team leads** in `guide/lead.md`. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
 A session action is available only when both the capability and Omni local policy permit it.

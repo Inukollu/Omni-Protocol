@@ -3,6 +3,8 @@ import type { BreakStatus, BreakState } from "../src/index.js";
 import { validateBreakTransition, validateBreakCommand, validateBreakStatus, validateTeamCommand, validateResult, type BreakMethod } from "../src/validation.js";
 import { BreakStream } from "../src/testing.js";
 
+const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, forceBreak: true, endForcedBreak: true, setPolicy: true } as const;
+
 const state = (status: BreakStatus): BreakState => ({ status, canRequestBreak: true });
 const event = (status: BreakStatus) => ({ event: { type: "break-state", break: state(status) } });
 
@@ -254,10 +256,23 @@ describe("break prerequisites", () => {
 });
 
 describe("lead commands", () => {
-  const lead = { ...context, authentication: { ...context.authentication, capabilities: { lead: true as const } },
+  const lead = { ...context, authentication: { ...context.authentication, capabilities: { lead: EVERY_LEAD_CAPABILITY } },
     team: { members: [{ id: "member", availability: "ready", break: "awaiting-approval" }] },
     memberBreak: { ...state("not-requested"), reasons: [{ id: "bio", label: "Bio" }] },
   };
+  it("lets a lead send only the commands its lead capabilities allow", () => {
+    const rules = (found: readonly { rule: string }[]) => found.map(violation => violation.rule);
+    const holding = (granted: Record<string, true>) => ({ ...lead, authentication: { ...lead.authentication, capabilities: { lead: granted } } });
+    const teamLead = holding({ decideBreakRequest: true, listen: true });
+    const decide = { command: { type: "decide-break-request", memberId: "member", decision: "granted" } };
+    const force = { command: { type: "force-break", memberId: "member", reasonId: "bio" } };
+    expect(rules(validateTeamCommand(decide, teamLead))).toEqual([]);
+    expect(rules(validateTeamCommand(force, teamLead))).toEqual(["team.command.notGranted"]);
+    expect(rules(validateTeamCommand(force, holding({ forceBreak: true })))).toEqual([]);
+    // Switching the team feature is every lead's.
+    expect(rules(validateTeamCommand({ command: { type: "lead-features", enabled: true } }, teamLead))).toEqual([]);
+  });
+
   it("requires current decision eligibility, target membership and explicit lead permission", () => {
     const request = { command: { type: "decide-break-request", memberId: "member", decision: "granted" } };
     expect(validateTeamCommand(request, lead)).toEqual([]);

@@ -5,9 +5,9 @@ The lead's own surface: the team member list, the lead's commands, lead assist, 
 ## Team leads
 
 The team feature is the lead's own surface, beside the agent's and never mixed with it. The
-login's `lead` flag turns it on in the agent application; the lead retrieves their members and
+session's `lead` capabilities turn it on in the agent application; the lead retrieves their members and
 sees, for each, their assignments as they stand and the full history of each, and acts on them
-with the authority the flag carries. Nothing the lead does here is a task on their agent computer. A lead
+with the lead capabilities the session holds. Nothing the lead does here is a task on their agent computer. A lead
 who also takes calls is an agent like any other on the agent side, and a lead who does not want
 the agent role for now places themself on a break of a working kind and keeps the team feature on.
 
@@ -30,7 +30,7 @@ computes nothing. See **`team-updated`** in `guide.md` and its companions.
 | `since` | Optional. When the current `availability` began — not when they signed in, and not when the team member list was read. |
 | `break` | Present only while the member has an outstanding break request. See **A member waiting for a break**. |
 | `tasks` | The member's open tasks as `MemberTask`s: the same task the member's computer holds, less the workspace. The assignment, title, task type, phase, party, room, audio and completion terms -- `completionMode`, `wrapAllowance`, `wrapEndsInSeconds` -- are what the lead reads, and the task's record -- `history`, steps and totals -- travels whole, exactly as the member's computer holds it, so the lead's screen and the member's show the same record. The workspace -- `capabilities`, `capabilitySource`, `browsers` and their URLs -- is the member's computer's alone and never travels (`team.member.task.workspace`). The party's number and email are shown to leads or locked as the provider decides for leads, apart from what it decides for the member -- see **What the queue locks is locked on the whole task**. `[]` when the member holds none; omitted only where the provider cannot see them. |
-| `listening` | Every lead on this member's call — listening, coaching or joined — published to every lead alike: each entry names the lead by `leadId`, which of the member's calls by `assignmentId`, the `mode` they are heard in, and since when. The entry naming the signed-in lead is what their own audio opens on. Absent while nobody is on the call, never `[]` (`team.member.listening.*`); a lead is on one member's call at a time (`team.listening.single`), and a lead who is heard is also in the task's `onCall` (`team.member.listening.heard`). |
+| `listening` | Every lead on this member's call — listening, coaching or joined — published to every lead alike: each entry names the lead by `leadId`, which of the member's calls by `assignmentId`, the `mode` they are heard in, and since when. The entry naming the signed-in lead is what their own audio opens on. Absent while nobody is on the call, never `[]` (`team.member.listening.*`); a lead is on one member's call at a time (`team.listening.single`), and a lead who is heard is also in the task's `onCall`: marked `coaching` where the member alone hears them (`team.member.listening.coaching`), unmarked once heard by everyone (`team.member.listening.heard`), and absent while listening in silence (`team.member.listening.silent`). |
 | `request` | Present while the member is asking a lead to join one of their calls: which assignment, the note they wrote, since when. The call named is one their `tasks` carry (`team.member.request.assignment`). Absent when they are not asking. See **Lead assist**. |
 | `nextCall`, `linedUp` | The member's own queue as their own snapshot carries it: their standing ask for the next call, and the call lined up for them. See **The agent's own queue** in `guide/queue.md`. |
 | `phone` | The member's phone as the platform sees it: the same `PhoneState` the member's own snapshot carries, so a lead sees a hardphone that is down, or a call on it that is no task, as the member does. Present where the provider declares `phoneStatus`. See **The phone's own view** in `guide/phone.md`. |
@@ -85,8 +85,10 @@ that publishes it declares `timeCheck` -- see **Every screen counts from the pro
 leads a team: the provider said so at sign-in, and the team member list agrees with it — owed,
 `members: []` included, once a lead has switched the feature on; absent for everybody else, which
 is the correct rendering for an agent who leads nobody (`team.required`, `team.unentitled`). What
-the lead may do with it comes with the flag: there is no per-action permission on the login or on
-the list.
+the lead may do with it is the lead capabilities the session holds, stated by the provider with the
+rest of the session's capabilities and current as of the latest: each lead command needs its own
+(`team.command.notGranted`), and the agent application shows a lead only the controls they hold.
+Switching the team feature and leaving a call are every lead's.
 
 **The lead switches the feature on and off, and the provider is told.** A lead may work as an
 agent alone, as agent and lead, or as lead alone, and moves between them on the fly. The
@@ -239,7 +241,8 @@ history. The three modes determine who hears the lead:
 | `coach` | The agent alone. The customer hears nothing. |
 | `join-call` | Everyone on the call. |
 
-All three come with the `lead` flag; a centre reserves none of them per lead.
+Each is a lead capability of its own -- `listen`, `coach`, `joinCall` -- so a centre may let a team
+lead listen and coach while only a floor manager joins or takes over.
 
 **There is no team audio.** Audio is the agent's or the lead's, and the lead's audio while
 listening follows the provider's published state exactly as a task's does: the entry naming this
@@ -292,13 +295,27 @@ channel is free, and a provider answers a `listen` from one whose channel is not
 includes a lead on a break: a lead working as lead alone is on a break of a working kind, and
 listens through it.
 
-**A silent lead reaches nobody but the leads.** In `listen` and `coach` the member's task carries
-no trace of the lead: not on `onCall`, not in the record. Whether coaching is announced to the
-agent is the platform's business and travels on the audio, not on this wire. In `join-call`, and
+**A lead who is heard is shown; a silent one reaches nobody but the leads.** In `listen` the
+member's task carries no trace of the lead: not on `onCall`, not in the record
+(`team.member.listening.silent`). In `coach` the member hears the lead and the customer does not,
+so the member's task carries the lead on `onCall` as an `agent` marked `coaching: true`, on the
+member's computer and on every lead's copy alike, for as long as the coaching lasts
+(`team.member.listening.coaching`); the record is unchanged, since coaching is shown while it
+happens and is not a step of the call:
+
+```ts
+onCall: [
+  { role: "party", since: "2026-10-18T10:00:00Z" },
+  { role: "agent", userId: "A-12", since: "2026-10-18T10:00:04Z" },
+  { role: "agent", userId: "L-9", coaching: true, since: "2026-10-18T10:05:10Z" },
+]
+```
+
+In `join-call`, and
 on a `join` answering a request, the lead is heard by everyone and is in the room: the task's
-`onCall` carries them as an `agent` by user id, on the member's computer and on every lead's copy of
-the task alike, and `leave` takes the entry off as it takes the channel off
-(`team.member.listening.heard`).
+`onCall` carries them as an `agent` by user id, no longer marked `coaching`, on the member's
+computer and on every lead's copy of the task alike, and `leave` takes the entry off as it takes the
+channel off (`team.member.listening.heard`).
 
 ### A member waiting for a break
 

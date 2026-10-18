@@ -105,7 +105,7 @@ request object only to the request method, and undefined to the other three.
 
 Use `validateTeamCommand(request, context)` before every lead act, its context carrying the manifest's `levels` as the break check's does: the team feature switch, break
 decisions, forcing and ending a forced break, policy, and every act on a member's call. It requires
-the live `lead` flag and active transport, a current team member list for any command naming a
+the live `lead` capability the command needs and active transport, a current team member list for any command naming a
 member, and the target's complete break state for forcing/ending a break. Approve/deny requires an
 awaiting decision; forcing a break uses the target's reason codes; ending a forced break requires a
 forced committed break; join and decline need the member's request on the list; coach, join-call

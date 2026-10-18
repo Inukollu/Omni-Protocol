@@ -102,14 +102,12 @@ const task = {
 
 **Switch on `command.action` with no `default`.** A `default` turns a future action into whatever
 the default does, silently; naming every arm means dropping one fails the build — indirectly, as a
-missing return — and keeps the narrowing that lets you read `destinationId` without a cast.
+missing return — and keeps the narrowing that lets you read `dialId` without a cast.
 
 ```ts
 switch (command.action) {
-  case "cold":     return coldTransfer(command.destinationId);
-  case "warm":     return warmTransfer(command.destinationId);
-  case "complete": return completeWarmTransfer();
-  case "cancel":   return cancelWarmTransfer();
+  case "add":    return addToCall(command.dialId, command.contactId ?? command.number);
+  case "remove": return removeFromCall(command.party === true ? "party" : command.contactId);
 }
 ```
 

@@ -23,6 +23,7 @@ import {
   type Manifest,
   type ProviderEvent,
   type UserCapabilities,
+  type LeadCapabilities,
 } from "./index.js";
 import {
   assertNoViolations,
@@ -134,10 +135,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (value.acceptance !== undefined) seen.add("task.acceptance");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
   if (isRecord(capabilities.outcomes)) seen.add("task.outcomes");
-  for (const directory of ["coldTransfer", "warmTransfer", "conference"]) {
-    const declared = capabilities[directory];
-    if (isRecord(declared) && some(declared.destinations)) seen.add("task.destinations");
-  }
+  if (isRecord(capabilities.conference) && typeof capabilities.conference.destinations === "string") seen.add("task.destinations");
   if (some(capabilities.custom)) seen.add("task.custom");
   if (Object.values(capabilities).some(declared => isRecord(declared) && declared.lockedBy !== undefined)) seen.add("task.locked");
 }
@@ -367,7 +365,7 @@ export async function testAdapter<C extends Channel>(
           requireMethod(on, method, "the login declares capabilities.breaks");
         }
       }
-      if (capabilities.lead === true) requireMethod(on, "executeTeam", "the login declares capabilities.lead");
+      if (capabilities.lead !== undefined) requireMethod(on, "executeTeam", "the login declares capabilities.lead");
       if (capabilities.nextCall === true) {
         // The ask, its withdrawal and the release stand together: a lined-up call the agent could neither withdraw nor let go is a promise with no way out.
         for (const method of ["requestNextCall", "cancelNextCall", "releaseLinedUp"] as const) {
@@ -691,7 +689,7 @@ export async function testAdapter<C extends Channel>(
     // reaches the lead, which the reader held the connect snapshot to. A reloaded client is a
     // connect too: it is told again, after its capacity, and held the same way.
     const switchOnLeadFeatures = async (on: Connection<C>, at: string): Promise<void> => {
-      if (current().capabilities.lead !== true || typeof on.executeTeam !== "function") return;
+      if (current().capabilities.lead === undefined || typeof on.executeTeam !== "function") return;
       const from = events.length;
       let switched: unknown;
       // On from the moment the application says so: the provider may answer with the team at once.
@@ -1057,7 +1055,7 @@ export function assertCapabilityWithdrawal(
   const after = last.capabilities;
   const withdrawn =
     (before.breaks === true && after.breaks !== true) ||
-    (before.lead === true && after.lead !== true) ||
+    Object.keys(before.lead ?? {}).some(name => after.lead?.[name as keyof LeadCapabilities] !== true) ||
     (before.preferences ?? []).some(was => !(after.preferences ?? []).some(now => now.id === was.id));
   if (!withdrawn) {
     throw new Error("Capability withdrawal must end with at least one capability the first login declared withdrawn");
@@ -2472,7 +2470,7 @@ export function assertHistoryAgreesAcrossTasks(earlier: Task, later: Task): void
   }
   before.forEach((step, index) => {
     const restated = after[index]!;
-    for (const field of ["step", "at", "by", "dialId", "destinationId", "mutedBy"] as const) {
+    for (const field of ["step", "at", "by", "dialId", "contactId", "mutedBy"] as const) {
       if (step[field] !== restated[field]) {
         throw new Error(`steps[${index}].${field} is ${String(step[field])} on ${earlier.assignmentId} and ${String(restated[field])} on ${later.assignmentId}: one call has one history`);
       }

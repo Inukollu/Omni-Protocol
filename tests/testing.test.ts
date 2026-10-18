@@ -4,6 +4,8 @@ import type { LoginStore, Refusal, PhoneState, SecretStore, AuthenticationContex
 import { validateTask } from "../src/validation.js";
 import { memoryStore, assertHistoryAgreesAcrossTasks, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, testAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
+const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, forceBreak: true, endForcedBreak: true, setPolicy: true } as const;
+
 const LEVELS = ["org", "site", "team", "person"];
 
 const voiceTask = {
@@ -83,7 +85,7 @@ describe("assertCapabilityWithdrawal", () => {
     orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }],
   } satisfies Manifest<"voice">;
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
-  const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, lead: true as const } } satisfies AuthenticationState;
+  const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, lead: EVERY_LEAD_CAPABILITY } } satisfies AuthenticationState;
   const demoted = { status: "authenticated", identity: ada, capabilities: { breaks: true } } satisfies AuthenticationState;
   const bare: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
   const withMembers: Snapshot<"voice"> = { ...bare, team: { members: [{ id: "A-2", availability: "ready" }] } };
@@ -95,7 +97,7 @@ describe("assertCapabilityWithdrawal", () => {
 
   it("holds a snapshot to withdrawn breaks", () => {
     // Breaks withdrawn: nothing on the snapshot depends on it, so the lead's snapshot agrees.
-    const noBreaks = { ...lead, capabilities: { lead: true as const } } satisfies AuthenticationState;
+    const noBreaks = { ...lead, capabilities: { lead: EVERY_LEAD_CAPABILITY } } satisfies AuthenticationState;
     expect(() => assertCapabilityWithdrawal([lead, noBreaks], withMembers, manifest)).not.toThrow();
   });
 
@@ -454,10 +456,10 @@ describe("TaskStream names a task by its assignment alone", () => {
   });
 
   it("lets a dial outcome name a life that has ended, since a dial placed late outlives its call", () => {
-    const s = seeded("alloc-1", { onCall: [{ role: "party", since: at }, { role: "conferenced", destinationId: "tier2", dialId: "dial-1a0", stage: "ringing", since: at }] });
+    const s = seeded("alloc-1", { onCall: [{ role: "party", since: at }, { role: "conferenced", contactId: "tier2", dialId: "dial-1a0", stage: "ringing", since: at }] });
     s.apply(ended("alloc-1"));
     expect(rulesOf(s.apply(outcome("alloc-1")))).toEqual([]);
-    const room = { onCall: [{ role: "party", since: at }, { role: "conferenced", destinationId: "tier2", dialId: "dial-1a0", stage: "ringing", since: at }] };
+    const room = { onCall: [{ role: "party", since: at }, { role: "conferenced", contactId: "tier2", dialId: "dial-1a0", stage: "ringing", since: at }] };
     expect(rulesOf(seeded("alloc-1", room).apply(outcome("alloc-9")))).toEqual(["stream.assignment.unknown"]);
     expect(rulesOf(seeded("alloc-1", room).apply(outcome("alloc-1")))).toEqual([]);
   });
@@ -620,8 +622,8 @@ describe("TaskStream places a dial outcome", () => {
   });
 
   it("knows a dial from the record or from who is on the call, which is how a dial made before a take-over is placed", () => {
-    const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-3c9", stage: "joined", since: at }],
-      history: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", destinationId: "tier3" }] } };
+    const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", contactId: "tier2", dialId: "dial-3c9", stage: "joined", since: at }],
+      history: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", contactId: "tier3" }] } };
     const s = new TaskStream();
     s.seed({ tasks: [inherited] });
     expect(rulesOf(s.apply(outcome("dial-3c9")))).toEqual([]);
@@ -629,14 +631,14 @@ describe("TaskStream places a dial outcome", () => {
     // The control: the same stream, a dial neither carried.
     expect(rulesOf(s.apply(outcome("dial-000", "e3")))).toEqual(["stream.dialOutcome.unknown"]);
     // And a dial arriving on an offer or an update counts the same way.
-    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, assignmentId: "alloc-99", phase: "pending", acceptance: "consent", onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-off", stage: "ringing", since: at }] } } };
+    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, assignmentId: "alloc-99", phase: "pending", acceptance: "consent", onCall: [{ role: "conferenced", contactId: "tier2", dialId: "dial-off", stage: "ringing", since: at }] } } };
     expect(rulesOf(s.apply(offered))).toEqual([]);
     expect(rulesOf(s.apply(outcome("dial-off", "e5")))).toEqual([]);
   });
 
   it("lets an update restate a joined entry after its answered outcome, and refuses one that joins it alone", () => {
-    const ringing: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-7f2", stage: "ringing", since: at }] };
-    const joined: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-7f2", stage: "joined", since: at }] };
+    const ringing: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", contactId: "tier2", dialId: "dial-7f2", stage: "ringing", since: at }] };
+    const joined: Task<"voice"> = { ...voiceTask, onCall: [{ role: "conferenced", contactId: "tier2", dialId: "dial-7f2", stage: "joined", since: at }] };
     const update = (task: Task<"voice">, id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task } });
     // The outcome is the transition and the stage the state: outcome first, then the room restated.
     const s = new TaskStream();
@@ -871,7 +873,7 @@ const conformingSnapshot = {
       browsers: true,
       hold: true,
       outcomes: { required: true, notes: "optional", codes: [{ id: "resolved", label: "Resolved" }, { id: "callback", label: "Callback needed" }] },
-      conference: { destinations: [{ id: "tier2", label: "Tier 2" }] },
+      conference: { destinations: "contacts-only" },
       custom: [{ id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary", render: "inline" } }],
     },
     capabilitySource: "queue",
@@ -891,7 +893,7 @@ const conformingSnapshot = {
     ] },
   }],
   taskCount: 1,
-  contacts: [{ name: "Asha Rao", number: "+919876543210", email: "asha@example.com", attributes: [{ key: "Category", value: "High priority" }] }],
+  contacts: [{ id: "c-1", name: "Asha Rao", number: "+919876543210", email: "asha@example.com", attributes: [{ key: "Category", value: "High priority" }] }],
   calendar: [{ id: "cb-1", title: "Callback", startsAt: "2026-08-21T10:00:00Z", endsAt: "2026-08-21T10:15:00Z" }],
 } satisfies Snapshot<"voice">;
 
@@ -1162,12 +1164,12 @@ describe("testAdapter", () => {
       break: { status: "on-break", canRequestBreak: true, reasons: [{ id: "lunch", label: "Lunch" }], forced: { by: "M-1" } },
     } satisfies Snapshot<"voice">;
     const asking = teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "on-task", request: { assignmentId: "alloc-42", since: "2026-08-21T09:04:00Z" } }] } });
-    expect(state(await run({ capabilities: { lead: true as const }, snapshot: reached, emitOnLeadFeatures: listener => listener(asking) })))
+    expect(state(await run({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: reached, emitOnLeadFeatures: listener => listener(asking) })))
       .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
-    const withTeam = await run({ capabilities: { lead: true as const } });
+    const withTeam = await run({ capabilities: { lead: EVERY_LEAD_CAPABILITY } });
     expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
     expect(events(withTeam)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
-    const oneByOne = await run({ capabilities: { lead: true as const }, emitOnLeadFeatures: listener => {
+    const oneByOne = await run({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, emitOnLeadFeatures: listener => {
       listener(teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } }));
       listener(teamEvent("evt-member", { type: "team-member-updated", member: { id: "A-2", availability: "on-task" } }));
       listener(teamEvent("evt-gone", { type: "team-member-removed", memberId: "A-2" }));
@@ -1441,7 +1443,7 @@ describe("testAdapter tests one call", () => {
       // A client that is gone hears nothing: the platform's push to it goes nowhere, as on a reload.
       onUnsubscribe: () => { listener = undefined; if (script.platform !== undefined) script.platform.firstListener = undefined; },
       onConnect: connectContext => { given = connectContext.store; },
-      ...(script.lead === undefined ? {} : { capabilities: { lead: true as const }, emitOnLeadFeatures: (l: (envelope: ProviderEventEnvelope<"voice">) => void) => {
+      ...(script.lead === undefined ? {} : { capabilities: { lead: EVERY_LEAD_CAPABILITY }, emitOnLeadFeatures: (l: (envelope: ProviderEventEnvelope<"voice">) => void) => {
         script.lead!.switched += 1;
         l({ id: `evt-team-${script.lead!.switched}`, loginId: "session-1", occurredAt: at, event: { type: "team-updated", team: { members: [] } } });
       } }),
@@ -2066,7 +2068,7 @@ describe("testAdapter requires each method the declarations call for", () => {
   });
 
   it("executeTeam(), when the login declares lead", async () => {
-    const leading = { lead: true as const };
+    const leading = { lead: EVERY_LEAD_CAPABILITY };
     expect(await rules({ capabilities: leading, connection: { executeTeam: undefined } })).toContain("connection.executeTeam.required");
     expect(await rules({ capabilities: leading })).toEqual([]);
     // The control: an agent who does not lead owes no method.
@@ -2074,7 +2076,7 @@ describe("testAdapter requires each method the declarations call for", () => {
   });
 
   it("switches the team feature on after capacity, and holds the provider to the whole team once, then one member at a time", async () => {
-    const leading = { lead: true as const };
+    const leading = { lead: EVERY_LEAD_CAPABILITY };
     // The provider assumes nothing: a team on the connect snapshot is the provider assuming, and
     // the whole team is owed once the application has said on.
     expect(await rules({ capabilities: leading, snapshot: { ...minimalSnapshot, team: { members: [] } } })).toContain("team.unexpected");
@@ -2111,18 +2113,18 @@ describe("testAdapter requires each method the declarations call for", () => {
     // A state with no identity is reported and not adopted: the team member list is still checked against
     // the lead who signed in, and the run completes instead of throwing inside a listener.
     const broken = { status: "authenticated" } as unknown as AuthenticationState;
-    const found = await rules({ capabilities: { lead: true as const }, snapshot: minimalSnapshot, emitAuthentication: publish => publish(broken) });
+    const found = await rules({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: minimalSnapshot, emitAuthentication: publish => publish(broken) });
     expect(found).toContain("authentication.identity");
     expect(found).not.toContain("team.unentitled");
-    expect(await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: minimalSnapshot })).toEqual([]);
+    expect(await rules({ manifest: plainManifest, capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: minimalSnapshot })).toEqual([]);
   });
 
   it("holds refreshing to the login it refreshes", async () => {
     const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Pacific/Chatham" };
-    const same = { status: "refreshing", identity: asha, capabilities: { lead: true as const } } satisfies AuthenticationState;
+    const same = { status: "refreshing", identity: asha, capabilities: { lead: EVERY_LEAD_CAPABILITY } } satisfies AuthenticationState;
     const fewer = { status: "refreshing", identity: asha, capabilities: {} } satisfies AuthenticationState;
-    const other = { status: "refreshing", identity: { id: "A-9", displayName: "Bo", timeZone: "Pacific/Chatham" }, capabilities: { lead: true as const } } satisfies AuthenticationState;
-    const lead = { lead: true as const };
+    const other = { status: "refreshing", identity: { id: "A-9", displayName: "Bo", timeZone: "Pacific/Chatham" }, capabilities: { lead: EVERY_LEAD_CAPABILITY } } satisfies AuthenticationState;
+    const lead = { lead: EVERY_LEAD_CAPABILITY };
     expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: minimalSnapshot, emitAuthentication: publish => publish(same) })).toEqual([]);
     expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: minimalSnapshot, emitAuthentication: publish => publish(fewer) })).toEqual(["authentication.refreshing.capabilities"]);
     expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: minimalSnapshot, emitAuthentication: publish => publish(other) })).toEqual(["authentication.refreshing.identity"]);
@@ -2229,7 +2231,7 @@ describe("testAdapter requires each method the declarations call for", () => {
   it("carries a member's request on the member, and nothing where nobody is asking", async () => {
     const request = { assignmentId: "call-42-a", since: "2026-08-21T09:04:00Z" };
     const team = (member: Record<string, unknown>) => teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "on-task", ...member }] } });
-    const plain = { manifest: plainManifest, snapshot: minimalSnapshot, capabilities: { lead: true as const } };
+    const plain = { manifest: plainManifest, snapshot: minimalSnapshot, capabilities: { lead: EVERY_LEAD_CAPABILITY } };
     expect(await rules({ ...plain, emitOnLeadFeatures: l => l(team({ request })) })).toEqual([]);
     expect(await rules({ ...plain, emitOnLeadFeatures: l => l(team({})) })).toEqual([]);
     expect(await rules({ ...plain, emitOnLeadFeatures: l => l(team({ request: { ...request, assignmentId: "" } })) })).toEqual(["team.member.request.assignmentId"]);
@@ -2242,15 +2244,15 @@ describe("testAdapter requires each method the declarations call for", () => {
     const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Pacific/Chatham" };
     const whole = teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } });
     const demoted = { status: "authenticated", identity: asha, capabilities: {} } satisfies AuthenticationState;
-    const unchanged = { status: "authenticated", identity: asha, capabilities: { lead: true as const } } satisfies AuthenticationState;
-    expect(await rules({ capabilities: { lead: true as const }, emitOnCapacity: l => l(whole), emitAuthentication: publish => publish(demoted) })).toContain("team.unentitled");
-    expect(await rules({ capabilities: { lead: true as const }, emitOnCapacity: l => l(whole), emitAuthentication: publish => publish(unchanged) })).not.toContain("team.unentitled");
+    const unchanged = { status: "authenticated", identity: asha, capabilities: { lead: EVERY_LEAD_CAPABILITY } } satisfies AuthenticationState;
+    expect(await rules({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, emitOnCapacity: l => l(whole), emitAuthentication: publish => publish(demoted) })).toContain("team.unentitled");
+    expect(await rules({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, emitOnCapacity: l => l(whole), emitAuthentication: publish => publish(unchanged) })).not.toContain("team.unentitled");
   });
 
   it("a login that leads is owed the team once switched on, and one that does not is never sent one", async () => {
     // The case a fixture cannot hide: the login says lead, the switch went on, and the run never saw a team.
-    expect(await rules({ capabilities: { lead: true as const }, emitOnLeadFeatures: () => undefined }, { timeoutMs: 50 })).toContain("team.required");
-    expect(await rules({ capabilities: { lead: true as const } })).not.toContain("team.required");
+    expect(await rules({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, emitOnLeadFeatures: () => undefined }, { timeoutMs: 50 })).toContain("team.required");
+    expect(await rules({ capabilities: { lead: EVERY_LEAD_CAPABILITY } })).not.toContain("team.required");
     const whole = teamEvent("evt-team", { type: "team-updated", team: { members: [] } });
     expect(await rules({ capabilities: {}, emitOnCapacity: l => l(whole) })).toContain("team.unentitled");
     expect(await rules({ capabilities: {}, snapshot: minimalSnapshot })).not.toContain("team.unentitled");
@@ -2262,7 +2264,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     const colleague = { id: "A-2", availability: "ready" } as const;
     const reader = { id: "1042", availability: "on-task" } as const;
     const whole = (members: unknown[]) => teamEvent("evt-team", { type: "team-updated", team: { members } as never });
-    const leads = { lead: true as const };
+    const leads = { lead: EVERY_LEAD_CAPABILITY };
     expect(await rules({ capabilities: leads, emitOnLeadFeatures: l => l(whole([colleague])) })).not.toContain("team.member.self");
     expect(await rules({ capabilities: leads, emitOnLeadFeatures: l => l(whole([colleague, reader])) })).toContain("team.member.self");
     const later = teamEvent("evt-member", { type: "team-member-updated", member: reader });
@@ -2507,8 +2509,8 @@ describe("testAdapter requires each method the declarations call for", () => {
 
   it("waits for a team-updated that arrives after the switch, and names one that never comes", async () => {
     const team = teamEvent("evt-team", { type: "team-updated", team: { members: [] } });
-    expect(await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: minimalSnapshot, emitOnLeadFeatures: listener => { setTimeout(() => listener(team), 20); } })).not.toContain("team.required");
-    expect(await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: minimalSnapshot, emitOnLeadFeatures: () => undefined }, { timeoutMs: 100 })).toContain("team.required");
+    expect(await rules({ manifest: plainManifest, capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: minimalSnapshot, emitOnLeadFeatures: listener => { setTimeout(() => listener(team), 20); } })).not.toContain("team.required");
+    expect(await rules({ manifest: plainManifest, capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: minimalSnapshot, emitOnLeadFeatures: () => undefined }, { timeoutMs: 100 })).toContain("team.required");
   });
 
   it("asks getUserDetails() about the people a team member's own tasks name, not only the members", async () => {
@@ -2519,10 +2521,10 @@ describe("testAdapter requires each method the declarations call for", () => {
       return { ...rest, assignmentId: "alloc-88", history: { steps } };
     };
     const led = (steps: unknown[]) => ({ ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task", tasks: [memberTask(steps)] }] } });
-    await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: led([{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-31" }]), connection: { getUserDetails } });
+    await rules({ manifest: plainManifest, capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: led([{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-31" }]), connection: { getUserDetails } });
     expect(asked.flat()).toContain("A-31");
     asked.length = 0;
-    await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: led([]), connection: { getUserDetails } });
+    await rules({ manifest: plainManifest, capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: led([]), connection: { getUserDetails } });
     expect(asked.flat()).not.toContain("A-31");
   });
 
@@ -2535,16 +2537,16 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ manifest: plainManifest, snapshot: joined, connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
     expect(await rules({ manifest: plainManifest, snapshot: assisting, connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
     const later = teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } });
-    expect(await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: bare, connection: { getUserDetails: undefined }, emitOnLeadFeatures: listener => listener(later) })).toContain("connection.getUserDetails.required");
+    expect(await rules({ manifest: plainManifest, capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: bare, connection: { getUserDetails: undefined }, emitOnLeadFeatures: listener => listener(later) })).toContain("connection.getUserDetails.required");
     const member = teamEvent("evt-member", { type: "team-member-updated", member: { id: "A-2", availability: "ready" } });
-    expect(await rules({ manifest: plainManifest, capabilities: { lead: true as const }, snapshot: bare, connection: { getUserDetails: undefined }, emitOnLeadFeatures: listener => { listener(teamEvent("evt-team", { type: "team-updated", team: { members: [] } })); listener(member); } })).toContain("connection.getUserDetails.required");
+    expect(await rules({ manifest: plainManifest, capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: bare, connection: { getUserDetails: undefined }, emitOnLeadFeatures: listener => { listener(teamEvent("evt-team", { type: "team-updated", team: { members: [] } })); listener(member); } })).toContain("connection.getUserDetails.required");
   });
 
   it("setPreference() when the login declares preferences, and policies on a lead's team member list where the provider offers them", async () => {
     const choosing = { preferences: [{ id: "hold" as const, label: "Hold", enabled: true, setBy: "team" as const }] };
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: choosing, connection: { setPreference: undefined } })).toContain("connection.setPreference.required");
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: {}, connection: { setPreference: undefined } })).not.toContain("connection.setPreference.required");
-    const setting = { lead: true as const };
+    const setting = { lead: EVERY_LEAD_CAPABILITY };
     const withPolicies = teamEvent("evt-team", { type: "team-updated", team: { members: [], policies: { hold: { setting: "off", setBy: "team" } } } });
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: setting, connection: { executeTeam: undefined } })).toContain("connection.executeTeam.required");
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: setting, emitOnLeadFeatures: l => l(withPolicies) })).toEqual([]);

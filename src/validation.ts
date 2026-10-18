@@ -12,6 +12,7 @@
 
 import {
   RECORDING_ACTIONS,
+  LEAD_COMMAND_CAPABILITY,
   SHIFT_EVENT_KINDS,
   type RecordingAction,
   type RecordingStatus,
@@ -151,6 +152,7 @@ const SNAPSHOT_REASONS = membersOf<Extract<ProviderEvent, { type: "snapshot" }>[
   reconnected: true, "provider-requested": true,
 });
 const SESSION_CAPABILITIES = membersOf<keyof UserCapabilities>({ breaks: true, lead: true, preferences: true, nextCall: true });
+const LEAD_CAPABILITY_NAMES: readonly string[] = Object.values(LEAD_COMMAND_CAPABILITY);
 const MEMBER_BREAKS = membersOf<Extract<BreakStatus, "awaiting-approval" | "granted" | "starting-after-task">>({
   "awaiting-approval": true, granted: true, "starting-after-task": true,
 });
@@ -760,31 +762,25 @@ function validateLocalizedText(value: unknown, rule: string, path: string, into:
 // Task.
 // ---------------------------------------------------------------------------
 
-function validateDestinationDirectory(value: unknown, path: string, into: Collector): void {
+function validateConferenceCapability(value: unknown, path: string, into: Collector): void {
   if (!isPlainObject(value)) {
-    into.add("task.destinations.shape", path, "a conference control carries the directory it offers: { destinations: [...] }");
+    into.add("task.conference.shape", path, "a conference control says whom it may bring in, as the dialpad does: { destinations: \"contacts-only\" | \"any-number\" }");
     return;
   }
-  if (!Array.isArray(value.destinations)) {
-    into.add("task.destinations.list", `${path}.destinations`, "destinations must be an array");
-    return;
-  }
-  // Nothing is typed, so a directory with nothing in it is a control with nothing to offer.
-  if (value.destinations.length === 0) {
-    into.add("task.destinations.offer", path, "a directory offers at least one item; with none, omit the capability");
-  }
+  into.oneOf(value.destinations, DIAL_DESTINATION_POLICIES, "task.conference.destinations", `${path}.destinations`);
+}
+
+/** The provider's contacts, the agent computer's directory: each entry a contact with a unique id. */
+function validateContactEntriesInto(value: unknown[], path: string, into: Collector, levels: readonly string[]): void {
   const seen = new Set<string>();
-  value.destinations.forEach((destination: unknown, index: number) => {
-    const at = `${path}.destinations[${index}]`;
-    if (!isPlainObject(destination)) {
-      into.add("task.destination.shape", at, "each destination must be an object");
-      return;
+  value.forEach((contact: unknown, index: number) => {
+    const at = `${path}[${index}]`;
+    validateContactInto(contact, at, into, levels);
+    if (!isPlainObject(contact)) return;
+    if (into.filled(contact.id, "contact.id", `${at}.id`, "a contacts entry carries the unique id the wire names it by")) {
+      into.require(!seen.has(contact.id as string), "contact.id.unique", `${at}.id`, `duplicate contact id: ${contact.id}`);
+      seen.add(contact.id as string);
     }
-    if (into.filled(destination.id, "task.destination.id", `${at}.id`, "a destination needs an id")) {
-      if (seen.has(destination.id as string)) into.add("task.destination.unique", `${at}.id`, `duplicate destination id: ${destination.id}`);
-      seen.add(destination.id as string);
-    }
-    into.filled(destination.label, "task.destination.label", `${at}.label`, "a destination needs a label");
   });
 }
 
@@ -1142,7 +1138,7 @@ function validateHistory(value: unknown, path: string, into: Collector, task: { 
     }
     // A step that dialled says where to and, when a host placed it, which dial; no other step dialled.
     const dialled = typeof entry.step === "string" && (HISTORY_STEPS_THAT_DIAL as readonly string[]).includes(entry.step);
-    for (const field of ["dialId", "destinationId"] as const) {
+    for (const field of ["dialId", "contactId"] as const) {
       if (entry[field] === undefined) continue;
       if (into.filled(entry[field], `task.history.${field}`, `${at}.${field}`, `${field} must not be empty when present`)) {
         into.require(dialled, `task.history.${field}.unexpected`, `${at}.${field}`,
@@ -1203,13 +1199,17 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
       into.require(entry.held === true, "task.onCall.held", `${at}.held`, "held is stated by presence: send true or omit it");
     }
     if (role === "party") parties += 1;
+    if (entry.coaching !== undefined) {
+      into.require(entry.coaching === true, "task.onCall.coaching", `${at}.coaching`, "coaching is stated by presence: send true or omit it");
+      into.require(role === "agent", "task.onCall.coaching.unexpected", `${at}.coaching`, "only a lead, on the call as an agent, coaches");
+    }
     if (role === "agent") {
       into.require(isUserId(entry.userId), "task.onCall.userId", `${at}.userId`, "an agent on the call is named by their user id");
     } else {
       into.require(entry.userId === undefined, "task.onCall.userId.unexpected", `${at}.userId`, `a ${role} is not named by a user id`);
     }
     if (role === "conferenced") {
-      into.filled(entry.destinationId, "task.onCall.destinationId", `${at}.destinationId`, `a ${role} entry names the directory item that was dialled`);
+      into.filled(entry.contactId, "task.onCall.contactId", `${at}.contactId`, `a ${role} entry names the contact that was dialled, by its id in the provider's contacts`);
       // Stated, so a snapshot says who is present without anyone having seen the dial's outcome.
       if (into.oneOf(entry.stage, ON_CALL_STAGES, "task.onCall.stage", `${at}.stage`)) {
         into.require(!(entry.stage === "ringing" && entry.held === true), "task.onCall.held.ringing", `${at}.held`,
@@ -1228,12 +1228,12 @@ function validateOnCall(value: unknown, channel: string, path: string, into: Col
         into.require(!(entry.stage === "ringing" && entry.held === true), "task.onCall.held.ringing", `${at}.held`,
           "nobody ringing is held; held belongs to somebody who has joined");
       }
-      for (const field of ["destinationId", "label"] as const) {
+      for (const field of ["contactId", "label"] as const) {
         into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
           `a party is not a directory item; ${field} belongs on conferenced`);
       }
     } else {
-      for (const field of ["destinationId", "dialId", "label", "stage"] as const) {
+      for (const field of ["contactId", "dialId", "label", "stage"] as const) {
         into.require(entry[field] === undefined, `task.onCall.${field}.unexpected`, `${at}.${field}`,
           role === "party" ? `a party carries ${field} on a connect-back alone, with its dial and stage together` : `a ${role} was dialled from nowhere; ${field} belongs on conferenced`);
       }
@@ -1526,7 +1526,7 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
       case "recording": into.violations.push(...validateRecordingPolicy(declared, `${path}.capabilities.recording`)); break;
       case "outcomes": validateOutcomes(declared, `${path}.capabilities.outcomes`, into); break;
       case "custom": validateCustomCapabilities(declared, `${path}.capabilities.custom`, into); break;
-      case "conference": validateDestinationDirectory(declared, `${path}.capabilities.${name}`, into); break;
+      case "conference": validateConferenceCapability(declared, `${path}.capabilities.${name}`, into); break;
       default:
         // Presence is the permission: the flag capabilities carry no payload, so anything but
         // true is a value a host would have to interpret.
@@ -1592,7 +1592,7 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
 /**
  * Checks a lead command before dispatch, against the current authentication, transport and team
  * member list (`team`) and, for force-break and end-forced-break, the target's full `memberBreak`.
- * The authority is the login's `lead` flag; the provider rechecks the target and the state
+ * The authority is the lead capability the command needs, on the session's `lead`; the provider rechecks the target and the state
  * atomically, since a team member list is not authority to act after it has changed.
  */
 export function validateTeamCommand(request: unknown, context: unknown, path = "teamCommand"): ProtocolViolation[] {
@@ -1606,7 +1606,8 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
   const caps = isPlainObject(auth.capabilities) ? auth.capabilities : {};
   into.require((auth.status === "authenticated" || auth.status === "refreshing") && context.transport === "active",
     "team.command.connection", path, "lead commands require a live login and active transport");
-  into.require(caps.lead === true, "team.command.capability", path, "the login must declare lead");
+  const lead = isPlainObject(caps.lead) ? caps.lead : undefined;
+  into.require(lead !== undefined, "team.command.capability", path, "the login must declare lead");
   const command = request.command;
   const member = ["type", "memberId", "assignmentId"];
   const allowed: Record<string, readonly string[]> = {
@@ -1618,6 +1619,13 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
   };
   const fields = typeof command.type === "string" && Object.hasOwn(allowed, command.type) ? allowed[command.type] : undefined;
   if (!fields) { into.add("team.command.type", path, `unknown lead command: ${describeValue(command.type)}`); return into.violations; }
+  // Every lead switches the feature and leaves a call; every other command is the lead capability it needs.
+  const needs = Object.hasOwn(LEAD_COMMAND_CAPABILITY, command.type as string)
+    ? LEAD_COMMAND_CAPABILITY[command.type as keyof typeof LEAD_COMMAND_CAPABILITY] : undefined;
+  if (needs !== undefined && lead !== undefined) {
+    into.require(lead[needs] === true, "team.command.notGranted", path,
+      `${describeValue(command.type)} needs the lead capability ${needs}, which this lead does not hold`);
+  }
   for (const key of Object.keys(request)) into.require(key === "command", "team.request.field", `${path}.${key}`, "only command is supported");
   for (const key of Object.keys(command)) into.require(fields.includes(key), "team.command.field", `${path}.${key}`, "field is not supported for this command");
   if (command.reason !== undefined) into.filled(command.reason, "team.command.reason", path, "reason must not be empty");
@@ -1878,7 +1886,7 @@ export interface ReaderContext {
   self?: UserId;
   /**
    * The login's `AuthenticationState.capabilities`. The login is the permission: a lead's
-   * snapshot carries a team member list, nobody else's does, and `requests` need `team.leadAssistControl`.
+   * snapshot carries a team member list, and nobody else's does.
    */
   capabilities?: UserCapabilities;
   /** The level ids the manifest declares. `validateSnapshot` and `validateEventEnvelope` take them from the manifest unless given. */
@@ -1924,7 +1932,7 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Te
   }
   // The login is the permission: a team member list reaches a login that declares `capabilities.lead`
   // and nobody else. Only a caller holding the login can check it.
-  if (context.capabilities !== undefined && context.capabilities.lead !== true) {
+  if (context.capabilities !== undefined && context.capabilities.lead === undefined) {
     into.add("team.unentitled", path,
       "a team member list published to a login that does not declare capabilities.lead: the login is the permission");
   }
@@ -2018,11 +2026,22 @@ function validateTeamMemberInto(member: unknown, at: string, context: TeamValida
           "a listening entry names which of the member's calls the lead is on: the application opens its own audio on it") && Array.isArray(member.tasks)) {
           into.require(task !== undefined, "team.member.listening.assignment", `${here}.assignmentId`, "the call the lead is on is one the member's tasks carry");
         }
-        if (into.oneOf(entry.mode, LISTENING_MODES, "team.member.listening.mode", `${here}.mode`) && entry.mode === "join-call"
+        if (into.oneOf(entry.mode, LISTENING_MODES, "team.member.listening.mode", `${here}.mode`)
           && isPlainObject(task) && Array.isArray(task.onCall) && isUserId(entry.leadId)) {
-          // A lead who is heard is in the room the member sees; a silent one is not.
-          into.require(task.onCall.some((who: unknown) => isPlainObject(who) && who.role === "agent" && who.userId === entry.leadId),
-            "team.member.listening.heard", `${here}.mode`, `${entry.leadId} has joined the call and is heard, so the task's onCall carries them as an agent`);
+          // A lead who is heard is in the room the member sees -- marked coaching where the member alone
+          // hears them -- and a silent one is not.
+          const inRoom = task.onCall.find((who: unknown) => isPlainObject(who) && who.role === "agent" && who.userId === entry.leadId);
+          const coaching = isPlainObject(inRoom) && inRoom.coaching === true;
+          if (entry.mode === "join-call") {
+            into.require(inRoom !== undefined && !coaching, "team.member.listening.heard", `${here}.mode`,
+              `${entry.leadId} has joined the call and is heard by everyone, so the task's onCall carries them as an agent, not coaching`);
+          } else if (entry.mode === "coach") {
+            into.require(coaching, "team.member.listening.coaching", `${here}.mode`,
+              `${entry.leadId} is coaching and the member hears them, so the task's onCall carries them as an agent marked coaching`);
+          } else {
+            into.require(inRoom === undefined, "team.member.listening.silent", `${here}.mode`,
+              `${entry.leadId} is listening in silence, so the task's onCall does not carry them`);
+          }
         }
         into.timestamp(entry.since, "team.member.listening.since", `${here}.since`);
       });
@@ -2172,8 +2191,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
     into.require(idle.contacts === true, "snapshot.contacts.capability", `${path}.contacts`,
       "contacts require the contacts idle capability");
     if (Array.isArray(snapshot.contacts)) {
-      snapshot.contacts.forEach((contact: unknown, index: number) =>
-        validateContactInto(contact, `${path}.contacts[${index}]`, into, levels));
+      validateContactEntriesInto(snapshot.contacts, `${path}.contacts`, into, levels);
     } else {
       into.add("snapshot.contacts.shape", `${path}.contacts`, "contacts must be an array when present");
     }
@@ -2381,7 +2399,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
           `the manifest does not declare ${describeValue(event.outcome)} among its dialOutcomes`);
       }
       if (event.assignmentId !== undefined) into.require(isAssignmentId(event.assignmentId), "event.dialOutcome.assignmentId", `${at}.assignmentId`, "assignmentId must name an assignment when present");
-      if (event.destinationId !== undefined) into.filled(event.destinationId, "event.dialOutcome.destinationId", `${at}.destinationId`, "a destinationId must not be empty when present");
+      if (event.contactId !== undefined) into.filled(event.contactId, "event.dialOutcome.contactId", `${at}.contactId`, "a contactId must not be empty when present");
       if (event.reason !== undefined) into.filled(event.reason, "event.dialOutcome.reason", `${at}.reason`, "a reason must not be empty when present");
       break;
     }
@@ -2403,7 +2421,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       break;
     case "team-updated": case "team-member-updated": case "team-member-removed": case "team-policies-updated": {
       const field = event.type === "team-updated" ? "team" : event.type === "team-member-updated" ? "member" : event.type === "team-member-removed" ? "memberId" : "policies";
-      into.require(context.capabilities === undefined || context.capabilities.lead === true, "event.team.capability", `${at}.${field}`,
+      into.require(context.capabilities === undefined || context.capabilities.lead !== undefined, "event.team.capability", `${at}.${field}`,
         `${event.type} reaches a login that declares lead, and nobody else`);
       into.require(context.leadFeatures !== false, "event.team.features", `${at}.${field}`, "the team feature is not on for this lead: nothing of the team reaches them until the application switches it on, and nothing after it switches it off");
       const teamContext = { ...context, levels, channel: isChannel(channel) ? channel : undefined };
@@ -2422,8 +2440,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       if (!Array.isArray(event.contacts)) {
         into.add("event.contacts.shape", `${at}.contacts`, "contacts must be an array");
       } else {
-        event.contacts.forEach((contact: unknown, index: number) =>
-          validateContactInto(contact, `${at}.contacts[${index}]`, into, levels));
+        validateContactEntriesInto(event.contacts, `${at}.contacts`, into, levels);
       }
       break;
     case "next-call":
@@ -2954,7 +2971,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
         if (command.action === "request") fields.push("note");
         break;
       case "conference":
-        fields.push("action", "destinationId");
+        fields.push("action", "contactId", "number");
         fields.push(command.action === "add" ? "dialId" : "party");
         break;
     }
@@ -2981,12 +2998,17 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
       if (into.oneOf(command.action, CONFERENCE_ACTIONS, "command.conference.action", `${path}.action`)) {
         if (command.action === "add") {
           dial("command.conference.dialId");
-          into.filled(command.destinationId, "command.conference.destinationId", `${path}.destinationId`, "a conference names the directory item it dials in");
+          if (command.number === undefined) {
+            into.filled(command.contactId, "command.conference.contactId", `${path}.contactId`, "a conference names the contact it dials in, or the number typed");
+          } else {
+            into.filled(command.number, "command.conference.number", `${path}.number`, "a typed number must not be empty");
+            into.require(command.contactId === undefined, "command.conference.number.both", path, "an add names a contact or a typed number, never both");
+          }
         } else {
           const party = command.party === true;
-          const item = isFilled(command.destinationId);
-          into.require(party !== item, "command.conference.remove.target", path,
-            "a remove names one person: the party, or a conferenced entry by its destinationId, never both and never neither");
+          const contact = isFilled(command.contactId);
+          into.require(party !== contact, "command.conference.remove.target", path,
+            "a remove names one person: the party, or a conferenced entry by its contactId, never both and never neither");
         }
       }
       break;
@@ -3056,13 +3078,7 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
   // to act on yet, and in completing this agent's interaction has ended. The caller and other
   // channels may continue elsewhere; this task's phase no longer permits these controls.
   const interaction = () => inPhase("command.phase.interaction", "in-progress", "paused");
-  // A destination is one the directory offered: the id Omni sends is the id the provider published.
-  const listed = (name: string) => {
-    const declared = capabilities[name];
-    const directory = isPlainObject(declared) && Array.isArray(declared.destinations) ? declared.destinations.filter(isPlainObject) : [];
-    into.require(directory.some(item => item.id === command.destinationId), "command.destination.unknown", `${path}.destinationId`,
-      `${describeValue(command.destinationId)} is not a destination the task's ${name} directory offered`);
-  };
+
   const onCall = Array.isArray(task.onCall) ? task.onCall.filter(isPlainObject) : [];
   switch (type) {
     case "answer": case "accept": case "decline":
@@ -3110,15 +3126,19 @@ export function validateTaskCommand(command: unknown, task?: unknown, path = "co
     case "conference": {
       interaction();
       const conferencing = offered("conference");
-      if (conferencing && command.action === "add") listed("conference");
+      if (conferencing && command.action === "add" && command.number !== undefined) {
+        const declared = capabilities.conference;
+        into.require(isPlainObject(declared) && declared.destinations === "any-number", "command.conference.number.contactsOnly", `${path}.number`,
+          "the task's conference takes contacts only: a typed number needs any-number");
+      }
       if (conferencing && command.action === "remove") {
         const others = onCall.filter(entry => entry.role !== "agent");
         if (command.party === true) {
           into.require(others.some(entry => entry.role !== "party"), "command.conference.remove.alone", path,
             "removing the party would leave the agent alone: that is end-call");
-        } else if (isFilled(command.destinationId)) {
-          into.require(onCall.some(entry => entry.role === "conferenced" && entry.destinationId === command.destinationId), "command.conference.remove.unknown", path,
-            `no conferenced entry on onCall has destinationId ${describeValue(command.destinationId)}`);
+        } else if (isFilled(command.contactId)) {
+          into.require(onCall.some(entry => entry.role === "conferenced" && entry.contactId === command.contactId), "command.conference.remove.unknown", path,
+            `no conferenced entry on onCall has contactId ${describeValue(command.contactId)}`);
           into.require(others.length > 1, "command.conference.remove.alone", path,
             "removing the last other person would leave the agent alone: that is end-call");
         }
@@ -3332,6 +3352,10 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
     if (declared === undefined) continue;
     if (!into.require((SESSION_CAPABILITIES as readonly string[]).includes(name), "authentication.capability.unknown",
       `${path}.${name}`, `unsupported session capability: ${name}`)) continue;
+    if (name === "lead") {
+      validateLeadCapabilitiesInto(declared, `${path}.lead`, into);
+      continue;
+    }
     if (name === "preferences") {
       if (Array.isArray(declared) && declared.length === 0) {
         into.add("authentication.capability.preferences.empty", `${path}.preferences`,
@@ -3341,6 +3365,24 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
       continue;
     }
     into.require(declared === true, "authentication.capability.value", `${path}.${name}`,
+      `${name} is declared by presence: send true or omit it`);
+  }
+}
+
+/** A lead's capabilities: an object of the lead commands it allows, each by presence, at least one. */
+function validateLeadCapabilitiesInto(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) {
+    into.add("authentication.capability.lead.shape", path,
+      "lead states the lead capabilities this session holds: an object such as { listen: true, coach: true }");
+    return;
+  }
+  const granted = Object.entries(value).filter(([, declared]) => declared !== undefined);
+  into.require(granted.length > 0, "authentication.capability.lead.empty", path,
+    "a lead holds at least one lead capability; a session with none omits lead");
+  for (const [name, declared] of granted) {
+    if (!into.require((LEAD_CAPABILITY_NAMES as readonly string[]).includes(name), "authentication.capability.lead.unknown",
+      `${path}.${name}`, `unsupported lead capability: ${name}`)) continue;
+    into.require(declared === true, "authentication.capability.lead.value", `${path}.${name}`,
       `${name} is declared by presence: send true or omit it`);
   }
 }
