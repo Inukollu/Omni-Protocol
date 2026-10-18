@@ -991,7 +991,7 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
       seen.add(browser.id as string);
     }
     // The name is an input to a `TAB_NAME` isolation scheme: two tabs with one name would
-    // silently share a session.
+    // silently share a profile.
     if (into.filled(browser.name, "task.browser.name", `${at}.name`, "a browser needs a name")) {
       if (names.has(browser.name as string)) into.add("task.browser.name.unique", `${at}.name`, `duplicate browser name: ${browser.name}`);
       names.add(browser.name as string);
@@ -1012,7 +1012,7 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
     // Reuse and its scheme travel together. A reusing browser with no scheme would otherwise
     // inherit whatever a host happened to default to, which is how two tasks end up sharing a
     // session nobody intended. The guide names the rule for the missing case.
-    if (browser.sharedSession === true) {
+    if (browser.sharedProfile === true) {
       if (browser.isolationScheme === undefined) {
         into.add("task.browser.isolationScheme.required", `${at}.isolationScheme`,
           `a reusing browser must declare one of: ${ISOLATION_SCHEME_VALUES.join(", ")}`);
@@ -1021,11 +1021,11 @@ function validateBrowsers(value: unknown, path: string, into: Collector): void {
           "task.browser.isolationScheme", `${at}.isolationScheme`,
           `an isolation scheme must be one of: ${ISOLATION_SCHEME_VALUES.join(", ")}`);
       }
-    } else if (browser.sharedSession === false) {
+    } else if (browser.sharedProfile === false) {
       into.require(browser.isolationScheme === undefined, "task.browser.isolationScheme.unexpected",
         `${at}.isolationScheme`, "a browser that does not share its session must not declare an isolation scheme");
     } else {
-      into.add("task.browser.sharedSession", `${at}.sharedSession`, "a browser must say whether its session is shared across tasks");
+      into.add("task.browser.sharedProfile", `${at}.sharedProfile`, "a browser must say whether its profile is shared across tasks");
     }
   });
 }

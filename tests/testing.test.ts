@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
+import { BROWSER_ISOLATION_SCHEMES, browserProfileKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
 import type { SessionStore, Refusal, PhoneState, SecretStore, AuthenticationContext } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
-import { memoryStore, assertHistoryAgreesAcrossTasks, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, testAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
+import { memoryStore, assertHistoryAgreesAcrossTasks, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserProfileIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserProfileKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, testAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
 const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, forceBreak: true, endForcedBreak: true, setPolicy: true } as const;
 
@@ -770,51 +770,51 @@ describe("browser isolation", () => {
     name: "CRM",
     purpose: "Customer record",
     url: "https://crm.example.test/customer/42",
-    sharedSession: true,
+    sharedProfile: true,
     isolationScheme: BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME,
   } as const satisfies TaskBrowser;
-  const isolated = { ...browser, sharedSession: false, isolationScheme: undefined } as const satisfies TaskBrowser;
+  const isolated = { ...browser, sharedProfile: false, isolationScheme: undefined } as const satisfies TaskBrowser;
 
-  it("shares one session across tasks under a task-type scheme", () => {
-    expect(() => assertBrowserSessionIsolation(
+  it("shares one profile across tasks under a task-type scheme", () => {
+    expect(() => assertBrowserProfileIsolation(
       { providerId: "voiceco", assignmentId: "call-1-a", taskType: "Support", browser },
       { providerId: "voiceco", assignmentId: "call-2-a", taskType: "Support", browser: { ...browser, id: "crm-copy" } },
       true,
     )).not.toThrow();
   });
 
-  it("never shares a session when sharedSession is false", () => {
-    expect(() => assertBrowserSessionIsolation(
+  it("never shares a profile when sharedProfile is false", () => {
+    expect(() => assertBrowserProfileIsolation(
       { providerId: "voiceco", assignmentId: "call-1-a", taskType: "Support", browser },
       { providerId: "voiceco", assignmentId: "call-1-a", taskType: "Support", browser: isolated },
       false,
     )).not.toThrow();
     // Two isolated browsers do not share with each other either: "no key" is not a matching key.
-    expect(() => assertBrowserSessionIsolation(
+    expect(() => assertBrowserProfileIsolation(
       { providerId: "voiceco", assignmentId: "call-1-a", taskType: "Support", browser: isolated },
       { providerId: "voiceco", assignmentId: "call-1-a", taskType: "Support", browser: isolated },
       false,
     )).not.toThrow();
-    expect(browserSessionKey({ providerId: "voiceco", assignmentId: "c-a", taskType: "Support", browser: isolated })).toBeUndefined();
+    expect(browserProfileKey({ providerId: "voiceco", assignmentId: "c-a", taskType: "Support", browser: isolated })).toBeUndefined();
   });
 
   it("reports a mismatch between expected and derived sharing", () => {
-    expect(() => assertBrowserSessionIsolation(
+    expect(() => assertBrowserProfileIsolation(
       { providerId: "voiceco", assignmentId: "call-1-a", taskType: "Support", browser },
       { providerId: "otherco", assignmentId: "call-1-a", taskType: "Support", browser },
       true,
-    )).toThrow(/Browser session sharing mismatch/);
+    )).toThrow(/Browser profile sharing mismatch/);
     // And in the other direction, so the helper is known to check rather than to throw.
-    expect(() => assertBrowserSessionIsolation(
+    expect(() => assertBrowserProfileIsolation(
       { providerId: "voiceco", assignmentId: "call-1-a", taskType: "Support", browser },
       { providerId: "voiceco", assignmentId: "call-2-a", taskType: "Support", browser },
       false,
-    )).toThrow(/Browser session sharing mismatch/);
+    )).toThrow(/Browser profile sharing mismatch/);
   });
 
   it("keeps every adversarial naming variant in its own session", () => {
     const variants = ["Acme.Voice", "Acme", "acme", "Acme Voice", "Acme-Voice", "Acme%2EVoice"];
-    expect(() => assertNoBrowserSessionKeyCollisions(
+    expect(() => assertNoBrowserProfileKeyCollisions(
       variants.flatMap(providerId => ["Support", "Voice.Support", "support"].map(taskType => ({
         providerId, assignmentId: "t1-a", taskType, browser,
       }))),
@@ -822,7 +822,7 @@ describe("browser isolation", () => {
   });
 
   it("detects a genuine collision when one exists", () => {
-    expect(() => assertNoBrowserSessionKeyCollisions([
+    expect(() => assertNoBrowserProfileKeyCollisions([
       { providerId: "voiceco", assignmentId: "call-1-a", taskType: "Support", browser },
       { providerId: "voiceco", assignmentId: "call-2-a", taskType: "Support", browser },
     ])).toThrow(/collision/);
@@ -884,8 +884,8 @@ const conformingSnapshot = {
     wrapAllowance: 60,
     party: { name: "Maya Rao", number: "+919876543210" },
     browsers: [
-      { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedSession: true, isolationScheme: "ProviderName.TaskTypeName.TabName" },
-      { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedSession: false },
+      { id: "crm", name: "CRM", purpose: "Customer record", url: "https://crm.example.com/42", sharedProfile: true, isolationScheme: "ProviderName.TaskTypeName.TabName" },
+      { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedProfile: false },
     ],
     history: { steps: [
         { step: "queued", at: "2026-08-21T08:59:19Z", seconds: 41 },

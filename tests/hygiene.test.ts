@@ -14,7 +14,7 @@ const offending = (text: string): string[] => INTERNAL.filter(name => text.toLow
 describe("a public repo says less", () => {
   it("keeps the words the contract renamed out of everything committed, and finds a planted one", () => {
     // A rename that lingers in the guide or a fixture teaches the old word to the next adapter.
-    const RENAMED = ["loginId", "LoginStore", "LoginValidationContext", "SessionCapabilities", "ConnectionStatus", "ConnectionRecovery", "provider-status",
+    const RENAMED = ["loginId", "sharedSession", "browserSessionKey", "BrowserSessionKeyInput", "LoginStore", "LoginValidationContext", "SessionCapabilities", "ConnectionStatus", "ConnectionRecovery", "provider-status",
       "orgTiers", "TierDeclaration", "DEFAULT_TIERS", "effectiveTiers", "task-audio-ready", "TaskBrowserBase",
       "destinationPolicy", "completionAllowance", "DispositionPolicy", "BrowserAccessPolicy", "DialDestinationPolicy",
       "ProviderSummary", "provider-summary", "assertBrowserIsolationAndReuse", "reuse:",

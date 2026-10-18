@@ -118,23 +118,23 @@ export const invalidEmailTask = {
 } satisfies Task<"email">;
 
 // A reusing browser declares its scheme, and a browser that does not reuse declares none.
-// There is no default: sharing a signed-in session is a decision, not something to inherit.
+// There is no default: sharing a signed-in profile is a decision, not something to inherit.
 export const reusingBrowser = {
   id: "crm", name: "CRM", purpose: "Contact record", url: "https://crm.example.com/contact/42",
-  sharedSession: true,
+  sharedProfile: true,
   isolationScheme: BROWSER_ISOLATION_SCHEMES.PROVIDER_NAME__TASK_TYPE_NAME__TAB_NAME,
 } satisfies TaskBrowser;
 
 export const isolatedBrowser = {
   id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/",
-  sharedSession: false,
+  sharedProfile: false,
 } satisfies TaskBrowser;
 
 // Each refused shape sits on one line so the directive above it covers wherever tsc anchors it.
 // @ts-expect-error A reusing browser with no isolation scheme does not compile.
-export const reusingBrowserWithoutAScheme: TaskBrowser = { id: "crm", name: "CRM", purpose: "Contact record", url: "https://crm.example.com/contact/42", sharedSession: true };
+export const reusingBrowserWithoutAScheme: TaskBrowser = { id: "crm", name: "CRM", purpose: "Contact record", url: "https://crm.example.com/contact/42", sharedProfile: true };
 // @ts-expect-error A browser that does not reuse has no scheme to declare.
-export const isolatedBrowserWithAScheme: TaskBrowser = { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedSession: false, isolationScheme: BROWSER_ISOLATION_SCHEMES.TAB_NAME };
+export const isolatedBrowserWithAScheme: TaskBrowser = { id: "kb", name: "Knowledge", purpose: "Article lookup", url: "https://kb.example.com/", sharedProfile: false, isolationScheme: BROWSER_ISOLATION_SCHEMES.TAB_NAME };
 
 // Every command reaches the provider through `execute`; the union is the channel's whole set.
 export const voiceHold: TaskCommand<"voice"> = { type: "hold" };
@@ -275,9 +275,9 @@ export const audiolessEmailTask = { ...emailTask, assignmentId: "email-9",
   audio: "started" } satisfies Task<"email">;
 // @ts-expect-error A snapshot states its task count; a blank state cannot pass as a confirmed empty.
 export const uncountedSnapshot = { transport: "active", sessionId: "s-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [] } satisfies Snapshot<"voice">;
-export const hiddenUrlBrowser = { id: "crm", name: "CRM", url: "https://crm.example.com/42", purpose: "Customer record", sharedSession: false, urlVisibility: "hidden" } satisfies TaskBrowser;
-export const plainUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", sharedSession: false } satisfies TaskBrowser;
-export const partialUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", sharedSession: false,
+export const hiddenUrlBrowser = { id: "crm", name: "CRM", url: "https://crm.example.com/42", purpose: "Customer record", sharedProfile: false, urlVisibility: "hidden" } satisfies TaskBrowser;
+export const plainUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", sharedProfile: false } satisfies TaskBrowser;
+export const partialUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", sharedProfile: false,
   // @ts-expect-error A URL is hidden, shown to its domain, or shown in full; there is no fourth word.
   urlVisibility: "partial" } satisfies TaskBrowser;
 export const agentsOwnTab = { id: "tab-1", name: "Intranet", url: "https://intranet.example.com/" } satisfies PersonalBrowser;
@@ -298,7 +298,7 @@ export const staleParty = { ...emailTask, assignmentId: "email-11",
   // @ts-expect-error The person on the other end is the party.
   contact: { name: "Asha" } } satisfies Task<"email">;
 export const staleSharing = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup",
-  // @ts-expect-error A browser says whether its session is shared: sharedSession.
+  // @ts-expect-error A browser says whether its profile is shared: sharedProfile.
   reuse: false } satisfies TaskBrowser;
 // @ts-expect-error The queue board is queue-summary.
 export const staleSummary = { type: "provider-summary", summary: { title: "Sales", waitingCount: 0, updatedAt: "2026-08-21T09:00:00Z" } } satisfies ProviderEvent<"voice">;

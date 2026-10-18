@@ -903,17 +903,17 @@ export interface Browser {
 
 /**
  * A tab the task brought: fixed at the task's definition -- count and details -- with why it is
- * there, whether its session is shared across tasks, and whether the agent may read its URL. The
+ * there, whether its profile is shared across tasks, and whether the agent may read its URL. The
  * union is what makes a reusing browser with no scheme fail to compile rather than inherit a
- * default -- which is how two tasks end up sharing a session nobody intended.
+ * default -- which is how two tasks end up sharing a profile nobody intended.
  */
 export type TaskBrowser = Browser & {
   purpose: string;
   /** Hide this tab's URL from the agent in Omni's chrome. Omitted, the URL shows as any browser's does; a provider says `hidden` where the URL carries what the agent may not read. */
   urlVisibility?: UrlVisibility;
 } & (
-  | { sharedSession: false; isolationScheme?: never }
-  | { sharedSession: true; isolationScheme: BrowserIsolationScheme }
+  | { sharedProfile: false; isolationScheme?: never }
+  | { sharedProfile: true; isolationScheme: BrowserIsolationScheme }
 );
 
 /** A tab the agent opened in the personal workspace: theirs, as many as they like, and never on the wire. */
@@ -2135,7 +2135,7 @@ export function historyStepExpectsAPerson(step: HistoryStep): boolean {
   return (HISTORY_STEPS_WITH_A_PERSON as readonly HistoryStep[]).includes(step);
 }
 
-export interface BrowserSessionKeyInput {
+export interface BrowserProfileKeyInput {
   /** `Manifest.id`, never `displayName`: only the id is unique across an installation and stable. */
   providerId: string;
   /** The task's assignment: a task-scoped session lives one assignment, never the next customer's. */
@@ -2168,15 +2168,15 @@ export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): bool
 /**
  * The storage-profile key a reusing browser shares, or `undefined` where it shares nothing.
  *
- * Fails closed. A browser with `sharedSession: false` has no key; nor does a reusing one whose scheme is
+ * Fails closed. A browser with `sharedProfile: false` has no key; nor does a reusing one whose scheme is
  * missing or unknown -- the type forbids that, but an adapter compiled against another version can
  * still send it, and the safe reading is "do not share", never "share with everyone named the
  * same". Every part is encoded, separator included, before joining, so a tab called `a.b`
  * cannot collide with a provider called `a` and a tab called `b`.
  */
-export function browserSessionKey(input: BrowserSessionKeyInput): string | undefined {
+export function browserProfileKey(input: BrowserProfileKeyInput): string | undefined {
   const { providerId, assignmentId, taskType, browser } = input;
-  if (browser.sharedSession !== true) return undefined;
+  if (browser.sharedProfile !== true) return undefined;
   // `encodeURIComponent` leaves `.` untouched, and `.` is the separator: a raw join would let
   // provider `Acme.Voice` with type `Support` forge the key of `Acme` with `Voice.Support`.
   const part = (value: string) => encodeURIComponent(value).replaceAll(".", "%2E");
