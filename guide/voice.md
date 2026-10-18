@@ -220,19 +220,20 @@ capabilities: {
 | Field | Contract |
 | --- | --- |
 | `destinations` | Whom the agent may bring in, in the dialpad's own words (`task.addToCall.destinations`): `contacts-only`, an entry of this provider's contacts; `any-number`, a number the agent types as well. |
-| `contactIds` | Optional. The contacts this task offers, by id: a billing call may offer Billing escalation and Tier 2 and nothing else (`task.addToCall.contactIds`, `.unique`). Omitted, every contact is offered. Ids only -- the agent computer shows the names it holds -- and an add naming another contact is refused before it is sent (`command.addToCall.contactId.unlisted`). |
+| `contactIds` | Optional. The contacts this task offers, by id: a billing call may offer the billing specialist and the translator line and nothing else (`task.addToCall.contactIds`, `.unique`). Omitted, every contact is offered. Ids only -- the agent computer shows the names it holds -- and an add naming another contact is refused before it is sent (`command.addToCall.contactId.unlisted`). |
 
 **The directory is the provider's contacts, at the agent computer.** It reaches the agent
 computer once, with the snapshot, and again whenever it changes (`contacts-updated`), never on a
 task, a call or a history. Each entry is a contact with a unique `id` (`contact.id`,
-`contact.id.unique`), a name, and a number that may be withheld: a queue, an IVR menu, an outside
-line or a person, which the provider executes and the protocol does not describe. The wire names a
-contact by its `id` alone, and the agent computer shows the name it holds for it:
+`contact.id.unique`), a name, and a number that may be withheld: a person the agent can reach -- a
+colleague, a specialist, an outside number such as a translator line. Adding to the call brings a
+person in while the agent stays; it is not a way to send the caller to a queue or a menu. The wire
+names a contact by its `id` alone, and the agent computer shows the name it holds for it:
 
 ```ts
 const contacts: ContactEntry[] = [
-  { id: "c-17", name: "Tier 2 support", number: "+914023400000" },
-  { id: "c-20", name: "Back to the main menu" },
+  { id: "c-17", name: "Ravi, billing specialist", number: "+914023400000" },
+  { id: "c-20", name: "Translator line" },
 ];
 ```
 
@@ -249,8 +250,7 @@ A typed number on a `contacts-only` task is refused before it is sent
 (`omni.destination-not-permitted`). A typed number becomes a contact: the provider enters it in its
 contacts under an id of its own, publishes the entry, and names the person by that id from then
 on -- on `onCall`, in the `added` step, on the dial's outcome and on a remove -- as it names
-everyone else. Returning to an IVR or queue does not end the caller journey; a later assignment to
-the same agent is a new interaction.
+everyone else.
 
 ## Ending a call, and removing one person from it
 

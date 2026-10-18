@@ -817,8 +817,8 @@ export interface OutcomeRules {
 /**
  * Whom the agent may add to the call, in the dialpad's own words: `contacts-only`, an entry of
  * this provider's contacts, named by its `id`; or `any-number`, a number the agent types as well.
- * `contactIds` narrows the contacts this task offers to those ids -- a billing call offering Billing
- * escalation and Tier 2 -- and omitted, every contact is offered. Ids only: the names are the
+ * `contactIds` narrows the contacts this task offers to those ids -- a billing call offering the
+ * billing specialist and the translator line -- and omitted, every contact is offered. Ids only: the names are the
  * agent computer's, from the contacts.
  */
 export interface AddToCallCapability {
@@ -1056,7 +1056,7 @@ export const ON_CALL_ROLES = ["party", "agent", "added"] as const satisfies read
  * `contactId` of its entry in the provider's contacts, a typed number included), and the
  * `stage` it has reached: `ringing` until the dial is answered, `joined` after, stated so a snapshot
  * says who is present without anyone having seen the outcome. Nobody ringing is held. `label` names
- * a destination -- a person, a queue -- not a phrase. `coaching` marks a lead the agent alone hears,
+ * a person or a line -- not a phrase. `coaching` marks a lead the agent alone hears,
  * present while they coach and gone when they stop. At most one `party`. The `party`
  * carries a `stage` while being dialled -- by any host dial, a dialpad call, a preview Call or a
  * connect-back, carrying its `dialId`, or by a callback the platform places itself, carrying none --

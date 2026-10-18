@@ -40,7 +40,7 @@ describe("provider interaction controls", () => {
   it("adds a contact by its id, and a typed number only where the task allows any number", () => {
     const contactsOnly = { ...task, capabilities: { addToCall: { destinations: "contacts-only" } } };
     const anyNumber = { ...task, capabilities: { addToCall: { destinations: "any-number" } } };
-    for (const contactId of ["ivr-return", "agent-target"])
+    for (const contactId of ["billing-specialist", "translator-line"])
       expect(validateTaskCommand({ type: "add-to-call", dialId: "dial", contactId }, contactsOnly, "command", { levels: LEVELS })).toEqual([]);
     const typed = { type: "add-to-call", dialId: "dial", number: "+914023456789" };
     expect(validateTaskCommand(typed, anyNumber, "command", { levels: LEVELS })).toEqual([]);
