@@ -2,7 +2,7 @@
 // `@ts-expect-error` is a shape the contract must refuse, paired with the shape it must accept.
 import {
   ConnectContext,
-  LoginStore,
+  SessionStore,
   HistoryReport,
   HostAudioOutput,
   BROWSER_ISOLATION_SCHEMES,
@@ -38,6 +38,8 @@ import {
   type OnCall,
   type TeamCommand,
 } from "../src/index.js";
+
+const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, forceBreak: true, endForcedBreak: true, setPolicy: true } as const;
 
 export const voiceManifest = {
   id: "voice-provider",
@@ -163,7 +165,7 @@ export const emailConnectBack: TaskCommand<"email"> = { type: "connect-back", di
 
 // The agent hands a call to nobody: lead assist is how help arrives, and a transfer is not a command.
 // @ts-expect-error renamed away: transfer, cold or warm, is gone; a lead is asked onto the call instead.
-export const coldTransfer: TaskCommand<"voice"> = { type: "transfer", action: "cold", dialId: "dial-2", destinationId: "tier2" };
+export const coldTransfer: TaskCommand<"voice"> = { type: "transfer", action: "cold", dialId: "dial-2", contactId: "tier2" };
 // @ts-expect-error renamed away: the consult steps went with the warm transfer.
 export const completeConsultation: TaskCommand<"voice"> = { type: "transfer", action: "complete" };
 // @ts-expect-error renamed away: no directory is offered for a transfer.
@@ -184,15 +186,15 @@ export const offerWithDeadline: ProviderEvent<"email"> = { type: "task-offered",
 export const expiredPreview: TaskOutcome = { type: "expired", phase: "preview" };
 export const expiredConfirmed: TaskOutcome = { type: "expired", phase: "confirmed" };
 // Who is on the call is voice-only, like the commands that bring people onto it.
-export const conferencingVoiceTask = { ...emailTask, assignmentId: "call-10", channel: "voice", capabilities: { conference: { destinations: [{ id: "tier2", label: "Tier 2" }] } }, phase: "paused", onCall: [{ role: "conferenced", destinationId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
+export const addingVoiceTask = { ...emailTask, assignmentId: "call-10", channel: "voice", capabilities: { addToCall: { destinations: "contacts-only" } }, phase: "paused", onCall: [{ role: "added", contactId: "tier2", dialId: "dial-3", stage: "ringing", since: "2026-08-21T09:05:00Z" }] } satisfies Task<"voice">;
 // @ts-expect-error A dialled entry says where it stands: ringing or joined.
-export const unstagedConferenced: OnCall = { role: "conferenced", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
-// @ts-expect-error renamed away: nobody is consulted on a call; a colleague dialled in is conferenced.
-export const consultedEntry: OnCall = { role: "consulted", destinationId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" };
+export const unstagedAdded: OnCall = { role: "added", contactId: "tier2", since: "2026-08-21T09:05:00Z" };
+// @ts-expect-error renamed away: nobody is consulted on a call; a colleague dialled in is added.
+export const consultedEntry: OnCall = { role: "consulted", contactId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error Email has nobody on a call.
-export const conferencingEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-6", onCall: [{ role: "conferenced", destinationId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
+export const addingEmailTask: Task<"email"> = { ...emailTask, assignmentId: "email-6", onCall: [{ role: "added", contactId: "tier2", stage: "joined", since: "2026-08-21T09:05:00Z" }] };
 // @ts-expect-error A party was dialled from nowhere and names no destination.
-export const misplacedParty: OnCall = { role: "party", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
+export const misplacedParty: OnCall = { role: "party", contactId: "tier2", since: "2026-08-21T09:05:00Z" };
 // The party being connected back carries the host's dial and its stage, together and only together.
 export const partyRinging: OnCall = { role: "party", dialId: "dial-9", stage: "ringing", since: "2026-08-21T09:05:00Z" };
 // A callback the platform places on the same task: the party ringing, no host dial.
@@ -200,23 +202,25 @@ export const partyCalledBack: OnCall = { role: "party", stage: "ringing", since:
 // @ts-expect-error A dial with no stage is half a claim.
 export const partyDialledStageless: OnCall = { role: "party", dialId: "dial-9", since: "2026-08-21T09:05:00Z" };
 // @ts-expect-error An agent on the call is named by user id, not by a destination.
-export const misplacedAgent: OnCall = { role: "agent", destinationId: "tier2", since: "2026-08-21T09:05:00Z" };
+export const misplacedAgent: OnCall = { role: "agent", contactId: "tier2", since: "2026-08-21T09:05:00Z" };
 
-// A conference add dials and carries the host's dialId; a remove names who leaves, as the room names them.
-export const addToConference: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" };
-export const removeFromConference: TaskCommand<"voice"> = { type: "conference", action: "remove", destinationId: "tier2" };
-export const removeTheCustomer: TaskCommand<"voice"> = { type: "conference", action: "remove", party: true };
+// An add to the call dials and carries the host's dialId; a remove names who leaves, as the room names them.
+export const addToTheCall: TaskCommand<"voice"> = { type: "add-to-call", dialId: "dial-4", contactId: "tier2" };
+export const removeFromTheCall: TaskCommand<"voice"> = { type: "remove-from-call", contactId: "tier2" };
+export const removeTheCustomer: TaskCommand<"voice"> = { type: "remove-from-call", party: true };
 // @ts-expect-error A remove names one person: the party, or a directory item, never both.
-export const removeEverybody: TaskCommand<"voice"> = { type: "conference", action: "remove", party: true, destinationId: "tier2" };
+export const removeEverybody: TaskCommand<"voice"> = { type: "remove-from-call", party: true, contactId: "tier2" };
 // @ts-expect-error A remove names one person; naming nobody is end-call.
-export const removeNobody: TaskCommand<"voice"> = { type: "conference", action: "remove" };
+export const removeNobody: TaskCommand<"voice"> = { type: "remove-from-call" };
+// @ts-expect-error renamed away: adding to the call is not conferencing.
+export const conferenceTheCall: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", contactId: "tier2" };
 export const endTheCall: TaskCommand<"voice"> = { type: "end-call" };
 // @ts-expect-error renamed away: the agent ends the call; disconnect was the engineer's word.
 export const disconnectTheCall: TaskCommand<"voice"> = { type: "disconnect" };
-// @ts-expect-error A conference add is a dial, so it carries the host's dialId.
-export const unplacedConferenceAdd: TaskCommand<"voice"> = { type: "conference", action: "add", destinationId: "tier2" };
-// @ts-expect-error renamed away: the address a conference dials is its destination, as on every other dial.
-export const conferenceParticipant: TaskCommand<"voice"> = { type: "conference", action: "add", dialId: "dial-4", participant: "+14155550111" };
+// @ts-expect-error An add to the call is a dial, so it carries the host's dialId.
+export const unplacedAdd: TaskCommand<"voice"> = { type: "add-to-call", contactId: "tier2" };
+// @ts-expect-error renamed away: an add names a contact or a typed number, nothing else.
+export const addParticipant: TaskCommand<"voice"> = { type: "add-to-call", dialId: "dial-4", participant: "+14155550111" };
 
 // A dial ends one way or another, and only voice has dials to end.
 export const voiceDialOutcomes: Manifest<"voice">["dialOutcomes"] = ["answered", "no-answer"];
@@ -270,7 +274,7 @@ export const audiolessEmailTask = { ...emailTask, assignmentId: "email-9",
   // @ts-expect-error Real-time audio is a voice affair; an email task carries no state for it.
   audio: "started" } satisfies Task<"email">;
 // @ts-expect-error A snapshot states its task count; a blank state cannot pass as a confirmed empty.
-export const uncountedSnapshot = { transport: "active", loginId: "s-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [] } satisfies Snapshot<"voice">;
+export const uncountedSnapshot = { transport: "active", sessionId: "s-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [] } satisfies Snapshot<"voice">;
 export const hiddenUrlBrowser = { id: "crm", name: "CRM", url: "https://crm.example.com/42", purpose: "Customer record", sharedSession: false, urlVisibility: "hidden" } satisfies TaskBrowser;
 export const plainUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", sharedSession: false } satisfies TaskBrowser;
 export const partialUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb.example.com/", purpose: "Article lookup", sharedSession: false,
@@ -278,10 +282,10 @@ export const partialUrlBrowser = { id: "kb", name: "Knowledge", url: "https://kb
   urlVisibility: "partial" } satisfies TaskBrowser;
 export const agentsOwnTab = { id: "tab-1", name: "Intranet", url: "https://intranet.example.com/" } satisfies PersonalBrowser;
 // The renamed keys are refused by the type, so a fixture kept from an older release fails the build.
-export const staleLogin = { transport: "active", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0,
-  // @ts-expect-error The login is identified by loginId.
-  sessionId: "session-1" } satisfies Snapshot<"voice">;
-export const staleBreak = { transport: "active", loginId: "login-1", tasks: [], taskCount: 0,
+export const staleSession = { transport: "active", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0,
+  // @ts-expect-error renamed away: the session is identified by sessionId.
+  loginId: "session-1" } satisfies Snapshot<"voice">;
+export const staleBreak = { transport: "active", sessionId: "session-1", tasks: [], taskCount: 0,
   // @ts-expect-error Whether the agent may ask is canRequestBreak.
   break: { status: "not-requested", accepting: true } } satisfies Snapshot<"voice">;
 export const staleLadder = { ...voiceManifest,
@@ -318,20 +322,20 @@ export const promisingHost: Host = { guarantees: { browserUrlVisibility: true, p
 export const reticentHost: Host = { guarantees: {}, report: () => noAudioHere, subscribe: () => () => undefined };
 // The station is the host's: a softphone host states what its Mute does, and a silenced device says who silenced it.
 export const streamMutingHost: Host = { guarantees: {}, mute: "stream", report: () => noAudioHere, subscribe: () => () => undefined };
-// The connect context ties the mute kind to the phone: a softphone login states it, a hardphone or a conversation cannot.
-const store: LoginStore = { get: async () => undefined, set: async () => undefined, delete: async () => undefined };
+// The connect context ties the mute kind to the phone: a softphone session states it, a hardphone or a conversation cannot.
+const store: SessionStore = { get: async () => undefined, set: async () => undefined, delete: async () => undefined };
 const seatless = { guarantees: {}, report: () => noAudioHere, subscribe: () => () => undefined };
-export const softphoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, phone: "softphone", host: { ...reticentHost, mute: "stream" } };
-export const hardphoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, phone: "hardphone", host: seatless };
-export const chatLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, host: seatless };
-// @ts-expect-error A softphone login's host states what its Mute does.
-export const silentSoftphoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, phone: "softphone", host: seatless };
+export const softphoneSession: ConnectContext = { protocolVersion: 1, sessionId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, phone: "softphone", host: { ...reticentHost, mute: "stream" } };
+export const hardphoneSession: ConnectContext = { protocolVersion: 1, sessionId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, phone: "hardphone", host: seatless };
+export const chatSession: ConnectContext = { protocolVersion: 1, sessionId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, host: seatless };
+// @ts-expect-error A softphone session's host states what its Mute does.
+export const silentSoftphoneSession: ConnectContext = { protocolVersion: 1, sessionId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, phone: "softphone", host: seatless };
 // @ts-expect-error A hardphone's microphone is the phone's: the host states no mute.
-export const mutingHardphoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, phone: "hardphone", host: { ...reticentHost, mute: "stream" } };
+export const mutingHardphoneSession: ConnectContext = { protocolVersion: 1, sessionId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, phone: "hardphone", host: { ...reticentHost, mute: "stream" } };
 // @ts-expect-error renamed away: the handset is a hardphone; the former spelling is refused.
-export const deskPhoneLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, phone: "deskPhone", host: seatless };
-// @ts-expect-error Every connection carries the login's store.
-export const storelessLogin: ConnectContext = { protocolVersion: 1, loginId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, phone: "hardphone", host: seatless };
+export const deskPhoneSession: ConnectContext = { protocolVersion: 1, sessionId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, store, phone: "deskPhone", host: seatless };
+// @ts-expect-error Every connection carries the session's store.
+export const storelessSession: ConnectContext = { protocolVersion: 1, sessionId: "s1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, phone: "hardphone", host: seatless };
 export const stationMutingHost: Host = { guarantees: {}, mute: "station", report: () => noAudioHere, subscribe: () => () => undefined };
 // @ts-expect-error A host mutes the stream it sends or the station's microphone; there is no third way.
 export const softMutingHost: Host = { guarantees: {}, mute: "soft", report: () => noAudioHere, subscribe: () => () => undefined };
@@ -373,21 +377,21 @@ export const plainActive = { type: "transport-status", status: "active",
 // @ts-expect-error An email task cannot be a call a lead took over.
 export const emailTakenOver: Task<"email"> = { ...emailTask, assignmentId: "email-7", takenOver: { memberId: "A-1", since: "2026-08-21T09:05:00Z" } };
 
-// What the login may do travels with the identity, and nowhere else.
+// What the session may do travels with the identity, and nowhere else.
 const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Asia/Kolkata" };
-export const leadLogin: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, lead: true } };
+export const leadSession: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { breaks: true, lead: EVERY_LEAD_CAPABILITY } };
 // @ts-expect-error The lead flag is one flag: no per-action permission rides beside it.
 export const controlledLead: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { team: { breakControl: true } } };
-export const plainLogin: AuthenticationState = { status: "refreshing", identity: asha, capabilities: {} };
-// @ts-expect-error A usable login says what it may do, {} included.
-export const silentLogin: AuthenticationState = { status: "authenticated", identity: asha };
+export const plainSession: AuthenticationState = { status: "refreshing", identity: asha, capabilities: {} };
+// @ts-expect-error A usable session says what it may do, {} included.
+export const silentSession: AuthenticationState = { status: "authenticated", identity: asha };
 // @ts-expect-error A state that is not usable has nothing to declare.
 export const expiredWithCapabilities: AuthenticationState = { status: "expired", identity: asha, capabilities: {} };
 export const completed: CompleteAuthenticationResult = { status: "authenticated", identity: asha, capabilities: { breaks: true } };
-// @ts-expect-error Completion says what the login may do, like the state it becomes.
+// @ts-expect-error Completion says what the session may do, like the state it becomes.
 export const completedSilently: CompleteAuthenticationResult = { status: "authenticated", identity: asha };
-export const bareSnapshot: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
-// @ts-expect-error Capabilities live on the login, not the snapshot.
+export const bareSnapshot: Snapshot<"voice"> = { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+// @ts-expect-error Capabilities live on the session, not the snapshot.
 export const staleSnapshot: Snapshot<"voice"> = { ...bareSnapshot, sessionCapabilities: {} };
 export const teamMembers: TeamMembers = { members: [] };
 // A member's ask rides on the member; the list carries no request of its own.
@@ -407,7 +411,7 @@ export const oneLeadListening: TeamMembers = { members: [{ id: "A-2", availabili
 // The phone's own view: the device, its mute, its channels; a task's call names its task, the phone's own call names none.
 // The agent's own queue: the ask while on a call, the call lined up for them, the release the provider grants.
 export const lining: AuthenticationState = { status: "authenticated", identity: asha, capabilities: { nextCall: true } };
-export const askedForNext: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0, nextCall: { since: "2026-08-21T09:04:00Z" } };
+export const askedForNext: Snapshot<"voice"> = { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0, nextCall: { since: "2026-08-21T09:04:00Z" } };
 export const nextLinedUp: ProviderEvent<"voice"> = { type: "lined-up", linedUp: { party: { name: "Priya S" }, queue: "Billing", queuedSince: "2026-08-21T09:02:00Z", since: "2026-08-21T09:04:30Z", release: true } };
 export const queueEmptied: ProviderEvent<"voice"> = { type: "lined-up" };
 // @ts-expect-error A lined-up call is not a task: it has no assignment until the offer.
@@ -421,21 +425,21 @@ export const seesThePhone: Manifest<"voice"> = { id: "acme", displayName: "Acme"
 export const chatSeesThePhone: Manifest<"chat"> = { id: "acme", displayName: "Acme", channel: "chat", supportedProtocolVersions: [1], authenticationMethods: ["credentials"], settleMs: 5000, orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "site", label: { en: "Your site" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }], phoneStatus: true };
 // @ts-expect-error A channel is one of ringing, active or held.
 export const parkedChannel: PhoneChannel = { state: "parked", since: "2026-08-21T09:00:00Z" };
-export const myDay: Snapshot<"voice"> = { transport: "active", loginId: "session-1", providerTime: "2026-08-21T09:00:00Z", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0, shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4210, tasksHandled: 12 } };
+export const myDay: Snapshot<"voice"> = { transport: "active", sessionId: "session-1", providerTime: "2026-08-21T09:00:00Z", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0, shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4210, tasksHandled: 12 } };
 export const dayMoved: ProviderEvent<"voice"> = { type: "shift-updated", shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4482, tasksHandled: 13 } };
 export const memberDay: Shift = { signedInAt: "2026-08-21T08:58:12Z" };
 // The lead's copy of a task: the record and the terms, never the workspace.
 export const leadsCopy: MemberTask<"voice"> = { assignmentId: "alloc-7", title: "Billing call", channel: "voice", taskType: "Billing", phase: "completing", completionMode: "provider-automatic", wrapAllowance: 60, wrapEndsInSeconds: 20 };
 // @ts-expect-error renamed away: browsers, controls and their source stay on the member's computer.
 export const leadsWorkspace: MemberTask<"voice"> = { ...leadsCopy, browsers: [] };
-// A displaced client: another agent computer took the login, and this one is finished.
+// A displaced client: another agent computer took the session, and this one is finished.
 export const displaced: ProviderEvent<"voice"> = { type: "transport-status", status: "error", recovery: "displaced", message: "Signed in from another agent computer" };
 export const wrapping: Task<"voice"> = { ...emailTask, assignmentId: "call-15", channel: "voice", capabilities: {}, phase: "completing", completionMode: "provider-automatic", wrapAllowance: 60, wrapEndsInSeconds: 20 };
 // @ts-expect-error renamed away: the day is one shape for the agent and their lead, Shift.
 export const formerMemberDay: MemberShift = { signedInAt: "2026-08-21T08:58:12Z" };
 // @ts-expect-error Somebody forced it: a lead by user id, or the provider.
 export const anonymousForcedBreak: ForcedBreak = {};
-// @ts-expect-error What the lead may do is on the login, not the team member list.
+// @ts-expect-error What the lead may do is on the session, not the team member list.
 export const teamMembersWithControl: TeamMembers = { members: [], breakControl: true };
 
 // The host reports; a request may lack the microphone, and a ready input may not.

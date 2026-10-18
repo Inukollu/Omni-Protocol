@@ -14,7 +14,7 @@ const offending = (text: string): string[] => INTERNAL.filter(name => text.toLow
 describe("a public repo says less", () => {
   it("keeps the words the contract renamed out of everything committed, and finds a planted one", () => {
     // A rename that lingers in the guide or a fixture teaches the old word to the next adapter.
-    const RENAMED = ["sessionId", "SessionCapabilities", "ConnectionStatus", "ConnectionRecovery", "provider-status",
+    const RENAMED = ["loginId", "LoginStore", "LoginValidationContext", "SessionCapabilities", "ConnectionStatus", "ConnectionRecovery", "provider-status",
       "orgTiers", "TierDeclaration", "DEFAULT_TIERS", "effectiveTiers", "task-audio-ready", "TaskBrowserBase",
       "destinationPolicy", "completionAllowance", "DispositionPolicy", "BrowserAccessPolicy", "DialDestinationPolicy",
       "ProviderSummary", "provider-summary", "assertBrowserIsolationAndReuse", "reuse:",
@@ -28,12 +28,13 @@ describe("a public repo says less", () => {
       "preparing", "start-call", "preparationEndsAt", "\"Preparing\"", "\"Reviewing\"", "kind: \"agent\"", "\"queue\" | \"agent\"", "allowManualEntry", "task.destination.address", "task.destination.kind", "kind: \"external\"",
       "agentDisconnect", "type: \"disconnect\"", "`disconnect`",
       "exerciseAdapter", "driveTimeoutMs", "notExercised", "rulesEvaluated", "drive: true", "driveOneCall", "deskPhone", "desk phone", "desk-phone",
-      "RecordingState", "effectiveRecordingState", "validateRecordingState"];
+      "RecordingState", "effectiveRecordingState", "validateRecordingState",
+      "type: \"conference\"", "\"conferenced\"", "`conferenced`", "DestinationDirectory", "allowUnknown"];
     // A line under @ts-expect-error, or under a "renamed away" note, is a refusal kept on purpose, not vocabulary.
     const marked = (line: string) => line.includes("@ts-expect-error") || line.includes("renamed away:");
     const refusals = (text: string) => { const lines = text.split("\n"); return lines.filter((_, index) => !marked(lines[index - 1] ?? "")).join("\n"); };
     const lingering = (text: string) => RENAMED.filter(word => refusals(text).includes(word));
-    expect(lingering("the old sessionId key")).toEqual(["sessionId"]);
+    expect(lingering("the old loginId key")).toEqual(["loginId"]);
     const files = ["guide.md", ...readdirSync(join(root, "guide")).map(name => `guide/${name}`), "README.md", ...readdirSync(join(root, "src")).map(name => `src/${name}`), ...readdirSync(__dirname).filter(name => name !== "hygiene.test.ts").map(name => `tests/${name}`)];
     for (const file of files) expect(lingering(readFileSync(join(root, file), "utf8")), file).toEqual([]);
   });

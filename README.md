@@ -47,7 +47,7 @@ at such as `snapshot.tasks[0].browsers[1].url`, and a `message`.
 
 Some rules need more than the object in hand. A team member list never carries the agent it is published to,
 a lead's snapshot always carries one and nobody else's ever does — and a validator cannot know who
-is reading, or what their login declares, from the snapshot alone. `validateTeamMembers`,
+is reading, or what their session declares, from the snapshot alone. `validateTeamMembers`,
 `validateSnapshot`, and `validateEventEnvelope` each take an optional final `{ self, capabilities }`
 from the `authenticated` state; given them, they report `team.member.self`, `team.request.self`,
 `team.required`, `team.unentitled`, `team.requests.capability`, and `team.requests.required`.
@@ -62,14 +62,14 @@ validateSnapshot(snapshot, manifest, "snapshot", { self: identity.id, capabiliti
 
 `testAdapter` validates the manifest, opens an authenticated session, connects, checks
 required capability methods, subscribes, validates the snapshot, every delivered event, and every
-authentication state published during the run — against the latest login — states a capacity,
+authentication state published during the run — against the latest session — states a capacity,
 then unsubscribes and disconnects. `result.notTested` names what the run never reached — each
 optional part of a task, of the break state and team member list, each contribution, each event type — so a
 clean result is read for what it covers and not for the whole contract; `assertReached(result,
 subjects)` is the paired assertion.
 
 ```ts
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", host: stillHost(report) };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1", host: stillHost(report) };
 const result = await testAdapter(adapter, context, { collectOnly: true });
 expect(result.violations).toEqual([]);
 expect(result.disconnectWasClean).toBe(true);
@@ -102,14 +102,12 @@ const task = {
 
 **Switch on `command.action` with no `default`.** A `default` turns a future action into whatever
 the default does, silently; naming every arm means dropping one fails the build — indirectly, as a
-missing return — and keeps the narrowing that lets you read `destinationId` without a cast.
+missing return — and keeps the narrowing that lets you read `dialId` without a cast.
 
 ```ts
 switch (command.action) {
-  case "cold":     return coldTransfer(command.destinationId);
-  case "warm":     return warmTransfer(command.destinationId);
-  case "complete": return completeWarmTransfer();
-  case "cancel":   return cancelWarmTransfer();
+  case "add":    return addToCall(command.dialId, command.contactId ?? command.number);
+  case "remove": return removeFromCall(command.party === true ? "party" : command.contactId);
 }
 ```
 

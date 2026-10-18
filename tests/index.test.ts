@@ -81,7 +81,7 @@ describe("Omni protocol", () => {
   });
 
   it("names every history step, the call's arrival as the agent says it", () => {
-    const steps: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered", "callback-requested"];
+    const steps: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "added", "unanswered", "callback-requested"];
     expect(Object.keys(DEFAULT_HISTORY_STEP_LABELS).sort()).toEqual([...steps].sort());
     for (const label of Object.values(DEFAULT_HISTORY_STEP_LABELS)) expect(label.trim()).not.toBe("");
     expect(DEFAULT_HISTORY_STEP_LABELS.arrived).toBe("Incoming call");
@@ -189,7 +189,7 @@ describe("localizedText", () => {
     const event: ProviderEvent = {
       type: "snapshot",
       reason: "reconnected",
-      snapshot: { transport: "active", loginId: "session-1", break: { status: "starting-after-task", canRequestBreak: true }, tasks: [], taskCount: 0 },
+      snapshot: { transport: "active", sessionId: "session-1", break: { status: "starting-after-task", canRequestBreak: true }, tasks: [], taskCount: 0 },
     };
     expect(event.snapshot.break.status).toBe("starting-after-task");
   });
@@ -223,9 +223,9 @@ describe("localizedText", () => {
       async connect(context) {
         context.signal?.throwIfAborted();
         return {
-          snapshot: () => ({ transport: "active" as const, loginId: "session-1", break: { status: "not-requested" as const, canRequestBreak: true }, tasks: [], taskCount: 0 }),
+          snapshot: () => ({ transport: "active" as const, sessionId: "session-1", break: { status: "not-requested" as const, canRequestBreak: true }, tasks: [], taskCount: 0 }),
           subscribe: listener => {
-            listener({ id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
+            listener({ id: "event-1", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
             return () => undefined;
           },
           setCapacity: async capacity => (expect(capacity.count).toBeGreaterThanOrEqual(0), { status: "applied" as const }),
@@ -236,7 +236,7 @@ describe("localizedText", () => {
       },
     });
 
-    const result = await testAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, host: stillHost(), store: memoryStore() });
+    const result = await testAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, host: stillHost(), store: memoryStore() });
     expect(result.violations).toEqual([]);
     expect(result.events.map(item => item.event)).toEqual([{ type: "transport-status", status: "active" }]);
     expect(disconnect).toHaveBeenCalledOnce();
@@ -245,13 +245,15 @@ describe("localizedText", () => {
 
 describe("sameCapabilities", () => {
   it("compares field by field, whatever the key order", () => {
-    expect(sameCapabilities({ breaks: true, lead: true }, { lead: true, breaks: true })).toBe(true);
+    expect(sameCapabilities({ breaks: true, lead: { listen: true, coach: true } }, { lead: { coach: true, listen: true }, breaks: true })).toBe(true);
     expect(sameCapabilities({}, {})).toBe(true);
     // Each field on its own moves the answer: the lead flag is one of them, so a demotion is a change.
-    expect(sameCapabilities({ lead: true }, {})).toBe(false);
+    expect(sameCapabilities({ lead: { listen: true } }, {})).toBe(false);
+    // A lead capability withdrawn is a change, though the session still leads.
+    expect(sameCapabilities({ lead: { listen: true, takeOverCall: true } }, { lead: { listen: true } })).toBe(false);
     expect(sameCapabilities({ breaks: true }, {})).toBe(false);
-    expect(sameCapabilities({ lead: true }, { lead: true })).toBe(true);
-    // Every field: the preferences the login declares, by id, label, enabled and who set or locked them.
+    expect(sameCapabilities({ lead: { listen: true } }, { lead: { listen: true } })).toBe(true);
+    // Every field: the preferences the session declares, by id, label, enabled and who set or locked them.
     const hold = { id: "hold" as const, label: "Hold", enabled: true, setBy: "team" as const };
     expect(sameCapabilities({ preferences: [hold] }, { preferences: [hold] })).toBe(true);
     expect(sameCapabilities({ preferences: [hold] }, {})).toBe(false);
@@ -335,7 +337,7 @@ describe("historyStepExpectsAPerson", () => {
     for (const step of nobody) expect(historyStepExpectsAPerson(step)).toBe(false);
     // The control that matters: every other step does expect one, so an absent agent on any
     // of them means "handled, could not attribute" rather than "nobody involved".
-    const everyStep: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered"];
+    const everyStep: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "added", "unanswered"];
     for (const step of everyStep.filter(step => !nobody.includes(step))) {
       expect(historyStepExpectsAPerson(step)).toBe(true);
     }
@@ -347,11 +349,11 @@ describe("every dial has an outcome", () => {
   it("names the dial a command places, and none for a command that dials nothing", () => {
     expect(commandDialId({ type: "connect-back", dialId: "dial-1" })).toBe("dial-1");
     expect(commandDialId({ type: "dial", dialId: "dial-5" })).toBe("dial-5");
-    expect(commandDialId({ type: "conference", action: "add", dialId: "dial-4", destinationId: "tier2" })).toBe("dial-4");
+    expect(commandDialId({ type: "add-to-call", dialId: "dial-4", contactId: "tier2" })).toBe("dial-4");
     // The control: a remove, a schedule, a hold dial nowhere.
     expect(commandDialId({ type: "schedule", at: "2026-08-22T10:00:00Z" })).toBeUndefined();
-    expect(commandDialId({ type: "conference", action: "remove", destinationId: "tier2" })).toBeUndefined();
-    expect(commandDialId({ type: "conference", action: "remove", party: true })).toBeUndefined();
+    expect(commandDialId({ type: "remove-from-call", contactId: "tier2" })).toBeUndefined();
+    expect(commandDialId({ type: "remove-from-call", party: true })).toBeUndefined();
     expect(commandDialId({ type: "end-call" })).toBeUndefined();
     expect(commandDialId({ type: "hold" })).toBeUndefined();
   });
@@ -361,7 +363,7 @@ describe("every dial has an outcome", () => {
     expect(CAPABILITY_SOURCES).toEqual(["queue", "dialer", "nobody", "not-yet-read"]);
     expect(HOST_MUTES).toEqual(["stream", "station"]);
     expect(MUTED_BY).toEqual(["host", "station"]);
-    expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "conferenced", "unanswered"]);
+    expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "added", "unanswered"]);
     for (const step of HISTORY_STEPS_THAT_DIAL) expect(historyStepDials(step)).toBe(true);
     for (const step of ["arrived", "self-service", "queued", "offered", "answered", "held", "muted"] as const) expect(historyStepDials(step)).toBe(false);
   });

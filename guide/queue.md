@@ -11,7 +11,7 @@ platform's queue and never instead of it, and the contract carries it in three p
 the lined-up call, and the release.
 
 ```ts
-// the login declares it, as it declares breaks
+// the user's capabilities include it, as they include breaks
 { status: "authenticated", identity: {...}, capabilities: { breaks: true, nextCall: true } }
 
 // 1. The ask. The agent presses Next call during the call or the wrap; the agent computer offers the button
@@ -92,8 +92,8 @@ carries `nextCall` and `linedUp` as the member's own snapshot does, republished 
 
 Use `validateBreakCommand(method, request, state, context)` from the validation entry point
 before any agent break dispatch. The context supplies current authentication and transport, and
-the manifest's `levels` the login is validated against;
-all four methods require the live login's break capability and active transport. Pass the
+the manifest's `levels` the session is validated against;
+all four methods require the live session's break capability and active transport. Pass the
 request object only to the request method, and undefined to the other three.
 
 | Method | Required current state |
@@ -105,7 +105,7 @@ request object only to the request method, and undefined to the other three.
 
 Use `validateTeamCommand(request, context)` before every lead act, its context carrying the manifest's `levels` as the break check's does: the team feature switch, break
 decisions, forcing and ending a forced break, policy, and every act on a member's call. It requires
-the live `lead` flag and active transport, a current team member list for any command naming a
+the live `lead` capability the command needs and active transport, a current team member list for any command naming a
 member, and the target's complete break state for forcing/ending a break. Approve/deny requires an
 awaiting decision; forcing a break uses the target's reason codes; ending a forced break requires a
 forced committed break; join and decline need the member's request on the list; coach, join-call
@@ -256,7 +256,7 @@ outstanding and offers **Cancel break request**, but does not tell the agent tha
 begun.
 
 Omni offers the aggregate Break control only when every provider currently holding capacity
-declares `capabilities.breaks` at login. If one cannot be stopped, offering a global break would
+declares `capabilities.breaks` at sign-in. If one cannot be stopped, offering a global break would
 knowingly permit partial availability.
 
 Omni coordinates one break attempt as follows:
@@ -265,7 +265,7 @@ Omni coordinates one break attempt as follows:
    currently receive work. A provider joining during the attempt is given no capacity until it
    finishes. A provider whose authentication is `expired` is not one the agent can receive work
    from and is not asked: nothing is asked of it, the break proceeds without it, and when the
-   login is restored it is reconciled from its snapshot as a set-aside provider is, with no
+   session is restored it is reconciled from its snapshot as a set-aside provider is, with no
    capacity until then. `refreshing` keeps a provider in — its identity and capabilities remain
    available and work continues. `assertBreakAttemptProviders` holds an agent application to this set.
 2. Enter `requesting-break`. Keep the agent's normal capacity in place throughout this phase.
@@ -316,7 +316,7 @@ snapshot before anything else, and the snapshot decides:
   late behind it, the provider stops an agent who is already stopped; nothing happens, because a
   commit is a state to be in, not an act to be done.
 - `not-requested` — the grant did not survive. Omni makes a new request for that provider alone,
-  against an agent who is already on break elsewhere. **A new login is this case too**: the grant
+  against an agent who is already on break elsewhere. **A new session is this case too**: the grant
   belonged to the old session.
 
 The provider must not offer work in the meantime, and the commit is what stops it; Omni gives it

@@ -25,9 +25,9 @@ describe("provider interaction controls", () => {
     }
     for (const command of [
       { type: "hold", dialId: "extra" },
-      { type: "conference", action: "remove", party: true, notes: "extra" },
+      { type: "remove-from-call", party: true, notes: "extra" },
       { type: "lead-assist", action: "leave", note: "extra" },
-      { type: "conference", action: "remove", party: true, dialId: "extra" },
+      { type: "remove-from-call", party: true, dialId: "extra" },
     ]) expect(validateTaskCommand(command).some(v => v.rule === "command.field")).toBe(true);
     expect(validateTaskCommand({ type: "custom", name: "control", extra: "payload" })).toEqual([]);
     expect(validateTaskCommand({ type: "lead-assist", action: "request", note: "help" })).toEqual([]);
@@ -37,11 +37,14 @@ describe("provider interaction controls", () => {
     expect(validateTaskCommand(request.command, { ...task, phase: "completing" }, "command", { levels: LEVELS })).not.toEqual([]);
     expect(validateTaskCommand(request.command, { ...task, onCall: [{ role: "party", since: "2026-09-11T00:00:00Z" }] }, "command", { levels: LEVELS })).toEqual([]);
   });
-  it("routes only to the provider's directory, including an IVR, with no destination inference", () => {
-    const policy = { ...task, capabilities: { conference: { destinations: [{ id: "ivr-return", label: "Main IVR" }, { id: "agent-target", label: "Agent" }] } } };
-    for (const destinationId of ["ivr-return", "agent-target"])
-      expect(validateTaskCommand({ type: "conference", action: "add", dialId: "dial", destinationId }, policy, "command", { levels: LEVELS })).toEqual([]);
-    expect(validateTaskCommand({ type: "conference", action: "add", dialId: "dial", destinationId: "invented" }, policy, "command", { levels: LEVELS })).not.toEqual([]);
+  it("adds a contact by its id, and a typed number only where the task allows any number", () => {
+    const contactsOnly = { ...task, capabilities: { addToCall: { destinations: "contacts-only" } } };
+    const anyNumber = { ...task, capabilities: { addToCall: { destinations: "any-number" } } };
+    for (const contactId of ["billing-specialist", "translator-line"])
+      expect(validateTaskCommand({ type: "add-to-call", dialId: "dial", contactId }, contactsOnly, "command", { levels: LEVELS })).toEqual([]);
+    const typed = { type: "add-to-call", dialId: "dial", number: "+914023456789" };
+    expect(validateTaskCommand(typed, anyNumber, "command", { levels: LEVELS })).toEqual([]);
+    expect(validateTaskCommand(typed, contactsOnly, "command", { levels: LEVELS }).map(v => v.rule)).toEqual(["command.addToCall.number.contactsOnly"]);
   });
   it("rejects provider mute while preserving ordinary interaction completion", () => {
     expect(validateTaskCommand({ type: "mute" }, task, "command", { levels: LEVELS })).not.toEqual([]);

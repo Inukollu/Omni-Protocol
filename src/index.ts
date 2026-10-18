@@ -50,8 +50,8 @@ export type UserId = string;
 /**
  * The provider's name for one assignment: the call routed to this agent, from the offer until the
  * task ends. Non-empty, opaque, unique within the provider and never reused while the provider is
- * still speaking about it -- a lead names a member's assignment from another login, so the scope is
- * the provider, not the login. What the platform calls its own record, and whether it reuses that
+ * still speaking about it -- a lead names a member's assignment from another session, so the scope is
+ * the provider, not the session. What the platform calls its own record, and whether it reuses that
  * name, is the adapter's business: a platform that reoffers a closed call under the same handle
  * seconds later is why the adapter, not the agent computer, is held to this. Scope it with `assignmentKey()`.
  */
@@ -155,7 +155,7 @@ export const DIAL_OUTCOMES = ["answered", "busy", "no-answer", "unreachable", "r
  * How the agent hears the call: on a `softphone`, where the host owns the audio and opens it
  * through `openAudio`, or on a `hardphone`, a handset the platform rings, where the host opens
  * nothing and only shows the call. A voice manifest lists the phones its platform supports, and
- * the host picks one for the login at authentication.
+ * the host picks one for the session at authentication.
  */
 export type Phone = "softphone" | "hardphone";
 
@@ -177,7 +177,7 @@ export const PHONE_CHANNEL_STATES = ["ringing", "active", "held"] as const satis
 
 /**
  * One call on the phone, as the phone sees it: ringing, the one active, or held. A bridge is one
- * channel, so a conference is one entry and its members are on the task's `onCall`. Where the call
+ * channel, so a call with people added is one entry and they are on the task's `onCall`. Where the call
  * is a task's, `assignmentId` names it and the two views agree; absent, the call is the phone's
  * alone -- an internal call on the extension, a lead's listening leg.
  */
@@ -188,7 +188,7 @@ export interface PhoneChannel {
 }
 
 /**
- * The phone's own view, published by a provider that declares `phoneStatus`: the device the login
+ * The phone's own view, published by a provider that declares `phoneStatus`: the device the session
  * is on, whether it can take a call, its own mute where the platform observes it, and its channels
  * -- one active at most, any number held. The task side says which of those calls are the agent's
  * work and where each stands; the phone side exists whether or not a task is behind a call. `muted`
@@ -196,7 +196,7 @@ export interface PhoneChannel {
  * never a softphone's, whose microphone is the host's and whose mute is the host's report.
  */
 export interface PhoneState {
-  /** The agent's phone for this provider, as the host chose it for the login at connect: which of the manifest's phones the agent hears this provider's calls on. */
+  /** The agent's phone for this provider, as the host chose it for the session at connect: which of the manifest's phones the agent hears this provider's calls on. */
   phone: Phone;
   status: PhoneStatus;
   /** The phone's own mute, on a hardphone the platform observes; absent where it does not, or on a softphone. */
@@ -288,12 +288,12 @@ export interface Manifest<C extends Channel = Channel> {
   /**
    * The outcomes this platform distinguishes when a dial ends, `answered` and at least one way of
    * not reaching the destination. Required of a provider that dials at all -- an idle dialpad, or
-   * a task that may conference or call back -- and forbidden off voice, where nothing dials.
+   * a task that may add to the call or call back -- and forbidden off voice, where nothing dials.
    */
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   /**
    * The phones this platform can put an agent on. Required of every voice manifest, and forbidden
-   * off voice, where there is no call to hear. The host picks one of these per login.
+   * off voice, where there is no call to hear. The host picks one of these per session.
    */
   phones?: C extends "voice" ? Phone[] : never;
   /**
@@ -327,13 +327,13 @@ export interface SecretStore {
 }
 
 /**
- * A small store for one login's operational state -- what an adapter holds about open work that
+ * A small store for one session's operational state -- what an adapter holds about open work that
  * its platform cannot hold for it, such as the interaction legs a host reported. Kept by the host for
- * the life of the login, across a reload of the host, and cleared at sign-out. Never for anything
+ * the life of the session, across a reload of the host, and cleared at sign-out. Never for anything
  * sensitive: that is `SecretStore`, whose contract is that a host may clear it aggressively, and
  * clears it once the session has ended.
  */
-export interface LoginStore {
+export interface SessionStore {
   get(key: string): Promise<string | undefined>;
   set(key: string, value: string): Promise<void>;
   delete(key: string): Promise<void>;
@@ -341,8 +341,8 @@ export interface LoginStore {
 
 export interface AuthenticationContext {
   protocolVersion: number;
-  /** Omni's identity for this login. The same value arrives later as `ConnectContext.loginId`. */
-  loginId: string;
+  /** Omni's identity for this session. The same value arrives later as `ConnectContext.sessionId`. */
+  sessionId: string;
   /**
    * The zone the agent's day is reckoned in, as the host's clock has it, stated before any
    * identity exists so the first `authenticated` state already carries it. The same value arrives
@@ -357,7 +357,7 @@ export interface AuthenticationContext {
    */
   languages: readonly LanguageTag[];
   /**
-   * How this login hears its calls, chosen by the host from the manifest's `phones`. Required for
+   * How this session hears its calls, chosen by the host from the manifest's `phones`. Required for
    * a voice provider and absent for any other. The same value arrives later as `ConnectContext.phone`.
    */
   phone?: Phone;
@@ -394,12 +394,12 @@ export type ListeningMode = "listen" | "coach" | "join-call";
 export const LISTENING_MODES = ["listen", "coach", "join-call"] as const satisfies readonly ListeningMode[];
 
 /**
- * What this login may do, beyond any one task. It travels with the identity because it is part
- * of who the agent is on this provider: the provider knows the roles and says so at sign-in.
- * Current as of the latest `authenticated` state, never fixed for the login.
+ * What this user may do for the session, beyond any one task. It travels with the identity
+ * because it is part of who the agent is on this provider: the provider knows the roles and says
+ * so at sign-in. Current as of the latest `authenticated` state, never fixed for the session.
  */
 export interface UserCapabilities {
-  /** This login may request a break. Requires the four break methods. */
+  /** This session may request a break. Requires the four break methods. */
   breaks?: true;
   /**
    * The platform lines calls up for this agent: the agent may press Next call while on one to
@@ -410,15 +410,50 @@ export interface UserCapabilities {
   /** The choices the team left to this person, with where each stands. Omitted when there are none. Requires `setPreference`. */
   preferences?: AgentPreference[];
   /**
-   * This login leads a team. The flag alone turns on the team feature in the agent application:
-   * the lead sees their members with their tasks and stats, and acts on them through `executeTeam`
-   * with the authority the flag carries. No per-action permission rides beside it. The provider
-   * assumes nothing of the switch: the application sends `lead-features` on every connect, and
-   * only while it is on does the team reach the lead -- `team-updated` whole after the switch and
-   * on any snapshot, then one member at a time as members change; to nobody else, ever.
+   * This session leads a team, with the lead capabilities it holds for the whole session. Its
+   * presence turns on the team feature in the agent application: the lead sees their members with
+   * their tasks and stats, and acts on them through `executeTeam` with the commands its lead
+   * capabilities allow, and no others. The provider assumes nothing of the switch: the
+   * application sends `lead-features` on every connect, and only while it is on does the team
+   * reach the lead -- `team-updated` whole after the switch and on any snapshot, then one member at
+   * a time as members change; to nobody else, ever.
    */
-  lead?: true;
+  lead?: LeadCapabilities;
 }
+
+/**
+ * What a lead may do, for the whole session: one key per lead command it allows, each stated by
+ * presence. Switching the team feature (`lead-features`) and leaving a call (`leave`) are every
+ * lead's and are not listed. At least one is stated: a session with none leads nobody.
+ */
+export interface LeadCapabilities {
+  join?: true;
+  decline?: true;
+  listen?: true;
+  coach?: true;
+  joinCall?: true;
+  takeOverCall?: true;
+  decideBreakRequest?: true;
+  setBreakPolicy?: true;
+  forceBreak?: true;
+  endForcedBreak?: true;
+  setPolicy?: true;
+}
+
+/** The lead capability each lead command needs; `lead-features` and `leave` need none. */
+export const LEAD_COMMAND_CAPABILITY = {
+  join: "join",
+  decline: "decline",
+  listen: "listen",
+  coach: "coach",
+  "join-call": "joinCall",
+  "take-over-call": "takeOverCall",
+  "decide-break-request": "decideBreakRequest",
+  "set-break-policy": "setBreakPolicy",
+  "force-break": "forceBreak",
+  "end-forced-break": "endForcedBreak",
+  "set-policy": "setPolicy",
+} as const satisfies Record<Exclude<TeamCommand["type"], "lead-features" | "leave">, keyof LeadCapabilities>;
 
 /**
  * Only `authenticated` and `refreshing` know who the agent is and what they may do, and only
@@ -512,7 +547,7 @@ export const MUTED_BY = ["host", "station"] as const satisfies readonly MutedBy[
  * What pressing Mute does on this host. `stream`: the host stops the audio it sends, and the
  * microphone keeps capturing. `station`: the host mutes the microphone itself at the operating
  * system, which every application on the machine then shares. A browser can only do the first;
- * a native host says which it does. Stated by the host on a softphone login, never inferred
+ * a native host says which it does. Stated by the host on a softphone session, never inferred
  * from what kind of application it is.
  */
 export type HostMute = "stream" | "station";
@@ -646,14 +681,14 @@ export interface HostGuarantees {
   /**
    * The host's Mute is its own control on any call and is never offered while the task is
    * `paused`; a mute standing when a hold begins stands through it. Required of a softphone
-   * login's host and refused of any other, since a hardphone's mute is the handset's.
+   * session's host and refused of any other, since a hardphone's mute is the handset's.
    */
   muteUnavailableOnHold?: true;
 }
 
 export interface ProviderTimeScope {
   providerId: string;
-  loginId: string;
+  sessionId: string;
 }
 
 /** Best-effort host estimate, never a provider observation or accuracy guarantee. The provider may ignore it and timestamp receipt itself. */
@@ -670,7 +705,7 @@ export interface Host {
   /** Voice softphone recording support; policy and destination remain per task. */
   recording?: HostRecording;
   guarantees: HostGuarantees;
-  /** What pressing Mute does on this host. Stated on a softphone login, where the host holds the microphone; absent on a hardphone and off voice. */
+  /** What pressing Mute does on this host. Stated on a softphone session, where the host holds the microphone; absent on a hardphone and off voice. */
   mute?: HostMute;
   report(): HostReport;
   subscribe(listener: (report: HostReport) => void): Unsubscribe;
@@ -679,7 +714,7 @@ export interface Host {
 export type ConnectContext = {
   protocolVersion: number;
   /** The session that authenticated this connection. */
-  loginId: string;
+  sessionId: string;
   /** Omni-side policy: whether the agent's tasks are accepted without asking them. Stated, never assumed: a host says which. */
   autoAcceptTasks: boolean;
   /**
@@ -690,9 +725,9 @@ export type ConnectContext = {
   timeZone: TimeZone;
   /** The same value passed as `AuthenticationContext.languages`: what the agent reads, most preferred first. */
   languages: readonly LanguageTag[];
-  /** Where the adapter keeps this login's operational state across a reload of the host. */
-  store: LoginStore;
-  /** The same value passed as `AuthenticationContext.phone`: how this login hears its calls. Narrowed by the arms below. */
+  /** Where the adapter keeps this session's operational state across a reload of the host. */
+  store: SessionStore;
+  /** The same value passed as `AuthenticationContext.phone`: how this session hears its calls. Narrowed by the arms below. */
   phone?: Phone;
   /**
    * The host's report of the agent's station, to consult before declaring the agent ready to the
@@ -722,11 +757,11 @@ export type ConnectContext = {
 export type TransportStatus = "connecting" | "active" | "error";
 
 /**
- * What revives a connection that reported `error`: `reconnect` -- the login is good, dispose this
+ * What revives a connection that reported `error`: `reconnect` -- the session is good, dispose this
  * connection and call `connect()` again -- or `reauthenticate` -- run the authentication flow
  * first. The adapter knows which; the host acts on its word.
  */
-/** What revives an errored connection: `displaced` says another client took the login, and nothing revives this one until the agent takes it back. */
+/** What revives an errored connection: `displaced` says another client took the session, and nothing revives this one until the agent takes it back. */
 export type TransportRecovery = "reconnect" | "reauthenticate" | "displaced";
 
 // ---------------------------------------------------------------------------
@@ -741,6 +776,16 @@ export interface Contact {
   /** The email, or `{ lockedBy }` where the agent may not see it; it identifies a person as a number does. */
   email?: Lockable<string>;
   attributes?: Attribute[];
+}
+
+/**
+ * One entry of the provider's contacts, the agent computer's directory: a unique `id`, which is how
+ * the wire names this contact on a call, in its history and on a dial's outcome, with the name and
+ * the number, either of which may be absent or withheld. The agent computer shows the name it holds
+ * for an id.
+ */
+export interface ContactEntry extends Contact {
+  id: string;
 }
 
 export interface ScheduledActivity {
@@ -770,18 +815,15 @@ export interface OutcomeRules {
 }
 
 /**
- * One item the queue configured for the agent to send a contact to: a button or a menu item. The
- * protocol does not say what it does -- a queue, a menu, a line -- the provider executes it when a
- * command names its `id`. The provider may publish a queue, IVR, named agent or other supported destination; the host does not invent one.
+ * Whom the agent may add to the call, in the dialpad's own words: `contacts-only`, an entry of
+ * this provider's contacts, named by its `id`; or `any-number`, a number the agent types as well.
+ * `contactIds` narrows the contacts this task offers to those ids -- a billing call offering the
+ * billing specialist and the translator line -- and omitted, every contact is offered. Ids only: the names are the
+ * agent computer's, from the contacts.
  */
-export interface Destination {
-  id: string;
-  label: string;
-}
-
-/** The items a conference control offers. Nothing is typed; the agent picks one. */
-export interface DestinationDirectory {
-  destinations: Destination[];
+export interface AddToCallCapability {
+  destinations: DialDestinations;
+  contactIds?: string[];
 }
 
 export interface CustomCapability {
@@ -822,7 +864,7 @@ export type TaskCapabilities<C extends Channel = Channel> =
         schedule?: Lockable<true>;
         /** Ask a lead to join this call, with a note. The lead's decision arrives on `Task.leadAssist`. */
         leadAssist?: Lockable<true>;
-        conference?: Lockable<DestinationDirectory>;
+        addToCall?: Lockable<AddToCallCapability>;
         recording?: Lockable<TaskRecordingPolicy>;
       }
     : C extends "chat"
@@ -938,7 +980,7 @@ export type HistoryStep =
   | "held"
   | "muted"
   | "transferred"
-  | "conferenced"
+  | "added"
   | "unanswered"
   | "callback-requested";
 
@@ -965,11 +1007,12 @@ export interface TaskHistoryStep {
   step: HistoryStep;
   at: IsoTimestamp;
   /**
-   * On a step that dialled -- `transferred`, `conferenced`, `unanswered` -- the host's identity for
-   * that dial when a host placed it, and the directory item it went to. Neither belongs on any other step.
+   * On a step that dialled -- `transferred`, `added`, `unanswered` -- the host's identity for
+   * that dial when a host placed it, and the contact it went to, by the contacts entry's `id`. Neither
+   * belongs on any other step.
    */
   dialId?: DialId;
-  destinationId?: string;
+  contactId?: string;
   /**
    * Reported, never derived. An entry may be written while its leg is still running, so there is
    * no end to subtract from -- and omitted is the honest report of that, where nought would
@@ -998,21 +1041,23 @@ export type TaskCompletion =
   | { completionMode: "agent-command"; wrapAllowance?: DurationSeconds }
   | { completionMode: "provider-automatic"; wrapAllowance: DurationSeconds };
 
-export type OnCallRole = "party" | "agent" | "conferenced";
+export type OnCallRole = "party" | "agent" | "added";
 
 /** Where a dialled entry stands: `ringing` until its dial is answered, `joined` after. */
 export type OnCallStage = "ringing" | "joined";
 
-export const ON_CALL_ROLES = ["party", "agent", "conferenced"] as const satisfies readonly OnCallRole[];
+export const ON_CALL_ROLES = ["party", "agent", "added"] as const satisfies readonly OnCallRole[];
 
 /**
  * Somebody on the call, or being brought onto it, as the provider states it: who, since when, and
- * whether they are held aside. `party` is the customer; `agent` a person, by user id; `conferenced`
+ * whether they are held aside. `party` is the customer; `agent` a person, by user id; `added`
  * someone a dial is bringing in -- listed from the moment the dial is placed, so the agent can call
- * it off while it rings -- carrying the dial when a host placed it, the address either way, and the
+ * it off while it rings -- carrying the dial when a host placed it, the contact either way (the
+ * `contactId` of its entry in the provider's contacts, a typed number included), and the
  * `stage` it has reached: `ringing` until the dial is answered, `joined` after, stated so a snapshot
  * says who is present without anyone having seen the outcome. Nobody ringing is held. `label` names
- * a destination -- a person, a queue -- not a phrase. At most one `party`. The `party`
+ * a person or a line -- not a phrase. `coaching` marks a lead the agent alone hears,
+ * present while they coach and gone when they stop. At most one `party`. The `party`
  * carries a `stage` while being dialled -- by any host dial, a dialpad call, a preview Call or a
  * connect-back, carrying its `dialId`, or by a callback the platform places itself, carrying none --
  * `ringing` from the moment the dial is placed, `joined` on the publication that follows its
@@ -1023,8 +1068,8 @@ export const ON_CALL_ROLES = ["party", "agent", "conferenced"] as const satisfie
 export type OnCall = { since: IsoTimestamp; held?: true } & (
   | { role: "party"; dialId?: never; stage?: never }
   | { role: "party"; stage: OnCallStage; dialId?: DialId }
-  | { role: "agent"; userId: UserId }
-  | { role: "conferenced"; destinationId: string; stage: OnCallStage; dialId?: DialId; label?: string }
+  | { role: "agent"; userId: UserId; coaching?: true }
+  | { role: "added"; contactId: string; stage: OnCallStage; dialId?: DialId; label?: string }
 );
 
 /**
@@ -1176,7 +1221,7 @@ export type TaskOutcome =
 
 export const TASK_COMMAND_NAMES = {
   voice: ["answer", "decline", "dial", "hold", "resume", "end-call", "terminate-call",
-          "connect-back", "lead-assist", "conference", "recording", "schedule", "complete"],
+          "connect-back", "lead-assist", "add-to-call", "remove-from-call", "recording", "schedule", "complete"],
   chat: ["accept", "decline", "pause", "resume", "schedule", "complete"],
   email: ["accept", "decline", "schedule", "complete"],
 } as const;
@@ -1210,16 +1255,21 @@ export type VoiceTaskCommand =
   | { type: "lead-assist"; action: "request"; note?: string }
   /** Withdraw a standing request. Needs `Task.leadAssist` with status `requested`. */
   | { type: "lead-assist"; action: "cancel" }
-  /** Dial the directory item `destinationId` into the call. Gated by `conference`. */
-  | { type: "conference"; action: "add"; dialId: DialId; destinationId: string }
+  /**
+   * Dial a contact into the call: an entry of the provider's contacts by `contactId`, or, where the
+   * capability allows `any-number`, a `number` the agent typed, which the provider enters in its
+   * contacts under an id of its own. Gated by `addToCall`.
+   */
+  | { type: "add-to-call"; dialId: DialId; contactId: string; number?: never }
+  | { type: "add-to-call"; dialId: DialId; number: string; contactId?: never }
   /**
    * Remove one person from the call, named as `onCall` names them, and the call goes on for the
-   * rest: a `conferenced` entry by its `destinationId`, which while it still rings calls the dial
+   * rest: a `added` entry by its `contactId`, which while it still rings calls the dial
    * off, or the `party`, leaving the agent with the colleague. A remove that would leave the agent
    * alone is `end-call`, and a provider answers it `failed`.
    */
-  | { type: "conference"; action: "remove"; destinationId: string; party?: never }
-  | { type: "conference"; action: "remove"; party: true; destinationId?: never }
+  | { type: "remove-from-call"; contactId: string; party?: never }
+  | { type: "remove-from-call"; party: true; contactId?: never }
   | (RecordingCommand & { source: "provider" })
   | ({ type: "complete" } & OutcomePayload);
 
@@ -1280,7 +1330,7 @@ export type TaskCommandResult =
 /** The dial a command places, by the host's identity for it; `undefined` for a command that dials nothing. */
 export function commandDialId(command: TaskCommand): DialId | undefined {
   if (command.type === "connect-back" || command.type === "dial") return command.dialId;
-  if (command.type === "conference" && command.action === "add") return command.dialId;
+  if (command.type === "add-to-call") return command.dialId;
   return undefined;
 }
 
@@ -1543,7 +1593,7 @@ export interface Shift {
 }
 
 /**
- * The lead's view of their team: published to a login that declares `capabilities.lead` while the
+ * The lead's view of their team: published to a user whose capabilities include `lead` while the
  * lead has the team feature on, and to nobody else. Whole on `team-updated` -- after the switch,
  * and on any snapshot -- and from then on one member at a time: `team-member-updated` carries the
  * member whole, so applying it twice changes nothing, and `team-member-removed` takes one off.
@@ -1722,7 +1772,7 @@ export type PreferenceResult =
 
 export interface Snapshot<C extends Channel = Channel> {
   transport: TransportStatus;
-  loginId: string;
+  sessionId: string;
   /**
    * The provider's own instant of this read, required of a provider that declares `timeCheck`:
    * every duration the agent computer renders off the active call is counted from the provider's clock, and
@@ -1734,7 +1784,7 @@ export interface Snapshot<C extends Channel = Channel> {
   tasks: Task<C>[];
   /** The provider's own count of those tasks, stated rather than inferred: it must equal `tasks.length`, so a blank or unanswered state can never pass as a confirmed empty. */
   taskCount: number;
-  contacts?: Contact[];
+  contacts?: ContactEntry[];
   calendar?: ScheduledActivity[];
   /** The agent's own day so far, as the provider counts it; replaced whole by `shift-updated`. Omitted where the provider cannot say. */
   shift?: Shift;
@@ -1798,7 +1848,7 @@ export type ProviderEvent<C extends Channel = Channel> =
    * from what the agent is looking at, and that task may already have ended: a dial placed late
    * routinely outlives its call. `reason` is the switch's own words, shown to the agent as such.
    */
-  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; assignmentId?: AssignmentId; destinationId?: string; reason?: string }
+  | { type: "dial-outcome"; dialId: DialId; outcome: DialOutcome; assignmentId?: AssignmentId; contactId?: string; reason?: string }
   | { type: "announcement"; text: string; html?: string; announcedAt: IsoTimestamp; expiresAt?: IsoTimestamp }
   | { type: "queue-summary"; summary: QueueSummary }
   | { type: "diagnostic"; expected: string; observed: string; assignmentId?: AssignmentId }
@@ -1808,7 +1858,7 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "team-member-updated"; member: TeamMember }
   | { type: "team-member-removed"; memberId: UserId }
   | { type: "team-policies-updated"; policies: TeamPolicies }
-  | { type: "contacts-updated"; contacts: Contact[] }
+  | { type: "contacts-updated"; contacts: ContactEntry[] }
   | { type: "calendar-updated"; calendar: ScheduledActivity[] }
   /** The agent's own day, whole, whenever a total moves: a task ended, a break ended. */
   | { type: "shift-updated"; shift: Shift }
@@ -1828,8 +1878,8 @@ export type ProviderEvent<C extends Channel = Channel> =
  */
 export interface ProviderEventEnvelope<C extends Channel = Channel> {
   id: string;
-  /** The login this belongs to. */
-  loginId: string;
+  /** The session this belongs to. */
+  sessionId: string;
   occurredAt: IsoTimestamp;
   event: ProviderEvent<C>;
 }
@@ -1885,7 +1935,7 @@ export interface ProviderTimeCheckRequest {
 
 export interface ProviderTimeCheckResult {
   requestId: string;
-  loginId: string;
+  sessionId: string;
   /** Provider clock domain/incarnation; changes on clock discontinuity or authority replacement. */
   clockId: string;
   /** Provider-domain ISO instant sampled after this request arrived, before its response leaves. */
@@ -1911,7 +1961,7 @@ export interface Connection<C extends Channel = Channel> {
   dial?(request: DialRequest): Promise<DialResult>;
 
   /**
-   * The four break methods stand or fall together. Declaring `capabilities.breaks` at login and
+   * The four break methods stand or fall together. Declaring `capabilities.breaks` at sign-in and
    * implementing `requestBreak` without `commitBreak` leaves an agent granted a break that can
    * never start, and the two-phase coordination has no way to report it.
    */
@@ -1929,13 +1979,13 @@ export interface Connection<C extends Channel = Channel> {
   cancelNextCall?(): Promise<NextCallCancelResult>;
   releaseLinedUp?(): Promise<LinedUpReleaseResult>;
 
-  /** Required when the login declares `capabilities.lead`: every lead act, on the team surface and nowhere else. */
+  /** Required when the user's capabilities include `lead`: every lead act, on the team surface and nowhere else. */
   executeTeam?(request: TeamCommandRequest): Promise<TeamCommandResult>;
   /** Required of a voice adapter whose manifest lists `softphone`: on one, the call's audio lands in Omni. */
   openAudio?(request: OpenAudioRequest): Promise<OpenAudioResult>;
-  /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
+  /** Required when the user's capabilities include `preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
-  /** Records an interaction leg the host performed. Required of a softphone login's connection: the host mutes its microphone on any call, and the record is the provider's. */
+  /** Records an interaction leg the host performed. Required of a softphone session's connection: the host mutes its microphone on any call, and the record is the provider's. */
   recordStep?(report: HistoryReport): Promise<HistoryReportResult>;
 }
 
@@ -1980,7 +2030,7 @@ export const DEFAULT_TASK_TYPE_PRESENTATION = {
 
 export const DEFAULT_HISTORY_STEP_LABELS = {
   arrived: "Incoming call", "self-service": "Self-service", queued: "Queued", offered: "Offered", answered: "Answered", held: "On hold",
-  muted: "Muted", transferred: "Transferred", conferenced: "Conferenced", unanswered: "Unanswered",
+  muted: "Muted", transferred: "Transferred", added: "Added", unanswered: "Unanswered",
   "callback-requested": "Callback requested",
 } as const satisfies Readonly<Record<HistoryStep, string>>;
 
@@ -2038,11 +2088,11 @@ export const userKey = (providerId: string, userId: UserId): string =>
  * of them is here.
  */
 export const HISTORY_STEPS_WITH_A_PERSON = [
-  "offered", "answered", "held", "muted", "transferred", "conferenced", "unanswered",
+  "offered", "answered", "held", "muted", "transferred", "added", "unanswered",
 ] as const satisfies readonly HistoryStep[];
 
-/** The steps a dial writes, and so the only ones that carry a `dialId` and a `destinationId`. */
-export const HISTORY_STEPS_THAT_DIAL = ["transferred", "conferenced", "unanswered"] as const satisfies readonly HistoryStep[];
+/** The steps a dial writes, and so the only ones that carry a `dialId` and a `contactId`. */
+export const HISTORY_STEPS_THAT_DIAL = ["transferred", "added", "unanswered"] as const satisfies readonly HistoryStep[];
 
 export const historyStepDials = (step: HistoryStep): boolean =>
   (HISTORY_STEPS_THAT_DIAL as readonly HistoryStep[]).includes(step);
@@ -2096,7 +2146,7 @@ export interface BrowserSessionKeyInput {
 }
 
 /**
- * Whether two logins declare the same capabilities, field by field. The comparison an adapter
+ * Whether two sessions declare the same capabilities, field by field. The comparison an adapter
  * makes before republishing `authenticated`: capabilities are current, not fixed, and the natural
  * guard -- comparing the identity -- never fires on a demotion, because the thing that changed is
  * not the thing being compared. Key order does not matter, and a withdrawn `lead` is a change.
@@ -2107,8 +2157,10 @@ export function sameCapabilities(a: UserCapabilities, b: UserCapabilities): bool
   void ({ breaks: true, preferences: true, lead: true, nextCall: true } satisfies Record<keyof UserCapabilities, true>);
   const preferences = (list: AgentPreference[] | undefined): string | undefined =>
     list === undefined ? undefined : list.map(p => [p.id, p.label, p.enabled, p.setBy, p.lockedBy ?? "", p.reason ?? ""].join("\u0000")).sort().join("\u0001");
+  const lead = (granted: LeadCapabilities | undefined): string | undefined =>
+    granted === undefined ? undefined : Object.keys(granted).filter(key => granted[key as keyof LeadCapabilities] === true).sort().join(",");
   return a.breaks === b.breaks &&
-    a.lead === b.lead &&
+    lead(a.lead) === lead(b.lead) &&
     a.nextCall === b.nextCall &&
     preferences(a.preferences) === preferences(b.preferences);
 }

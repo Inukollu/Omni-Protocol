@@ -15,7 +15,7 @@ import {
   type Host,
   type HostGuarantees,
   type HostMute,
-  type LoginStore,
+  type SessionStore,
   type Refusal,
   type UserId,
   type SecretStore,
@@ -23,6 +23,7 @@ import {
   type Manifest,
   type ProviderEvent,
   type UserCapabilities,
+  type LeadCapabilities,
 } from "./index.js";
 import {
   assertNoViolations,
@@ -36,7 +37,7 @@ import {
   ruleTested,
   validateHostMute,
   validateHostRecording,
-  validateLoginStore,
+  validateSessionStore,
   validateHistoryReport,
   validateManifest,
   validateResult,
@@ -55,7 +56,7 @@ import {
 export { ProtocolConformanceError, assertNoViolations, type ProtocolViolation } from "./validation.js";
 
 /** A state that knows who the agent is and what they may do. */
-type Login = Extract<AuthenticationState, { status: "authenticated" }>;
+type SignedIn = Extract<AuthenticationState, { status: "authenticated" }>;
 
 /**
  * A part of the contract a run may never reach: state nothing obliges an adapter to publish, so
@@ -134,10 +135,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
   if (value.acceptance !== undefined) seen.add("task.acceptance");
   const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
   if (isRecord(capabilities.outcomes)) seen.add("task.outcomes");
-  for (const directory of ["coldTransfer", "warmTransfer", "conference"]) {
-    const declared = capabilities[directory];
-    if (isRecord(declared) && some(declared.destinations)) seen.add("task.destinations");
-  }
+  if (isRecord(capabilities.addToCall) && typeof capabilities.addToCall.destinations === "string") seen.add("task.destinations");
   if (some(capabilities.custom)) seen.add("task.custom");
   if (Object.values(capabilities).some(declared => isRecord(declared) && declared.lockedBy !== undefined)) seen.add("task.locked");
 }
@@ -212,10 +210,10 @@ export interface AdapterContractResult {
   /** The state the session was restored with at sign-in. */
   authenticationState: AuthenticationState;
   /**
-   * The latest login the session published during the run. Equal to `authenticationState` unless
+   * The latest signed-in state the authentication session published during the run. Equal to `authenticationState` unless
    * the adapter republished `authenticated` -- capabilities are current, not fixed.
    */
-  login: AuthenticationState;
+  signedIn: AuthenticationState;
   /** True only when every unsubscribe, `disconnect()`, and `close()` settled without throwing. */
   disconnectWasClean: boolean;
   /**
@@ -250,14 +248,14 @@ export interface TestAdapterOptions {
   timeoutMs?: number;
   /**
    * Builds the adapter again, as a host reload does: a new object with no memory, for the same
-   * login. Given it, the test -- once the host's muted leg is recorded -- connects a second adapter
+   * session. Given it, the test -- once the host's muted leg is recorded -- connects a second adapter
    * with the same context and the same store and expects its snapshot to carry the task with that
    * leg. A platform that holds the record hands it back; an adapter that composed the record in
    * memory has nothing, and is named. Without it the store is required and never read.
    */
   rebuild?: () => Adapter<Channel>;
   /**
-   * The values the queue locks on this login's tasks -- a party's number or email -- as the run's
+   * The values the queue locks on this session's tasks -- a party's number or email -- as the run's
    * author knows them. A task whose party stands locked may carry none of them anywhere else
    * (`task.locked.leak`). Required once any task locks a party field: a run that cannot ask the
    * question is not a pass, and says so by throwing rather than passing.
@@ -269,7 +267,7 @@ export interface TestAdapterOptions {
  * Adapter conformance exercise: validates the manifest, opens an authenticated session,
  * connects, checks that every method the declarations require is implemented, subscribes,
  * validates the snapshot, every delivered event, and every authentication state the session
- * publishes during the run -- against the latest login, since capabilities are current, not
+ * publishes during the run -- against the latest session, since capabilities are current, not
  * fixed -- states a capacity, then unsubscribes and disconnects.
  *
  * Violations are collected rather than thrown from inside the adapter's own
@@ -309,7 +307,7 @@ export async function testAdapter<C extends Channel>(
   let unsubscribeAuthentication: (() => void) | undefined;
   let unsubscribeHost: (() => void) | undefined;
   let authenticationState: AuthenticationState | undefined;
-  let login: Login | undefined;
+  let signedIn: SignedIn | undefined;
   let disconnectWasClean = false;
 
   try {
@@ -322,17 +320,17 @@ export async function testAdapter<C extends Channel>(
       );
     }
 
-    // The harness knows who is signed in and what their login declares, so it can hold the
+    // The harness knows who is signed in and what their capabilities include, so it can hold the
     // adapter to rules the structural validators cannot check alone: a team member list never carries the
     // agent it is published to, a lead's snapshot always carries one, nobody else's ever does.
-    // Capabilities are current, not fixed, so the login is read when something is validated,
+    // Capabilities are current, not fixed, so the session is read when something is validated,
     // never captured at sign-in: a provider that withdraws one republishes `authenticated`, and
     // everything published after that is held to the new set. A published state that fails
-    // validation is reported and not adopted -- the harness keeps the last login it could trust.
-    login = authenticationState;
-    const current = (): Login => {
-      if (login === undefined) throw new Error("unreachable: the exercise has an authenticated login");
-      return login;
+    // validation is reported and not adopted -- the harness keeps the last session it could trust.
+    signedIn = authenticationState;
+    const current = (): SignedIn => {
+      if (signedIn === undefined) throw new Error("unreachable: the exercise has an authenticated session");
+      return signedIn;
     };
     // Off until the application has said otherwise: the provider assumes nothing of the team feature.
     let leadFeaturesOn = false;
@@ -341,7 +339,7 @@ export async function testAdapter<C extends Channel>(
       capabilities: current().capabilities,
       leadFeatures: leadFeaturesOn,
       phone: context.phone,
-      loginId: context.loginId,
+      sessionId: context.sessionId,
       autoAcceptTasks: context.autoAcceptTasks,
       locked: options.lockedValues,
     });
@@ -364,17 +362,17 @@ export async function testAdapter<C extends Channel>(
         // The four stand or fall together: `granted` is a promise to honour a later commit, and
         // an adapter with requestBreak but no commitBreak leaves an agent a break that never starts.
         for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak"] as const) {
-          requireMethod(on, method, "the login declares capabilities.breaks");
+          requireMethod(on, method, "the user's capabilities include breaks");
         }
       }
-      if (capabilities.lead === true) requireMethod(on, "executeTeam", "the login declares capabilities.lead");
+      if (capabilities.lead !== undefined) requireMethod(on, "executeTeam", "the user's capabilities include lead");
       if (capabilities.nextCall === true) {
         // The ask, its withdrawal and the release stand together: a lined-up call the agent could neither withdraw nor let go is a promise with no way out.
         for (const method of ["requestNextCall", "cancelNextCall", "releaseLinedUp"] as const) {
-          requireMethod(on, method, "the login declares capabilities.nextCall");
+          requireMethod(on, method, "the user's capabilities include nextCall");
         }
       }
-      if (some(capabilities.preferences)) requireMethod(on, "setPreference", "the login declares capabilities.preferences");
+      if (some(capabilities.preferences)) requireMethod(on, "setPreference", "the user's capabilities include preferences");
     };
 
     const onAuthenticationState = (state: AuthenticationState): void => {
@@ -395,7 +393,7 @@ export async function testAdapter<C extends Channel>(
       if (state.status === "refreshing") {
         violations.push(...refreshingCarriesOver(current(), state, "authentication"));
       } else if (state.status === "authenticated") {
-        login = state;
+        signedIn = state;
         // A capability granted later requires its methods just as one declared at sign-in does.
         if (connection !== undefined) requireCapabilityMethods(connection, state.capabilities);
       }
@@ -420,16 +418,16 @@ export async function testAdapter<C extends Channel>(
     violations.push(...validateHostReport(first, "context.host"));
     const hasAudio = isRecord(first) && first.audio !== undefined;
     if (softphone && !hasAudio) {
-      violations.push({ rule: "context.host.audio.required", path: "context.host.audio", message: "a softphone login's host reports its audio" });
+      violations.push({ rule: "context.host.audio.required", path: "context.host.audio", message: "a softphone session's host reports its audio" });
     }
     if (!softphone && hasAudio) {
       violations.push({ rule: "context.host.audio.unexpected", path: "context.host.audio",
-        message: adapter.manifest.channel === "voice" ? "a hardphone login has no audio in the host to report" : `a ${adapter.manifest.channel} connection has no audio for the host to report` });
+        message: adapter.manifest.channel === "voice" ? "a hardphone session has no audio in the host to report" : `a ${adapter.manifest.channel} connection has no audio for the host to report` });
     }
     // What the host's Mute does is stated where the host holds a microphone, and nowhere else.
     violations.push(...validateHostMute(context.host.mute, softphone, "context.host.mute"));
-    // The login's store is the host's to provide: an adapter that composes a record keeps in it what its platform cannot.
-    const storeShape = validateLoginStore((context as { store?: unknown }).store, "context.store");
+    // The session's store is the host's to provide: an adapter that composes a record keeps in it what its platform cannot.
+    const storeShape = validateSessionStore((context as { store?: unknown }).store, "context.store");
     violations.push(...storeShape);
     // The harness watches the store it hands over, so what an adapter leaves behind is seen rather than asked for.
     const watched = storeShape.length === 0 ? watchStore(context.store) : { store: context.store, held: new Set<string>(), everHeld: new Set<string>() };
@@ -469,10 +467,10 @@ export async function testAdapter<C extends Channel>(
       // than an `enabled` flag, so its presence is the declaration.
       if (adapter.manifest.idleCapabilities?.dial !== undefined) requireMethod(on, "dial", "the manifest declares dial");
       // On a softphone the call's audio lands in Omni, so the adapter has to open it; on a hardphone the host opens nothing.
-      if (softphone) requireMethod(on, "openAudio", "the login is on a softphone");
+      if (softphone) requireMethod(on, "openAudio", "the session is on a softphone");
       // The microphone is the host's, so on a softphone every call can be muted by it, and the
       // record of that leg is the provider's to take; on a hardphone the host holds no microphone.
-      if (softphone) requireMethod(on, "recordStep", "the login is on a softphone, whose microphone the host mutes");
+      if (softphone) requireMethod(on, "recordStep", "the session is on a softphone, whose microphone the host mutes");
     };
     connectObligations(live);
     const tellRefused = (report: Refusal): void => {
@@ -538,7 +536,7 @@ export async function testAdapter<C extends Channel>(
         if (earlier !== undefined) {
           if (earlier !== payload) {
             violations.push({ rule: "event.id.reused", path: "event.id",
-              message: `envelope ${envelope.id} was delivered again with a different event: an id names one event for the life of the login` });
+              message: `envelope ${envelope.id} was delivered again with a different event: an id names one event for the life of the session` });
           }
           return;
         }
@@ -571,8 +569,8 @@ export async function testAdapter<C extends Channel>(
         authentication = session;
         connection = second;
         live = second;
-        // The second client is held to everything the first was on connect: its methods, its login's
-        // methods, the login it publishes from here, and a capacity stated to it, since the first's
+        // The second client is held to everything the first was on connect: its methods, its session's
+        // methods, the session it publishes from here, and a capacity stated to it, since the first's
         // statement died with the first and nothing may be assigned against a count nobody stated to it.
         connectObligations(second);
         requireCapabilityMethods(second, current().capabilities);
@@ -691,7 +689,7 @@ export async function testAdapter<C extends Channel>(
     // reaches the lead, which the reader held the connect snapshot to. A reloaded client is a
     // connect too: it is told again, after its capacity, and held the same way.
     const switchOnLeadFeatures = async (on: Connection<C>, at: string): Promise<void> => {
-      if (current().capabilities.lead !== true || typeof on.executeTeam !== "function") return;
+      if (current().capabilities.lead === undefined || typeof on.executeTeam !== "function") return;
       const from = events.length;
       let switched: unknown;
       // On from the moment the application says so: the provider may answer with the team at once.
@@ -791,7 +789,7 @@ export async function testAdapter<C extends Channel>(
   return {
     events: events as ProviderEventEnvelope[],
     authenticationState: authenticationState as AuthenticationState,
-    login: (login ?? authenticationState) as AuthenticationState,
+    signedIn: (signedIn ?? authenticationState) as AuthenticationState,
     notTested: CONTRACT_SUBJECTS.filter(subject => !seen.has(subject)),
     disconnectWasClean,
     violations,
@@ -873,27 +871,27 @@ function eventNamesUsers(envelope: unknown): boolean {
 }
 
 /**
- * `refreshing` carries the identity and capabilities of the login it refreshes. A change to
- * either is published as `authenticated`; a different identity is a new login.
+ * `refreshing` carries the identity and capabilities of the session it refreshes. A change to
+ * either is published as `authenticated`; a different identity is a new session.
  */
 function refreshingCarriesOver(
-  login: Login,
+  signedIn: SignedIn,
   state: Extract<AuthenticationState, { status: "refreshing" }>,
   path: string,
 ): ProtocolViolation[] {
   const found: ProtocolViolation[] = [];
-  if (state.identity.id !== login.identity.id) {
+  if (state.identity.id !== signedIn.identity.id) {
     found.push({
       rule: "authentication.refreshing.identity",
       path: `${path}.identity.id`,
-      message: "refreshing carries the identity of the login it refreshes; a different identity is a new login",
+      message: "refreshing carries the identity of the session it refreshes; a different identity is a new session",
     });
   }
-  if (!sameCapabilities(state.capabilities, login.capabilities)) {
+  if (!sameCapabilities(state.capabilities, signedIn.capabilities)) {
     found.push({
       rule: "authentication.refreshing.capabilities",
       path: `${path}.capabilities`,
-      message: "refreshing carries the capabilities of the login it refreshes; a change is published as authenticated",
+      message: "refreshing carries the capabilities of the session it refreshes; a change is published as authenticated",
     });
   }
   return found;
@@ -945,30 +943,30 @@ function connectingReports(context: ConnectContext, violations: ProtocolViolatio
   };
 }
 
-/** Validates each state of a published sequence, and that every `refreshing` carries over the login before it. */
-function assertLoginSequence(states: readonly AuthenticationState[], levels: readonly string[], summary: string): void {
+/** Validates each state of a published sequence, and that every `refreshing` carries over the session before it. */
+function assertSignedInSequence(states: readonly AuthenticationState[], levels: readonly string[], summary: string): void {
   const found: ProtocolViolation[] = [];
-  let login: Login | undefined;
+  let signedIn: SignedIn | undefined;
   states.forEach((state, index) => {
     const path = `states[${index}]`;
     const own = validateAuthenticationState(state, path, { levels });
     found.push(...own);
     if (own.length > 0) return;
-    if (state.status === "authenticated") login = state;
-    else if (state.status === "refreshing" && login !== undefined) found.push(...refreshingCarriesOver(login, state, path));
+    if (state.status === "authenticated") signedIn = state;
+    else if (state.status === "refreshing" && signedIn !== undefined) found.push(...refreshingCarriesOver(signedIn, state, path));
   });
   assertNoViolations(found, summary);
 }
 
 /**
  * Validates restored authentication followed by a refresh failure or expiry. Every state is
- * validated against the manifest's levels, and a `refreshing` state must carry over the login it refreshes.
+ * validated against the manifest's levels, and a `refreshing` state must carry over the session it refreshes.
  */
 export function assertAuthenticationRestoreAndExpiry(
   states: readonly AuthenticationState[],
   manifest: Manifest,
 ): void {
-  assertLoginSequence(states, declaredLevels(manifest), "Authentication scenario");
+  assertSignedInSequence(states, declaredLevels(manifest), "Authentication scenario");
   if (states.length < 2 || states[0]?.status !== "authenticated") {
     throw new Error("Authentication scenario must start with a restored authenticated state");
   }
@@ -1030,9 +1028,9 @@ function notYetReadTasks(tasks: readonly unknown[], path: string): ProtocolViola
  * Capabilities are current, not fixed. A provider that withdraws one republishes `authenticated`
  * with the new set, and the next snapshot agrees with it. `states` is what the authentication
  * session published, first to last: beginning and ending `authenticated` for the same identity,
- * passing only through usable states (`expired`, `terminated` or `signed-out` ends the login instead), with at
+ * passing only through usable states (`expired`, `terminated` or `signed-out` ends the session instead), with at
  * least one capability gone by the end. `snapshot` is the first snapshot published after the last
- * state, validated against that login -- so a team member list still published to a login that no longer
+ * state, validated against that sign-in -- so a team member list still published to a session that no longer
  * leads, or requests to one that may no longer join, is the failure.
  */
 export function assertCapabilityWithdrawal(
@@ -1040,31 +1038,31 @@ export function assertCapabilityWithdrawal(
   snapshot: Snapshot,
   manifest: Manifest,
 ): void {
-  assertLoginSequence(states, declaredLevels(manifest), "Capability withdrawal");
+  assertSignedInSequence(states, declaredLevels(manifest), "Capability withdrawal");
   const stray = states.findIndex(state => state.status !== "authenticated" && state.status !== "refreshing");
   if (stray >= 0) {
-    throw new Error(`Capability withdrawal passes only through usable states; states[${stray}] is ${states[stray]?.status}, which ends the login`);
+    throw new Error(`Capability withdrawal passes only through usable states; states[${stray}] is ${states[stray]?.status}, which ends the session`);
   }
   const first = states[0];
   const last = states.at(-1);
   if (first?.status !== "authenticated" || last?.status !== "authenticated") {
-    throw new Error("Capability withdrawal must begin and end with an authenticated login");
+    throw new Error("Capability withdrawal must begin and end with an authenticated session");
   }
   if (first.identity.id !== last.identity.id) {
-    throw new Error("Capability withdrawal must keep the identity: a different identity is a new login");
+    throw new Error("Capability withdrawal must keep the identity: a different identity is a new session");
   }
   const before = first.capabilities;
   const after = last.capabilities;
   const withdrawn =
     (before.breaks === true && after.breaks !== true) ||
-    (before.lead === true && after.lead !== true) ||
+    Object.keys(before.lead ?? {}).some(name => after.lead?.[name as keyof LeadCapabilities] !== true) ||
     (before.preferences ?? []).some(was => !(after.preferences ?? []).some(now => now.id === was.id));
   if (!withdrawn) {
-    throw new Error("Capability withdrawal must end with at least one capability the first login declared withdrawn");
+    throw new Error("Capability withdrawal must end with at least one capability the first session declared withdrawn");
   }
   assertNoViolations(
     validateSnapshot(snapshot, manifest, "snapshot", { self: last.identity.id, capabilities: after }),
-    "Capability withdrawal: the snapshot after the last login must agree with it",
+    "Capability withdrawal: the snapshot after the last session must agree with it",
   );
 }
 
@@ -1749,15 +1747,15 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     try {
       const restoredSession = await again.createAuthenticationSession({ ...call.context, secrets: call.secrets });
       // The reload is a restore before it is anything else: the second session stands authenticated
-      // as the same person, from the secrets alone, or nothing it reads afterwards is this login's.
+      // as the same person, from the secrets alone, or nothing it reads afterwards is this session's.
       const restored = await (restoredSession as unknown as { state(): Promise<unknown> }).state();
-      found.push(...validateAuthenticationState(restored, "test.reload.login", { levels: declaredLevels(call.manifest) }));
-      ruleTested("test.reload.login");
+      found.push(...validateAuthenticationState(restored, "test.reload.session", { levels: declaredLevels(call.manifest) }));
+      ruleTested("test.reload.session");
       const same = isRecord(restored) && restored.status === "authenticated" && isRecord(restored.identity) && restored.identity.id === call.reader().self;
       if (!same) {
-        refuse("test.reload.login", "test.reload.login",
-          `a second adapter built from the same login and secrets did not restore it: the session says ${String(isRecord(restored) ? restored.status : restored)}${isRecord(restored) && isRecord(restored.identity) ? ` as ${String(restored.identity.id)}` : ""}, and the login is ${String(call.reader().self)}`);
-        // A reload that cannot restore the login is a sign-in screen, not a connection: the run ends here.
+        refuse("test.reload.session", "test.reload.session",
+          `a second adapter built from the same session and secrets did not restore it: the authentication session says ${String(isRecord(restored) ? restored.status : restored)}${isRecord(restored) && isRecord(restored.identity) ? ` as ${String(restored.identity.id)}` : ""}, and the session is ${String(call.reader().self)}`);
+        // A reload that cannot restore the session is a sign-in screen, not a connection: the run ends here.
         try { await restoredSession.close(); } catch { /* the session that would not restore is closed as far as it can be */ }
         return;
       }
@@ -1785,7 +1783,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       ruleTested("test.reload.snapshot");
       if (carried === undefined) {
         refuse("test.reload.snapshot", "test.reload.snapshot",
-          `a second adapter built from the same login does not carry ${taskId} on its snapshot, and the task is still open`);
+          `a second adapter built from the same session does not carry ${taskId} on its snapshot, and the task is still open`);
         return;
       }
       ruleTested("test.reload.history");
@@ -1798,12 +1796,12 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
         .map(entry => `${String(entry.step)}@${String(entry.at)}`);
       if (lost.length > 0) {
         refuse("test.reload.history", "test.reload.history",
-          `a second adapter built from the same login carries ${taskId} without ${lost.join(", ")}, which the first had published: a record once read is not unread`);
+          `a second adapter built from the same session carries ${taskId} without ${lost.join(", ")}, which the first had published: a record once read is not unread`);
       }
       const leg = steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined;
       if (leg === undefined) {
         refuse("test.reload.history", "test.reload.history",
-          `a second adapter built from the same login carries ${taskId} without the muted leg at ${at}: the record was composed in memory and died with the adapter; the login's store is where it lives`);
+          `a second adapter built from the same session carries ${taskId} without the muted leg at ${at}: the record was composed in memory and died with the adapter; the session's store is where it lives`);
       } else if (leg.mutedBy !== "host") {
         refuse("test.reload.history", "test.reload.history",
           `the reloaded record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host`);
@@ -1823,7 +1821,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
         found.push(...malformed);
         if (malformed.length === 0 && isRecord(reopened) && reopened.status === "opened") session = reopened.audio as unknown as Record<string, unknown>;
         else if (malformed.length === 0) refuse("test.reload.openAudio", "test.reload.openAudio",
-          `a second adapter built from the same login could not open the audio of ${taskId}, which its own snapshot carries with audio started`);
+          `a second adapter built from the same session could not open the audio of ${taskId}, which its own snapshot carries with audio started`);
       }
     } catch (error) {
       refuse("test.reload.rejected", "test.reload", `the second adapter rejected rather than answered: ${String(error)}`);
@@ -1844,7 +1842,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     if (call.everHeldForTask(taskId)) ruleTested("test.store.retained");
     if (retained.length > 0) {
       refuse("test.store.retained", "test.store",
-        `${taskId} has ended and the login's store still holds ${retained.join(", ")}: a task's keys go with the task, or the next offer of the same id inherits them`);
+        `${taskId} has ended and the session's store still holds ${retained.join(", ")}: a task's keys go with the task, or the next offer of the same id inherits them`);
     }
   };
   // A key written about the task after its end -- a persist hung off a timer, a late command -- is the
@@ -1855,7 +1853,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     const late = [...call.held].filter(key => namesTask(key, taskId) && !retainedAtEnd!.has(key));
     if (late.length > 0) {
       refuse("test.store.late", "test.store",
-        `${taskId} had ended with its keys gone, and the login's store now holds ${late.join(", ")}: something wrote about the task after its end`);
+        `${taskId} had ended with its keys gone, and the session's store now holds ${late.join(", ")}: something wrote about the task after its end`);
     }
   };
 
@@ -2035,7 +2033,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     const malformed = validateResult(opened, "openAudio", "test.openAudio");
     found.push(...malformed);
     if (malformed.length === 0 && isRecord(opened) && opened.status === "opened") session = opened.audio as unknown as Record<string, unknown>;
-    else if (malformed.length === 0 && isRecord(opened)) refuse("test.openAudio.unavailable", "test.openAudio", "a softphone login's adapter could not open the call's audio");
+    else if (malformed.length === 0 && isRecord(opened)) refuse("test.openAudio.unavailable", "test.openAudio", "a softphone session's adapter could not open the call's audio");
   }
   // 3b. The microphone is the host's. With the audio open, the test mutes it for a moment and
   // reports the leg the provider's record would otherwise miss -- begun, then ended -- and
@@ -2092,8 +2090,8 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     setMuted(false);
     await report({ at, seconds: Math.round((Date.now() - began) / 1000), ended: true });
     reportedLegs.push({ at: canonicalTimes.get(at), task: latestTask() });
-    // 3c. A host reload destroys the adapter object and keeps the login's store. Built again from
-    // the same login, a second adapter carries the task and the leg -- from its platform, or from
+    // 3c. A host reload destroys the adapter object and keeps the session's store. Built again from
+    // the same session, a second adapter carries the task and the leg -- from its platform, or from
     // the store -- or it composed the record in memory and the record died with it.
     if (call.rebuild !== undefined && canonicalTimes.has(at)) {
       await recordSurvivesReload(canonicalTimes.get(at)!);
@@ -2101,7 +2099,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       if (!call.handOver.isLive()) return found;
     }
   }
-  // The host's Mute is unavailable on hold, and the host promised as much at login: a host holds the
+  // The host's Mute is unavailable on hold, and the host promised as much at sign-in: a host holds the
   // report back (historyReport.muted.held), and an adapter that receives one anyway must refuse it --
   // so the test sends a mute begun on hold past the validator and expects failed.
   const muteRefusedOnHold = async (): Promise<void> => {
@@ -2362,7 +2360,7 @@ export class BreakStream {
   /** True until a validated authoritative snapshot establishes a usable baseline. */
   get needsRecovery(): boolean { return this.recovery; }
 
-  /** Caller establishes snapshot freshness/login scope separately; malformed state never replaces the baseline. */
+  /** Caller establishes snapshot freshness/session scope separately; malformed state never replaces the baseline. */
   seed(snapshot: unknown): ProtocolViolation[] {
     const state = isRecord(snapshot) ? snapshot.break : undefined;
     const found = validateBreakTransition(state, state, "snapshot.break");
@@ -2415,7 +2413,7 @@ export function assertAudioFollowsTheTask(envelopes: readonly ProviderEventEnvel
 }
 
 /** The store as handed to the adapter, and the keys it holds at any moment, seen rather than reported. */
-function watchStore(store: LoginStore): { store: LoginStore; held: Set<string>; everHeld: Set<string> } {
+function watchStore(store: SessionStore): { store: SessionStore; held: Set<string>; everHeld: Set<string> } {
   const held = new Set<string>();
   const everHeld = new Set<string>();
   return {
@@ -2429,8 +2427,8 @@ function watchStore(store: LoginStore): { store: LoginStore; held: Set<string>; 
   };
 }
 
-/** A login store that lives in memory for the test: what most adapter tests hand `testAdapter` as `context.store`. */
-export function memoryStore(): LoginStore {
+/** A session store that lives in memory for the test: what most adapter tests hand `testAdapter` as `context.store`. */
+export function memoryStore(): SessionStore {
   const kept = new Map<string, string>();
   return {
     get: async key => kept.get(key),
@@ -2472,7 +2470,7 @@ export function assertHistoryAgreesAcrossTasks(earlier: Task, later: Task): void
   }
   before.forEach((step, index) => {
     const restated = after[index]!;
-    for (const field of ["step", "at", "by", "dialId", "destinationId", "mutedBy"] as const) {
+    for (const field of ["step", "at", "by", "dialId", "contactId", "mutedBy"] as const) {
       if (step[field] !== restated[field]) {
         throw new Error(`steps[${index}].${field} is ${String(step[field])} on ${earlier.assignmentId} and ${String(restated[field])} on ${later.assignmentId}: one call has one history`);
       }
@@ -2491,14 +2489,14 @@ export interface BreakCandidate {
   holdsCapacity: boolean;
 }
 
-const usableLogin = (status: AuthenticationState["status"]): boolean =>
+const usableSession = (status: AuthenticationState["status"]): boolean =>
   status === "authenticated" || status === "refreshing";
 
 /**
  * A break one provider forces stops the agent everywhere: the host states a capacity of zero on
  * every other usable provider holding capacity -- taken, never refused, and nothing the agent can
  * cancel -- and on the forcing provider states nothing, since the break itself holds the agent
- * there. A provider whose login is not usable is left alone, as a break attempt leaves it.
+ * there. A provider whose session is not usable is left alone, as a break attempt leaves it.
  */
 export function assertForcedBreakStopsTheRest(forcedOn: string, candidates: readonly BreakCandidate[], stopped: readonly string[]): void {
   if (!candidates.some(candidate => candidate.id === forcedOn)) throw new Error(`${forcedOn} is not a provider the host knows`);
@@ -2509,12 +2507,12 @@ export function assertForcedBreakStopsTheRest(forcedOn: string, candidates: read
   if (chosen.has(forcedOn)) throw new Error(`${forcedOn} forced the break and holds the agent itself: its capacity is not restated`);
   for (const candidate of candidates) {
     if (candidate.id === forcedOn) continue;
-    const expected = usableLogin(candidate.authentication) && candidate.holdsCapacity;
+    const expected = usableSession(candidate.authentication) && candidate.holdsCapacity;
     if (expected && !chosen.has(candidate.id)) {
       throw new Error(`${candidate.id} can give the agent work and must be stopped: capacity 0 stated`);
     }
     if (!expected && chosen.has(candidate.id)) {
-      const why = usableLogin(candidate.authentication) ? "holds no capacity" : `is ${candidate.authentication}`;
+      const why = usableSession(candidate.authentication) ? "holds no capacity" : `is ${candidate.authentication}`;
       throw new Error(`${candidate.id} ${why} and is not stopped: there is nothing to stop`);
     }
   }
@@ -2522,7 +2520,7 @@ export function assertForcedBreakStopsTheRest(forcedOn: string, candidates: read
 
 /**
  * A break attempt asks every connected provider from which the agent can currently receive work.
- * A provider whose login is not usable -- `expired` above all -- is not asked, whatever else is
+ * A provider whose session is not usable -- `expired` above all -- is not asked, whatever else is
  * true of it: nothing can be asked of it, and a host that waits on it stalls the break for
  * everyone. A usable provider holding capacity is asked, and cannot be left out. `refreshing` is
  * usable: identity and capabilities remain available and work continues.
@@ -2533,12 +2531,12 @@ export function assertBreakAttemptProviders(candidates: readonly BreakCandidate[
     if (!candidates.some(candidate => candidate.id === id)) throw new Error(`${id} is not a provider the host knows`);
   }
   for (const candidate of candidates) {
-    const expected = usableLogin(candidate.authentication) && candidate.holdsCapacity;
+    const expected = usableSession(candidate.authentication) && candidate.holdsCapacity;
     if (expected && !chosen.has(candidate.id)) {
       throw new Error(`${candidate.id} can give the agent work and must be asked`);
     }
     if (!expected && chosen.has(candidate.id)) {
-      const why = usableLogin(candidate.authentication) ? "holds no capacity" : `is ${candidate.authentication}`;
+      const why = usableSession(candidate.authentication) ? "holds no capacity" : `is ${candidate.authentication}`;
       throw new Error(`${candidate.id} ${why} and is not asked: nothing can be asked of it`);
     }
   }
