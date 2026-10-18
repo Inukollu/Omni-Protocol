@@ -168,7 +168,7 @@ lists show as `elsewhere`. Nobody on those providers can deny it, and the agent 
 because there is nothing to cancel: a break request on them would be the agent's own to withdraw
 and a lead's to refuse, and a forced break is neither. When the forcing provider ends the forced
 break and the agent resumes there, the agent application restates its capacity on the rest. A
-provider whose login is not usable is left alone, as a break attempt leaves it;
+provider whose session is not usable is left alone, as a break attempt leaves it;
 `assertForcedBreakStopsTheRest` holds an agent application to this set. **The provider keeps its
 shift totals true.** A member held elsewhere is one the provider sees -- `elsewhere` is a state it
 publishes -- and the day's `shift` is its own account of the day, so the time the agent was

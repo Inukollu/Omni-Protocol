@@ -486,7 +486,7 @@ function validatePhones(manifest: Record<string, unknown>, path: string, into: C
 }
 
 /**
- * The host's choice of phone for a login, held to the manifest: one the platform listed, required
+ * The host's choice of phone for a session, held to the manifest: one the platform listed, required
  * on voice, absent elsewhere.
  */
 export function validatePhone(value: unknown, manifest: unknown, path = "context.phone"): ProtocolViolation[] {
@@ -494,10 +494,10 @@ export function validatePhone(value: unknown, manifest: unknown, path = "context
   const channel = isPlainObject(manifest) ? manifest.channel : undefined;
   const phones = isPlainObject(manifest) && Array.isArray(manifest.phones) ? manifest.phones : [];
   if (channel !== "voice") {
-    into.require(value === undefined, "context.phone.unexpected", path, `a ${describeValue(channel)} login has no call to hear and chooses no phone`);
+    into.require(value === undefined, "context.phone.unexpected", path, `a ${describeValue(channel)} session has no call to hear and chooses no phone`);
     return into.violations;
   }
-  if (!into.require(value !== undefined, "context.phone.required", path, "a voice login says how the agent hears the call: one of the manifest's phones")) return into.violations;
+  if (!into.require(value !== undefined, "context.phone.required", path, "a voice session says how the agent hears the call: one of the manifest's phones")) return into.violations;
   if (into.oneOf(value, PHONES, "context.phone", path)) {
     into.require(phones.includes(value), "context.phone.unsupported", path,
       `the host chose ${describeValue(value)} and the manifest lists ${phones.length === 0 ? "no phones" : phones.map(describeValue).join(", ")}`);
@@ -518,16 +518,16 @@ function manifestCalendar(manifest: unknown): boolean | undefined {
 /** Undefined explicitly means unavailable; a returned estimate is not a clock guarantee. */
 export function validateProviderTimeEstimate(value: unknown, scope: unknown, path = "estimate"): ProtocolViolation[] {
   const into = new Collector();
-  if (!isPlainObject(scope)) { into.add("timeEstimate.scope", path, "provider/login scope is required"); return into.violations; }
-  for (const key of ["providerId", "loginId"]) into.filled(scope[key], "timeEstimate.scope", `scope.${key}`, "explicit provider/login scope is required");
+  if (!isPlainObject(scope)) { into.add("timeEstimate.scope", path, "provider/session scope is required"); return into.violations; }
+  for (const key of ["providerId", "sessionId"]) into.filled(scope[key], "timeEstimate.scope", `scope.${key}`, "explicit provider/session scope is required");
   if (value === undefined) return into.violations;
   if (!isPlainObject(value)) { into.add("timeEstimate.shape", path, "expected a provider time estimate or undefined"); return into.violations; }
-  for (const key of ["providerId", "loginId"]) into.require(value[key] === scope[key], "timeEstimate.scope", `${path}.${key}`, "estimate must match the requested provider/login");
+  for (const key of ["providerId", "sessionId"]) into.require(value[key] === scope[key], "timeEstimate.scope", `${path}.${key}`, "estimate must match the requested provider/session");
   into.timestamp(value.at, "timeEstimate.at", `${path}.at`);
   into.filled(value.clockId, "timeEstimate.clock", `${path}.clockId`, "estimate must identify its clock domain");
   if (value.uncertaintyMs !== undefined) into.require(typeof value.uncertaintyMs === "number" && Number.isFinite(value.uncertaintyMs) && value.uncertaintyMs >= 0,
     "timeEstimate.uncertainty", `${path}.uncertaintyMs`, "estimated uncertainty must be finite and nonnegative");
-  for (const key of Object.keys(value)) into.require(["providerId", "loginId", "at", "clockId", "uncertaintyMs"].includes(key), "timeEstimate.field", `${path}.${key}`, "unsupported estimate field");
+  for (const key of Object.keys(value)) into.require(["providerId", "sessionId", "at", "clockId", "uncertaintyMs"].includes(key), "timeEstimate.field", `${path}.${key}`, "unsupported estimate field");
   return into.violations;
 }
 
@@ -555,17 +555,17 @@ export function validateProviderTimeCheckRequest(value: unknown, path = "request
 }
 
 /** Checks response shape/correlation, not source-clock accuracy, round-trip delay or freshness. */
-export function validateProviderTimeCheckResult(value: unknown, request: unknown, loginId: string, path = "result"): ProtocolViolation[] {
+export function validateProviderTimeCheckResult(value: unknown, request: unknown, sessionId: string, path = "result"): ProtocolViolation[] {
   const into = new Collector();
   into.violations.push(...validateProviderTimeCheckRequest(request));
-  into.filled(loginId, "timeCheck.login", "loginId", "current authenticated login is required");
+  into.filled(sessionId, "timeCheck.session", "sessionId", "current authenticated session is required");
   if (!isPlainObject(value)) { into.add("timeCheck.result.shape", path, "expected a clock-check response"); return into.violations; }
   into.filled(value.requestId, "timeCheck.result.id", `${path}.requestId`, "response must identify its request");
   into.require(isPlainObject(request) && value.requestId === request.requestId, "timeCheck.result.request", `${path}.requestId`, "response must match the outstanding check");
-  into.require(value.loginId === loginId, "timeCheck.result.login", `${path}.loginId`, "response belongs to the current login");
+  into.require(value.sessionId === sessionId, "timeCheck.result.session", `${path}.sessionId`, "response belongs to the current session");
   into.filled(value.clockId, "timeCheck.result.clock", `${path}.clockId`, "provider clock domain/incarnation is required");
   into.timestamp(value.providerTime, "timeCheck.result.time", `${path}.providerTime`);
-  for (const key of Object.keys(value)) into.require(["requestId", "loginId", "clockId", "providerTime"].includes(key), "timeCheck.result.field", `${path}.${key}`, "unsupported response field");
+  for (const key of Object.keys(value)) into.require(["requestId", "sessionId", "clockId", "providerTime"].includes(key), "timeCheck.result.field", `${path}.${key}`, "unsupported response field");
   return into.violations;
 }
 
@@ -952,11 +952,11 @@ function validateResolvedInto(value: Record<string, unknown>, rule: string, path
   }
 }
 
-/** A command context's `levels`, the manifest's level ids the login is validated against. */
+/** A command context's `levels`, the manifest's level ids the session is validated against. */
 function contextLevels(context: Record<string, unknown>, rule: string, path: string, into: Collector): readonly string[] {
   const levels = context.levels;
   if (Array.isArray(levels) && levels.every(level => typeof level === "string")) return levels;
-  into.add(rule, `${path}.levels`, "the context carries levels, the ids of the manifest's orgLevels, to validate the login against");
+  into.add(rule, `${path}.levels`, "the context carries levels, the ids of the manifest's orgLevels, to validate the session against");
   return [];
 }
 
@@ -1136,7 +1136,7 @@ function validateHistory(value: unknown, path: string, into: Collector, task: { 
     if (entry.step === "muted") {
       into.oneOf(entry.mutedBy, MUTED_BY, "task.history.mutedBy", `${at}.mutedBy`);
       into.require(entry.by !== undefined, "task.history.muted.by", `${at}.by`,
-        "a muted leg is attributed to the login's agent: the host reported it, and the provider knows who the host's agent is");
+        "a muted leg is attributed to the session's agent: the host reported it, and the provider knows who the host's agent is");
     }
     else if ((HISTORY_STEPS as readonly unknown[]).includes(entry.step)) {
       into.require(entry.mutedBy === undefined, "task.history.mutedBy.unexpected", `${at}.mutedBy`, "only a muted step says who silenced the microphone");
@@ -1300,7 +1300,7 @@ export interface TaskValidationContext {
   /** Whether the manifest declares the `calendar` idle capability. A task that may schedule needs it to; absent, the question is not asked. */
   calendarDeclared?: boolean;
   /**
-   * The values the queue locked on this login's tasks -- a party's number or email -- as whoever
+   * The values the queue locked on this session's tasks -- a party's number or email -- as whoever
    * runs the validator knows them. Where a task's party stands locked, no other field of it may
    * carry one of these. Unknown to a host, which never sees the value, and then unchecked.
    */
@@ -1617,9 +1617,9 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
   into.violations.push(...validateAuthenticationState(auth, `${path}.authentication`, { levels: contextLevels(context, "team.command.levels", path, into) }));
   const caps = isPlainObject(auth.capabilities) ? auth.capabilities : {};
   into.require((auth.status === "authenticated" || auth.status === "refreshing") && context.transport === "active",
-    "team.command.connection", path, "lead commands require a live login and active transport");
+    "team.command.connection", path, "lead commands require a live session and active transport");
   const lead = isPlainObject(caps.lead) ? caps.lead : undefined;
-  into.require(lead !== undefined, "team.command.capability", path, "the login must declare lead");
+  into.require(lead !== undefined, "team.command.capability", path, "the session must declare lead");
   const command = request.command;
   const member = ["type", "memberId", "assignmentId"];
   const allowed: Record<string, readonly string[]> = {
@@ -1725,9 +1725,9 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
   into.violations.push(...validateAuthenticationState(context.authentication, `${path}.authentication`, { levels: contextLevels(context, "break.command.levels", path, into) }));
   const auth = isPlainObject(context.authentication) ? context.authentication : {};
   into.require(auth.status === "authenticated" || auth.status === "refreshing", "break.command.authentication", path,
-    "break commands require a live authenticated login");
+    "break commands require a live authenticated session");
   into.require(isPlainObject(auth.capabilities) && auth.capabilities.breaks === true, "break.command.capability", path,
-    "the login must declare breaks");
+    "the session must declare breaks");
   into.require(context.transport === "active", "break.command.transport", path, "break commands require active transport");
   if (!["requestBreak", "commitBreak", "cancelBreak", "endBreak"].includes(method)) {
     into.add("break.command.method", path, "unknown break method");
@@ -1768,7 +1768,7 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
 }
 
 /**
- * Checks two complete break states within one provider/login's ordered event stream.
+ * Checks two complete break states within one provider/session's ordered event stream.
  * Call before replacing accepted state; report violations and reconcile on failure.
  * This is not a freshness check: validate a fresh authoritative snapshot separately and
  * use it as a new baseline, never as an event transition. Source ordering and connection
@@ -1887,8 +1887,8 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
 }
 
 /**
- * Who is reading what the adapter published, and what their login declares. The validators check
- * structure without it; given it, they also hold what the adapter publishes to the login.
+ * Who is reading what the adapter published, and what their capabilities include. The validators check
+ * structure without it; given it, they also hold what the adapter publishes to the session.
  */
 export interface ReaderContext {
   /**
@@ -1897,16 +1897,16 @@ export interface ReaderContext {
    */
   self?: UserId;
   /**
-   * The login's `AuthenticationState.capabilities`. The login is the permission: a lead's
+   * The user's `AuthenticationState.capabilities`, for the session. They are the permission: a lead's
    * snapshot carries a team member list, and nobody else's does.
    */
   capabilities?: UserCapabilities;
   /** The level ids the manifest declares. `validateSnapshot` and `validateEventEnvelope` take them from the manifest unless given. */
   levels?: readonly string[];
-  /** The login's `loginId`. A snapshot or event naming another belongs to a login that is gone. */
-  loginId?: string;
+  /** The session's `sessionId`. A snapshot or event naming another belongs to a session that is gone. */
+  sessionId?: string;
   /**
-   * The phone the host chose for this login at connect, `ConnectContext.phone`. A phone state
+   * The phone the host chose for this session at connect, `ConnectContext.phone`. A phone state
    * naming another is the wrong phone. Unknown to a caller without the context, and then unchecked.
    */
   phone?: Phone;
@@ -1919,7 +1919,7 @@ export interface ReaderContext {
   /** The provider's channel, for a member's task that states none. Filled from the manifest by `validateSnapshot` and `validateEventEnvelope`. */
   channel?: Channel;
   /**
-   * The values the queue locked on this login's tasks, as whoever runs the validator knows them:
+   * The values the queue locked on this session's tasks, as whoever runs the validator knows them:
    * a conformance run states them, a host never has them. Where a task's party stands locked, no
    * other field of it may carry one (`task.locked.leak`). Absent, unchecked.
    */
@@ -1942,11 +1942,11 @@ function validateTeamMembersInto(teamMembers: unknown, path: string, context: Te
     into.add("team.shape", path, "a team member list must be an object");
     return;
   }
-  // The login is the permission: a team member list reaches a login that declares `capabilities.lead`
-  // and nobody else. Only a caller holding the login can check it.
+  // The user's capabilities are the permission: a team member list reaches a user whose capabilities include `lead`
+  // and nobody else. Only a caller holding the session can check it.
   if (context.capabilities !== undefined && context.capabilities.lead === undefined) {
     into.add("team.unentitled", path,
-      "a team member list published to a login that does not declare capabilities.lead: the login is the permission");
+      "a team member list published to a user whose capabilities do not include lead: the user's capabilities are the permission");
   }
   // Policies are present where the provider offers policy control, absent where it does not.
   if (teamMembers.policies !== undefined) validateTeamPoliciesInto(teamMembers.policies, `${path}.policies`, into, context.levels);
@@ -2140,7 +2140,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
         const here = `${path}.phone.channels[${index}]`;
         const task = tasks.find(task => task.assignmentId === channel.assignmentId);
         if (!into.require(task !== undefined, "phone.channel.assignment", `${here}.assignmentId`,
-          `${String(channel.assignmentId)} is not a task this login holds: a channel names the task its call is, or nothing`)) return;
+          `${String(channel.assignmentId)} is not a task this session holds: a channel names the task its call is, or nothing`)) return;
         const agrees = channel.state === "active" ? task!.phase === "in-progress" && task!.audio === "started"
           : channel.state === "held" ? task!.phase === "paused"
           : task!.phase === "pending" || (Array.isArray(task!.onCall) && task!.onCall.some((who: unknown) => isPlainObject(who) && who.role === "party" && who.stage === "ringing"));
@@ -2155,10 +2155,10 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
       });
     }
   }
-  if (into.filled(snapshot.loginId, "snapshot.loginId", `${path}.loginId`, "a snapshot needs the login id it belongs to")
-    && context.loginId !== undefined) {
-    into.require(snapshot.loginId === context.loginId, "snapshot.loginId.mismatch", `${path}.loginId`,
-      `a snapshot for session ${describeValue(snapshot.loginId)} on a login whose session is ${context.loginId}`);
+  if (into.filled(snapshot.sessionId, "snapshot.sessionId", `${path}.sessionId`, "a snapshot needs the session id it belongs to")
+    && context.sessionId !== undefined) {
+    into.require(snapshot.sessionId === context.sessionId, "snapshot.sessionId.mismatch", `${path}.sessionId`,
+      `a snapshot for session ${describeValue(snapshot.sessionId)} while the current session is ${context.sessionId}`);
   }
 
 
@@ -2228,7 +2228,7 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   }
   // The switch is the permission: once the application has said the team feature is on, a
   // snapshot carries the team, `members: []` included. Before it has said, the provider assumes
-  // nothing and owes nothing. The other direction -- a team member list to a login that does not
+  // nothing and owes nothing. The other direction -- a team member list to a session that does not
   // lead, or to a lead who turned the feature off -- is the team member list's own rule.
   if (context.leadFeatures === true && snapshot.team === undefined) {
     into.add("team.required", `${path}.team`,
@@ -2329,10 +2329,10 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
   const levels = context.levels ?? manifestLevels(manifest);
 
   into.filled(envelope.id, "event.id", `${path}.id`, "an event needs an id");
-  if (into.filled(envelope.loginId, "event.loginId", `${path}.loginId`, "an event needs the login id it belongs to")
-    && context.loginId !== undefined) {
-    into.require(envelope.loginId === context.loginId, "event.loginId.mismatch", `${path}.loginId`,
-      `an event for session ${describeValue(envelope.loginId)} on a login whose session is ${context.loginId}`);
+  if (into.filled(envelope.sessionId, "event.sessionId", `${path}.sessionId`, "an event needs the session id it belongs to")
+    && context.sessionId !== undefined) {
+    into.require(envelope.sessionId === context.sessionId, "event.sessionId.mismatch", `${path}.sessionId`,
+      `an event for session ${describeValue(envelope.sessionId)} while the current session is ${context.sessionId}`);
   }
   const idle = isPlainObject(manifest) && isPlainObject(manifest.idleCapabilities) ? manifest.idleCapabilities : {};
   into.timestamp(envelope.occurredAt, "event.occurredAt", `${path}.occurredAt`);
@@ -2434,7 +2434,7 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
     case "team-updated": case "team-member-updated": case "team-member-removed": case "team-policies-updated": {
       const field = event.type === "team-updated" ? "team" : event.type === "team-member-updated" ? "member" : event.type === "team-member-removed" ? "memberId" : "policies";
       into.require(context.capabilities === undefined || context.capabilities.lead !== undefined, "event.team.capability", `${at}.${field}`,
-        `${event.type} reaches a login that declares lead, and nobody else`);
+        `${event.type} reaches a user whose capabilities include lead, and nobody else`);
       into.require(context.leadFeatures !== false, "event.team.features", `${at}.${field}`, "the team feature is not on for this lead: nothing of the team reaches them until the application switches it on, and nothing after it switches it off");
       const teamContext = { ...context, levels, channel: isChannel(channel) ? channel : undefined };
       if (event.type === "team-updated") validateTeamMembersInto(event.team, `${at}.team`, teamContext, into);
@@ -2596,7 +2596,7 @@ function validatePhoneStateInto(value: unknown, path: string, context: ReaderCon
   }
   if (into.oneOf(value.phone, PHONES, "phone.phone", `${path}.phone`) && context.phone !== undefined) {
     into.require(value.phone === context.phone, "phone.phone.mismatch", `${path}.phone`,
-      `the host chose a ${context.phone} for this login at connect and the platform reports a ${describeValue(value.phone)}: the phone state is the phone the agent hears this provider's calls on`);
+      `the host chose a ${context.phone} for this session at connect and the platform reports a ${describeValue(value.phone)}: the phone state is the phone the agent hears this provider's calls on`);
   }
   into.oneOf(value.status, PHONE_STATUSES, "phone.status", `${path}.status`);
   if (value.muted !== undefined) {
@@ -2729,7 +2729,7 @@ const MUTED_BY = membersOf<MutedBy>({ host: true, station: true });
 const HOST_MUTES = membersOf<HostMute>({ stream: true, station: true });
 
 /**
- * What pressing Mute does on this host, stated on a softphone login and nowhere else: on an agent computer
+ * What pressing Mute does on this host, stated on a softphone session and nowhere else: on an agent computer
  * phone the microphone is the phone's, and off voice there is none. Neither the value nor its
  * absence is inferred from what kind of application the host is.
  */
@@ -2745,15 +2745,15 @@ export function validateCapacity(capacity: unknown, path = "capacity"): Protocol
   return into.violations;
 }
 
-/** The login's store, which the host provides on every connection: three functions, and nothing else is a store. */
-export function validateLoginStore(store: unknown, path = "store"): ProtocolViolation[] {
+/** The session's store, which the host provides on every connection: three functions, and nothing else is a store. */
+export function validateSessionStore(store: unknown, path = "store"): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(store)) {
-    into.add("store.shape", path, "a connection carries the login's store: an object with get, set and delete");
+    into.add("store.shape", path, "a connection carries the session's store: an object with get, set and delete");
     return into.violations;
   }
   for (const method of ["get", "set", "delete"] as const) {
-    into.require(typeof store[method] === "function", `store.${method}`, `${path}.${method}`, `a login store ${method}s by key`);
+    into.require(typeof store[method] === "function", `store.${method}`, `${path}.${method}`, `a session store ${method}s by key`);
   }
   return into.violations;
 }
@@ -2761,8 +2761,8 @@ export function validateLoginStore(store: unknown, path = "store"): ProtocolViol
 export function validateHostMute(mute: unknown, softphone: boolean, path = "host.mute"): ProtocolViolation[] {
   const into = new Collector();
   if (mute === undefined) {
-    into.require(!softphone, "host.mute.required", path, "a softphone login's host states what its Mute does: stream or station");
-  } else if (into.require(softphone, "host.mute.unexpected", path, "only a softphone login's host holds a microphone to mute; a hardphone's is the phone's, and a conversation has none")) {
+    into.require(!softphone, "host.mute.required", path, "a softphone session's host states what its Mute does: stream or station");
+  } else if (into.require(softphone, "host.mute.unexpected", path, "only a softphone session's host holds a microphone to mute; a hardphone's is the phone's, and a conversation has none")) {
     into.oneOf(mute, HOST_MUTES, "host.mute", path);
   }
   return into.violations;
@@ -2778,15 +2778,15 @@ export function validateHostGuarantees(guarantees: unknown, path = "host.guarant
     into.add("host.guarantees.shape", path, "a host declares its guarantees as an object, empty when it makes none");
     return into.violations;
   }
-  // The login's phone decides who holds the mute: a softphone host owns it and promises to keep it
+  // The session's phone decides who holds the mute: a softphone host owns it and promises to keep it
   // off the hold; a hardphone's is the handset's, and a host off voice has none.
   if (phone !== undefined) {
     if (phone === "softphone") {
       into.require(guarantees.muteUnavailableOnHold === true, "host.guarantee.muteUnavailableOnHold.required", `${path}.muteUnavailableOnHold`,
-        "a softphone login's host holds the mute and promises it is unavailable while the task is paused");
+        "a softphone session's host holds the mute and promises it is unavailable while the task is paused");
     } else {
       into.require(guarantees.muteUnavailableOnHold === undefined, "host.guarantee.muteUnavailableOnHold.unexpected", `${path}.muteUnavailableOnHold`,
-        `a ${describeValue(phone)} login's host holds no mute to promise anything of`);
+        `a ${describeValue(phone)} session's host holds no mute to promise anything of`);
     }
   }
   for (const [name, declared] of Object.entries(guarantees)) {
@@ -3358,7 +3358,7 @@ function validateUser(value: unknown, rule: string, path: string, into: Collecto
 function validateUserCapabilitiesInto(value: unknown, path: string, into: Collector, levels: readonly string[]): void {
   if (!isPlainObject(value)) {
     into.add("authentication.capabilities.shape", path,
-      "a usable login declares its capabilities: an object, {} when it has none");
+      "a usable state declares the user's capabilities: an object, {} when there are none");
     return;
   }
   for (const [name, declared] of Object.entries(value)) {
@@ -3372,7 +3372,7 @@ function validateUserCapabilitiesInto(value: unknown, path: string, into: Collec
     if (name === "preferences") {
       if (Array.isArray(declared) && declared.length === 0) {
         into.add("authentication.capability.preferences.empty", `${path}.preferences`,
-          "a login with nothing left to the person omits preferences rather than declaring an empty list");
+          "a user with nothing left to them omits preferences rather than declaring an empty list");
       }
       validatePreferencesInto(declared, `${path}.preferences`, into, levels);
       continue;
@@ -3400,9 +3400,9 @@ function validateLeadCapabilitiesInto(value: unknown, path: string, into: Collec
   }
 }
 
-/** What a login is validated against beyond its own shape. */
-export interface LoginValidationContext {
-  /** The level ids the manifest declares, `Manifest.orgLevels`: a level the login names must be one of them. */
+/** What a session is validated against beyond its own shape. */
+export interface SessionValidationContext {
+  /** The level ids the manifest declares, `Manifest.orgLevels`: a level the session names must be one of them. */
   levels: readonly string[];
 }
 
@@ -3500,11 +3500,11 @@ function validateAuthenticationChallenge(value: unknown, path: string, into: Col
 }
 
 /**
- * What `start()` or `complete()` answered: a challenge or a rejection from `start`, a login or a
- * rejection from `complete`. A rejection carries a failure the host can show, and a login is held
+ * What `start()` or `complete()` answered: a challenge or a rejection from `start`, a session or a
+ * rejection from `complete`. A rejection carries a failure the host can show, and a session is held
  * to the same rules as any `authenticated` state.
  */
-export function validateAuthenticationResult(result: unknown, method: "start" | "complete", path: string, context: LoginValidationContext): ProtocolViolation[] {
+export function validateAuthenticationResult(result: unknown, method: "start" | "complete", path: string, context: SessionValidationContext): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(result)) {
     into.add("authentication.result.shape", path, `${method} must answer an object`);
@@ -3527,7 +3527,7 @@ export function validateAuthenticationResult(result: unknown, method: "start" | 
   return into.violations;
 }
 
-export function validateAuthenticationState(state: unknown, path: string, context: LoginValidationContext): ProtocolViolation[] {
+export function validateAuthenticationState(state: unknown, path: string, context: SessionValidationContext): ProtocolViolation[] {
   const into = new Collector();
   if (!isPlainObject(state)) {
     into.add("authentication.shape", path, "an authentication state must be an object");

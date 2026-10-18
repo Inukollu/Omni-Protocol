@@ -62,10 +62,10 @@ publication carried, counted from its receipt: the agent application infers no d
 was stated and reads no clock against another. Neither elapsed time nor submission changes the
 task phase: subsequent authoritative events state ringing, answer, audio and completion.
 
-An agent application must serialize manual clicks and its timer under the exact provider/login/task/assignment
+An agent application must serialize manual clicks and its timer under the exact provider/session/task/assignment
 scope, allowing at most one unresolved submission. Recheck the current phase, deadline owner,
 assignment and whether an attempt already exists before dispatch. A new snapshot or policy update
-cancels an obsolete timer; login loss, disconnect, task end and assignment replacement fence its
+cancels an obsolete timer; session loss, disconnect, task end and assignment replacement fence its
 callback. Reconnect past a deadline first reconciles current task and attempt state; it must not
 blindly submit again. An uncertain prior submission remains unresolved, without automatic retry.
 The provider atomically arbitrates any residual manual/timer race and does not accept a second
@@ -99,7 +99,7 @@ own assignment, and two open at once carry two assignment ids. Restore them unch
 reconnect. Commands, audio, endings and history reports name the exact assignment; never retarget
 an old command to the newest interaction of a journey. `validateTaskCommandRequest` checks the
 request's assignment against the supplied published task and then its command prerequisites. The
-caller must select that task within the correct provider/login and recheck at the provider; the
+caller must select that task within the correct provider/session and recheck at the provider; the
 validator cannot prove source freshness or authorization.
 `task-ended` retires only that interaction's resources. Another interaction, caller channel or IVR/queue
 portion must not be cleared because this task ended. Snapshot counts include all still-owned wrap
@@ -558,7 +558,7 @@ recording, and what the agent sees is the recording. Retention is not a promise 
 audio.
 
 Provider commands go only to `Connection.execute`; agent application commands go only to
-`HostRecording.execute`. Both name the assignment. Ids are opaque and scoped by provider login,
+`HostRecording.execute`. Both name the assignment. Ids are opaque and scoped by provider session,
 task and recorder; they are never inferred from filenames or the current agent. Reconnect creates
 no recording; the recorder restates its list. There is no automatic restart, hand-over to another
 recorder, or stop on task hold or disconnect. Task removal does not prove recording stopped:

@@ -12,7 +12,7 @@ chat and email publish none (`event.audio.channel`, `stream.taskAudio.channel`).
 
 The provider owns signalling and the platform's endpoint configuration. The agent application selects the
 declared phone mode; it does not enumerate or reconfigure the platform's devices. The selected
-mode stays with the login rather than being inferred from a snapshot or a device failure.
+mode stays with the session rather than being inferred from a snapshot or a device failure.
 
 Nor does the audio ever stand in for the task: a task's presence and
 phase follow the provider's reports about the work, and the audio — attaching, moving through a
@@ -44,7 +44,7 @@ the permission everywhere else:
 | --- | --- |
 | `browserUrlVisibility` | Every task browser's `urlVisibility` is honoured in this agent application's chrome, tab by tab. A provider that would send a caller's number in a URL checks this first and tokenises where the promise is absent. |
 | `personConsent` | A `consent` offer is accepted only by the person's own explicit act, never on their behalf. A provider whose work may only be taken by a human checks this first and does not offer it where the promise is absent. |
-| `muteUnavailableOnHold` | The agent application's Mute is its own control on any call and is never offered while the task is `paused`: a mute standing when a hold begins stands through it, and the agent lifts it after resume. Held to the login's phone at connect: required of a softphone login's agent application, whose microphone it is (`host.guarantee.muteUnavailableOnHold.required`), and refused of a hardphone login's, whose mute is the handset's (`.unexpected`). So an agent application that cannot control its mute fails at login, not on a call. |
+| `muteUnavailableOnHold` | The agent application's Mute is its own control on any call and is never offered while the task is `paused`: a mute standing when a hold begins stands through it, and the agent lifts it after resume. Held to the session's phone at connect: required of a softphone session's agent application, whose microphone it is (`host.guarantee.muteUnavailableOnHold.required`), and refused of a hardphone session's, whose mute is the handset's (`.unexpected`). So an agent application that cannot control its mute fails at sign-in, not on a call. |
 
 A guarantee the agent application does not make is an absent key, never `false` — `validateHostGuarantees`
 refuses a false one, as it refuses a name this contract does not list.
@@ -65,7 +65,7 @@ is the one that knows whether an agent without a microphone, or without a speake
 The agent application's own obligations here — asking at connect, never publishing `not-asked` when it does,
 publishing a state and not a flicker — are Omni's tests' to hold. `testAdapter` holds the
 other side: it validates the shape of whatever agent application a test hands the adapter, requires `audio` on
-a softphone login and none elsewhere -- not on a hardphone, not off voice
+a softphone session and none elsewhere -- not on a hardphone, not off voice
 (`context.host.audio.required` / `.unexpected`), holds `host.mute` to the same line (`host.mute.required`
 / `.unexpected`, `host.mute` for a third word) -- and refuses a voice adapter that never asked the
 agent application anything (`connection.host.consulted`), and one that subscribed to nothing will never hear of a
@@ -108,18 +108,18 @@ a return.
 A voice platform can put an agent on a **softphone**, where the call's audio lands in the agent application
 and Omni owns the microphone and the playback, or on a **hardphone**, a handset on the platform's
 switch that the platform rings, where the agent application owns no audio and only shows the call. Which of
-these a platform can do is a fact about the platform, and which one a login is on is a choice the
+these a platform can do is a fact about the platform, and which one a session is on is a choice the
 agent application makes for that agent -- so the manifest declares and the agent application chooses.
 
 ```ts
 // Manifest: what the platform can do
 phones: ["softphone", "hardphone"]
-// The agent application, at authentication and again at connect: which one this login is on
+// The agent application, at authentication and again at connect: which one this session is on
 { phone: "softphone" }
 ```
 
 A voice manifest lists its `phones` and any other channel lists none (`manifest.phones.required`,
-`manifest.phones.channel`). The agent application's `phone` is required on a voice login, absent on any other,
+`manifest.phones.channel`). The agent application's `phone` is required on a voice session, absent on any other,
 and one the manifest listed (`context.phone.required`, `.unexpected`, `.unsupported`). Everything
 about audio then follows the phone rather than the channel: on a softphone the agent application reports its
 audio, the adapter implements `openAudio`, and `task-audio-started` is the word to open it; on a
@@ -132,34 +132,34 @@ of station the agent signed in at, because the person chose it, and nothing else
 The provider knows whether that station can carry a call right now -- whether a handset is
 registered -- which an agent application in a browser cannot see. So the agent application's `phone` selects the branch, and
 the provider's own knowledge of the device decides readiness within it. A provider never overrides
-the agent application's declaration from its device record: treating a hardphone login as a softphone because
+the agent application's declaration from its device record: treating a hardphone session as a softphone because
 the handset is momentarily unregistered, and demanding a microphone of it, is the reading this
 sentence exists to refuse. What the provider does when the handset is not registered is what it
 does for any station that cannot take a call -- hold the agent not-ready and say why.
 
-**On a hardphone login the agent application never calls `openAudio`.** There is no stream to hand over and
+**On a hardphone session the agent application never calls `openAudio`.** There is no stream to hand over and
 no audio to attach; an agent application that calls it anyway is in error, and an adapter that receives the call
 answers `unavailable` with a non-retryable failure, since waiting changes nothing about a station
 that is a telephone. The harness requires no `openAudio` of such an adapter and never calls it.
 
-**Which handset a hardphone login rings is the platform's configuration for that agent**, and
+**Which handset a hardphone session rings is the platform's configuration for that agent**, and
 this wire never asks the agent for it: an agent application declares `phone` and nothing more. What a platform
 asks on surfaces of its own is its own decision.
 
-**A declared phone the platform does not permit for this agent is a login that cannot be
+**A declared phone the platform does not permit for this agent is a session that cannot be
 established.** The manifest says what the platform can do; the agent's record, kept by an
 administrator, says what this agent is configured for, and the two can disagree with the agent application's
 declaration -- a softphone declared for an agent whose record says hardphone. Honouring that
 declaration on a switch that allows one registration per endpoint would evict the handset: the
 agent's phone stops ringing and their calls land in a tab, and nobody is told. So the provider
-refuses the login at authentication, with `omni.phone-not-permitted` and a message the agent application shows
+refuses the session at authentication, with `omni.phone-not-permitted` and a message the agent application shows
 -- "this agent is configured for a hardphone" -- and refusing is correct, not an override of the
 agent application. It is a refusal, never a negotiation afterwards and never a quiet substitution, and it is
 never retryable: trying again does not reconfigure the agent, and an agent application validating the answer
 (`validateAuthenticationResult`) refuses a phone refusal marked otherwise
 (`authentication.failure.phone.retryable`). And **a
 provider never makes a declared phone true by changing the platform's configuration**: the record
-is the administrator's, and a login is not a request to reconfigure an agent.
+is the administrator's, and a session is not a request to reconfigure an agent.
 
 ### Opening the audio
 
@@ -190,7 +190,7 @@ carries as `audio.input.localAudio`, and absent while that input is `unavailable
 bridges audio without an application-side input may ignore it; one that needs it and finds it absent
 answers `unavailable` with a failure Omni shows the agent.
 
-**When to ask is the provider's word, not Omni's guess.** On a softphone login, Omni opens audio on `task-audio-started`,
+**When to ask is the provider's word, not Omni's guess.** On a softphone session, Omni opens audio on `task-audio-started`,
 and on a task arriving with `audio: "started"` on a snapshot; it closes on `task-audio-ended` and
 when the task ends. Between those words, nothing Omni's own senses report — a stream that drops, a
 track that ends — moves the task or its audio.
@@ -218,7 +218,7 @@ agent application sends: the microphone keeps capturing, the party hears silence
 changes, and every softphone agent application can do it. A *station* mute silences the microphone itself at
 the operating system: every application on the machine goes quiet, the system shows it, and a
 headset that follows the system follows it. Only a native agent application can do it. `Host.mute` says which
-this agent application does -- `stream` or `station` -- stated on a softphone login, where the agent application holds the
+this agent application does -- `stream` or `station` -- stated on a softphone session, where the agent application holds the
 microphone, and absent on a hardphone and off voice (`host.mute.required` / `.unexpected`). A
 browser says `stream`. A native agent application says whichever it does. Nothing on the wire says what kind of
 application the agent application is; a provider reads only what the agent application declared.
@@ -235,7 +235,7 @@ the endpoint and can clear an operating-system mute. A hardware slider is nobody
 **The record carries the same word.** A `muted` interaction leg is a period the agent could not be
 heard, and the record exists so that period is not a hole. **The Mute waits for resume.** On a
 softphone the agent application's own Mute is unavailable while the task is `paused`, as it
-promised at login (`muteUnavailableOnHold`): mute then hold is ordinary, and the muted leg runs on
+promised at sign-in (`muteUnavailableOnHold`): mute then hold is ordinary, and the muted leg runs on
 across the held one; hold then mute is not, and a `muted` leg with `mutedBy: "host"` beginning on a
 paused task is held back by the agent application (`historyReport.muted.held`) and refused by a
 provider that receives one anyway, `failed` with `omni.on-hold`. The test sends one past the validator while the task is held
@@ -245,7 +245,7 @@ with `mutedBy: "station"`, and stands. The agent application reports every such 
 through `recordStep` -- its own Mute, and a station mute it observed during a call -- with
 `mutedBy` saying whose the silence was, and the provider writes the word into the entry
 (`task.history.mutedBy`). The report names no agent because the agent application has exactly one, and
-the provider knows who that is: it attributes the leg to the login's agent in `by`, a fact it
+the provider knows who that is: it attributes the leg to the session's agent in `by`, a fact it
 holds and not an inference, for a station mute as much as for the agent application's own. An unattributed
 `muted` entry is refused (`task.history.muted.by`); a shared handset's unattributed hold
 is a different claim, and stands. A supervisor reading the record then sees "the agent muted for
@@ -316,10 +316,10 @@ the other three are the states in which nothing can land, each wanting a differe
 | `do-not-disturb` | The agent pressed it on the device. Nothing lands until they clear it; it is not a break, and the provider assigns or not as its platform does. |
 | `off-hook` | The handset is up with no call on it, and no channel is on it. |
 
-`phone` is the agent's device for this provider: the one the host chose for the login at
+`phone` is the agent's device for this provider: the one the host chose for the session at
 connect, from the manifest's phones, as the way the agent hears this provider's calls. A state
-naming the other is the wrong phone (`phone.phone.mismatch`). The phone is the agent's; the login
-is the agent's session with the provider, and what belongs to the login is that choice. `since` is when the status began, counted from the
+naming the other is the wrong phone (`phone.phone.mismatch`). The phone is the agent's; the session
+is the agent's session with the provider, and what belongs to the session is that choice. `since` is when the status began, counted from the
 provider's clock like every duration off the active call, and omitted rather than invented.
 
 **The channels.** The phone has one active audio channel and any number held

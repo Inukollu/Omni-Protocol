@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_ISOLATION_SCHEMES, browserSessionKey, type AuthenticationState, type BreakStatus, type Manifest, type ProviderEventEnvelope, type Snapshot, type Task, type TaskBrowser, OMNI_PROTOCOL_VERSION, type Adapter, type Connection, type Host, type HostGuarantees, type HostReport, type ConnectContext, type UserCapabilities } from "../src/index.js";
-import type { LoginStore, Refusal, PhoneState, SecretStore, AuthenticationContext } from "../src/index.js";
+import type { SessionStore, Refusal, PhoneState, SecretStore, AuthenticationContext } from "../src/index.js";
 import { validateTask } from "../src/validation.js";
 import { memoryStore, assertHistoryAgreesAcrossTasks, assertForcedBreakStopsTheRest, assertAuthenticationRestoreAndExpiry, assertBrowserSessionIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserSessionKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, testAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
@@ -22,7 +22,7 @@ const voiceTask = {
 } satisfies Task<"voice">;
 
 const statusEvent = {
-  id: "event-1", loginId: "session-1",
+  id: "event-1", sessionId: "session-1",
   occurredAt: "2026-08-21T01:00:00Z",
   event: { type: "transport-status", status: "active" },
 } as const satisfies ProviderEventEnvelope<"voice">;
@@ -51,7 +51,7 @@ describe("assertAuthenticationRestoreAndExpiry", () => {
   });
 
   it("validates every state, not only their order", () => {
-    // The same sequence three ways: as published, with a state that forgot what the login may
+    // The same sequence three ways: as published, with a state that forgot what the session may
     // do, and with a refresh that quietly changed it.
     const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
     const sequence = (refreshing: AuthenticationState) => () => assertAuthenticationRestoreAndExpiry([
@@ -87,7 +87,7 @@ describe("assertCapabilityWithdrawal", () => {
   const ada = { id: "A-1", displayName: "Ada", timeZone: "Pacific/Chatham" };
   const lead = { status: "authenticated", identity: ada, capabilities: { breaks: true, lead: EVERY_LEAD_CAPABILITY } } satisfies AuthenticationState;
   const demoted = { status: "authenticated", identity: ada, capabilities: { breaks: true } } satisfies AuthenticationState;
-  const bare: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+  const bare: Snapshot<"voice"> = { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
   const withMembers: Snapshot<"voice"> = { ...bare, team: { members: [{ id: "A-2", availability: "ready" }] } };
 
   it("accepts a team member list gone with the lead flag that entitled it, and rejects one that stayed", () => {
@@ -101,7 +101,7 @@ describe("assertCapabilityWithdrawal", () => {
     expect(() => assertCapabilityWithdrawal([lead, noBreaks], withMembers, manifest)).not.toThrow();
   });
 
-  it("passes only through usable states, and refreshing must carry the login over", () => {
+  it("passes only through usable states, and refreshing must carry the session over", () => {
     const refreshed = { status: "refreshing", identity: ada, capabilities: lead.capabilities } satisfies AuthenticationState;
     const drifted = { status: "refreshing", identity: ada, capabilities: {} } satisfies AuthenticationState;
     expect(() => assertCapabilityWithdrawal([lead, refreshed, demoted], bare, manifest)).not.toThrow();
@@ -128,7 +128,7 @@ describe("assertCapabilityWithdrawal", () => {
 
   it("rejects a sequence that changes identity", () => {
     const other = { ...demoted, identity: { id: "A-9", displayName: "Bo", timeZone: "Pacific/Chatham" } } satisfies AuthenticationState;
-    expect(() => assertCapabilityWithdrawal([lead, other], bare, manifest)).toThrow(/new login/);
+    expect(() => assertCapabilityWithdrawal([lead, other], bare, manifest)).toThrow(/new session/);
   });
 
   it("validates every state on the way", () => {
@@ -206,11 +206,11 @@ describe("assertDuplicateEventDelivery", () => {
 });
 
 describe("assertReconnectWithMissedAssignments", () => {
-  const before: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+  const before: Snapshot<"voice"> = { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
   const reconnect = {
-    id: "event-2", loginId: "session-1",
+    id: "event-2", sessionId: "session-1",
     occurredAt: "2026-08-21T01:01:00Z",
-    event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [voiceTask], taskCount: 1 } },
+    event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [voiceTask], taskCount: 1 } },
   } as const satisfies ProviderEventEnvelope<"voice">;
 
   it("accepts a reconnect snapshot carrying the missed assignment", () => {
@@ -235,9 +235,9 @@ describe("assertReconnectWithMissedAssignments", () => {
 describe("assertBreakFollowsItsRequests", () => {
   const at = "2026-08-21T09:00:00Z";
   const state = (status: BreakStatus, over: Record<string, unknown> = {}, id: string = status): ProviderEventEnvelope<"voice"> =>
-    ({ id, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { status, canRequestBreak: true, ...over } } }) as ProviderEventEnvelope<"voice">;
+    ({ id, sessionId: "session-1", occurredAt: at, event: { type: "break-state", break: { status, canRequestBreak: true, ...over } } }) as ProviderEventEnvelope<"voice">;
   const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
-  const idle: Snapshot<"voice"> = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
+  const idle: Snapshot<"voice"> = { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [], taskCount: 0 };
 
   it("accepts every move the guide describes", () => {
     // Asked, decided, committed while working, begun when the work ended, ended.
@@ -251,7 +251,7 @@ describe("assertBreakFollowsItsRequests", () => {
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break", { forced: { by: "M-1" } })], idle))).toEqual([]);
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("starting-after-task", { forced: { by: "M-1" } }), state("on-break", { forced: { by: "M-1" } })], idle))).toEqual([]);
     // A reconnect snapshot resets where the break stands; the same state twice is nothing.
-    const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { status: "granted", canRequestBreak: true } } } };
+    const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", sessionId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { status: "granted", canRequestBreak: true } } } };
     expect(rulesOf(() => assertBreakFollowsItsRequests([reconnect, state("starting-after-task"), state("starting-after-task", {}, "again")], idle))).toEqual([]);
     // No implied baseline: a first delta cannot establish its own ordering preconditions.
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break")]))).toEqual(["stream.breakState.baseline"]);
@@ -273,20 +273,20 @@ describe("assertBreakFollowsItsRequests", () => {
 describe("assertAudioFollowsTheTask", () => {
   const at = "2026-08-21T09:00:00Z";
   const call = (phase: Task<"voice">["phase"]): Task<"voice"> => ({ ...voiceTask, phase });
-  const offered = (): ProviderEventEnvelope<"voice"> => ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...call("pending"), acceptance: "consent" } } });
-  const updated = (phase: Task<"voice">["phase"], id = "e2"): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: call(phase) } });
+  const offered = (): ProviderEventEnvelope<"voice"> => ({ id: "e1", sessionId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...call("pending"), acceptance: "consent" } } });
+  const updated = (phase: Task<"voice">["phase"], id = "e2"): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: call(phase) } });
   // A connect-back brings a completing task back, and the update shows it: the party being dialled, ringing with the host's dial.
-  const connectingBack = (id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at,
+  const connectingBack = (id: string): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at,
     event: { type: "task-updated", task: { ...call("in-progress"), onCall: [{ role: "party", dialId: "dial-9", stage: "ringing", since: at }] } } });
-  const audioReady = (id = "e2b"): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-audio-started", assignmentId: voiceTask.assignmentId } });
-  const audioEnded: ProviderEventEnvelope<"voice"> = { id: "e3", loginId: "session-1", occurredAt: at, event: { type: "task-audio-ended", assignmentId: voiceTask.assignmentId } };
-  const ended: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-ended", assignmentId: voiceTask.assignmentId, outcome: { type: "completed", by: "agent" } } };
+  const audioReady = (id = "e2b"): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "task-audio-started", assignmentId: voiceTask.assignmentId } });
+  const audioEnded: ProviderEventEnvelope<"voice"> = { id: "e3", sessionId: "session-1", occurredAt: at, event: { type: "task-audio-ended", assignmentId: voiceTask.assignmentId } };
+  const ended: ProviderEventEnvelope<"voice"> = { id: "e4", sessionId: "session-1", occurredAt: at, event: { type: "task-ended", assignmentId: voiceTask.assignmentId, outcome: { type: "completed", by: "agent" } } };
   const rulesOf = (run: () => void): string[] => { try { run(); return []; } catch (error) { return (error as { violations?: { rule: string }[] }).violations?.map(v => v.rule) ?? [String(error)]; } };
 
   it("rejects audio events on non-voice tasks without changing their state", () => {
     for (const channel of ["chat", "email"] as const) {
       const work: Task = { ...voiceTask, channel, capabilities: {}, browsers: [], phase: "in-progress" };
-      const initial: Snapshot = { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [work], taskCount: 1 };
+      const initial: Snapshot = { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [work], taskCount: 1 };
       expect(rulesOf(() => assertAudioFollowsTheTask([audioReady(), audioEnded, ended], initial))).toEqual([
         "stream.taskAudio.channel", "stream.taskAudio.channel",
       ]);
@@ -296,7 +296,7 @@ describe("assertAudioFollowsTheTask", () => {
   it("accepts a call offered, started, made ready, whose audio ends, completing, then ending", () => {
     expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, updated("completing", "e5"), ended]))).toEqual([]);
     // A snapshot may carry the task in with its audio ready; connecting back puts audio back and it ends again.
-    expect(rulesOf(() => assertAudioFollowsTheTask([audioEnded, updated("completing"), connectingBack("e5"), audioReady("e5b"), { ...audioEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...call("in-progress"), audio: "started" }], taskCount: 1 }))).toEqual([]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([audioEnded, updated("completing"), connectingBack("e5"), audioReady("e5b"), { ...audioEnded, id: "e6" }, updated("completing", "e7"), ended], { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...call("in-progress"), audio: "started" }], taskCount: 1 }))).toEqual([]);
   });
 
   it("refuses a task that completes around its audio: completing while the audio the stream holds is still started", () => {
@@ -312,7 +312,7 @@ describe("assertAudioFollowsTheTask", () => {
       const { onCall: _room, audio: _media, ...rest } = voiceTask as Record<string, unknown>;
       return { ...rest, assignmentId: "alloc-c7", channel: "chat", capabilities: {}, completionMode: "provider-automatic", wrapAllowance: 60, ...over };
     };
-    const env = (id: string, event: Record<string, unknown>) => ({ id, loginId: "session-1", occurredAt: at, event }) as unknown as ProviderEventEnvelope;
+    const env = (id: string, event: Record<string, unknown>) => ({ id, sessionId: "session-1", occurredAt: at, event }) as unknown as ProviderEventEnvelope;
     const chatOffered = (over: Record<string, unknown> = {}) => env("c1", { type: "task-offered", task: chat({ phase: "pending", acceptance: "consent", ...over }) });
     const chatUpdated = (phase: string, over: Record<string, unknown> = {}, id = "c2") => env(id, { type: "task-updated", task: chat({ phase, ...(phase === "completing" ? { wrapEndsInSeconds: 60 } : {}), ...over }) });
     const chatEnded = (outcome: Record<string, unknown>) => env("c9", { type: "task-ended", assignmentId: "alloc-c7", outcome });
@@ -327,7 +327,7 @@ describe("assertAudioFollowsTheTask", () => {
   });
 
   it("refuses a voice ending with the audio still started, whatever the outcome: the audio ends first", () => {
-    const takenOver: ProviderEventEnvelope<"voice"> = { id: "e9", loginId: "session-1", occurredAt: at, event: { type: "task-ended", assignmentId: voiceTask.assignmentId, outcome: { type: "taken-over", leadId: "L-9" } } };
+    const takenOver: ProviderEventEnvelope<"voice"> = { id: "e9", sessionId: "session-1", occurredAt: at, event: { type: "task-ended", assignmentId: voiceTask.assignmentId, outcome: { type: "taken-over", leadId: "L-9" } } };
     expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), ended]))).toEqual(["stream.taskEnded.audioOpen"]);
     expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), takenOver]))).toEqual(["stream.taskEnded.audioOpen"]);
     // The controls: the audio ended first, and a task that never had audio.
@@ -336,7 +336,7 @@ describe("assertAudioFollowsTheTask", () => {
   });
 
   it("gives a host-placed dial audio from dialling: audio on a task whose party the host is ringing, and on no other task not at work", () => {
-    const dialled = (id: string, phase: Task<"voice">["phase"]): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at,
+    const dialled = (id: string, phase: Task<"voice">["phase"]): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at,
       event: { type: "task-offered", task: { ...call(phase), acceptance: "automatic", onCall: [{ role: "party", dialId: "dial-3", stage: "ringing", since: at }] } } });
     expect(rulesOf(() => assertAudioFollowsTheTask([dialled("d1", "pending"), audioReady("d2")]))).toEqual([]);
     // The control: an offered task nobody is dialling has no audio yet.
@@ -344,8 +344,8 @@ describe("assertAudioFollowsTheTask", () => {
   });
 
   it("holds the party's stage to its life: joined once after the answered outcome, then no stage, and only a dial it saw brings a completing task back", () => {
-    const outcome = (id: string, dialId: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId, assignmentId: voiceTask.assignmentId, outcome: "answered" } });
-    const party = (id: string, entry: Record<string, unknown>): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), onCall: [{ role: "party", since: at, ...entry }] } } });
+    const outcome = (id: string, dialId: string): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId, assignmentId: voiceTask.assignmentId, outcome: "answered" } });
+    const party = (id: string, entry: Record<string, unknown>): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), onCall: [{ role: "party", since: at, ...entry }] } } });
     const joined = { stage: "joined", dialId: "dial-9" };
     const back = [offered(), updated("in-progress"), audioReady(), audioEnded, updated("completing", "e5"), connectingBack("e6"), outcome("e7", "dial-9")];
     // joined is transient: stated once on the publication after the answered outcome, and a party with no stage is on the call.
@@ -359,15 +359,15 @@ describe("assertAudioFollowsTheTask", () => {
   });
 
   it("lets a connect-back release ended audio on the way back: the follow rule keeps the same exception as the phase rule", () => {
-    const completingEnded: ProviderEventEnvelope<"voice"> = { id: "e5", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("completing"), audio: "ended" } } };
+    const completingEnded: ProviderEventEnvelope<"voice"> = { id: "e5", sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("completing"), audio: "ended" } } };
     expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, completingEnded, connectingBack("e6")]))).toEqual([]);
     // The control: after ended audio, a phase that is not completing and not a connect-back is still refused.
     expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), audioEnded, completingEnded, updated("in-progress", "e6")]))).toEqual(["stream.taskUpdated.phase", "stream.taskAudioEnded.follow"]);
   });
 
   it("holds a resync snapshot to what the stream knew: no phase backwards, and no audio forgotten on a task still at work", () => {
-    const resync = (task: Record<string, unknown>, id = "s1") => ({ id, loginId: "session-1", occurredAt: at,
-      event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [task], taskCount: 1 } } }) as unknown as ProviderEventEnvelope<"voice">;
+    const resync = (task: Record<string, unknown>, id = "s1") => ({ id, sessionId: "session-1", occurredAt: at,
+      event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [task], taskCount: 1 } } }) as unknown as ProviderEventEnvelope<"voice">;
     // The audio was up; a snapshot carrying the task at work without it lost state. One carrying it started, or completing with it ended, did not.
     expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), resync(call("in-progress"))]))).toEqual(["stream.snapshot.audio"]);
     expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), resync({ ...call("paused") })]))).toEqual(["stream.snapshot.audio"]);
@@ -392,12 +392,12 @@ describe("assertAudioFollowsTheTask", () => {
   });
 
   it("lets an update re-state audio, and refuses one that moves it", () => {
-    const restated = (id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("paused"), audio: "started" } } });
-    const arrives = (id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), audio: "started" } } });
+    const restated = (id: string): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("paused"), audio: "started" } } });
+    const arrives = (id: string): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), audio: "started" } } });
     // Republishing ready on a hold is a statement, not a second arrival.
     expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), restated("e2c")]))).toEqual([]);
     expect(rulesOf(() => assertAudioFollowsTheTask([offered(), arrives("e2c")]))).toEqual(["stream.taskUpdated.audio"]);
-    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), { id: "e2d", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), audio: "ended" } } }]))).toEqual(["stream.taskUpdated.audio"]);
+    expect(rulesOf(() => assertAudioFollowsTheTask([offered(), updated("in-progress"), audioReady(), { id: "e2d", sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...call("in-progress"), audio: "ended" } } }]))).toEqual(["stream.taskUpdated.audio"]);
   });
 
   it("refuses audio that decides what follows", () => {
@@ -420,7 +420,7 @@ describe("TaskStream names a task by its assignment alone", () => {
   const at = "2026-08-21T09:00:00Z";
   const rulesOf = (violations: { rule: string }[]) => violations.map(v => v.rule);
   const life = (assignmentId: string, over: Record<string, unknown> = {}): Task<"voice"> => ({ ...voiceTask, assignmentId, ...over }) as unknown as Task<"voice">;
-  const env = (id: string, event: unknown): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event } as ProviderEventEnvelope<"voice">);
+  const env = (id: string, event: unknown): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event } as ProviderEventEnvelope<"voice">);
   const offered = (assignmentId: string, id = "o1") => env(id, { type: "task-offered", task: life(assignmentId, { phase: "pending", acceptance: "consent" }) });
   const ended = (assignmentId: string, id = "x1") => env(id, { type: "task-ended", assignmentId, outcome: { type: "completed", by: "agent" } });
   const audioEnded = (assignmentId: string, id = "m1") => env(id, { type: "task-audio-ended", assignmentId });
@@ -473,7 +473,7 @@ describe("TaskStream holds a task to the table: it does not go backwards", () =>
     ({ ...voiceTask, phase, onCall: phase === "completing" ? [] : room, ...over }) as unknown as Task<"voice">;
   const seeded = (phase: Task["phase"]) => { const s = new TaskStream(); s.seed({ tasks: [inPhase(phase)] }); return s; };
   const update = (phase: Task["phase"], over: Record<string, unknown> = {}): ProviderEventEnvelope<"voice"> =>
-    ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: inPhase(phase, over) } });
+    ({ id: "e1", sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: inPhase(phase, over) } });
 
   it("lets a task move forward by any number of steps, and stand where it is", () => {
     for (const [from, to] of [["pending", "confirmed"], ["pending", "in-progress"], ["pending", "completing"], ["confirmed", "preview"], ["confirmed", "in-progress"],
@@ -504,7 +504,7 @@ describe("TaskStream holds a task to the table: it does not go backwards", () =>
     const joined = [{ ...dialled[0]!, stage: "joined" as const }, dialled[1]!];
     expect(rulesOf(ringing.apply(update("in-progress", { onCall: joined })))).toEqual(["stream.taskUpdated.stage"]);
     const answered = new TaskStream(); answered.seed({ tasks: [inPhase("in-progress", { onCall: dialled })] });
-    answered.apply({ id: "d1", loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId: "dial-9", outcome: "answered" } } as ProviderEventEnvelope<"voice">);
+    answered.apply({ id: "d1", sessionId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId: "dial-9", outcome: "answered" } } as ProviderEventEnvelope<"voice">);
     expect(rulesOf(answered.apply(update("in-progress", { onCall: joined })))).toEqual([]);
   });
 });
@@ -519,9 +519,9 @@ describe("TaskStream holds a record once read", () => {
     ({ ...voiceTask, history: steps === undefined ? undefined : { steps } }) as unknown as Task<"voice">;
   const seeded = (steps: unknown[] | undefined) => { const s = new TaskStream(); s.seed({ tasks: [withRecord(steps)] }); return s; };
   const update = (steps: unknown[] | undefined): ProviderEventEnvelope<"voice"> =>
-    ({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: withRecord(steps) } });
+    ({ id: "e1", sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: withRecord(steps) } });
   const resync = (steps: unknown[] | undefined): ProviderEventEnvelope<"voice"> =>
-    ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [withRecord(steps)], taskCount: 1 } } });
+    ({ id: "s1", sessionId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [withRecord(steps)], taskCount: 1 } } });
 
   it("lets a record grow or stand, and refuses its loss on an update", () => {
     expect(rulesOf(seeded([answered]).apply(update([answered, held])))).toEqual([]);
@@ -552,7 +552,7 @@ describe("TaskStream holds terms once read", () => {
   const at = "2026-08-21T09:00:00Z";
   const rulesOf = (violations: { rule: string }[]) => violations.map(v => v.rule);
   const under = (capabilitySource: Task["capabilitySource"], id = "e1"): ProviderEventEnvelope<"voice"> =>
-    ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...voiceTask, capabilitySource } } });
+    ({ id, sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task: { ...voiceTask, capabilitySource } } });
   const seeded = (capabilitySource: Task["capabilitySource"]) => { const s = new TaskStream(); s.seed({ tasks: [{ ...voiceTask, capabilitySource }] }); return s; };
 
   it("lets terms arrive, and refuses their loss", () => {
@@ -570,7 +570,7 @@ describe("TaskStream holds terms once read", () => {
 
   it("holds a snapshot to the same rule: a resync may not say a task lost the terms it had", () => {
     const resync = (capabilitySource: Task["capabilitySource"]): ProviderEventEnvelope<"voice"> =>
-      ({ id: "s1", loginId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", loginId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...voiceTask, capabilitySource }], taskCount: 1 } } });
+      ({ id: "s1", sessionId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { transport: "active", sessionId: "session-1", break: { status: "not-requested", canRequestBreak: true }, tasks: [{ ...voiceTask, capabilitySource }], taskCount: 1 } } });
     expect(rulesOf(seeded("queue").apply(resync("not-yet-read")))).toEqual(["stream.snapshot.capabilitySource"]);
     expect(rulesOf(seeded("nobody").apply(resync("not-yet-read")))).toEqual(["stream.snapshot.capabilitySource"]);
     // The control: terms arriving on a snapshot, or restated by one, are what a snapshot is for.
@@ -583,7 +583,7 @@ describe("TaskStream holds terms once read", () => {
 
   it("holds an offer to the same rule once it is on the stream", () => {
     const s = new TaskStream(); s.seed({ tasks: [] });
-    const offered: ProviderEventEnvelope<"voice"> = { id: "e0", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...voiceTask, phase: "pending", acceptance: "consent", capabilitySource: "queue" } } };
+    const offered: ProviderEventEnvelope<"voice"> = { id: "e0", sessionId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...voiceTask, phase: "pending", acceptance: "consent", capabilitySource: "queue" } } };
     expect(rulesOf(s.apply(offered))).toEqual([]);
     expect(rulesOf(s.apply(under("not-yet-read", "e1")))).toEqual(["stream.taskUpdated.capabilitySource"]);
     expect(rulesOf(s.apply(under("queue", "e2")))).toEqual([]);
@@ -594,7 +594,7 @@ describe("TaskStream places a dial outcome", () => {
   const at = "2026-08-21T09:00:00Z";
   const stream = () => { const s = new TaskStream(); s.seed({ tasks: [] }); return s; };
   const outcome = (dialId: string, id = "e1"): ProviderEventEnvelope<"voice"> =>
-    ({ id, loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId, outcome: "answered" } });
+    ({ id, sessionId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId, outcome: "answered" } });
   const rulesOf = (violations: { rule: string }[]) => violations.map(v => v.rule);
 
   it("accepts an outcome for a dial the host placed, once, and refuses one for a dial nobody made", () => {
@@ -608,7 +608,7 @@ describe("TaskStream places a dial outcome", () => {
 
   it("holds a seconds-left value to the provider's own clock: between two publications it loses at least the seconds that passed", () => {
     const s = new TaskStream();
-    const wrap = (id: string, occurredAt: string, wrapEndsInSeconds: number): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt,
+    const wrap = (id: string, occurredAt: string, wrapEndsInSeconds: number): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt,
       event: { type: "task-updated", task: { ...voiceTask, phase: "completing", audio: "ended", onCall: [], wrapAllowance: 60, wrapEndsInSeconds } } });
     s.seed({ tasks: [{ ...voiceTask, phase: "completing", audio: "ended", onCall: [], wrapAllowance: 60, wrapEndsInSeconds: 60 }] });
     expect(rulesOf(s.apply(wrap("w1", "2026-08-21T09:00:00Z", 60)))).toEqual([]);
@@ -631,7 +631,7 @@ describe("TaskStream places a dial outcome", () => {
     // The control: the same stream, a dial neither carried.
     expect(rulesOf(s.apply(outcome("dial-000", "e3")))).toEqual(["stream.dialOutcome.unknown"]);
     // And a dial arriving on an offer or an update counts the same way.
-    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", loginId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, assignmentId: "alloc-99", phase: "pending", acceptance: "consent", onCall: [{ role: "added", contactId: "tier2", dialId: "dial-off", stage: "ringing", since: at }] } } };
+    const offered: ProviderEventEnvelope<"voice"> = { id: "e4", sessionId: "session-1", occurredAt: at, event: { type: "task-offered", task: { ...inherited, assignmentId: "alloc-99", phase: "pending", acceptance: "consent", onCall: [{ role: "added", contactId: "tier2", dialId: "dial-off", stage: "ringing", since: at }] } } };
     expect(rulesOf(s.apply(offered))).toEqual([]);
     expect(rulesOf(s.apply(outcome("dial-off", "e5")))).toEqual([]);
   });
@@ -639,7 +639,7 @@ describe("TaskStream places a dial outcome", () => {
   it("lets an update restate a joined entry after its answered outcome, and refuses one that joins it alone", () => {
     const ringing: Task<"voice"> = { ...voiceTask, onCall: [{ role: "added", contactId: "tier2", dialId: "dial-7f2", stage: "ringing", since: at }] };
     const joined: Task<"voice"> = { ...voiceTask, onCall: [{ role: "added", contactId: "tier2", dialId: "dial-7f2", stage: "joined", since: at }] };
-    const update = (task: Task<"voice">, id: string): ProviderEventEnvelope<"voice"> => ({ id, loginId: "session-1", occurredAt: at, event: { type: "task-updated", task } });
+    const update = (task: Task<"voice">, id: string): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task } });
     // The outcome is the transition and the stage the state: outcome first, then the room restated.
     const s = new TaskStream();
     s.seed({ tasks: [ringing] });
@@ -652,7 +652,7 @@ describe("TaskStream places a dial outcome", () => {
     // And a busy outcome does not join anyone either.
     const busy = new TaskStream();
     busy.seed({ tasks: [ringing] });
-    expect(rulesOf(busy.apply({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId: "dial-7f2", outcome: "busy", assignmentId: voiceTask.assignmentId } }))).toEqual([]);
+    expect(rulesOf(busy.apply({ id: "e1", sessionId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId: "dial-7f2", outcome: "busy", assignmentId: voiceTask.assignmentId } }))).toEqual([]);
     expect(rulesOf(busy.apply(update(joined, "e2")))).toEqual(["stream.taskUpdated.stage"]);
     // Restating ringing, or a joined entry that was already joined, moves nothing.
     expect(rulesOf(alone.apply(update(ringing, "e3")))).toEqual([]);
@@ -663,7 +663,7 @@ describe("TaskStream places a dial outcome", () => {
     const s = new TaskStream();
     s.seed({ tasks: [voiceTask] });
     s.dialled("dial-late");
-    expect(rulesOf(s.apply({ id: "e1", loginId: "session-1", occurredAt: at, event: { type: "task-ended", assignmentId: voiceTask.assignmentId, outcome: { type: "completed", by: "agent" } } }))).toEqual([]);
+    expect(rulesOf(s.apply({ id: "e1", sessionId: "session-1", occurredAt: at, event: { type: "task-ended", assignmentId: voiceTask.assignmentId, outcome: { type: "completed", by: "agent" } } }))).toEqual([]);
     expect(rulesOf(s.apply(outcome("dial-late", "e2")))).toEqual([]);
   });
 });
@@ -674,7 +674,7 @@ describe("assertForcedBreakStopsTheRest", () => {
   const email = { id: "email", authentication: "expired", holdsCapacity: true } as const;
   const idle = { id: "idle", authentication: "authenticated", holdsCapacity: false } as const;
 
-  it("stops every other usable provider holding capacity by capacity zero, and leaves the forcing one and a dead login alone", () => {
+  it("stops every other usable provider holding capacity by capacity zero, and leaves the forcing one and a dead session alone", () => {
     expect(() => assertForcedBreakStopsTheRest("voice", [voice, chat, email, idle], ["chat"])).not.toThrow();
     // The gap: a provider that can still give the agent work.
     expect(() => assertForcedBreakStopsTheRest("voice", [voice, chat, email, idle], [])).toThrow(/chat can give the agent work and must be stopped/);
@@ -695,7 +695,7 @@ describe("assertBreakAttemptProviders", () => {
 
   it("keeps a usable provider holding capacity in, refreshing included, and leaves an expired one out", () => {
     expect(() => assertBreakAttemptProviders([voice, chat, email, idle], ["voice", "chat"])).not.toThrow();
-    // The stall: waiting on a provider whose login is dead.
+    // The stall: waiting on a provider whose session is dead.
     expect(() => assertBreakAttemptProviders([voice, chat, email, idle], ["voice", "chat", "email"])).toThrow(/email is expired and is not asked/);
     // And the other way: a provider that can give work cannot be skipped.
     expect(() => assertBreakAttemptProviders([voice, chat, email, idle], ["voice"])).toThrow(/chat can give the agent work/);
@@ -835,7 +835,7 @@ describe("browser isolation", () => {
 
 /** A voice host with everything working: the microphone captured and flowing, a speaker present. */
 const speaking: HostReport = { online: true, audio: { input: { status: "available", localAudio: {} as MediaStream, flowing: true }, output: { status: "available" } } };
-const context = { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", languages: ["hi-IN", "en"], autoAcceptTasks: true, phone: "softphone" as const, host: stillHost(speaking, { muteUnavailableOnHold: true }, "stream"), store: memoryStore() };
+const context = { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1", timeZone: "Pacific/Chatham", languages: ["hi-IN", "en"], autoAcceptTasks: true, phone: "softphone" as const, host: stillHost(speaking, { muteUnavailableOnHold: true }, "stream"), store: memoryStore() };
 /** The host a connection on this manifest's channel gets: audio for voice, none for the rest. */
 
 const conformingManifest = {
@@ -861,7 +861,7 @@ const conformingManifest = {
 // four break methods and getUserDetails().
 const conformingSnapshot = {
   transport: "active",
-  loginId: "session-1",
+  sessionId: "session-1",
   providerTime: "2026-08-21T09:00:00Z",
   break: { status: "not-requested", canRequestBreak: true },
   shift: { signedInAt: "2026-08-21T08:58:12Z", talkSeconds: 4210, holdSeconds: 305, breakSeconds: 900, tasksHandled: 12 },
@@ -900,7 +900,7 @@ const conformingSnapshot = {
 /** Declares nothing optional, so no optional method is required of it. */
 const minimalSnapshot = {
   transport: "active",
-  loginId: "session-1",
+  sessionId: "session-1",
   providerTime: "2026-08-21T09:00:00Z",
   break: { status: "not-requested", canRequestBreak: true },
   tasks: [], taskCount: 0,
@@ -936,7 +936,7 @@ interface AdapterOverrides {
   /** Methods to replace, or to remove by passing `undefined`. */
   connection?: Partial<Record<keyof Connection<"voice">, unknown>>;
   authenticated?: boolean;
-  /** What the login declares. Breaks by default, so the conforming connection needs the four methods. */
+  /** What the session declares. Breaks by default, so the conforming connection needs the four methods. */
   capabilities?: UserCapabilities;
   /** The zone the identity republishes; `false` for a provider that never stored it. */
   identityTimeZone?: string | false;
@@ -1010,12 +1010,12 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         executeTeam: async ({ command }) => {
           if (command.type === "lead-features" && command.enabled && subscribed !== undefined) {
             if (overrides.emitOnLeadFeatures !== undefined) overrides.emitOnLeadFeatures(subscribed);
-            else subscribed({ id: "evt-team-whole", loginId: "session-1", occurredAt: "2026-08-21T09:03:00Z", event: { type: "team-updated", team: { members: [] } } });
+            else subscribed({ id: "evt-team-whole", sessionId: "session-1", occurredAt: "2026-08-21T09:03:00Z", event: { type: "team-updated", team: { members: [] } } });
           }
           return { status: "applied" };
         },
         setPreference: async () => ({ status: "applied" }),
-        checkTime: async ({ requestId }) => ({ requestId, loginId: "session-1", clockId: "clock-1", providerTime: "2026-08-21T09:00:00Z" }),
+        checkTime: async ({ requestId }) => ({ requestId, sessionId: "session-1", clockId: "clock-1", providerTime: "2026-08-21T09:00:00Z" }),
         recordStep: async (report: { at: string }) => ({ status: "recorded", at: report.at }),
         openAudio: async () => ({ status: "unavailable", failure: { code: "test", message: "No audio in a test", retryable: false } }),
       };
@@ -1033,9 +1033,9 @@ const contextFor = (manifest: unknown): ConnectContext =>
 const rules = async (overrides: AdapterOverrides, options: { timeoutMs?: number } = {}) =>
   (await testAdapter(makeAdapter(overrides).adapter, contextFor(overrides.manifest ?? conformingManifest), { collectOnly: true, ...options })).violations.map(violation => violation.rule);
 const teamEvent = (id: string, event: ProviderEventEnvelope<"voice">["event"]): ProviderEventEnvelope<"voice"> =>
-  ({ id, loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z", event });
+  ({ id, sessionId: "session-1", occurredAt: "2026-08-21T09:05:00Z", event });
 
-const badEnvelope = { id: "", loginId: "session-1", occurredAt: "not-a-time", event: { type: "transport-status", status: "active" } } as unknown as ProviderEventEnvelope<"voice">;
+const badEnvelope = { id: "", sessionId: "session-1", occurredAt: "not-a-time", event: { type: "transport-status", status: "active" } } as unknown as ProviderEventEnvelope<"voice">;
 
 describe("testAdapter", () => {
   it("accepts a rich conforming adapter and releases its resources", async () => {
@@ -1053,7 +1053,7 @@ describe("testAdapter", () => {
   it("holds the host's phone to the manifest, and lets a hardphone own no audio", async () => {
     const on = async (phone: unknown, overrides: AdapterOverrides = {}, host: Host = stillHost(speaking, { muteUnavailableOnHold: true }, "stream")) =>
       (await testAdapter(makeAdapter(overrides).adapter, { ...context, phone: phone as "softphone", host } as ConnectContext, { collectOnly: true })).violations.map(v => v.rule);
-    // A softphone login: the host reports audio and the adapter opens audio.
+    // A softphone session: the host reports audio and the adapter opens audio.
     expect(await on("softphone")).toEqual([]);
     expect(await on("softphone", { connection: { openAudio: undefined } })).toContain("connection.openAudio.required");
     expect(await on("softphone", {}, stillHost({ online: true }, { muteUnavailableOnHold: true }, "stream"))).toEqual(["context.host.audio.required"]);
@@ -1065,9 +1065,9 @@ describe("testAdapter", () => {
     expect(await on("softphone", {}, stillHost(speaking, { muteUnavailableOnHold: true }))).toEqual(["host.mute.required"]);
     expect(await on("softphone", {}, stillHost(speaking, { muteUnavailableOnHold: true }, "soft" as "stream"))).toEqual(["host.mute"]);
     expect(await on("hardphone", { connection: { openAudio: undefined, recordStep: undefined } }, stillHost({ online: true }, {}, "stream"))).toEqual(["host.mute.unexpected"]);
-    // A hardphone login: the host has no audio to report and nothing to open.
+    // A hardphone session: the host has no audio to report and nothing to open.
     expect(await on("hardphone", { connection: { openAudio: undefined, recordStep: undefined } }, stillHost({ online: true }))).toEqual([]);
-    // A softphone's host handed to a hardphone login is wrong three times: it promises a mute it does not hold, reports audio it does not have, and states a mute it cannot perform.
+    // A softphone's host handed to a hardphone session is wrong three times: it promises a mute it does not hold, reports audio it does not have, and states a mute it cannot perform.
     expect(await on("hardphone")).toEqual(["host.guarantee.muteUnavailableOnHold.unexpected", "context.host.audio.unexpected", "host.mute.unexpected"]);
     // The choice is held to the manifest, and required on voice.
     expect(await on("hardphone", { manifest: { ...conformingManifest, phones: ["softphone"] } })).toContain("context.phone.unsupported");
@@ -1082,7 +1082,7 @@ describe("testAdapter", () => {
     expect(await rules({ snapshot: under("nobody") })).toEqual([]);
     expect(await rules({ snapshot: under("not-yet-read") })).toEqual(["capabilitySource.notYetRead"]);
     // And on the wire after the snapshot: an offer under not-yet-read terms is the same fault.
-    const offer = (capabilitySource: string): ProviderEventEnvelope<"voice"> => ({ id: "offer-1", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
+    const offer = (capabilitySource: string): ProviderEventEnvelope<"voice"> => ({ id: "offer-1", sessionId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
       event: { type: "task-offered", task: { ...voiceTask, assignmentId: "call-77", phase: "pending", acceptance: "consent", capabilitySource: capabilitySource as "queue" } } });
     const idle = { ...conformingSnapshot, tasks: [], taskCount: 0 };
     expect(await rules({ snapshot: idle, emitOnCapacity: listener => listener(offer("queue")) })).toEqual([]);
@@ -1124,7 +1124,7 @@ describe("testAdapter", () => {
       previewEndsInSeconds: 120, atDeadline: "provider-dials" as const };
     const withPreview = { ...conformingSnapshot, tasks: [previewed], taskCount: 1 } satisfies Snapshot<"voice">;
     const update = (task: Task<"voice">): ProviderEventEnvelope<"voice"> =>
-      ({ id: "evt-spread", loginId: "session-1", occurredAt: "2026-08-21T09:01:30Z", event: { type: "task-updated", task } });
+      ({ id: "evt-spread", sessionId: "session-1", occurredAt: "2026-08-21T09:01:30Z", event: { type: "task-updated", task } });
     const spread = await rules({ snapshot: withPreview, emit: listener => listener(update({ ...previewed, phase: "in-progress" })) });
     expect(spread).toEqual(["task.preview.deadline.unexpected"]);
     // The control: the same move with both fields dropped is exactly what the guide asks for.
@@ -1205,15 +1205,15 @@ describe("testAdapter", () => {
   it("reads its connect snapshot as a host does: drops what the snapshot restates, applies what it cannot carry, and holds it to account", async () => {
     const at = "2026-08-21T01:00:00Z";
     const ringing = { ...conformingSnapshot, tasks: [{ ...conformingSnapshot.tasks[0], onCall: [{ role: "party", dialId: "dial-9", stage: "ringing", since: at }] }] };
-    const outcome = (id: string) => ({ id, loginId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId: "dial-9", assignmentId: "alloc-42", outcome: "no-answer" } }) as ProviderEventEnvelope<"voice">;
+    const outcome = (id: string) => ({ id, sessionId: "session-1", occurredAt: at, event: { type: "dial-outcome", dialId: "dial-9", assignmentId: "alloc-42", outcome: "no-answer" } }) as ProviderEventEnvelope<"voice">;
     // An outcome delivered during the read ends the dial once the snapshot lands, so a second afterwards is the duplicate it is;
     // delivered once, the dial has its outcome and nothing is refused.
     expect(await rules({ snapshot: ringing, emit: l => l(outcome("o1")), emitOnCapacity: l => l(outcome("o2")) })).toEqual(["stream.dialOutcome.duplicate"]);
     expect(await rules({ snapshot: ringing, emit: l => l(outcome("o1")) })).toEqual([]);
     // A task event during the read is superseded, and the snapshot must then carry what it said: an update the snapshot
     // carries is accounted for, one it does not is not; an ending the snapshot still carries is not, one it dropped is.
-    const updated = (task: Record<string, unknown>) => ({ id: "u1", loginId: "session-1", occurredAt: at, event: { type: "task-updated", task } }) as ProviderEventEnvelope<"voice">;
-    const ended = (assignmentId: string) => ({ id: "x1", loginId: "session-1", occurredAt: at, event: { type: "task-ended", assignmentId, outcome: { type: "completed", by: "agent" } } }) as ProviderEventEnvelope<"voice">;
+    const updated = (task: Record<string, unknown>) => ({ id: "u1", sessionId: "session-1", occurredAt: at, event: { type: "task-updated", task } }) as ProviderEventEnvelope<"voice">;
+    const ended = (assignmentId: string) => ({ id: "x1", sessionId: "session-1", occurredAt: at, event: { type: "task-ended", assignmentId, outcome: { type: "completed", by: "agent" } } }) as ProviderEventEnvelope<"voice">;
     expect(await rules({ emit: l => l(updated({ ...voiceTask, phase: "paused" })) })).toEqual([]);
     expect(await rules({ emit: l => l(updated({ ...voiceTask, assignmentId: "alloc-77" })) })).toEqual(["snapshot.accounts.task"]);
     expect(await rules({ emit: l => l(ended("alloc-42")) })).toEqual(["snapshot.accounts.ended"]);
@@ -1235,7 +1235,7 @@ describe("testAdapter", () => {
   });
 
   it("collects delivered events and deduplicates repeated ids", async () => {
-    const good = { id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } } as ProviderEventEnvelope<"voice">;
+    const good = { id: "event-1", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } } as ProviderEventEnvelope<"voice">;
     const { adapter } = makeAdapter({ emit: listener => { listener(good); listener(good); } });
     const result = await testAdapter(adapter, context);
     expect(result.events).toEqual([good]);
@@ -1267,7 +1267,7 @@ describe("testAdapter", () => {
     const emit = vi.fn((listener: (envelope: ProviderEventEnvelope<"voice">) => void) => {
       listener(badEnvelope);
       // Reached only if the listener did not throw back into provider dispatch.
-      listener({ id: "event-2", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
+      listener({ id: "event-2", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
     });
     const { adapter } = makeAdapter({ emit });
     const result = await testAdapter(adapter, context, { collectOnly: true });
@@ -1314,13 +1314,13 @@ describe("testAdapter tests one call", () => {
   interface Script { skipAudioStart?: boolean; keepRoomOnEnd?: boolean; refuseHold?: boolean; holdAfterEnd?: boolean; confirmFirst?: boolean; holdBeforeStart?: boolean; noEndCall?: boolean; badCapability?: boolean; refuseRecordStep?: boolean; restateHistory?: "with-mute" | "with-mute-by-station" | "without-mute";
     /** A platform shared between instances of the adapter, as a host reload shares it: which task is open, and the first client's listener. */
     platform?: { open: boolean; firstListener?: (envelope: ProviderEventEnvelope<"voice">) => void; firstTaken?: boolean; secondStated?: number };
-    /** A login that leads: the fixture answers each lead-features switch with an empty team, and counts the switches it was sent. */
+    /** A session that leads: the fixture answers each lead-features switch with an empty team, and counts the switches it was sent. */
     lead?: { switched: number };
     /** A first offer with a deadline, left to lapse: honoured, the platform ends it expired at the deadline and offers the real task; not, it lets it ring; "cancelled", it ends it the wrong way. */
     lapse?: { seconds: number; honour: "expired" | "never" | "cancelled" };
     /** The offer is a preview with a deadline. provider-dials honoured: the platform dials at the deadline; not: never. waits or host-dials honoured: the preview stands; not: the platform moves it early. */
     preview?: { atDeadline: "provider-dials" | "host-dials" | "waits"; seconds: number; honoured: boolean };
-    /** Where this adapter keeps the host's legs: in its own closure, or in the login's store handed to it. */
+    /** Where this adapter keeps the host's legs: in its own closure, or in the session's store handed to it. */
     legsIn?: "memory" | "store";
     /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
     reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "audio-throws" | "without-refused";
@@ -1328,7 +1328,7 @@ describe("testAdapter tests one call", () => {
     overwritesLateClose?: boolean;
     /** A provider whose store keys never name the task, or name it only as a run of characters inside another id: the harness can see nothing of them, and says so. */
     keyShape?: "unrelated" | "run-on";
-    /** The platform pushes the open task to every client of the login: the first connection sees a re-offer and says so. */
+    /** The platform pushes the open task to every client of the session: the first connection sees a re-offer and says so. */
     reofferOnReload?: boolean;
     /** The reloaded client itself raises a diagnostic once it stands: a live client's shout, counted. */
     shoutsAfterReload?: boolean;
@@ -1369,7 +1369,7 @@ describe("testAdapter tests one call", () => {
     const legKey = script.keyShape === "unrelated" ? "legs:other-77" : script.keyShape === "run-on" ? "legs:alloc-771" : "legs:alloc-77";
     // The assignment this instance publishes and answers to: a reloaded instance that reminted one is at least consistent with itself.
     const myAssignment = script.reloadAs === "reminted" && script.platform?.open === true ? "alloc-77.2" : "alloc-77";
-    // Envelope ids are unique within the login, across every client of it: a reloaded adapter carries on, never restarts.
+    // Envelope ids are unique within the session, across every client of it: a reloaded adapter carries on, never restarts.
     const id = () => `drv-${drvSeq += 1}`;
     const base: Record<string, unknown> = {
       ...conformingSnapshot.tasks[0]!, assignmentId: myAssignment, capabilities: { hold: script.badCapability ? "yes" : true, ...(script.noEndCall ? {} : { endCall: true }), schedule: true, outcomes: { required: true, codes: [{ id: "resolved", label: "Resolved" }] } },
@@ -1386,7 +1386,7 @@ describe("testAdapter tests one call", () => {
     let openLeg: { at: string; mutedBy: "host" | "station" } | undefined;
     let closedAtEnd: { at: string; seconds?: number; mutedBy: "host" | "station" } | undefined;
     // The store as the host handed it on connect: an adapter writes through what it was given, never a copy the test holds.
-    let given: LoginStore | undefined;
+    let given: SessionStore | undefined;
     const legEntry = (leg: { at: string; seconds: number; mutedBy: "host" | "station" }) =>
       ({ step: "muted" as const, ...leg, ...(script.leavesMuteOpen && phase === "completing" ? { seconds: undefined } : {}), by: "1042", mutedBy: script.restateHistory === "with-mute-by-station" ? "station" as const : leg.mutedBy });
     // The hold as the record carries it: open while the task is paused, closed with its duration on resume, unless the provider forgets.
@@ -1406,9 +1406,9 @@ describe("testAdapter tests one call", () => {
     };
     const reloaded = async () => {
       if (script.platform?.open !== true) return { ...conformingSnapshot, tasks: [], taskCount: 0 };
-      if (script.reofferOnReload) script.platform!.firstListener?.({ id: `diag-${Date.now()}`, loginId: "session-1", occurredAt: at,
+      if (script.reofferOnReload) script.platform!.firstListener?.({ id: `diag-${Date.now()}`, sessionId: "session-1", occurredAt: at,
         event: { type: "diagnostic", expected: "a task-offered introduces a task once", observed: "call-77 was offered again while the agent held it", assignmentId: myAssignment } });
-      if (script.shoutsAfterReload) listener?.({ id: `diag-live-${Date.now()}`, loginId: "session-1", occurredAt: at,
+      if (script.shoutsAfterReload) listener?.({ id: `diag-live-${Date.now()}`, sessionId: "session-1", occurredAt: at,
         event: { type: "diagnostic", expected: "a state read answers with the agent's tasks", observed: "the read answered late" } });
       offeredOnce = true;
       const kept = script.legsIn === "store" && given !== undefined ? await given.get(legKey) : undefined;
@@ -1429,7 +1429,7 @@ describe("testAdapter tests one call", () => {
       const wrap = over.phase === "completing" ? { wrapEndsInSeconds: base.wrapAllowance } : {};
       return { ...base, ...(begun && script.restateHistory !== undefined ? { history: history() } : {}), ...wrap, ...over } as unknown as Task<"voice">;
     };
-    const emit = (event: ProviderEventEnvelope<"voice">["event"]) => listener?.({ id: id(), loginId: "session-1", occurredAt: at, event });
+    const emit = (event: ProviderEventEnvelope<"voice">["event"]) => listener?.({ id: id(), sessionId: "session-1", occurredAt: at, event });
     const room = [{ role: "party" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
     // Nothing is offered until a capacity is stated, which is when a provider may assign; the
     // offer lands after the snapshot, as it does in life.
@@ -1445,7 +1445,7 @@ describe("testAdapter tests one call", () => {
       onConnect: connectContext => { given = connectContext.store; },
       ...(script.lead === undefined ? {} : { capabilities: { lead: EVERY_LEAD_CAPABILITY }, emitOnLeadFeatures: (l: (envelope: ProviderEventEnvelope<"voice">) => void) => {
         script.lead!.switched += 1;
-        l({ id: `evt-team-${script.lead!.switched}`, loginId: "session-1", occurredAt: at, event: { type: "team-updated", team: { members: [] } } });
+        l({ id: `evt-team-${script.lead!.switched}`, sessionId: "session-1", occurredAt: at, event: { type: "team-updated", team: { members: [] } } });
       } }),
       connection: {
         ...(script.platform === undefined ? {} : { snapshot: reloaded }),
@@ -1706,7 +1706,7 @@ describe("testAdapter tests one call", () => {
     expect(thrown.violations.map(v => v.rule)).toEqual(["test.reload.rejected"]);
     expect(thrown.rulesTested).toContain("test.reload.rejected");
     expect(thrown.rulesTested).not.toContain("test.reload.history");
-    expect(thrown.rulesTested).not.toContain("test.reload.login");
+    expect(thrown.rulesTested).not.toContain("test.reload.session");
   });
 
   it("builds the adapter again as a host reload does, and names one whose record died with it", async () => {
@@ -1760,7 +1760,7 @@ describe("testAdapter tests one call", () => {
     const result = await testAdapter(testable(script), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(script) });
     expect(result.violations).toEqual([]);
     expect(lead.switched).toBe(2);
-    // The control: a login that does not lead is switched on neither client.
+    // The control: a session that does not lead is switched on neither client.
     const plain = { switched: 0 };
     const unled = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false } };
     expect((await testAdapter(testable(unled), { ...context, store: memoryStore() }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(unled) })).violations).toEqual([]);
@@ -1777,8 +1777,8 @@ describe("testAdapter tests one call", () => {
     // A record that shrank across the reload is named by the stream, as on any resync, and by the test's check of the leg's word.
     expect(await misbehaving("without-answered")).toEqual(["stream.snapshot.history", "test.reload.history"]);
     expect(await misbehaving("miscounted")).toEqual(["snapshot.taskCount.mismatch"]);
-    // The reload is a restore before it is anything else: a second adapter that does not come up signed in as this login is named first.
-    expect(await misbehaving("signed-out")).toEqual(["test.reload.login", "stream.taskOffered.unended"]);
+    // The reload is a restore before it is anything else: a second adapter that does not come up signed in as this session is named first.
+    expect(await misbehaving("signed-out")).toEqual(["test.reload.session", "stream.taskOffered.unended"]);
     // The assignment is the task's one name: a rebuilt adapter that mints a new one no longer carries the task, and nothing after that can be tested.
     expect((await misbehaving("reminted")).slice(0, 1)).toEqual(["test.reload.snapshot"]);
     // The stream's rules keep working across the reload: the second snapshot may not forget the audio the first held up,
@@ -1820,8 +1820,8 @@ describe("testAdapter tests one call", () => {
 
   it("applies a re-delivered envelope once, and names an id reused for a different event", async () => {
     const at = "2026-08-21T09:00:00Z";
-    const first: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-1", occurredAt: at, event: { type: "transport-status", status: "active" } };
-    const again: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-1", occurredAt: at, event: { type: "transport-status", status: "error", recovery: "reconnect", message: "session gone" } };
+    const first: ProviderEventEnvelope<"voice"> = { id: "evt-1", sessionId: "session-1", occurredAt: at, event: { type: "transport-status", status: "active" } };
+    const again: ProviderEventEnvelope<"voice"> = { id: "evt-1", sessionId: "session-1", occurredAt: at, event: { type: "transport-status", status: "error", recovery: "reconnect", message: "session gone" } };
     const run = async (...envelopes: ProviderEventEnvelope<"voice">[]) =>
       await testAdapter(makeAdapter({ emit: listener => { for (const envelope of envelopes) listener(envelope); } }).adapter, context, { collectOnly: true });
     const harmless = await run(first, first);
@@ -1851,7 +1851,7 @@ describe("testAdapter tests one call", () => {
     expect(told).toEqual([{ artefact: "snapshot", violations: [expect.objectContaining({ rule: "task.wrapAllowance" })] }]);
     // An event it dropped: told with the envelope id.
     told.length = 0;
-    const bad: ProviderEventEnvelope<"voice"> = { id: "evt-bad", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z", event: { type: "task-audio-ended", assignmentId: "" } };
+    const bad: ProviderEventEnvelope<"voice"> = { id: "evt-bad", sessionId: "session-1", occurredAt: "2026-08-21T09:00:00Z", event: { type: "task-audio-ended", assignmentId: "" } };
     const result = await testAdapter(makeAdapter({ emitOnCapacity: listener => listener(bad), connection: listening }).adapter, context, { collectOnly: true });
     expect(result.violations.map(v => v.rule)).toContain("event.taskAudioEnded.assignmentId");
     expect(told.map(r => [r.artefact, r.envelopeId])).toEqual([["event", "evt-bad"]]);
@@ -2058,7 +2058,7 @@ describe("testAdapter requires each method the declarations call for", () => {
       .not.toContain("connection.openAudio.required");
   });
 
-  it("all four break methods together, when the login declares breaks", async () => {
+  it("all four break methods together, when the session declares breaks", async () => {
     // Requesting without committing is the failure the guide names: a break granted that can
     // never start. Each of the four is required on its own.
     for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak"] as const) {
@@ -2067,7 +2067,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     }
   });
 
-  it("executeTeam(), when the login declares lead", async () => {
+  it("executeTeam(), when the session declares lead", async () => {
     const leading = { lead: EVERY_LEAD_CAPABILITY };
     expect(await rules({ capabilities: leading, connection: { executeTeam: undefined } })).toContain("connection.executeTeam.required");
     expect(await rules({ capabilities: leading })).toEqual([]);
@@ -2109,7 +2109,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ emitAuthentication: publish => publish(careful) })).not.toContain("authentication.capabilities.shape");
   });
 
-  it("keeps the login it could trust when the session publishes a broken state", async () => {
+  it("keeps the session it could trust when the session publishes a broken state", async () => {
     // A state with no identity is reported and not adopted: the team member list is still checked against
     // the lead who signed in, and the run completes instead of throwing inside a listener.
     const broken = { status: "authenticated" } as unknown as AuthenticationState;
@@ -2119,7 +2119,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ manifest: plainManifest, capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: minimalSnapshot })).toEqual([]);
   });
 
-  it("holds refreshing to the login it refreshes", async () => {
+  it("holds refreshing to the session it refreshes", async () => {
     const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Pacific/Chatham" };
     const same = { status: "refreshing", identity: asha, capabilities: { lead: EVERY_LEAD_CAPABILITY } } satisfies AuthenticationState;
     const fewer = { status: "refreshing", identity: asha, capabilities: {} } satisfies AuthenticationState;
@@ -2130,7 +2130,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ manifest: plainManifest, capabilities: lead, snapshot: minimalSnapshot, emitAuthentication: publish => publish(other) })).toEqual(["authentication.refreshing.identity"]);
   });
 
-  it("requires the methods a later login grants, and reports the latest login", async () => {
+  it("requires the methods a later session grants, and reports the latest session", async () => {
     // Signed in without breaks, then granted them after the snapshot was checked -- the grant is
     // published from setCapacity, the last thing the harness calls -- so the four methods are
     // required by the listener, not by the check that ran at snapshot time. The paired republish
@@ -2155,10 +2155,10 @@ describe("testAdapter requires each method the declarations call for", () => {
     const { adapter } = makeAdapter({ ...overrides, connection: { setCapacity: overrides.connection?.setCapacity } });
     const result = await testAdapter(adapter, context, { collectOnly: true });
     expect(result.authenticationState).toMatchObject({ capabilities: {} });
-    expect(result.login).toMatchObject({ capabilities: { breaks: true } });
+    expect(result.signedIn).toMatchObject({ capabilities: { breaks: true } });
   });
 
-  it("requires the three queue methods of a login that declares nextCall, and reaches the agent's own queue where it is published", async () => {
+  it("requires the three queue methods of a session that declares nextCall, and reaches the agent's own queue where it is published", async () => {
     const lining = { nextCall: true as const };
     for (const method of ["requestNextCall", "cancelNextCall", "releaseLinedUp"] as const) {
       expect(await rules({ capabilities: lining, connection: { [method]: undefined } })).toContain(`connection.${method}.required`);
@@ -2183,13 +2183,13 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ capabilities: lining, emitOnStop: l => l(cleared) })).toEqual([]);
   });
 
-  it("takes the phone's own view from a provider that declares it can see the phone, held to the login's phone", async () => {
+  it("takes the phone's own view from a provider that declares it can see the phone, held to the session's phone", async () => {
     const seeing = { ...conformingManifest, phoneStatus: true as const } satisfies Manifest<"voice">;
     const idle: PhoneState = { phone: "softphone", status: "ready", channels: [{ state: "active", since: "2026-08-21T09:00:00Z", assignmentId: "alloc-42" }] };
     expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: idle } })).toEqual([]);
     expect(await rules({ manifest: seeing })).toEqual(["snapshot.phone.required"]);
     expect(await rules({ snapshot: { ...conformingSnapshot, phone: idle } })).toEqual(["snapshot.phone.unexpected"]);
-    // The login is on a softphone: a hardphone reported is the wrong phone, and a softphone's mute is the host's.
+    // The session is on a softphone: a hardphone reported is the wrong phone, and a softphone's mute is the host's.
     expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: { ...idle, phone: "hardphone" } } })).toEqual(["phone.phone.mismatch"]);
     expect(await rules({ manifest: seeing, snapshot: { ...conformingSnapshot, phone: { ...idle, muted: true } } })).toEqual(["phone.muted.softphone"]);
     // The phone carries every call the agent computer is on: the conforming task has its audio started.
@@ -2237,9 +2237,9 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ ...plain, emitOnLeadFeatures: l => l(team({ request: { ...request, assignmentId: "" } })) })).toEqual(["team.member.request.assignmentId"]);
   });
 
-  it("holds what follows to the latest login, not the one captured at sign-in", async () => {
+  it("holds what follows to the latest session, not the one captured at sign-in", async () => {
     // Signed in as a lead, then demoted before the snapshot: the team member list on that snapshot is now
-    // published to a login that does not lead. A harness that froze the login at sign-in would
+    // published to a session that does not lead. A harness that froze the session at sign-in would
     // pass it. The paired run republishes the same capabilities and stays clean.
     const asha = { id: "1042", displayName: "Asha Rao", timeZone: "Pacific/Chatham" };
     const whole = teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } });
@@ -2249,8 +2249,8 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, emitOnCapacity: l => l(whole), emitAuthentication: publish => publish(unchanged) })).not.toContain("team.unentitled");
   });
 
-  it("a login that leads is owed the team once switched on, and one that does not is never sent one", async () => {
-    // The case a fixture cannot hide: the login says lead, the switch went on, and the run never saw a team.
+  it("a session that leads is owed the team once switched on, and one that does not is never sent one", async () => {
+    // The case a fixture cannot hide: the session says lead, the switch went on, and the run never saw a team.
     expect(await rules({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, emitOnLeadFeatures: () => undefined }, { timeoutMs: 50 })).toContain("team.required");
     expect(await rules({ capabilities: { lead: EVERY_LEAD_CAPABILITY } })).not.toContain("team.required");
     const whole = teamEvent("evt-team", { type: "team-updated", team: { members: [] } });
@@ -2275,7 +2275,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     // The conforming snapshot carries call-42 in progress; its audio may end. A task the stream
     // never introduced may not; the same events before any snapshot are judged alone.
     const at = "2026-08-21T09:05:00Z";
-    const ended = (taskId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${taskId}`, loginId: "session-1", occurredAt: at, event: { type: "task-audio-ended", assignmentId: taskId === "call-42" ? "alloc-42" : `${taskId}-a` } });
+    const ended = (taskId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${taskId}`, sessionId: "session-1", occurredAt: at, event: { type: "task-audio-ended", assignmentId: taskId === "call-42" ? "alloc-42" : `${taskId}-a` } });
     // Delivered from setCapacity, which the harness calls after the snapshot; before it, the
     // stream has no beginning and the same events are judged alone.
     const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
@@ -2293,7 +2293,7 @@ describe("testAdapter requires each method the declarations call for", () => {
   it("fails a run in which the provider reports a diagnostic, and says what it reported", async () => {
     // Informational to a host, a failure here: a green conformance result must not sit over a
     // platform that is breaking the rules the adapter relies on.
-    const diagnostic: ProviderEventEnvelope<"voice"> = { id: "evt-diag", loginId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
+    const diagnostic: ProviderEventEnvelope<"voice"> = { id: "evt-diag", sessionId: "session-1", occurredAt: "2026-08-21T09:05:00Z",
       event: { type: "diagnostic", expected: "a task-ended names the task the agent holds", observed: "task-ended named call-99 while call-42 was held", assignmentId: "alloc-99" } };
     const result = await testAdapter(makeAdapter({ emit: listener => listener(diagnostic) }).adapter, context, { collectOnly: true });
     expect(result.violations.map(v => v.rule)).toEqual(["diagnostic.raised"]);
@@ -2410,7 +2410,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules(true)).toEqual(["connect.transportStatus.late"]);
   });
 
-  it("requires the login's store of every connection, and passes it through", async () => {
+  it("requires the session's store of every connection, and passes it through", async () => {
     // A store the test hands the harness reaches the adapter; one missing or malformed is named before connect.
     let seen: unknown;
     const { adapter } = makeAdapter();
@@ -2418,7 +2418,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     const store = memoryStore();
     expect((await testAdapter(observing, { ...context, store }, { collectOnly: true })).violations).toEqual([]);
     // The adapter is handed a store the harness watches; what it writes lands in the host's, and what the host holds it reads.
-    const handed = seen as LoginStore;
+    const handed = seen as SessionStore;
     await handed.set("k", "v");
     expect(await store.get("k")).toBe("v");
     await store.set("host", "wrote");
@@ -2462,7 +2462,7 @@ describe("testAdapter requires each method the declarations call for", () => {
   it("holds the break's moves to where it stood, from the connect snapshot on", async () => {
     // The conforming snapshot stands at not-requested: a grant may follow, a commit's state may not.
     const at = "2026-08-21T09:05:00Z";
-    const moved = (status: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${status}`, loginId: "session-1", occurredAt: at, event: { type: "break-state", break: { status, canRequestBreak: true } } }) as ProviderEventEnvelope<"voice">;
+    const moved = (status: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${status}`, sessionId: "session-1", occurredAt: at, event: { type: "break-state", break: { status, canRequestBreak: true } } }) as ProviderEventEnvelope<"voice">;
     const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
       let deliver: ((envelope: ProviderEventEnvelope<"voice">) => void) | undefined;
       return { emit: listener => { deliver = listener; }, connection: { setCapacity: async () => { deliver?.(envelope); return { status: "applied" as const }; } } };
@@ -2477,17 +2477,17 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules(both(moved("granted"), moved("on-break"), { ...moved("granted"), id: "evt-again" }))).toEqual(["stream.breakState.backwards"]);
   });
 
-  it("holds the snapshot and every event to the login's session", async () => {
-    const elsewhere = { ...minimalSnapshot, loginId: "session-0" } satisfies Snapshot<"voice">;
-    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot })).not.toContain("snapshot.loginId.mismatch");
-    expect(await rules({ manifest: plainManifest, snapshot: elsewhere })).toContain("snapshot.loginId.mismatch");
-    const stray: ProviderEventEnvelope<"voice"> = { id: "evt-1", loginId: "session-0", occurredAt: "2026-08-21T09:00:00Z", event: { type: "transport-status", status: "active" } };
-    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, emit: listener => listener(stray) })).toContain("event.loginId.mismatch");
+  it("holds the snapshot and every event to the session's session", async () => {
+    const elsewhere = { ...minimalSnapshot, sessionId: "session-0" } satisfies Snapshot<"voice">;
+    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot })).not.toContain("snapshot.sessionId.mismatch");
+    expect(await rules({ manifest: plainManifest, snapshot: elsewhere })).toContain("snapshot.sessionId.mismatch");
+    const stray: ProviderEventEnvelope<"voice"> = { id: "evt-1", sessionId: "session-0", occurredAt: "2026-08-21T09:00:00Z", event: { type: "transport-status", status: "active" } };
+    expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, emit: listener => listener(stray) })).toContain("event.sessionId.mismatch");
   });
 
   it("passes autoAcceptTasks through as the host stated it, and infers nothing from a caller that states none", async () => {
     const offered = (acceptance?: "consent"): ProviderEventEnvelope<"voice"> => ({
-      id: "evt-offer", loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
+      id: "evt-offer", sessionId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
       event: { type: "task-offered", task: { ...conformingSnapshot.tasks[0]!, phase: "pending", audio: undefined, ...(acceptance ? { acceptance } : {}) } },
     });
     const run = async (autoAcceptTasks: boolean, envelope: ProviderEventEnvelope<"voice">) =>
@@ -2542,7 +2542,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ manifest: plainManifest, capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: bare, connection: { getUserDetails: undefined }, emitOnLeadFeatures: listener => { listener(teamEvent("evt-team", { type: "team-updated", team: { members: [] } })); listener(member); } })).toContain("connection.getUserDetails.required");
   });
 
-  it("setPreference() when the login declares preferences, and policies on a lead's team member list where the provider offers them", async () => {
+  it("setPreference() when the session declares preferences, and policies on a lead's team member list where the provider offers them", async () => {
     const choosing = { preferences: [{ id: "hold" as const, label: "Hold", enabled: true, setBy: "team" as const }] };
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: choosing, connection: { setPreference: undefined } })).toContain("connection.setPreference.required");
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: {}, connection: { setPreference: undefined } })).not.toContain("connection.setPreference.required");
@@ -2554,7 +2554,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ manifest: plainManifest, snapshot: minimalSnapshot, capabilities: setting })).toEqual([]);
   });
 
-  it("holds who-decided to the manifest's declared ladder, on the login and on the snapshot", async () => {
+  it("holds who-decided to the manifest's declared ladder, on the session and on the snapshot", async () => {
     const laddered = { ...conformingManifest, orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "region", label: { en: "Your region" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }] } satisfies Manifest<"voice">;
     const of = (setBy: string) => ({ preferences: [{ id: "hold" as const, label: "Hold", enabled: true, setBy }] });
     expect(await rules({ manifest: laddered, capabilities: of("region") })).toEqual([]);
@@ -2565,7 +2565,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({ manifest: laddered, snapshot: lockedTask("site") })).toEqual(["task.capability.locked.lockedBy.unknown"]);
   });
 
-  it("recordStep(), of every softphone login: the host mutes its microphone, and the record is the provider's", async () => {
+  it("recordStep(), of every softphone session: the host mutes its microphone, and the record is the provider's", async () => {
     expect(await rules({ connection: { recordStep: undefined } })).toContain("connection.recordStep.required");
     // A chat provider has no microphone in play; a hardphone's is the phone's own, and the host mutes nothing.
     expect(await rules({ manifest: chatManifest, snapshot: chatSnapshot, connection: { recordStep: undefined, dial: undefined, openAudio: undefined } }))
@@ -2597,7 +2597,7 @@ describe("testAdapter requires each method the declarations call for", () => {
 
   it("holds work to being pulled: no offer before capacity is stated, none beyond it, the host's own dial excepted", async () => {
     const idle = { ...conformingSnapshot, tasks: [], taskCount: 0 };
-    const offer = (id: string, over: Record<string, unknown> = {}): ProviderEventEnvelope<"voice"> => ({ id: `offer-${id}`, loginId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
+    const offer = (id: string, over: Record<string, unknown> = {}): ProviderEventEnvelope<"voice"> => ({ id: `offer-${id}`, sessionId: "session-1", occurredAt: "2026-08-21T09:00:00Z",
       event: { type: "task-offered", task: { ...voiceTask, assignmentId: `${id}-a`, phase: "pending", acceptance: "consent", ...over } } });
     expect(await rules({ snapshot: idle, emitOnCapacity: listener => listener(offer("call-77")) })).toEqual([]);
     // Emitted at subscribe, the offer lands during the connect read too: an offer against no capacity, and a task the snapshot then fails to carry.

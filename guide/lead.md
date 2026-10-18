@@ -20,7 +20,7 @@ computes nothing. See **`team-updated`** in `guide.md` and its companions.
 
 | Field | Contract |
 | --- | --- |
-| `members` | Every member of this lead's team, whatever their state, each with their open tasks. `[]` says the lead has a team with nobody in it; omitting the team member list says something else entirely — see **The login is the permission** below. |
+| `members` | Every member of this lead's team, whatever their state, each with their open tasks. `[]` says the lead has a team with nobody in it; omitting the team member list says something else entirely — see **The session is the permission** below. |
 | `policies` | The team's policy per capability as it stands — the setting, who set it, and `lockedBy` where a level above the team made it theirs to keep. Present where the provider offers policy control; absent where it does not. See **Who decides what an agent may do** in `guide.md`. |
 
 | `TeamMember` field | Contract |
@@ -80,8 +80,8 @@ knows when the state actually began. It times the current `availability`, so it 
 that value does. And it is counted from the provider's clock, never the screen's, so a provider
 that publishes it declares `timeCheck` -- see **Every screen counts from the provider's clock** in `guide.md`.
 
-**The login is the permission.** A team member list goes to a login that declares
-`capabilities.lead`, once the team feature is on, and to nobody else. Omni never decides who
+**The user's capabilities are the permission.** A team member list goes to a user whose capabilities
+include `lead`, once the team feature is on, and to nobody else. Omni never decides who
 leads a team: the provider said so at sign-in, and the team member list agrees with it — owed,
 `members: []` included, once a lead has switched the feature on; absent for everybody else, which
 is the correct rendering for an agent who leads nobody (`team.required`, `team.unentitled`). What
@@ -101,7 +101,7 @@ assignments only from the list.
 **The provider assumes nothing.** The switch is not remembered across connections: the agent
 application sends `lead-features` on every connect, after it has stated capacity, and until it has
 the provider treats the feature as off. The connect snapshot therefore carries no team, whatever
-the login declares; the whole team arrives on `team-updated` once the switch is on, and every
+the user's capabilities include; the whole team arrives on `team-updated` once the switch is on, and every
 snapshot after that carries it. A conformance run switches the feature on for a lead and holds the
 provider to that first `team-updated` (`team.required`); a team on the connect snapshot is the
 provider assuming (`team.unexpected`).
@@ -344,7 +344,7 @@ whole and replaced whole, and a provider that cannot say omits it.
 
 **An agent is not waiting on one person.** Authority is held by several, everyone who holds it
 sees the request on their own console, and **any one of them settles it**. Omni offers the
-decision to every login that declares `lead` and has the team feature on — which is how the provider already
+decision to every user whose capabilities include `lead` and who has the team feature on — which is how the provider already
 says who may decide — and does not try to work out whose turn it is.
 
 A request needing *more than one* approval is not something this contract describes. There is

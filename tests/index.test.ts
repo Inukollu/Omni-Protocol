@@ -189,7 +189,7 @@ describe("localizedText", () => {
     const event: ProviderEvent = {
       type: "snapshot",
       reason: "reconnected",
-      snapshot: { transport: "active", loginId: "session-1", break: { status: "starting-after-task", canRequestBreak: true }, tasks: [], taskCount: 0 },
+      snapshot: { transport: "active", sessionId: "session-1", break: { status: "starting-after-task", canRequestBreak: true }, tasks: [], taskCount: 0 },
     };
     expect(event.snapshot.break.status).toBe("starting-after-task");
   });
@@ -223,9 +223,9 @@ describe("localizedText", () => {
       async connect(context) {
         context.signal?.throwIfAborted();
         return {
-          snapshot: () => ({ transport: "active" as const, loginId: "session-1", break: { status: "not-requested" as const, canRequestBreak: true }, tasks: [], taskCount: 0 }),
+          snapshot: () => ({ transport: "active" as const, sessionId: "session-1", break: { status: "not-requested" as const, canRequestBreak: true }, tasks: [], taskCount: 0 }),
           subscribe: listener => {
-            listener({ id: "event-1", loginId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
+            listener({ id: "event-1", sessionId: "session-1", occurredAt: "2026-08-21T01:00:00Z", event: { type: "transport-status", status: "active" } });
             return () => undefined;
           },
           setCapacity: async capacity => (expect(capacity.count).toBeGreaterThanOrEqual(0), { status: "applied" as const }),
@@ -236,7 +236,7 @@ describe("localizedText", () => {
       },
     });
 
-    const result = await testAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, loginId: "session-1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, host: stillHost(), store: memoryStore() });
+    const result = await testAdapter(adapter, { protocolVersion: OMNI_PROTOCOL_VERSION, sessionId: "session-1", timeZone: "Pacific/Chatham", languages: ["en"], autoAcceptTasks: true, host: stillHost(), store: memoryStore() });
     expect(result.violations).toEqual([]);
     expect(result.events.map(item => item.event)).toEqual([{ type: "transport-status", status: "active" }]);
     expect(disconnect).toHaveBeenCalledOnce();
@@ -253,7 +253,7 @@ describe("sameCapabilities", () => {
     expect(sameCapabilities({ lead: { listen: true, takeOverCall: true } }, { lead: { listen: true } })).toBe(false);
     expect(sameCapabilities({ breaks: true }, {})).toBe(false);
     expect(sameCapabilities({ lead: { listen: true } }, { lead: { listen: true } })).toBe(true);
-    // Every field: the preferences the login declares, by id, label, enabled and who set or locked them.
+    // Every field: the preferences the session declares, by id, label, enabled and who set or locked them.
     const hold = { id: "hold" as const, label: "Hold", enabled: true, setBy: "team" as const };
     expect(sameCapabilities({ preferences: [hold] }, { preferences: [hold] })).toBe(true);
     expect(sameCapabilities({ preferences: [hold] }, {})).toBe(false);

@@ -12,5 +12,5 @@ Last updated 2026-10-18.
   - **Chat and email design piece:** its own walk-through, as voice had.
     - Direction: Omni draws the conversation (messages on the wire), and agents start a chat or email from Omni.
     - To decide in it: a lead reading a member's chat live; a multi-day park that frees capacity.
-- **Naming review, later:** "login" vs "session". Vasu: the 10-12 hour signed-in period is the session, and login is a point-in-time act. Today the protocol says loginId and "the login", and uses "session" for createAuthenticationSession.
+- **Naming, open question:** the browser tab's `sharedSession` (a browser cookie session) is now a second meaning of "session". Decide its name.
 - **Omni release notes owed** for 0.1.115, 0.1.116, 0.1.117, 0.1.118, 0.1.121, 0.1.122, 0.1.123, 0.1.124, 0.1.125, 0.1.126, 0.1.127, 0.1.128 and 0.1.129, once the Omni session is back online. Jema has them all.

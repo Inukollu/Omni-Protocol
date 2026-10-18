@@ -14,7 +14,7 @@ capacity is stated, and needs no other word for it.
 or when the agent presses Ready. A successful connection, a healthy provider, or the absence of a
 break does not imply readiness. After that, an agent stops taking work on this provider only by a
 break under `capabilities.breaks`, or by the agent application restating `count: 0` -- which is how
-a forced break on another provider reaches this one; a login that declares no breaks has no
+a forced break on another provider reaches this one; a user whose capabilities include no breaks has no
 not-ready of its own, and `count: 0` is the agent application's division of capacity, not the
 agent's choice.
 
@@ -35,7 +35,7 @@ intent.
 
 ### Acceptance modes
 
-During login, Omni sends the agent's `autoAcceptTasks` value to the provider. When it is `true`, the
+During sign-in, Omni sends the agent's `autoAcceptTasks` value to the provider. When it is `true`, the
 provider states `acceptance` on each pending task — on the task rather than the offer, so a
 reconnect snapshot says it too and an offer the agent application never received is not accepted on the
 person's behalf for want of a word:
@@ -131,7 +131,7 @@ required and closed (`event.taskEnded.outcome.cancelled.by`). An offer nobody ac
 The provider does not introduce new work as already `in-progress`.
 
 A task appears already `in-progress` only in a snapshot taken after a reconnect or a resync,
-reporting work that began earlier in this login and never stopped. A fresh login has none to
+reporting work that began earlier in this session and never stopped. A fresh session has none to
 report: nothing has been assigned yet, and work the agent was working elsewhere is not carried
 into a new session.
 
@@ -231,7 +231,7 @@ already safe, since its outcome is placed by the agent application's own `dialId
 assignment earns its place is everything the agent application does not mint --
 `task-audio-started`, `task-audio-ended`, `task-ended`, a `recordStep` naming a task -- any of which
 would otherwise find the next customer under a reused handle and act on them. A minted id is part
-of the task the adapter keeps, not a field held in memory beside it: it lives in the login's
+of the task the adapter keeps, not a field held in memory beside it: it lives in the session's
 `store` with the task, or is derived from a platform handle that itself never reuses, so a rebuilt
 adapter comes back with the same assignment on the same task, or every late event it was minted to
 catch mismatches and the second adapter's snapshot no longer carries the task (`test.reload.snapshot`).
@@ -380,7 +380,7 @@ Migration from the earlier spellings:
 | a wrap the agent computer timed from an event's receipt | `Task.wrapEndsInSeconds` in `completing`, restated (`task.completing.wrapEndsInSeconds`, `.required`, `.unexpected`) |
 | MemberTask.capabilities, capabilitySource, browsers | gone: the workspace never travels to a lead (`team.member.task.workspace`); the record and the completion terms do |
 | a member republished on a hold, a mute, a take-over | on every publication of the member's task to the member |
-| two clients on one login | the later wins; the first is ended with `recovery: "displaced"` |
+| two clients on one session | the later wins; the first is ended with `recovery: "displaced"` |
 | the phone unspoken | `PhoneState` -- the device, its mute, its channels -- on `Snapshot.phone`, `phone-updated` and `TeamMember.phone`, from a manifest declaring `phoneStatus` (`snapshot.phone.required`, `.unexpected`, `phone.*`, `phone.channel.*`, `event.phone.capability`) |
 | the agent's readiness for the next call read into setCapacity | the agent's own queue: `capabilities.nextCall`, `requestNextCall`/`cancelNextCall`/`releaseLinedUp`, `Snapshot.nextCall` and `linedUp`, the `next-call` and `lined-up` events (`snapshot.nextCall.idle`, `nextCall.*`, `linedUp.*`) |
 | a harness that exercised an adapter, drove a call and evaluated rules | the harness reads as a test: `testAdapter`, `withCall`, `timeoutMs`, `notTested`, `rulesTested`, rules `test.*` (`test.timeout`, `test.offer.expired`, `test.preview.deadline`, ...) |
@@ -389,9 +389,9 @@ Migration from the earlier spellings:
 | a refusal on hold under `omni.command-not-permitted` | `omni.on-hold` |
 | outbound work's terms reported as `queue` | `dialer`: the dialer that declared the task chose its capabilities |
 | an `end-call` while the caller was on hold | refused: a `paused` task is resumed first (`command.endCall.held`), the agent computer shows End call disabled on hold, the provider answers `failed`, and the test names an adapter that ends from hold (`test.command.held`); `terminate-call` is not gated, it ends the caller's channel too |
-| the handset spelled by its place on a desk | `hardphone`, on the manifest's `phones` and the login's `phone`; the former spelling is refused |
+| the handset spelled by its place on a desk | `hardphone`, on the manifest's `phones` and the session's `phone`; the former spelling is refused |
 | the desk | the agent computer, in the guide's prose |
-| the agent application's Mute on hold | unavailable while the task is `paused`, promised at login by a softphone login's agent application (`host.guarantees.muteUnavailableOnHold`, required there and refused of a hardphone login); a host mute beginning on a paused task is refused (`historyReport.muted.held`) and the test names an adapter that records one (`test.recordStep.held`) |
+| the agent application's Mute on hold | unavailable while the task is `paused`, promised at sign-in by a softphone session's agent application (`host.guarantees.muteUnavailableOnHold`, required there and refused of a hardphone session); a host mute beginning on a paused task is refused (`historyReport.muted.held`) and the test names an adapter that records one (`test.recordStep.held`) |
 | a session ended from outside the agent computer, reported as `expired` | `terminated`, with `by` (a person or `provider`) and a reason never retryable; `signed-out` is only the agent's own Sign out here; an ended session's secrets are deleted before the ending is published (`authentication.secrets.retained`), kept only for an `expired` whose failure is retryable; the agent application clears the store after, and resumes no stored token |
 
 Update producers, consumers, saved task snapshots, and validation-rule assertions together.
@@ -507,7 +507,7 @@ may add to them; it never has fewer, and never drops the record while the task i
 stated to the agent application and then withdrawn without an event is a record contradicting itself, exactly
 as a task that lost the terms it had read would be, and the stream refuses it the same way
 (`stream.taskUpdated.history`, `stream.snapshot.history`). A provider whose
-platform cannot hold a leg the agent application reported keeps it in the login's `store` for the life of the
+platform cannot hold a leg the agent application reported keeps it in the session's `store` for the life of the
 task, so a reload of the agent application restates the same record; the entry is keyed by `step` and `at`, so
 a running hold restated with its final `seconds` is the same entry.
 
@@ -625,7 +625,7 @@ leg, when it began and when it ended, and `validateHistoryReport(report, path, m
 a running one it was never asked for (`historyReport.running.unexpected`). What a provider that
 did ask for them forwards upstream, and how often, is its own business. The step appears in
 `history` when the *provider* publishes it: Omni never writes the record itself.
-`recordStep` is required of every softphone login's connection, since every call on a softphone
+`recordStep` is required of every softphone session's connection, since every call on a softphone
 can be muted by the agent application, and answers `recorded` with the canonical history `at`. A `muted` report says whose the silence was,
 `mutedBy: "host"` or `"station"`, and no other report has the word (`historyReport.mutedBy`,
 `.mutedBy.unexpected`). On a hardphone the microphone is the phone's:
@@ -775,7 +775,7 @@ Task capabilities belong to each `Task`. If `hold` is omitted on one task, Omni
 must not show or issue hold for that task even if another task from the same provider supports it.
 
 **A capability is a property of the task, and of nothing the task names.** A provider derives it
-from no other source -- not the queue the task came from, not the login, not its own configuration
+from no other source -- not the queue the task came from, not the session, not its own configuration
 -- because each of those answers a question about this task from somewhere that does not know
 about this task, and a client with two sources and a rule for choosing between them is the shape
 that produces two consumers disagreeing about one fact. The task is the one source, and the
@@ -1136,9 +1136,9 @@ react rather than only display the message:
 | Code | Meaning |
 | --- | --- |
 | `omni.not-authenticated` | The provider session is no longer usable. The adapter has published `expired` at or before this answer — the state is what Omni surfaces reauthentication from; the code says why this action failed, and is never the only signal. |
-| `omni.capability-not-enabled` | The action targets a capability this task, manifest, or login did not declare — including a lead command from a login whose `capabilities` no longer carry it. |
+| `omni.capability-not-enabled` | The action targets a capability this task, manifest, or session did not declare — including a lead command from a session whose `capabilities` no longer carry it. |
 | `omni.assignment-not-found` | The assignment named is not one the provider holds, typically after the task already ended. |
-| `omni.phone-not-permitted` | The agent application declared a `phone` the platform does not permit for this agent -- a softphone for an agent configured for a hardphone, or the reverse. The login is refused at authentication, and the provider never reconfigures the agent to make the declaration true. See **How the agent hears the call** in `guide/phone.md`. |
+| `omni.phone-not-permitted` | The agent application declared a `phone` the platform does not permit for this agent -- a softphone for an agent configured for a hardphone, or the reverse. The session is refused at authentication, and the provider never reconfigures the agent to make the declaration true. See **How the agent hears the call** in `guide/phone.md`. |
 | `omni.destination-not-permitted` | The dialled number, or the `contactId` named, is not one the provider offers this agent. |
 | `omni.rate-limited` | The action was throttled. Pair with `retryAfterMs`. |
 | `omni.unavailable` | The provider is temporarily unable to serve the action, including any command sent while `transport-status` is not `active`. |

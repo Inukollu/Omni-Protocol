@@ -60,7 +60,7 @@ describe("preview trigger ownership", () => {
     const stream = new TaskStream();
     stream.resync({ tasks: [task] }, "snapshot");
     const event = (type: "task-audio-started" | "task-audio-ended"): ProviderEventEnvelope => ({
-      id: type, loginId: "login", occurredAt: at,
+      id: type, sessionId: "session", occurredAt: at,
       event: { type, assignmentId: task.assignmentId },
     });
     expect(stream.apply(event("task-audio-started"))).toEqual([]);

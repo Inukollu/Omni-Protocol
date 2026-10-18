@@ -50,8 +50,8 @@ export type UserId = string;
 /**
  * The provider's name for one assignment: the call routed to this agent, from the offer until the
  * task ends. Non-empty, opaque, unique within the provider and never reused while the provider is
- * still speaking about it -- a lead names a member's assignment from another login, so the scope is
- * the provider, not the login. What the platform calls its own record, and whether it reuses that
+ * still speaking about it -- a lead names a member's assignment from another session, so the scope is
+ * the provider, not the session. What the platform calls its own record, and whether it reuses that
  * name, is the adapter's business: a platform that reoffers a closed call under the same handle
  * seconds later is why the adapter, not the agent computer, is held to this. Scope it with `assignmentKey()`.
  */
@@ -155,7 +155,7 @@ export const DIAL_OUTCOMES = ["answered", "busy", "no-answer", "unreachable", "r
  * How the agent hears the call: on a `softphone`, where the host owns the audio and opens it
  * through `openAudio`, or on a `hardphone`, a handset the platform rings, where the host opens
  * nothing and only shows the call. A voice manifest lists the phones its platform supports, and
- * the host picks one for the login at authentication.
+ * the host picks one for the session at authentication.
  */
 export type Phone = "softphone" | "hardphone";
 
@@ -188,7 +188,7 @@ export interface PhoneChannel {
 }
 
 /**
- * The phone's own view, published by a provider that declares `phoneStatus`: the device the login
+ * The phone's own view, published by a provider that declares `phoneStatus`: the device the session
  * is on, whether it can take a call, its own mute where the platform observes it, and its channels
  * -- one active at most, any number held. The task side says which of those calls are the agent's
  * work and where each stands; the phone side exists whether or not a task is behind a call. `muted`
@@ -196,7 +196,7 @@ export interface PhoneChannel {
  * never a softphone's, whose microphone is the host's and whose mute is the host's report.
  */
 export interface PhoneState {
-  /** The agent's phone for this provider, as the host chose it for the login at connect: which of the manifest's phones the agent hears this provider's calls on. */
+  /** The agent's phone for this provider, as the host chose it for the session at connect: which of the manifest's phones the agent hears this provider's calls on. */
   phone: Phone;
   status: PhoneStatus;
   /** The phone's own mute, on a hardphone the platform observes; absent where it does not, or on a softphone. */
@@ -293,7 +293,7 @@ export interface Manifest<C extends Channel = Channel> {
   dialOutcomes?: C extends "voice" ? DialOutcome[] : never;
   /**
    * The phones this platform can put an agent on. Required of every voice manifest, and forbidden
-   * off voice, where there is no call to hear. The host picks one of these per login.
+   * off voice, where there is no call to hear. The host picks one of these per session.
    */
   phones?: C extends "voice" ? Phone[] : never;
   /**
@@ -327,13 +327,13 @@ export interface SecretStore {
 }
 
 /**
- * A small store for one login's operational state -- what an adapter holds about open work that
+ * A small store for one session's operational state -- what an adapter holds about open work that
  * its platform cannot hold for it, such as the interaction legs a host reported. Kept by the host for
- * the life of the login, across a reload of the host, and cleared at sign-out. Never for anything
+ * the life of the session, across a reload of the host, and cleared at sign-out. Never for anything
  * sensitive: that is `SecretStore`, whose contract is that a host may clear it aggressively, and
  * clears it once the session has ended.
  */
-export interface LoginStore {
+export interface SessionStore {
   get(key: string): Promise<string | undefined>;
   set(key: string, value: string): Promise<void>;
   delete(key: string): Promise<void>;
@@ -341,8 +341,8 @@ export interface LoginStore {
 
 export interface AuthenticationContext {
   protocolVersion: number;
-  /** Omni's identity for this login. The same value arrives later as `ConnectContext.loginId`. */
-  loginId: string;
+  /** Omni's identity for this session. The same value arrives later as `ConnectContext.sessionId`. */
+  sessionId: string;
   /**
    * The zone the agent's day is reckoned in, as the host's clock has it, stated before any
    * identity exists so the first `authenticated` state already carries it. The same value arrives
@@ -357,7 +357,7 @@ export interface AuthenticationContext {
    */
   languages: readonly LanguageTag[];
   /**
-   * How this login hears its calls, chosen by the host from the manifest's `phones`. Required for
+   * How this session hears its calls, chosen by the host from the manifest's `phones`. Required for
    * a voice provider and absent for any other. The same value arrives later as `ConnectContext.phone`.
    */
   phone?: Phone;
@@ -394,12 +394,12 @@ export type ListeningMode = "listen" | "coach" | "join-call";
 export const LISTENING_MODES = ["listen", "coach", "join-call"] as const satisfies readonly ListeningMode[];
 
 /**
- * What this login may do, beyond any one task. It travels with the identity because it is part
- * of who the agent is on this provider: the provider knows the roles and says so at sign-in.
- * Current as of the latest `authenticated` state, never fixed for the login.
+ * What this user may do for the session, beyond any one task. It travels with the identity
+ * because it is part of who the agent is on this provider: the provider knows the roles and says
+ * so at sign-in. Current as of the latest `authenticated` state, never fixed for the session.
  */
 export interface UserCapabilities {
-  /** This login may request a break. Requires the four break methods. */
+  /** This session may request a break. Requires the four break methods. */
   breaks?: true;
   /**
    * The platform lines calls up for this agent: the agent may press Next call while on one to
@@ -410,7 +410,7 @@ export interface UserCapabilities {
   /** The choices the team left to this person, with where each stands. Omitted when there are none. Requires `setPreference`. */
   preferences?: AgentPreference[];
   /**
-   * This login leads a team, with the lead capabilities it holds for the whole session. Its
+   * This session leads a team, with the lead capabilities it holds for the whole session. Its
    * presence turns on the team feature in the agent application: the lead sees their members with
    * their tasks and stats, and acts on them through `executeTeam` with the commands its lead
    * capabilities allow, and no others. The provider assumes nothing of the switch: the
@@ -547,7 +547,7 @@ export const MUTED_BY = ["host", "station"] as const satisfies readonly MutedBy[
  * What pressing Mute does on this host. `stream`: the host stops the audio it sends, and the
  * microphone keeps capturing. `station`: the host mutes the microphone itself at the operating
  * system, which every application on the machine then shares. A browser can only do the first;
- * a native host says which it does. Stated by the host on a softphone login, never inferred
+ * a native host says which it does. Stated by the host on a softphone session, never inferred
  * from what kind of application it is.
  */
 export type HostMute = "stream" | "station";
@@ -681,14 +681,14 @@ export interface HostGuarantees {
   /**
    * The host's Mute is its own control on any call and is never offered while the task is
    * `paused`; a mute standing when a hold begins stands through it. Required of a softphone
-   * login's host and refused of any other, since a hardphone's mute is the handset's.
+   * session's host and refused of any other, since a hardphone's mute is the handset's.
    */
   muteUnavailableOnHold?: true;
 }
 
 export interface ProviderTimeScope {
   providerId: string;
-  loginId: string;
+  sessionId: string;
 }
 
 /** Best-effort host estimate, never a provider observation or accuracy guarantee. The provider may ignore it and timestamp receipt itself. */
@@ -705,7 +705,7 @@ export interface Host {
   /** Voice softphone recording support; policy and destination remain per task. */
   recording?: HostRecording;
   guarantees: HostGuarantees;
-  /** What pressing Mute does on this host. Stated on a softphone login, where the host holds the microphone; absent on a hardphone and off voice. */
+  /** What pressing Mute does on this host. Stated on a softphone session, where the host holds the microphone; absent on a hardphone and off voice. */
   mute?: HostMute;
   report(): HostReport;
   subscribe(listener: (report: HostReport) => void): Unsubscribe;
@@ -714,7 +714,7 @@ export interface Host {
 export type ConnectContext = {
   protocolVersion: number;
   /** The session that authenticated this connection. */
-  loginId: string;
+  sessionId: string;
   /** Omni-side policy: whether the agent's tasks are accepted without asking them. Stated, never assumed: a host says which. */
   autoAcceptTasks: boolean;
   /**
@@ -725,9 +725,9 @@ export type ConnectContext = {
   timeZone: TimeZone;
   /** The same value passed as `AuthenticationContext.languages`: what the agent reads, most preferred first. */
   languages: readonly LanguageTag[];
-  /** Where the adapter keeps this login's operational state across a reload of the host. */
-  store: LoginStore;
-  /** The same value passed as `AuthenticationContext.phone`: how this login hears its calls. Narrowed by the arms below. */
+  /** Where the adapter keeps this session's operational state across a reload of the host. */
+  store: SessionStore;
+  /** The same value passed as `AuthenticationContext.phone`: how this session hears its calls. Narrowed by the arms below. */
   phone?: Phone;
   /**
    * The host's report of the agent's station, to consult before declaring the agent ready to the
@@ -757,11 +757,11 @@ export type ConnectContext = {
 export type TransportStatus = "connecting" | "active" | "error";
 
 /**
- * What revives a connection that reported `error`: `reconnect` -- the login is good, dispose this
+ * What revives a connection that reported `error`: `reconnect` -- the session is good, dispose this
  * connection and call `connect()` again -- or `reauthenticate` -- run the authentication flow
  * first. The adapter knows which; the host acts on its word.
  */
-/** What revives an errored connection: `displaced` says another client took the login, and nothing revives this one until the agent takes it back. */
+/** What revives an errored connection: `displaced` says another client took the session, and nothing revives this one until the agent takes it back. */
 export type TransportRecovery = "reconnect" | "reauthenticate" | "displaced";
 
 // ---------------------------------------------------------------------------
@@ -1593,7 +1593,7 @@ export interface Shift {
 }
 
 /**
- * The lead's view of their team: published to a login that declares `capabilities.lead` while the
+ * The lead's view of their team: published to a user whose capabilities include `lead` while the
  * lead has the team feature on, and to nobody else. Whole on `team-updated` -- after the switch,
  * and on any snapshot -- and from then on one member at a time: `team-member-updated` carries the
  * member whole, so applying it twice changes nothing, and `team-member-removed` takes one off.
@@ -1772,7 +1772,7 @@ export type PreferenceResult =
 
 export interface Snapshot<C extends Channel = Channel> {
   transport: TransportStatus;
-  loginId: string;
+  sessionId: string;
   /**
    * The provider's own instant of this read, required of a provider that declares `timeCheck`:
    * every duration the agent computer renders off the active call is counted from the provider's clock, and
@@ -1878,8 +1878,8 @@ export type ProviderEvent<C extends Channel = Channel> =
  */
 export interface ProviderEventEnvelope<C extends Channel = Channel> {
   id: string;
-  /** The login this belongs to. */
-  loginId: string;
+  /** The session this belongs to. */
+  sessionId: string;
   occurredAt: IsoTimestamp;
   event: ProviderEvent<C>;
 }
@@ -1935,7 +1935,7 @@ export interface ProviderTimeCheckRequest {
 
 export interface ProviderTimeCheckResult {
   requestId: string;
-  loginId: string;
+  sessionId: string;
   /** Provider clock domain/incarnation; changes on clock discontinuity or authority replacement. */
   clockId: string;
   /** Provider-domain ISO instant sampled after this request arrived, before its response leaves. */
@@ -1961,7 +1961,7 @@ export interface Connection<C extends Channel = Channel> {
   dial?(request: DialRequest): Promise<DialResult>;
 
   /**
-   * The four break methods stand or fall together. Declaring `capabilities.breaks` at login and
+   * The four break methods stand or fall together. Declaring `capabilities.breaks` at sign-in and
    * implementing `requestBreak` without `commitBreak` leaves an agent granted a break that can
    * never start, and the two-phase coordination has no way to report it.
    */
@@ -1979,13 +1979,13 @@ export interface Connection<C extends Channel = Channel> {
   cancelNextCall?(): Promise<NextCallCancelResult>;
   releaseLinedUp?(): Promise<LinedUpReleaseResult>;
 
-  /** Required when the login declares `capabilities.lead`: every lead act, on the team surface and nowhere else. */
+  /** Required when the user's capabilities include `lead`: every lead act, on the team surface and nowhere else. */
   executeTeam?(request: TeamCommandRequest): Promise<TeamCommandResult>;
   /** Required of a voice adapter whose manifest lists `softphone`: on one, the call's audio lands in Omni. */
   openAudio?(request: OpenAudioRequest): Promise<OpenAudioResult>;
-  /** Required when the login declares `capabilities.preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
+  /** Required when the user's capabilities include `preferences`: the person's own choice, kept by the provider and republished as `authenticated`. */
   setPreference?(request: SetPreferenceRequest): Promise<PreferenceResult>;
-  /** Records an interaction leg the host performed. Required of a softphone login's connection: the host mutes its microphone on any call, and the record is the provider's. */
+  /** Records an interaction leg the host performed. Required of a softphone session's connection: the host mutes its microphone on any call, and the record is the provider's. */
   recordStep?(report: HistoryReport): Promise<HistoryReportResult>;
 }
 
@@ -2146,7 +2146,7 @@ export interface BrowserSessionKeyInput {
 }
 
 /**
- * Whether two logins declare the same capabilities, field by field. The comparison an adapter
+ * Whether two sessions declare the same capabilities, field by field. The comparison an adapter
  * makes before republishing `authenticated`: capabilities are current, not fixed, and the natural
  * guard -- comparing the identity -- never fires on a demotion, because the thing that changed is
  * not the thing being compared. Key order does not matter, and a withdrawn `lead` is a change.

@@ -200,7 +200,7 @@ describe("break prerequisites", () => {
       expect(found.length === 0, `${method} from ${status}`).toBe(allowed[method].includes(status));
     }
   });
-  it("validates the login against the manifest's levels, which the context carries", () => {
+  it("validates the session against the manifest's levels, which the context carries", () => {
     const decided = { ...context, authentication: { ...context.authentication, capabilities: { breaks: true, preferences: [{ id: "hold", label: "Hold", enabled: true, setBy: "team" }] } } };
     const rules = (found: readonly { rule: string }[]) => found.map(violation => violation.rule);
     expect(rules(validateBreakCommand("requestBreak", {}, state("not-requested"), decided))).toEqual([]);

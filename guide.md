@@ -41,8 +41,8 @@ are used precisely throughout and mean nothing looser here.
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
 | **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; the provider's contacts may include an agent, whom an add to the call then names by contact id. |
-| **Lead** | An agent whose session declares `capabilities.lead`, the lead capabilities it holds. Its presence lets the agent application offer the team feature; the application switches it on with `lead-features` on every connect, and only then does the provider publish the team -- whole on `team-updated`, then one member at a time -- to that login and to nobody else: **the login is the permission**. The lead sees their members with their tasks and stats, and acts on them with the lead capabilities the session holds. |
-| **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on login, and whether tasks are auto-accepted. Where a capability and local policy disagree, the stricter wins. |
+| **Lead** | An agent whose capabilities include `lead`, the lead capabilities they hold for the session. Its presence lets the agent application offer the team feature; the application switches it on with `lead-features` on every connect, and only then does the provider publish the team -- whole on `team-updated`, then one member at a time -- to that sign-in and to nobody else: **the session is the permission**. The lead sees their members with their tasks and stats, and acts on them with the lead capabilities the session holds. |
+| **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on session, and whether tasks are auto-accepted. Where a capability and local policy disagree, the stricter wins. |
 | **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. The protocol never describes the IVR or the queue; it carries the call's history and details to whichever agent holds it now. |
 | **Assignment** | The call routed to this agent, from the offer until the task ends. It is the one thing that crosses: the provider assigns, names the assignment with `assignmentId`, and that is the only name the agent computer ever uses back. A call that comes back is a new assignment on the same call, and a declined or lapsed offer is an assignment that became nothing more. What the platform calls its own record, and whether it reuses that name, is the adapter's business and unknown to the agent computer. |
 | **Interaction** | The agent's time on the call, from answer until their audio ends: the `in-progress` and `paused` phases. An assignment produces at most one interaction, and a call that returns produces a new assignment and so a new interaction. |
@@ -50,9 +50,9 @@ are used precisely throughout and mean nothing looser here.
 | **Channel** | The kind of work a provider carries: `voice`, `chat`, or `email`. Fixed per provider by its manifest. |
 | **Task type** | The provider's own name for a category of work — a queue, a mailbox folder, a chat source. Free-form, and finer-grained than a channel. |
 | **Capability** | A provider's declaration that a control exists for a task or a session. It says *offer this*; the provider performs it, and the agent application only offers it — see **Where a command executes** in `guide/agent.md`. |
-| **Login** | One authenticated sign-in to one provider, identified by `loginId`. A transport reconnect keeps it; signing in again replaces it, and nothing tied to the old `loginId` survives. |
-| **Transport** | The adapter's connection to its platform: a WebSocket or SignalR connection, required to be persistent and ordered. Which one and how it reconnects are the adapter's business; losing it does not end a login. |
-| **Connection** | The `Connection` object Omni holds for one login: the methods it can call and the events it receives. |
+| **Session** | One authenticated sign-in to one provider, identified by `sessionId`. A transport reconnect keeps it; signing in again replaces it, and nothing tied to the old `sessionId` survives. |
+| **Transport** | The adapter's connection to its platform: a WebSocket or SignalR connection, required to be persistent and ordered. Which one and how it reconnects are the adapter's business; losing it does not end a session. |
+| **Connection** | The `Connection` object Omni holds for one session: the methods it can call and the events it receives. |
 | **Concurrent capacity** | How many tasks this provider may have assigned to the agent at once — an absolute ceiling, stated as `AgentCapacity.count` and standing until Omni restates it. The provider counts its own outstanding tasks against it. |
 | **Snapshot** | The provider's complete state at one moment. It replaces what Omni holds; it is never a patch. |
 | **Event** | One completed transaction reported after a snapshot established the baseline. |
@@ -111,7 +111,7 @@ negotiateProtocolVersion([1], [2]);         // undefined — refuse to connect
 
 Omni negotiates the version before it creates an authentication session. The selected
 `protocolVersion` is included in both `AuthenticationContext` and `ConnectContext` and remains
-fixed for that login, including transport reconnects. An adapter that advertises several versions
+fixed for that sign-in, including transport reconnects. An adapter that advertises several versions
 must use this value to select the corresponding contract behavior.
 
 ## Semantic types
@@ -287,7 +287,7 @@ type SecretStore = {
 
 type AuthenticationContext = {
   protocolVersion: number;
-  loginId: string;
+  sessionId: string;
   timeZone: TimeZone;
   languages: readonly LanguageTag[];
   phone?: Phone;
@@ -411,7 +411,7 @@ type HostGuarantees = {
   muteUnavailableOnHold?: true;
 };
 
-type ProviderTimeScope = { providerId: string; loginId: string };
+type ProviderTimeScope = { providerId: string; sessionId: string };
 type ProviderTimeEstimate = ProviderTimeScope & {
   at: IsoTimestamp;
   clockId: string;
@@ -427,7 +427,7 @@ type Host = {
   subscribe(listener: (report: HostReport) => void): Unsubscribe;
 };
 
-type LoginStore = {
+type SessionStore = {
   get(key: string): Promise<string | undefined>;
   set(key: string, value: string): Promise<void>;
   delete(key: string): Promise<void>;
@@ -435,11 +435,11 @@ type LoginStore = {
 
 type ConnectContext = {
   protocolVersion: number;
-  loginId: string;
+  sessionId: string;
   autoAcceptTasks: boolean;
   timeZone: TimeZone;
   languages: readonly LanguageTag[];
-  store: LoginStore;
+  store: SessionStore;
   phone?: Phone;
   host: Host;
   signal?: AbortSignal;
@@ -538,7 +538,7 @@ type PreferenceResult =
 
 type Snapshot = {
   transport: TransportStatus;
-  loginId: string;
+  sessionId: string;
   providerTime?: IsoTimestamp;
   break: BreakState;
   tasks: Task[];
@@ -975,15 +975,15 @@ nothing else on that copy carries it, exactly as on the member's (`task.locked.l
 member's tasks with the same `lockedValues`). What the queue provides rather than permits — browsers, outcomes, custom
 controls — is content, and is never locked.
 
-**A lead sets the team's policy from their team member list.** A login that declares
-`capabilities.lead` may `executeTeam({ command: { type: "set-policy", capability, setting } })`, where the provider offers policy control and says so by publishing `policies`,
+**A lead sets the team's policy from their team member list.** A user whose
+capabilities include `lead` may `executeTeam({ command: { type: "set-policy", capability, setting } })`, where the provider offers policy control and says so by publishing `policies`,
 with `on`, `off`, or `person`, for any task control, `dial`, or a skill — and only `hold`
 and skills may be `person`; connect back and dial are the team's, on or off, within what the queue
-allows. The team member list carries `policies` for such a login: every policy as it stands, who set it, and
+allows. The team member list carries `policies` for such a session: every policy as it stands, who set it, and
 `lockedBy` where a level above the team made it theirs to keep, which the lead sees and cannot
 change — `set-policy` on it answers `failed` with `omni.capability-not-enabled`.
 
-**What the team left to the person is the person's, and the provider keeps it.** The login's
+**What the team left to the person is the person's, and the provider keeps it.** The session's
 `capabilities.preferences` lists every preference the person may hold — `hold`, a skill —
 with where it stands and who set it: `setBy: "team"` while they inherit the team's default,
 `"person"` once they have set their own, `"provider"` where no level has said anything. Nothing
@@ -1261,7 +1261,7 @@ type ProviderEvent =
 
 type ProviderEventEnvelope = {
   id: string;
-  loginId: string;
+  sessionId: string;
   occurredAt: IsoTimestamp;
   event: ProviderEvent;
 };
@@ -1289,7 +1289,7 @@ type ProviderTimeCheckPolicy = {
 type ProviderTimeCheckRequest = { requestId: string };
 type ProviderTimeCheckResult = {
   requestId: string;
-  loginId: string;
+  sessionId: string;
   clockId: string;
   providerTime: IsoTimestamp;
 };
@@ -1620,7 +1620,7 @@ Snapshots establish and replace provider state when an agent signs in, reconnect
 **A snapshot is the provider's answer, and an adapter that got no answer publishes nothing.** A
 state read that answers unknown — a session not yet associated, a backend mid-failover — is not an
 empty state: the adapter keeps what it holds, stays `connecting`, and publishes a snapshot only
-once the provider has actually answered for this login, exactly as `connect()` may not resolve
+once the provider has actually answered for this session, exactly as `connect()` may not resolve
 before it can provide a meaningful one. And emptiness is stated, never inferred: every snapshot
 carries `taskCount`, the provider's own count reconciled against `tasks.length`, so a snapshot
 with no work says `taskCount: 0` in so many words and a blank or half-built state — which lacks
@@ -1725,22 +1725,22 @@ connection is up nothing has been lost, and when it comes back the adapter sends
 
 Request/response polling does not have those properties and is not a transport for this contract.
 
-### 3. An adapter's memory is the platform's and the login's, never the connection's
+### 3. An adapter's memory is the platform's and the session's, never the connection's
 
 Everything an adapter publishes about a task is derived from what the platform states, or kept in
-the login's store where the platform cannot hold it. Per offer, the `assignmentId` comes from what
+the session's store where the platform cannot hold it. Per offer, the `assignmentId` comes from what
 the offer itself states; per call, the audio follows `task-audio-started` and `task-audio-ended`,
 never a flag set when the audio was opened; per session, the phone the agent holds is what the
 platform restates on activation, not a mapping read once over HTTP. What the platform cannot hold
 -- an agent application's muted leg -- goes in `ConnectContext.store`, keyed by the task and gone with it.
 
 A fact read once over a connection and kept in the adapter object dies with the client. An agent application
-reload is the first client dying and a second coming up for the same login, and the second
+reload is the first client dying and a second coming up for the same session, and the second
 publishes the same truth about the same task as the first did, or the first was publishing
 something it made up: an assignment minted for the connection, audio remembered as a boolean, a
 phone the second never read. Three pieces of exactly that state were found in one adapter in an
 afternoon, and none of it was visible until the adapter was built twice. The test's `rebuild` is the test of this
-principle: given a way to build the adapter again, the run hands the login over and holds the
+principle: given a way to build the adapter again, the run hands the session over and holds the
 second to what the first published (`test.reload.snapshot`, `.history`, `.openAudio`, and the
 stream's own rules across the resync). An adapter that cannot be built twice against its platform
 and publish the same task is not a conformant adapter yet, whatever a single run says.
@@ -1804,10 +1804,10 @@ compile time.
 | `displayName` | Human-readable provider label. |
 | `channel` | Protocol-v1 value `voice`, `chat`, or `email`. New channels require a later protocol version. |
 | `supportedProtocolVersions` | Required non-empty list of versions this adapter can speak. Must share at least one with Omni. |
-| `authenticationMethods` | Required non-empty list of supported login methods. |
+| `authenticationMethods` | Required non-empty list of supported sign-in methods. |
 | `idleCapabilities` | Declares actions Omni may offer while the agent has no active task, such as voice dialing. Task controls do not belong here. |
 | `orgLevels` | The organisation's whole ladder as the provider calls it, each level with the label an agent computer shows for "who decided", one text per language as `{ en: "Your region", hi: "आपका क्षेत्र" }`, from which the agent application picks with `localizedText()` (`manifest.orgLevel.label`, `.language`, `.text`). Required of every provider (`manifest.orgLevels.required`), stated outright, `person` included: what it leaves out does not exist. There is no default ladder. See **Who decides what an agent may do**. |
-| `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `hardphone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per login. See **How the agent hears the call** in `guide/phone.md`. |
+| `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `hardphone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per session. See **How the agent hears the call** in `guide/phone.md`. |
 | `phoneStatus` | Voice only, declared by presence as `true`: the platform sees the phone itself -- its registration, its do-not-disturb, its hook, its calls -- and publishes it as `Snapshot.phone` and `phone-updated`. A platform that cannot see the phone omits it, and then publishes no phone (`manifest.phoneStatus`). See **The phone's own view** in `guide/phone.md`. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that add to the call or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome** in `guide/voice.md`. |
 | `timeCheck` | `true`: implements `checkTime` and states `providerTime` on every snapshot. Required of a provider that publishes an instant the agent computer renders as a running duration -- a member's `since`, a `listening[].since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts from the provider's clock (`manifest.timeCheck.required`); agent application polling is independently opt-in. See **Every screen counts from the provider's clock**. |
@@ -1817,7 +1817,7 @@ compile time.
 
 ### Authentication methods
 
-A provider declares one or both protocol-v1 login methods:
+A provider declares one or both protocol-v1 sign-in methods:
 
 | Value | Contract |
 | --- | --- |
@@ -1831,7 +1831,7 @@ authenticationMethods: [
 ]
 ```
 
-The list must not be empty or contain duplicates. It declares available login methods only;
+The list must not be empty or contain duplicates. It declares available sign-in methods only;
 credentials and tokens never belong in the manifest.
 
 `manifest.id` partitions the `SecretStore`, so an id is first-claimed: an adapter whose id another
@@ -2069,11 +2069,11 @@ Creates the provider-scoped authentication session.
 
 | `AuthenticationContext` field | Contract |
 | --- | --- |
-| `protocolVersion` | The negotiated version, fixed for this login. |
-| `loginId` | Omni-generated identity for this login. The same value Omni later passes as `ConnectContext.loginId`, and how an adapter ties a connection back to the session that authenticated it. |
+| `protocolVersion` | The negotiated version, fixed for this session. |
+| `sessionId` | Omni-generated identity for this session. The same value Omni later passes as `ConnectContext.sessionId`, and how an adapter ties a connection back to the session that authenticated it. |
 | `timeZone` | The zone the agent's day is reckoned in, as an IANA name from the agent application's clock, stated before any identity exists so the first `authenticated` state already carries it. The same value Omni later passes as `ConnectContext.timeZone`. See **The agent's day**. |
 | `languages` | The languages the agent reads, as BCP 47 tags, most preferred first, from the agent application's own setting: `["hi-IN", "en"]`. Never empty (`context.languages`), each a well-formed tag (`context.languages.tag`), none twice (`context.languages.unique`). The same value Omni later passes as `ConnectContext.languages`. See **The agent's languages**. |
-| `phone` | How this login hears its calls, chosen by the agent application from the manifest's `phones`: required for a voice provider, absent for any other. The same value Omni later passes as `ConnectContext.phone`. See **How the agent hears the call** in `guide/phone.md`. |
+| `phone` | How this session hears its calls, chosen by the agent application from the manifest's `phones`: required for a voice provider, absent for any other. The same value Omni later passes as `ConnectContext.phone`. See **How the agent hears the call** in `guide/phone.md`. |
 | `secrets` | Omni-provided `SecretStore`, scoped to this provider's manifest id. |
 | `signal` | Optional cancellation signal. |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -2094,40 +2094,40 @@ reports later changes.
 | --- | --- |
 | `signed-out` | No usable provider session exists, because the agent signed out on this agent computer, or never signed in. Only the agent's own Sign out here leads to it. |
 | `authenticating` | An interactive `browser-sso` or `credentials` flow is active. |
-| `authenticated` | A usable session exists. Includes the provider identity, the login's `capabilities`, and optional token expiry time. |
+| `authenticated` | A usable session exists. Includes the provider identity, the user's `capabilities` for the session, and optional token expiry time. |
 | `refreshing` | The adapter is refreshing its session. Existing provider identity and capabilities remain available, unchanged: a change to either is published as `authenticated`. |
-| `expired` | The session's time ran out, or its refresh is failing. It may include an identity and typed failure. The agent signs in again on the same login, and the workspace stays. |
+| `expired` | The session's time ran out, or its refresh is failing. It may include an identity and typed failure. The agent signs in again on the same session, and the workspace stays. |
 | `terminated` | The session was ended from outside this agent computer: by a supervisor, by the agent on another screen, or by the platform itself. `by` says who, a person by `UserId` or `provider` where no person was behind it (`authentication.terminated.by`), and `failure` says why and is never retryable (`authentication.terminated.failure`, `.retryable`). It is never reported as `expired`, which would hide who ended it, nor as `signed-out`, which is the agent's own act. The session's ending is the whole message: the agent application disposes the connection with `disconnect()` and shows `failure.message` on the sign-in, and the adapter reports no transport `error` beside it -- `reauthenticate` would say this session is restored, and it is not. |
 
 Omni calls `connect()` only after authentication reaches `authenticated`. Token refresh remains
 adapter-owned; the adapter publishes `refreshing`, followed by `authenticated` or `expired`.
 `refreshing` asks nothing of the agent and Omni shows nothing for it. If authentication expires
 during active work, Omni preserves the task workspace and shows reauthentication for that
-provider: the transport is still up and the tasks still on it, so this is a login problem with a
-login fix, rendered apart from a provider Omni cannot reach. Commands meanwhile answer
+provider: the transport is still up and the tasks still on it, so this is a session problem with a
+session fix, rendered apart from a provider Omni cannot reach. Commands meanwhile answer
 `omni.not-authenticated`.
 
-**Re-authentication restores the login; it does not replace it.** It runs on the session Omni
-kept, under the same `loginId` — the old `flowId` died with the expiry, so the adapter issues a
+**Re-authentication restores the session; it does not replace it.** It runs on the session Omni
+kept, under the same `sessionId` — the old `flowId` died with the expiry, so the adapter issues a
 new challenge — and when the state returns to `authenticated` the connection and everything on it
 carry on: Omni does not call `connect()` again, since a second connection would be a second
 session for one agent. The exception is a transport that reported `error` with `recovery:
-"reauthenticate"`: that connection is finished, and once the login is restored Omni disposes it and
+"reauthenticate"`: that connection is finished, and once the session is restored Omni disposes it and
 calls `connect()` afresh, as for `reconnect` -- see **`transport-status`**. What "signing in again
-replaces the login" describes is a new `AuthenticationSession` under a new `loginId`, after
+replaces the session" describes is a new `AuthenticationSession` under a new `sessionId`, after
 `signed-out`.
 
 **A sign-in the platform no longer allows is ended, not restored.** A role changed mid-shift can
-take away what the login was built on -- an agent made a supervisor may no longer have a phone, and
+take away what the session was built on -- an agent made a supervisor may no longer have a phone, and
 the platform refuses to renew the softphone. Retrying cannot help and the same session cannot carry
 on, so the adapter deletes the secrets and publishes `terminated`, `by: "provider"`, with a failure
 in the agent's words: `{ code: "phone-not-allowed", message: "Your sign-in no longer allows a phone.
 Sign in again.", retryable: false }`. The agent application disposes the connection and shows that
 message on the sign-in.
 
-### What the login may do
+### What the user may do
 
-`capabilities` declares provider actions available to this login rather than to one task: whether
+`capabilities` declares provider actions available to this user for the session rather than to one task: whether
 the agent may ask for a break, and whether they lead a team. It is declared by presence, like every
 capability in this contract, and it travels with the identity because it is part of who the agent
 is on this provider: the provider knows the roles, and says so at sign-in rather than leaving Omni
@@ -2135,14 +2135,14 @@ to infer them from what arrives later.
 
 | Field | Contract |
 | --- | --- |
-| `breaks` | This login may request a break. Requires the four break methods on the connection. |
+| `breaks` | This session may request a break. Requires the four break methods on the connection. |
 | `nextCall` | The platform lines calls up for this agent: pressing Next call while on a call puts the next queued call in the agent's own queue, to start when their wrap ends unless somebody else takes it first. Requires `requestNextCall`, `cancelNextCall` and `releaseLinedUp` on the connection. See **The agent's own queue** in `guide/queue.md`. |
-| `lead` | This login leads a team, with the `LeadCapabilities` it holds for the whole session: one key per lead command it allows -- `join`, `decline`, `listen`, `coach`, `joinCall`, `takeOverCall`, `decideBreakRequest`, `setBreakPolicy`, `forceBreak`, `endForcedBreak`, `setPolicy` -- each by presence, at least one (`authentication.capability.lead.*`). Switching the team feature and leaving a call are every lead's and are not listed. Its presence turns on the team feature in the agent application, which offers only the lead commands the lead holds; any other is refused before it is sent (`team.command.notGranted`). A team lead may hold listen, coach and break decisions, a floor manager all of them. While the lead has the feature on, the provider publishes a `TeamMembers` object to them on every snapshot — `members: []` when nobody is in it — and to nobody else. Requires `executeTeam`. See **Team leads** in `guide/lead.md`. |
+| `lead` | This session leads a team, with the `LeadCapabilities` it holds for the whole session: one key per lead command it allows -- `join`, `decline`, `listen`, `coach`, `joinCall`, `takeOverCall`, `decideBreakRequest`, `setBreakPolicy`, `forceBreak`, `endForcedBreak`, `setPolicy` -- each by presence, at least one (`authentication.capability.lead.*`). Switching the team feature and leaving a call are every lead's and are not listed. Its presence turns on the team feature in the agent application, which offers only the lead commands the lead holds; any other is refused before it is sent (`team.command.notGranted`). A team lead may hold listen, coach and break decisions, a floor manager all of them. While the lead has the feature on, the provider publishes a `TeamMembers` object to them on every snapshot — `members: []` when nobody is in it — and to nobody else. Requires `executeTeam`. See **Team leads** in `guide/lead.md`. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
 A session action is available only when both the capability and Omni local policy permit it.
 
-**Capabilities are current, not fixed.** They describe the login as of its latest `authenticated`
+**Capabilities are current, not fixed.** They describe the session as of its latest `authenticated`
 state. A provider that reads roles live — a lead demoted mid-shift — republishes `authenticated`
 with the new set through `subscribe()` on the authentication session, which Omni keeps open for
 the life of the connection for exactly this reason, and the next snapshot agrees with it. Omni
@@ -2256,7 +2256,7 @@ is identified from the same directory and carries the same `UserId` type.
 
 | Field | Contract |
 | --- | --- |
-| `id` | Required `UserId`. Unique within this provider and stable across logins: it is what Omni scopes and stores, so a value that changes between sessions breaks every reference to this person. |
+| `id` | Required `UserId`. Unique within this provider and stable across sessions: it is what Omni scopes and stores, so a value that changes between sessions breaks every reference to this person. |
 | `displayName` | Required agent-facing name. Presentation only — never an identifier, never compared. |
 
 `AuthenticationFailure` contains a stable `code`, safe agent-facing `message`, `retryable` flag,
@@ -2311,7 +2311,7 @@ by any script running on its page, so a browser agent application is only as saf
 
 Adapters may store refresh tokens or equivalent session material, but never raw submitted
 credentials, and they put a secret nowhere but the `SecretStore`: never in manifests, logs,
-events, snapshots, task attributes, errors, the login's `store`, or browser storage of their own.
+events, snapshots, task attributes, errors, the session's `store`, or browser storage of their own.
 
 ## Connecting to a provider
 
@@ -2323,17 +2323,17 @@ Creates one live provider connection for the signed-in agent.
 - Must resolve only when the connection can provide a meaningful snapshot.
 - May reject for authentication, configuration, or startup failure.
 - Must not create a second agent session merely because the underlying transport reconnects.
-- **One client at a time per login, and the later one wins.** A second `connect()` on a login
+- **One client at a time per session, and the later one wins.** A second `connect()` on a session
   that already has a live client is the agent moving agent computers -- an agent computer left open at work, signed in
   from home. The provider takes the new connection, and ends the first with `transport-status`
   `error` and `recovery: "displaced"`, so the first agent computer stops stating capacity and reporting legs
-  and shows the agent they are signed in elsewhere. Two live clients on one login would be two
+  and shows the agent they are signed in elsewhere. Two live clients on one session would be two
   sources for one agent, and the lead's list would follow whichever spoke last.
 - The returned connection owns reconnect until Omni calls `disconnect()` or aborts `context.signal`.
-- May be called again on the same login after that: once per `Connection`, not once per login.
+- May be called again on the same session after that: once per `Connection`, not once per session.
   Omni disposes a connection whose `error` named `recovery: "reconnect"` with `disconnect()` and
   calls `connect()` afresh — see **`transport-status`**. `recovery: "reauthenticate"` ends the same
-  way, after the authentication flow has run on the same session and `loginId`: once the state
+  way, after the authentication flow has run on the same session and `sessionId`: once the state
   returns to `authenticated`, Omni disposes the errored connection and calls `connect()` afresh.
   `expired` alone, with the transport not in `error`, keeps the connection.
 
@@ -2341,13 +2341,13 @@ Creates one live provider connection for the signed-in agent.
 
 | Field | Contract |
 | --- | --- |
-| `protocolVersion` | Version negotiated before authentication. Fixed for this login. |
-| `loginId` | Omni-generated identity for this login. It is the same value passed as `AuthenticationContext.loginId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new login. |
-| `autoAcceptTasks` | Agent local policy policy relayed to the provider at login, stated by the agent application on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
+| `protocolVersion` | Version negotiated before authentication. Fixed for this session. |
+| `sessionId` | Omni-generated identity for this session. It is the same value passed as `AuthenticationContext.sessionId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new session. |
+| `autoAcceptTasks` | Agent local policy policy relayed to the provider at sign-in, stated by the agent application on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
 | `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
 | `languages` | The same value passed as `AuthenticationContext.languages`. See **The agent's languages**. |
-| `phone` | The same value passed as `AuthenticationContext.phone`: how this login hears its calls. The type ties `host.mute` to it: a `softphone` login's agent application states what its Mute does, and a hardphone or conversation login's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's** in `guide/phone.md`. |
-| `store` | The login's operational store, kept by the agent application for the life of the login, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A login-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`test.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`test.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.assignment-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one login-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a login-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
+| `phone` | The same value passed as `AuthenticationContext.phone`: how this session hears its calls. The type ties `host.mute` to it: a `softphone` session's agent application states what its Mute does, and a hardphone or conversation session's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's** in `guide/phone.md`. |
+| `store` | The session's operational store, kept by the agent application for the life of the session, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A session-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`test.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`test.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.assignment-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one session-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a session-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
 | `host` | The agent application's report of the agent's station — devices, permissions, network — to consult before declaring the agent ready to the platform, and on every change. See **The agent application reports, the adapter decides** in `guide/phone.md`. |
 | `signal` | Optional cancellation signal: the agent application giving up on this sign-in. When it is aborted, stop startup promptly, begin no new work, and reject `connect()` with `signal.reason`, as the web platform's own fetch does. The harness hands `connect()` a signal already aborted and names a connection made anyway (`connect.signal.aborted`) or a failure with anything but `signal.reason` (`connect.signal.reason`). |
 | `log` | Optional structured logging callback. Never include credentials, tokens, or sensitive contact data. |
@@ -2407,14 +2407,14 @@ because Omni renders that form itself. That is a local convenience and never rea
 
 ### `Snapshot`
 
-What the login may do is declared on its `AuthenticationState` — see **What the login may do** —
+What the user may do is declared on the `AuthenticationState` — see **What the user may do** —
 not here. The snapshot carries what the provider holds for the agent now, and where that depends on
-a capability it agrees with the login: a lead's snapshot carries `team`, nobody else's does.
+a capability it agrees with the user's capabilities: a lead's snapshot carries `team`, nobody else's does.
 
 | Field | Contract |
 | --- | --- |
-| `transport` | Current `TransportStatus` — whether this provider's transport can serve the login. Defined under **`transport-status`**. |
-| `loginId` | Identity of this login. It must match the connection context. |
+| `transport` | Current `TransportStatus` — whether this provider's transport can serve the session. Defined under **`transport-status`**. |
+| `sessionId` | Identity of this session. It must match the connection context. |
 | `providerTime` | The provider's own instant of this read. Required of a provider that declares `timeCheck` (`snapshot.providerTime`), forbidden of one that does not (`snapshot.providerTime.unexpected`): a clock sample the agent computer counts durations from, saving it a `checkTime`. |
 | `break` | Complete break state, including status, whether the agent may ask, reasons, retry details, and any forced break. |
 | `tasks` | Complete set of tasks currently offered to or owned by this agent. |
@@ -2426,7 +2426,7 @@ a capability it agrees with the login: a lead's snapshot carries `team`, nobody 
 | `linedUp` | The call waiting in the agent's own queue, while one is: the caller as shown to this audience, the queue, the caller's wait, when it was lined up, and `release` where the provider lets the agent let it go. Not a task yet. Replaced whole by `lined-up`. See **The agent's own queue** in `guide/queue.md`. |
 | `labels` | The signed-in customer's own words for phases, history steps and kinds of work, per language, as its admin set them in the provider. Replaced whole by `labels-updated`. Omitted where the customer set none. See **Presentation labels**. |
 | `shift` | The agent's own day so far, as the provider counts it -- the same `Shift` their lead sees on the team member list, the same numbers from the same count. Replaced whole by `shift-updated`. Omitted only where the provider cannot say. See **The agent's day is on the wire**. |
-| `team` | Required `TeamMembers` when the login declares `capabilities.lead` and the lead has the team feature on, `members: []` when nobody is in it. Forbidden otherwise — the login is the permission, and a lead who turned the feature off gets nothing of the team. |
+| `team` | Required `TeamMembers` when the user's capabilities include `lead` and the lead has the team feature on, `members: []` when nobody is in it. Forbidden otherwise — the user's capabilities are the permission, and a lead who turned the feature off gets nothing of the team. |
 
 ## Live connection
 
@@ -2445,17 +2445,17 @@ surface in one place, and what obliges an adapter to implement each one.
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability** in `guide/agent.md`. |
 | `getUserDetails(ids)` | The adapter publishes any `UserId`: on `ForcedBreak.by` where a person forced it, a team member list, or `history[].by`. Each `User` carries its `timeZone`; a person whose zone the provider cannot name is omitted from the answer, as any unresolvable id is. |
 | `dial(request)` | The manifest declares `idleCapabilities.dial`, and with it `dialOutcomes`. |
-| `requestBreak(request)` | The login declares `capabilities.breaks`. |
-| `commitBreak()` | The login declares `capabilities.breaks`. Commit and cancel are not optional halves of it. |
-| `cancelBreak()` | The login declares `capabilities.breaks`. |
-| `endBreak()` | The login declares `capabilities.breaks`. |
-| `requestNextCall()`, `cancelNextCall()`, `releaseLinedUp()` | The login declares `capabilities.nextCall`. The three stand together: a lined-up call the agent could neither withdraw nor let go is a promise with no way out. See **The agent's own queue** in `guide/queue.md`. |
-| `executeTeam(request)` | The login declares `capabilities.lead`: every lead act, on the team surface and nowhere else. See **Lead commands** in `guide/lead.md`. |
-| `setPreference(request)` | The login declares `capabilities.preferences`: the person's choice has to have somewhere to go. |
+| `requestBreak(request)` | The user's capabilities include `breaks`. |
+| `commitBreak()` | The user's capabilities include `breaks`. Commit and cancel are not optional halves of it. |
+| `cancelBreak()` | The user's capabilities include `breaks`. |
+| `endBreak()` | The user's capabilities include `breaks`. |
+| `requestNextCall()`, `cancelNextCall()`, `releaseLinedUp()` | The user's capabilities include `nextCall`. The three stand together: a lined-up call the agent could neither withdraw nor let go is a promise with no way out. See **The agent's own queue** in `guide/queue.md`. |
+| `executeTeam(request)` | The user's capabilities include `lead`: the lead commands its lead capabilities allow, on the team surface and nowhere else. See **Lead commands** in `guide/lead.md`. |
+| `setPreference(request)` | The user's capabilities include `preferences`: the person's choice has to have somewhere to go. |
 | `recordStep(report)` | The manifest lists `softphone` among its `phones`. On a softphone the agent application mutes its own microphone on any call, and the provider's record has to have somewhere to take that leg; a hardphone's microphone is the phone's. See **The agent application records what it performs** in `guide/agent.md`. |
 | `openAudio(request)` | The manifest lists `softphone` among its `phones`. On a softphone the call's audio lands in Omni, so the adapter has to open it; a platform of hardphones alone never does. |
 
-**The four break methods stand or fall together.** Declaring `capabilities.breaks` at login and then
+**The four break methods stand or fall together.** Declaring `capabilities.breaks` at sign-in and then
 implementing `requestBreak` without `commitBreak` leaves an agent granted a break that can never
 start, and the two-phase coordination in **Coordinating a multi-provider break** in `guide/breaks.md` has no way to
 report that: `granted` is a promise to honour a later commit.
@@ -2510,7 +2510,7 @@ that reads as a database key.
 - **Take the whole list in one call.** Omni resolves a team member list or an interaction history as a batch, and
   a per-id round trip multiplies that by its length.
 - **Omni caches a result for one hour, then resolves it again.** The identifier is stable across
-  logins but the name behind it is not, so the cache expires on a clock rather than living for the
+  sessions but the name behind it is not, so the cache expires on a clock rather than living for the
   session. One hour is a starting figure and may be tuned; an adapter must not depend on any
   particular value, or on Omni asking again at any particular moment.
 
@@ -2533,8 +2533,8 @@ Stops the connection and releases adapter-owned resources.
 
 | Field | Contract |
 | --- | --- |
-| `id` | Required identifier for this event, unique within the login. Omni does not act on it; it exists so an agent application log line and an adapter log line can be matched when something has to be traced. |
-| `loginId` | Login session that produced the event. Omni rejects any other value, which only reaches it if an adapter kept an old connection emitting after a re-login. |
+| `id` | Required identifier for this event, unique within the session. Omni does not act on it; it exists so an agent application log line and an adapter log line can be matched when something has to be traced. |
+| `sessionId` | The session that produced the event. Omni rejects any other value, which only reaches it if an adapter kept an old connection emitting after signing in again. |
 | `occurredAt` | Valid RFC-3339 timestamp with an explicit timezone, representing provider observation time. |
 | `event` | Typed `ProviderEvent` payload. |
 
@@ -2623,13 +2623,13 @@ While the connection is active, the agent application checks immediately on opt-
 using a monotonic scheduler. Only one check may be outstanding. Missed ticks are skipped, never
 replayed in a burst. Each request has a fresh ID. The provider samples its own event/deadline
 clock after receiving the request and before returning `providerTime` as an ISO/RFC3339 instant,
-with the request ID, authenticated login ID and `clockId`. No cached sample or adapter-local time
+with the request ID, authenticated session ID and `clockId`. No cached sample or adapter-local time
 may masquerade as provider time. A provider unable to sample that domain must not declare support.
 Clock authority replacement or a discontinuity changes `clockId`.
 
 Validate requests and responses with `validateProviderTimeCheckRequest` and
 `validateProviderTimeCheckResult`. The agent application also checks the outstanding request, provider/connection
-and login, monotonic elapsed time and cancellation after the await: a late successful response is
+and session, monotonic elapsed time and cancellation after the await: a late successful response is
 still rejected. Reject samples at or beyond `timeoutMs`, or above `maxRoundTripMs`. Cancel local
 tracking and invalidate estimates on disconnect, logout, policy disable, clock change or clock
 jump; late results cannot restore them. Resume with a fresh check after reconnection. Expire a
@@ -2639,7 +2639,7 @@ Checking failure alone does not assert call/recording state or require a healthy
 This read-only check is not a task command. Protocol supplies declarations and validators; the
 agent application implements the scheduler and the provider implements the clock read.
 
-The agent application may also expose `Host.estimateProviderTime({ providerId, loginId })`. It returns an ISO
+The agent application may also expose `Host.estimateProviderTime({ providerId, sessionId })`. It returns an ISO
 `at` in that provider's clock domain, the same explicit scope and `clockId`, or `undefined` when
 unavailable. Optional `uncertaintyMs` is an estimate, not a guaranteed bound. The method is optional
 at the agent application level and is deliberately absent from `HostGuarantees`. A provider declaring time
@@ -2684,7 +2684,7 @@ Loss has exactly one shape: the connection went away. The adapter reports `conne
 reconnects, and emits a `snapshot` event carrying complete state. That snapshot is the repair —
 whatever was missed while the connection was down is in it, and Omni replaces its provider view
 rather than reasoning about what it did not receive. A repair is an answer like any other: a
-platform that has not yet answered for this login after a reconnect — a state read served empty by
+platform that has not yet answered for this session after a reconnect — a state read served empty by
 a backend that does not know the session yet — yields no snapshot, and the adapter stays
 `connecting` holding what it holds. See **Snapshots establish state; events report transactions**.
 
@@ -2719,7 +2719,7 @@ direction — the provider asking Omni to reconcile — and neither replaces the
 Carries a complete `Snapshot` after reconnect or when the provider explicitly requests
 reconciliation. `reason` is `reconnected` or `provider-requested`. Omni replaces the provider's
 current status, break state, tasks, contacts, scheduled activities, the agent's day and the team
-member list with this snapshot. It carries what the login and its switches call for — the whole
+member list with this snapshot. It carries what the session and its switches call for — the whole
 team for a lead with the feature on, on every snapshot — and nothing they do not; a capability is withdrawn by a republished `authenticated`,
 never by an omission from a snapshot.
 
@@ -2735,27 +2735,27 @@ safe for the agent to see.
 | `error` | The adapter cannot serve the session and is not simply mid-reconnect. Say why in `message` (`event.transportStatus.message.required`), and say what revives it in `recovery` — both required here, and `recovery` forbidden on any other status. It is not terminal: an adapter that recovers on its own still reports `connecting` and then `active`, and one that cannot is revived as `recovery` says. |
 
 **An error names its recovery, and the agent application acts on that word.** The adapter knows why its session
-died; the agent application knows how to run a login. `recovery` joins the two:
+died; the agent application knows how to run a sign-in. `recovery` joins the two:
 
-- **`reconnect`** — the login is good and this connection is not: a backend restart, a session the
+- **`reconnect`** — the session is good and this connection is not: a backend restart, a session the
   platform no longer recognises. Omni calls `disconnect()` on the dead connection and then
-  `connect()` again on the same login — same `loginId` — and the fresh connect snapshot
+  `connect()` again on the same session — same `sessionId` — and the fresh connect snapshot
   re-establishes state exactly as a reconnect snapshot does. `connect()` is once per
-  `Connection`, not once per login.
-- **`reauthenticate`** — the session under the login lapsed and the same login can be restored: a
+  `Connection`, not once per session.
+- **`reauthenticate`** — the provider's authorization lapsed and the same session can be restored: a
   token rejected, published as `expired`. A session ended from outside -- a remote logout, a
   permission withdrawn -- is `terminated`, which is the whole message and gets no transport `error`
   beside it (see **Authentication state**). Omni
-  runs the authentication flow first, on the same session and `loginId`, never through
+  runs the authentication flow first, on the same session and `sessionId`, never through
   `signed-out`; the authentication session decides whether stored material refreshes it silently or
   the agent must act, exactly as at sign-in. Once the state returns to `authenticated`, Omni
   disposes the errored connection with `disconnect()` and calls `connect()` afresh, as for
   `reconnect`, and the fresh snapshot re-establishes state. The adapter tears nothing down itself
   and expects nothing to carry on: the connection that reported `error` is finished.
-- **`displaced`** — another client connected on this login and took it: the agent moved agent computers.
+- **`displaced`** — another client connected on this session and took it: the agent moved agent computers.
   Nothing revives this connection on its own -- Omni does not reconnect, or it would take the
-  login straight back from the agent computer the agent just sat down at -- and the agent computer shows the agent
-  they are signed in elsewhere, with a way to take the login back, which is a `connect()` that
+  session straight back from the agent computer the agent just sat down at -- and the agent computer shows the agent
+  they are signed in elsewhere, with a way to take the session back, which is a `connect()` that
   displaces the other. See **`Adapter.connect(context)`**.
 
 **Before the connection exists.** A provider can hold a sign-in back before any connection
@@ -2780,7 +2780,7 @@ for the other to blink.
 whether they are on a break, or how much work they can take: capacity travels on `setCapacity`,
 availability on `BreakState`. Nor does it carry authentication — a session that expired reports
 `expired` on `AuthenticationState` and fails actions with `omni.not-authenticated`, while
-the transport underneath may be perfectly `active`. Provider login identity likewise belongs to
+the transport underneath may be perfectly `active`. Provider sign-in identity likewise belongs to
 authentication state, not here.
 
 **Only `active` means work can arrive.** Omni stops expecting assignments in any other value, so an
@@ -2816,13 +2816,13 @@ Adapters and hosts can call `validateBreakTransition(before, after)` from the pa
 with two complete break objects before applying an event. It checks shape and the transition
 rules above; it does not mutate either state or apply the event. Report a violation visibly,
 retain the last accepted state without claiming it remains current, and reconcile from the
-source. Continue to validate the full envelope/login and task/break consistency separately.
+source. Continue to validate the full envelope/session and task/break consistency separately.
 The conformance `BreakStream` validates its baseline, retains the last accepted state on a
 rejected delta, and sets `needsRecovery`. Transport loss also requires reseeding; an `active` transport
 notification alone does not restore a break baseline. Until a fresh validated snapshot is seeded, further
 break deltas are refused (`stream.breakState.baseline`); the first delta is never an implicit
 snapshot. `seed(snapshot)` returns violations, which callers must check. This is a conformance
-tracker, not a complete production reducer: snapshot freshness, login/connection fencing and
+tracker, not a complete production reducer: snapshot freshness, session/connection fencing and
 full task consistency remain separately required.
 
 **Both sides must enforce the order.** The agent application validates immediately before dispatch; the
@@ -2992,7 +2992,7 @@ each connected provider.
 The whole `TeamMembers`, replacing what the lead had. It is emitted once, after the lead switches
 the team feature on, and to nobody the provider does not publish a team to; every snapshot while
 the feature is on carries the same whole team. The changes that follow arrive one member at a
-time, below; the whole team is never resent for one of them. Nothing of the team goes to a login
+time, below; the whole team is never resent for one of them. Nothing of the team goes to a session
 that no longer declares `capabilities.lead` on a republished `authenticated`, or to a lead who
 turned the feature off (`event.team.features`).
 
@@ -3078,7 +3078,7 @@ wider goes through this key.
 
 ### `sameCapabilities(a, b)`
 
-Whether two logins declare the same capabilities, field by field — key order aside, and with
+Whether two sessions declare the same capabilities, field by field — key order aside, and with
 `team: {}` distinct from `team` absent. It is the comparison an adapter makes before republishing
 `authenticated`, and the one `testAdapter` holds `refreshing` to.
 
@@ -3104,26 +3104,26 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateEventEnvelope(envelope, manifest)` | Envelope identity, timestamp, and the payload for each event type. |
 | `validateContact(contact, levels)` | Contact field shapes and attribute keys, and a locked number or email locked by a level `levels` names. Every field is optional, so this checks what is present rather than what is missing. |
 | `validateScheduledActivity(activity, levels)` | Required activity fields and start/end ordering, and its party as `validateContact` holds one. |
-| `validateHostGuarantees(guarantees, path?, phone?)` | What an agent application promises: only the guarantees this contract names, each declared by presence and never `false`. Given the login's phone, the mute promise is held to it: `muteUnavailableOnHold` required of a softphone login's agent application and refused of any other (`host.guarantee.muteUnavailableOnHold.required` / `.unexpected`). The harness validates the guarantees of whatever agent application a test hands the adapter, against the phone it chose. |
+| `validateHostGuarantees(guarantees, path?, phone?)` | What an agent application promises: only the guarantees this contract names, each declared by presence and never `false`. Given the session's phone, the mute promise is held to it: `muteUnavailableOnHold` required of a softphone session's agent application and refused of any other (`host.guarantee.muteUnavailableOnHold.required` / `.unexpected`). The harness validates the guarantees of whatever agent application a test hands the adapter, against the phone it chose. |
 | `validateProviderTimeCheckPolicy(policy)` | Explicit optional polling settings, positive safe-integer durations and round-trip/timeout/interval ordering. |
 | `validateProviderTimeCheckRequest(request)` | Fresh-request shape; the agent application enforces actual uniqueness and outstanding-request lifetime. |
-| `validateProviderTimeCheckResult(result, request, loginId)` | ISO timestamp, clock identity, exact request/login correlation; timing and source accuracy remain runtime checks. |
-| `validateProviderTimeEstimate(estimate, scope)` | Optional agent application estimate shape and provider/login scope; no accuracy guarantee. |
+| `validateProviderTimeCheckResult(result, request, sessionId)` | ISO timestamp, clock identity, exact request/session correlation; timing and source accuracy remain runtime checks. |
+| `validateProviderTimeEstimate(estimate, scope)` | Optional agent application estimate shape and provider/session scope; no accuracy guarantee. |
 | `validateHistoryReport(report, path?, manifest?, task?)` | What the agent application reports of a leg it performed, for an adapter to check before forwarding: a task, a step, when it began, a positive `seconds` where stated, and an explicit `ended` that carries the final duration. Given the manifest, a running report is refused unless it declares `runningStepReports`. Given the task, the agent application's own mute beginning on a `paused` task is refused (`historyReport.muted.held`): the Mute waits for resume. |
 | `validateHostReport(report)` | The agent application's own report as published to an adapter: `online`, and where there is audio, an input that is `available` with the microphone and `flowing`, or `unavailable` with a reason and the failure that says why, and an output that is `available` or `unavailable` with its failure. The harness validates whatever agent application a test hands the adapter; `stillHost(report)` builds one that never changes. |
 | `validateNextCall(value)` | The agent's standing ask for the next call, on its own as `next-call` and `Snapshot.nextCall` carry it: since when, and nothing else (`nextCall.since`, `nextCall.field`). |
 | `validateLinedUp(value, levels, path?)` | A call lined up in the agent's own queue, on its own as `lined-up` and `Snapshot.linedUp` carry it: the caller under the same contact rules as a task's party, the queue's label, the waits, and `release` by presence (`linedUp.*`). |
 | `validateLabels(value, path?)` | The customer's words on their own, as `labels-updated` and `Snapshot.labels` carry them: renames of the protocol's phases and steps only, and every word one text per well-formed language tag (`labels.*`). |
 | `validatePhoneState(value, path?, context?)` | The phone as the platform sees it, on its own as `phone-updated` and `Snapshot.phone` carry it: its status, its one active channel, its mute where a hardphone's is observed (`phone.*`). |
-| `validateHostMute(mute, softphone)` | What the agent application's Mute does, stated on a softphone login and nowhere else: `stream` or `station` (`host.mute`), required where the agent application holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
+| `validateHostMute(mute, softphone)` | What the agent application's Mute does, stated on a softphone session and nowhere else: `stream` or `station` (`host.mute`), required where the agent application holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
 | `validateLanguages(languages)` | The agent's languages a host states on both contexts: a non-empty list (`context.languages`) of well-formed BCP 47 tags (`context.languages.tag`), none twice ignoring case (`context.languages.unique`). The harness holds `ConnectContext.languages` to it. |
-| `validateLoginStore(store)` | The login's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
+| `validateSessionStore(store)` | The session's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
 | `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
-| `validateAuthenticationResult(result, method, path, { levels })` | What `start()` or `complete()` answered: a challenge or a rejection, a login or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
+| `validateAuthenticationResult(result, method, path, { levels })` | What `start()` or `complete()` answered: a challenge or a rejection, a session or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
 | `validateRedirectUri(uri, path?)` | A host's fixed redirect URI in one of RFC 8252's forms: `https`, a reverse-domain private-use scheme, or loopback http to `127.0.0.1` or `[::1]`, with no fragment (`redirectUri.*`). |
 | `validateTaskCommand(command, task?, path, { levels })` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, an add's contact or number, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.removeFromCall.alone`), the caller off hold before the agent's part ends (`command.endCall.held`). An agent application validates before sending and an adapter before acting. |
 | `validateResult(result, method)` | What a connection method answered: the status it gives, a failure where the status says so and nowhere else, the failure's shape, and that an `omni.` code is one this contract names. |
-| `validateAuthenticationState(state, path, { levels })` | The identity each state must carry, the capabilities a usable login declares, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
+| `validateAuthenticationState(state, path, { levels })` | The identity each state must carry, the capabilities a usable state declares for the user, and the expiry that only `authenticated` may. Omni applies it to every state a session publishes — the republished as much as the first. |
 
 Every check that reads a level — a `lockedBy`, a `setBy` — is given `levels`, the ids of the
 manifest's `orgLevels`, and refuses any other; `validateSnapshot` and `validateEventEnvelope` take
@@ -3136,9 +3136,9 @@ found at such as `snapshot.tasks[0].browsers[1].url`, and a `message`.
 
 Some rules need to know who is reading. `validateTeamMembers`, `validateSnapshot`, and
 `validateEventEnvelope` take an optional final `{ self, capabilities, leadFeatures }` — the signed-in agent's
-`AuthenticationState.identity.id` and their login's `capabilities`. Given `self`, a team member list that
-carries that agent reports `team.member.self`, on a `team-member-updated` and a `team-member-removed` as on the list. Given `capabilities`, a team member list published to a login that does not lead
-reports `team.unentitled`, and a team event to such a login reports `event.team.capability`; given
+`AuthenticationState.identity.id` and their `capabilities` for the session. Given `self`, a team member list that
+carries that agent reports `team.member.self`, on a `team-member-updated` and a `team-member-removed` as on the list. Given `capabilities`, a team member list published to a user who does not lead
+reports `team.unentitled`, and a team event to such a session reports `event.team.capability`; given
 `leadFeatures: true`, a snapshot without a team reports `team.required`, and given `leadFeatures: false`,
 anything of the team reaching the lead reports `team.unexpected` or `event.team.features`. Without them those rules are not checked, because they cannot be.
 `testAdapter` passes all three, holding the switch off until it has sent it. Given the manifest, a
@@ -3182,7 +3182,7 @@ Adapter conformance exercise from `@xema/omni-protocol/testing`.
 
 It validates the manifest, opens an authenticated session, connects, checks required capability
 methods, subscribes, validates the snapshot, every delivered event, and every authentication state
-the session publishes during the run — each against the latest login, since capabilities are
+the authentication session publishes during the run — each against the latest such state, since capabilities are
 current, not fixed — states a capacity, then unsubscribes and disconnects. Provider packages should
 run it with a deterministic test transport and authentication state.
 
@@ -3195,12 +3195,12 @@ expect(result.violations).toEqual([]);
 expect(result.disconnectWasClean).toBe(true);
 ```
 
-`result.authenticationState` is the state the session was restored with; `result.login` is the
-latest the session published during the run, which differs only when the adapter republished
+`result.authenticationState` is the state the authentication session was restored with; `result.signedIn` is the
+latest it published during the run, which differs only when the adapter republished
 `authenticated`. A published state that fails validation is reported and not adopted, and a
-`refreshing` state must carry over the login it refreshes — a different identity is
+`refreshing` state must carry over the session it refreshes — a different identity is
 `authentication.refreshing.identity`, a changed capability set `authentication.refreshing.capabilities`.
-A capability granted by a later login requires its methods just as one declared at sign-in does.
+A capability granted by a later session requires its methods just as one declared at sign-in does.
 
 `result.notTested` lists what the run never reached — one subject per family of rules: each
 optional part of a task (`task.browsers`, `task.history`, `task.leadAssist`, …), the break's
@@ -3228,8 +3228,8 @@ capacity, or beyond the count with nothing dialled on it, is named
 (`stream.taskOffered.beforeCapacity`, `.overCapacity`); every user the snapshot names is looked up
 through `getUserDetails` and the answer held to the shape, nobody unasked, nobody described as
 nothing (`getUserDetails.user.*`, `getUserDetails.unasked`, `connection.getUserDetails.empty`); and
-the second adapter a `rebuild` gives comes up signed in as the same login from the secrets alone
-before it reads anything (`test.reload.login`), and is then held to everything the first was on
+the second adapter a `rebuild` gives comes up signed in as the same session from the secrets alone
+before it reads anything (`test.reload.session`), and is then held to everything the first was on
 connect: the methods its declarations call for, the agent application's report, a capacity stated to it, its
 snapshot read as the connect snapshot was, and its audio opened afresh on a task carried with
 `audio: "started"`, since the first client's session died with it. The result also says which rules the
@@ -3249,7 +3249,7 @@ Where the provider restates the task's record afterwards, each leg is in it or t
 (`test.recordStep.history`). Given `rebuild`, a way to build the adapter again as an agent application reload
 does, the test reloads the agent application as a reload happens: the first client is unsubscribed,
 disconnected and its session closed (`test.reload.handover`), and only then is a second adapter
-built and connected for the same login with the same context and the same `store`; its snapshot
+built and connected for the same session with the same context and the same `store`; its snapshot
 must carry the task with that leg at its acknowledged provider timestamp and the reported actor, and the run goes on with the second as its
 connection to the end. A platform that holds the record hands it back, and an adapter that composed
 the record in memory has nothing and is named (`test.reload.snapshot`, `test.reload.history`,
@@ -3311,7 +3311,7 @@ Three properties of the harness matter to adapter authors:
 - **Resources are released even when the adapter fails.** Every unsubscribe, `disconnect()`, and
   `close()` run in a `finally` block, and a throw from any of them is reported as
   `disconnectWasClean: false` rather than being hidden.
-- **The login is read, never captured.** Everything is validated against the latest
+- **The session is read, never captured.** Everything is validated against the latest
   `authenticated` state, so a withdrawal published before a snapshot is held against that snapshot.
 
 ### Contract scenarios
@@ -3321,7 +3321,7 @@ cannot be established from TypeScript structure alone.
 
 | Helper | Contract checked |
 | --- | --- |
-| `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no team member list for a login that no longer leads. Every state is validated on the way, `refreshing` must carry the login over, and the sequence passes only through usable states. |
+| `assertCapabilityWithdrawal(states, snapshot, manifest)` | A capability withdrawn by a later `authenticated` state is gone from the next snapshot: no team member list for a session that no longer leads. Every state is validated on the way, `refreshing` must carry the session over, and the sequence passes only through usable states. |
 | `assertTaskCapabilityWithdrawal(tasks, manifest, command)` | A capability withdrawn by a republish of the task is gone from the task: every task in the sequence is validated, all carry the offer's id, at least one capability the offer declared is absent at the end (a locked control is present, not withdrawn), and `command` is clean against the first task and refused against the last for want of a withdrawn capability and nothing else. Pair it with `assertCommandRefusedAfterWithdrawal` on the provider's answer. |
 | `assertCommandRefusedAfterWithdrawal(result)` | A command that arrives after its capability was withdrawn fails with `omni.capability-not-enabled`, named by the provider. The same assertion serves a command the provider never supported under a capability it declares. |
 | `assertReached(result, subjects)` | The exercise met every subject named; throws listing those it did not. Pair it with a clean `testAdapter` result. |
@@ -3332,8 +3332,8 @@ cannot be established from TypeScript structure alone.
 | `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a forced break arriving in effect with `forced`. The harness applies the same rules after the connect snapshot. |
 | `assertAudioFollowsTheTask(envelopes, snapshot?)` | The audio follows the task and never decides it: every task is introduced once, `task-audio-started` and `task-audio-ended` alternate on work that has begun, audio ends only where it arrived, and what follows the audio ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no audio satisfies it by never testing it — pair it with the assertion that the audio end is present. |
 | `assertHistoryAgreesAcrossTasks(earlier, later)` | Two tasks of one call -- a hand-over, a take-over, a callback: the later restates every earlier step in order, with the same step, instant, person, dial and destination, and any duration already stated unchanged. Throws when either carries no history. |
-| `assertBreakAttemptProviders(candidates, asked)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose login is `expired`. |
-| `assertForcedBreakStopsTheRest(forcedOn, candidates, stopped)` | A forced break on one provider stops the agent everywhere else: capacity zero stated on every other usable provider holding capacity, nothing on the forcing one, nothing on a dead login. See **Forced breaks** in `guide/breaks.md`. |
+| `assertBreakAttemptProviders(candidates, asked)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose session is `expired`. |
+| `assertForcedBreakStopsTheRest(forcedOn, candidates, stopped)` | A forced break on one provider stops the agent everywhere else: capacity zero stated on every other usable provider holding capacity, nothing on the forcing one, nothing on a dead session. See **Forced breaks** in `guide/breaks.md`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `on-break` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
 | `assertBrowserSessionIsolation(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |

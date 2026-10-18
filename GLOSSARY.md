@@ -20,7 +20,7 @@ for orientation only: each platform's own documentation is the authority on its 
 | **Agent computer** | The agent's screen and machine, where the agent application runs. | *Desktop*, *workstation*, *station*. |
 | **Manifest** | What a provider declares about itself up front: its name, channel, phones and features. | *Integration definition*, *app manifest* (Twilio Flex plugins, Salesforce call center definition file). |
 | **Channel** | The kind of work: voice, chat or email. | *Media type* (Genesys Cloud), *channel* (Amazon Connect, Salesforce Omni-Channel), *media* (NICE). |
-| **Login** | One signed-in session of one agent on one provider. | *Session*, *agent session*. |
+| **Session** | One agent signed in on one provider, from sign-in until it ends. | *Session*, *agent session*. |
 
 ## The work
 
