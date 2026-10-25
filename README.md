@@ -11,6 +11,7 @@ system.
 
 | Path | |
 | --- | --- |
+| `PURPOSE.md` | **Why.** What the protocol is trying to achieve, and how choices in it are made. |
 | `guide.md` | **The protocol.** The terms, the shapes, the rules, and how an adapter is declared, connected and held to them. |
 | `guide/` | One file per role and channel: `agent.md`, `lead.md`, `queue.md`, `breaks.md`, `phone.md`, `voice.md`, `chat.md`, `email.md`. Each points back into `guide.md` for what it relies on. |
 | `src/index.ts` | The TypeScript declarations. |
