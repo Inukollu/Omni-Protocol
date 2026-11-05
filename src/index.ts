@@ -84,13 +84,16 @@ export interface User {
   id: UserId;
   displayName: string;
   /**
-   * The zone this person's day is reckoned in, as the provider keeps it: stated by the host at
-   * authentication, stored on the agent, and carried on every identity and every described user
-   * so a day-scoped figure -- theirs or a colleague's a lead is reading -- is bucketed by the
-   * right day. Never absent: a person whose day nobody can name is not on this wire.
+   * On the signed-in identity, the zone this session sees every day in: the one the host stated at
+   * authentication, required there (`SignedInUser`). On anyone else -- a colleague from
+   * `getUserDetails()` -- the zone they last signed in from, for information only, and absent
+   * where the provider does not know it. No figure is cut by a colleague's zone.
    */
-  timeZone: TimeZone;
+  timeZone?: TimeZone;
 }
+
+/** The person this session is signed in as: a `User` whose `timeZone` is always stated. */
+export type SignedInUser = User & { timeZone: TimeZone };
 
 /** Key/value detail on a `Contact` or a `ScheduledActivity`. A task's attributes are typed. */
 export interface Attribute {
@@ -273,7 +276,6 @@ export interface Manifest<C extends Channel = Channel> {
   supportedProtocolVersions: number[];
   authenticationMethods: AuthenticationMethod[];
   idleCapabilities?: IdleCapabilities<C>;
-  /** Optional provider-clock sampling through Connection.checkTime; absent means unsupported. */
   /**
    * Implements `checkTime`, and states `providerTime` on every snapshot. Required of a provider
    * that publishes an instant the agent computer renders as a running duration -- a member's `since`, a
@@ -344,7 +346,7 @@ export interface AuthenticationContext {
   /** Omni's identity for this session. The same value arrives later as `ConnectContext.sessionId`. */
   sessionId: string;
   /**
-   * The zone the agent's day is reckoned in, as the host's clock has it, stated before any
+   * The zone this session sees every day in, as the host's clock has it, stated before any
    * identity exists so the first `authenticated` state already carries it. The same value arrives
    * later as `ConnectContext.timeZone`.
    */
@@ -470,10 +472,10 @@ export const LEAD_COMMAND_CAPABILITY = {
 export type AuthenticationState =
   | { status: "signed-out" }
   | { status: "authenticating" }
-  | { status: "authenticated"; identity: User; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
-  | { status: "refreshing"; identity: User; capabilities: UserCapabilities }
-  | { status: "expired"; identity?: User; failure?: AuthenticationFailure }
-  | { status: "terminated"; by: UserId | "provider"; identity?: User; failure: AuthenticationFailure & { retryable: false } };
+  | { status: "authenticated"; identity: SignedInUser; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "refreshing"; identity: SignedInUser; capabilities: UserCapabilities }
+  | { status: "expired"; identity?: SignedInUser; failure?: AuthenticationFailure }
+  | { status: "terminated"; by: UserId | "provider"; identity?: SignedInUser; failure: AuthenticationFailure & { retryable: false } };
 
 export interface CredentialField {
   name: string;
@@ -504,7 +506,7 @@ export type CompleteAuthenticationRequest =
   | { flowId: string; method: "credentials"; values: Readonly<Record<string, string>> };
 
 export type CompleteAuthenticationResult =
-  | { status: "authenticated"; identity: User; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "authenticated"; identity: SignedInUser; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
   | { status: "rejected"; failure: AuthenticationFailure };
 
 export type AuthenticationActionResult =
@@ -529,12 +531,6 @@ export interface AuthenticationSession {
   close(): Promise<void>;
 }
 
-/**
- * How the host's own audio stands: the microphone Omni captures for the agent, and whether it has
- * it. Omni facilitates the microphone -- captures it, prompts, retries, tells the agent -- and
- * does not decide for the adapter what a missing one means. The adapter does what its platform
- * needs: go not-ready, refuse calls, or carry on because audio lands elsewhere.
- */
 /**
  * Who silenced a device that is present and permitted: the host, by its own Mute, or the station --
  * a slider on the headset, the operating system -- which the host observes and, on a browser,
@@ -574,11 +570,6 @@ export type HostAudioOutput =
   | ({ status: "available" } & ({ flowing?: true; mutedBy?: never } | { flowing: false; mutedBy: MutedBy }))
   | { status: "unavailable"; reason: HostOutputUnavailableReason; failure: ProtocolFailure };
 
-/**
- * What only the host can see about the agent's station: the devices, the permissions, the
- * network. Omni reports it; the adapter decides what any of it means for its platform and what
- * to relay. `audio` is present on a voice connection.
- */
 /** What Omni's own chrome shows of a task browser's URL: nothing, the domain, or all of it. */
 export type UrlVisibility = "full" | "domain" | "hidden";
 
@@ -655,18 +646,28 @@ export interface HostRecordingRequest {
   command: RecordingCommand & { source: "host" };
 }
 
+/**
+ * What only the host can see about the agent's station: the devices, the permissions, the
+ * network. Omni reports it; the adapter decides what any of it means for its platform and what
+ * to relay. `audio` is present on a voice connection.
+ */
 export interface HostReport {
   /** Full current host-owned recording view; never provider-owned state. */
   recordings?: HostRecordingReport[];
   /** Whether the host has a network interface up. Not a claim that anything is reachable: the adapter knows its own platform's reachability better than the host does. */
   online: boolean;
+  /**
+   * How the host's own audio stands: the microphone Omni captures for the agent, and whether it has
+   * it. Omni facilitates the microphone -- captures it, prompts, retries, tells the agent -- and
+   * does not decide for the adapter what a missing one means. The adapter does what its platform
+   * needs: go not-ready, refuse calls, or carry on because audio lands elsewhere.
+   */
   audio?: {
     input: HostAudioInput;
     output: HostAudioOutput;
   };
 }
 
-/** The host, as an adapter may ask it: a report now, and every change for the life of the connection. */
 /**
  * What the host promises the provider, declared once per connection. Presence is the guarantee:
  * an absent key is a host that makes no such promise, and a provider that needs one checks before
@@ -699,6 +700,7 @@ export interface ProviderTimeEstimate extends ProviderTimeScope {
   uncertaintyMs?: number;
 }
 
+/** The host, as an adapter may ask it: a report now, and every change for the life of the connection. */
 export interface Host {
   /** Optional current provider-clock estimate; undefined when no usable estimate exists. */
   estimateProviderTime?(scope: ProviderTimeScope): ProviderTimeEstimate | undefined;
@@ -718,9 +720,9 @@ export type ConnectContext = {
   /** Omni-side policy: whether the agent's tasks are accepted without asking them. Stated, never assumed: a host says which. */
   autoAcceptTasks: boolean;
   /**
-   * The zone the agent's day is reckoned in, the same value passed as
-   * `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the
-   * identity; a roaming agent corrects it by signing in.
+   * The zone this session sees every day in, the same value passed as
+   * `AuthenticationContext.timeZone`. The provider carries it on the identity and cuts every
+   * day-scoped figure this session reads by it.
    */
   timeZone: TimeZone;
   /** The same value passed as `AuthenticationContext.languages`: what the agent reads, most preferred first. */
@@ -758,10 +760,10 @@ export type TransportStatus = "connecting" | "active" | "error";
 
 /**
  * What revives a connection that reported `error`: `reconnect` -- the session is good, dispose this
- * connection and call `connect()` again -- or `reauthenticate` -- run the authentication flow
- * first. The adapter knows which; the host acts on its word.
+ * connection and call `connect()` again -- `reauthenticate` -- run the authentication flow
+ * first -- or `displaced` -- another client took the session, and nothing revives this one until
+ * the agent takes it back. The adapter knows which; the host acts on its word.
  */
-/** What revives an errored connection: `displaced` says another client took the session, and nothing revives this one until the agent takes it back. */
 export type TransportRecovery = "reconnect" | "reauthenticate" | "displaced";
 
 // ---------------------------------------------------------------------------
@@ -982,6 +984,7 @@ export type HistoryStep =
   | "transferred"
   | "added"
   | "unanswered"
+  | "connected-back"
   | "callback-requested";
 
 /**
@@ -1007,7 +1010,7 @@ export interface TaskHistoryStep {
   step: HistoryStep;
   at: IsoTimestamp;
   /**
-   * On a step that dialled -- `transferred`, `added`, `unanswered` -- the host's identity for
+   * On a step that dialled -- `transferred`, `added`, `unanswered`, `connected-back` -- the host's identity for
    * that dial when a host placed it, and the contact it went to, by the contacts entry's `id`. Neither
    * belongs on any other step.
    */
@@ -1508,7 +1511,7 @@ export interface TeamMember {
   tasks?: MemberTask[];
   /** Every lead on this member's call, listening, coaching or joined, published to every lead alike; absent while none is. */
   listening?: MemberListening[];
-  /** The member's own history for the day: sign-in, sign-out, breaks and productivity, the same numbers the member's own snapshot carries. Omitted where the provider cannot say. */
+  /** The member's own history for the day: sign-in, sign-out, breaks and productivity, the same instants and count the member's own snapshot carries, cut by the lead's day. Omitted where the provider cannot say. */
   shift?: Shift;
   /** The member's standing ask for a lead on one of their calls; absent when they are not asking. */
   request?: MemberRequest;
@@ -1574,21 +1577,40 @@ export interface ShiftEvent {
   kind: ShiftEventKind;
 }
 
+/** A day's total that can be running now: talk, hold, or break. */
+export type ShiftFigure = "talk" | "hold" | "break";
+
+export const SHIFT_FIGURES = ["talk", "hold", "break"] as const satisfies readonly ShiftFigure[];
+
 /**
- * An agent's own history for the day, about the person rather than any one call: when they
- * signed in and out, today's totals as the provider counts them, each present only when the
- * provider knows it, and the day's sign-in, sign-out and break events, oldest first. Published
- * to the agent on their snapshot and on `shift-updated`, and to their lead on the team member
- * list: the same numbers from the same count.
+ * A stretch still running, which its total leaves out: the agent computer counts it on from `since`,
+ * on the provider's clock, and adds it to the total it shows.
+ */
+export interface ShiftRunning {
+  figure: ShiftFigure;
+  since: IsoTimestamp;
+}
+
+/**
+ * An agent's own history for the day, about the person rather than any one call: the day's first
+ * sign-in, the sign-out while they are signed out, today's totals as the provider counts them,
+ * each present only when the provider knows it, the stretches still running, and the day's
+ * sign-in, sign-out and break events, oldest first. The day is the viewer's: published to the
+ * agent on their snapshot and on `shift-updated`, cut in the agent's zone, and to their lead on
+ * the team member list, cut in the lead's -- the same instants from the same count.
  */
 export interface Shift {
+  /** The day's first sign-in. */
   signedInAt: IsoTimestamp;
+  /** The latest sign-out, present only while the agent is signed out; an earlier session's is in `events`. */
   signedOutAt?: IsoTimestamp;
   talkSeconds?: DurationSeconds;
   holdSeconds?: DurationSeconds;
   /** Every break the member was on today, including time held elsewhere for a break another provider forced: the provider counts it under a break kind of its own. */
   breakSeconds?: DurationSeconds;
   tasksHandled?: number;
+  /** The totals still running, at most one per figure; each total above leaves its running stretch out. */
+  running?: ShiftRunning[];
   events?: ShiftEvent[];
 }
 
@@ -1653,7 +1675,7 @@ export type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
   /** `reason` text is optional. `reasonId` selects a published `BreakReason.id`, required when reasons are published; the forced break carries it as `activeReasonId`. */
-  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationMs?: number }
+  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationSeconds?: DurationSeconds }
   /** Clears forced metadata only; preserves the committed break until the agent explicitly resumes. */
   | { type: "end-forced-break"; memberId: UserId };
 
@@ -1699,7 +1721,6 @@ export type OpenAudioResult =
 // Provider state and events.
 // ---------------------------------------------------------------------------
 
-/** The provider's complete state at one moment. It replaces what Omni holds; never a patch. */
 /**
  * What the team may leave to the person: a capability by its own name -- `hold` -- or a
  * skill by its provider id. The same key as in `Task.capabilities`, because it is the same
@@ -1770,6 +1791,7 @@ export type PreferenceResult =
   | { status: "applied" }
   | { status: "failed"; failure: ProtocolFailure };
 
+/** The provider's complete state at one moment. It replaces what Omni holds; never a patch. */
 export interface Snapshot<C extends Channel = Channel> {
   transport: TransportStatus;
   sessionId: string;
@@ -2013,14 +2035,19 @@ export const DEFAULT_TASK_PHASE_LABELS = {
     "in-progress": "On Call", paused: "On Hold", completing: "After Call Work",
   },
   chat: {
-    pending: "Incoming Chat", confirmed: "Accepted", preview: "Preview",
+    pending: "Incoming Chat", confirmed: "Accepted",
     "in-progress": "In Chat", paused: "Paused", completing: "Wrap-up",
   },
   email: {
-    pending: "Assigned", confirmed: "Accepted", preview: "Preview",
+    pending: "Assigned", confirmed: "Accepted",
     "in-progress": "Working", paused: "Paused", completing: "Completing",
   },
-} as const satisfies Readonly<Record<Channel, Readonly<Record<TaskPhase, string>>>>;
+} as const satisfies {
+  // Preview is voice only: a chat or an email has no record put in front of the agent to call.
+  voice: Readonly<Record<TaskPhase, string>>;
+  chat: Readonly<Record<Exclude<TaskPhase, "preview">, string>>;
+  email: Readonly<Record<Exclude<TaskPhase, "preview">, string>>;
+};
 
 export const DEFAULT_TASK_TYPE_PRESENTATION = {
   voice: { singular: "Call", plural: "Calls", referenceLabel: "Call ID" },
@@ -2031,7 +2058,7 @@ export const DEFAULT_TASK_TYPE_PRESENTATION = {
 export const DEFAULT_HISTORY_STEP_LABELS = {
   arrived: "Incoming call", "self-service": "Self-service", queued: "Queued", offered: "Offered", answered: "Answered", held: "On hold",
   muted: "Muted", transferred: "Transferred", added: "Added", unanswered: "Unanswered",
-  "callback-requested": "Callback requested",
+  "connected-back": "Reconnected", "callback-requested": "Callback requested",
 } as const satisfies Readonly<Record<HistoryStep, string>>;
 
 /**
@@ -2084,15 +2111,15 @@ export const userKey = (providerId: string, userId: UserId): string =>
 
 /**
  * Every history step somebody from the provider takes part in. `arrived`, `self-service` and
- * `queued` are the ones nobody does, and `callback-requested` is the caller's choice unless an agent arranged it, so none
+ * `queued` are the ones nobody does, and `callback-requested` is the caller's own choice in the queue, so none
  * of them is here.
  */
 export const HISTORY_STEPS_WITH_A_PERSON = [
-  "offered", "answered", "held", "muted", "transferred", "added", "unanswered",
+  "offered", "answered", "held", "muted", "transferred", "added", "unanswered", "connected-back",
 ] as const satisfies readonly HistoryStep[];
 
 /** The steps a dial writes, and so the only ones that carry a `dialId` and a `contactId`. */
-export const HISTORY_STEPS_THAT_DIAL = ["transferred", "added", "unanswered"] as const satisfies readonly HistoryStep[];
+export const HISTORY_STEPS_THAT_DIAL = ["transferred", "added", "unanswered", "connected-back"] as const satisfies readonly HistoryStep[];
 
 export const historyStepDials = (step: HistoryStep): boolean =>
   (HISTORY_STEPS_THAT_DIAL as readonly HistoryStep[]).includes(step);

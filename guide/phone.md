@@ -17,7 +17,7 @@ mode stays with the session rather than being inferred from a snapshot or a devi
 Nor does the audio ever stand in for the task: a task's presence and
 phase follow the provider's reports about the work, and the audio — attaching, moving through a
 hold, someone added to the call, a lead joining or a take-over, and ending — is transient beside it. See **A task is
-never its audio** under **Task assignment lifecycle**.
+never its audio** in `guide/voice.md`.
 
 ### The agent application reports, the adapter decides
 
@@ -83,8 +83,9 @@ stated a violation. Capacity does not wait on the microphone: whether an agent w
 can take calls is the platform's question, answered by the adapter from the agent application's report, not by
 Omni withholding capacity for every platform alike.
 
-Capacity follows **automatically** once the connection is established; the agent does not press
-anything to become available.
+Capacity follows once the connection is established, when the agent application's local policy
+says -- at once, or when the agent presses Ready -- as **The agent becomes ready** in
+`guide/agent.md` sets out; the connection itself makes nobody available.
 
 | Situation | What Omni sends |
 | --- | --- |
@@ -248,7 +249,7 @@ through `recordStep` -- its own Mute, and a station mute it observed during a ca
 the provider knows who that is: it attributes the leg to the session's agent in `by`, a fact it
 holds and not an inference, for a station mute as much as for the agent application's own. An unattributed
 `muted` entry is refused (`task.history.muted.by`); a shared handset's unattributed hold
-is a different claim, and stands. A supervisor reading the record then sees "the agent muted for
+is a different claim, and stands. A lead reading the record then sees "the agent muted for
 forty seconds" and "the agent's headset was muted for forty seconds" as the different things they
 are. See **The agent application records what it performs** in `guide/agent.md`.
 
@@ -295,10 +296,10 @@ and `phone-updated`, from a manifest that declares `phoneStatus` (`snapshot.phon
 `snapshot.phone.unexpected`, `event.phone.capability`).
 
 ```ts
-// people added to the call on alloc-42 -- one channel, since the bridge mixes -- with alloc-43 parked
+// people added to the call on asg-42 -- one channel, since the bridge mixes -- with asg-43 parked
 const busy: PhoneState = { phone: "hardphone", status: "ready", muted: true, channels: [
-  { state: "active", since: "2026-09-12T10:30:04Z", assignmentId: "alloc-42" },
-  { state: "held", since: "2026-09-12T10:35:20Z", assignmentId: "alloc-43" },
+  { state: "active", since: "2026-09-12T10:30:04Z", assignmentId: "asg-42" },
+  { state: "held", since: "2026-09-12T10:35:20Z", assignmentId: "asg-43" },
 ] };
 // an internal call on the extension the agent computer never saw as a task
 const internal: PhoneState = { phone: "hardphone", status: "ready", channels: [{ state: "active", since: "2026-09-12T11:02:00Z" }] };

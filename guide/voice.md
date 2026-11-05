@@ -125,7 +125,7 @@ phase it is in.
 
 The line runs between the provider's word and Omni's own senses. `task-audio-ended` is the
 provider's report that primary interaction ended — a fact about the work, which is why the completion
-allowance starts on it and the Connect back control appears on it — and Omni follows that report as it
+allowance starts on it and the Reconnect control appears on it — and Omni follows that report as it
 follows any other. What Omni never does is derive a task's state from its own audio session: a
 stream that drops, a track that ends, a transport that disconnects, a microphone that fails, an
 endpoint re-registering change nothing about the task until the provider says so. Structurally:
@@ -167,7 +167,7 @@ tell a task coming back from one going backwards (`stream.taskUpdated.phase`).
 **The control exists only while there is a window to use it in.** Under `agent-command` the task
 stays `completing` until the agent completes it, so the window is open for as long as they need.
 Under `provider-automatic` the window is the allowance -- and with `wrapAllowance: 0` there
-is none: the provider completes the task at provider end, and Omni does not offer Connect back,
+is none: the provider completes the task at provider end, and Omni does not offer Reconnect,
 whatever the task declares. A capability names a control that can be used; on a task with no `completing`
 window it cannot, and declaring it there changes nothing.
 
@@ -181,7 +181,7 @@ const connectBackCapable = {
 } satisfies Pick<Task<"voice">, "channel" | "capabilities" | "phase" | "completionMode" | "wrapAllowance">;
 ```
 
-With ten seconds of the thirty left, the agent presses Connect back: `execute({ command: { type:
+With ten seconds of the thirty left, the agent presses Reconnect: `execute({ command: { type:
 "connect-back", dialId } })` returns `dialling`, the task is `in-progress`, and the thirty seconds
 are gone.
 The second call ends: `task-audio-ended`, the task is `completing`, and a new thirty seconds runs
@@ -202,7 +202,7 @@ const immediateProviderCompletion = {
 | `hold` | Primary toggle: Hold | Omni may issue voice-task `hold` and `resume` commands. Hold holds the caller: while the task is `paused` the party waits on hold and the agent keeps talking with everyone else on the call -- an added colleague, a lead who joined -- and `onCall` marks the party `held: true`. |
 | `endCall` | Primary button: End call | The provider ends the agent's channel and every channel the agent added; the caller continues on the provider's path. The task goes to its wrap. See **Ending a call, and removing one person from it**. |
 | `terminateCall` | Primary button: Terminate call | The provider ends the whole call: every channel on it, the agent's, the caller's, any colleague's and anyone else's. The task goes to its wrap. See **Ending a call, and removing one person from it**. |
-| `connectBack` | Completing-task button: Connect back | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance completes the task at provider end. See **Connecting back during completion**. |
+| `connectBack` | Completing-task button: Reconnect | Omni may have the provider connect the agent back to the task's party while the task is `completing`, returning it to `in-progress` on the same task. Not offered where there is no `completing` window: `provider-automatic` with a zero allowance completes the task at provider end. See **Connecting back during completion**. |
 | `schedule` | Secondary menu item: Schedule | Omni may put a follow-up for this party on the calendar, from the call or from its wrap: a time, and a note. See **Scheduling a follow-up** in `guide/agent.md`. |
 | `leadAssist` | Secondary menu item: Lead assist | Omni may ask a lead to join this call, with a note. The lead's decision reaches the agent on `Task.leadAssist`. See **Lead assist** in `guide/lead.md`. |
 | `addToCall` | Secondary button: Add to call | Omni may dial a contact or a typed number into the active call (`add-to-call`), and remove one person from it (`remove-from-call`) -- an added entry, one still ringing included, which calls the dial off, or the party, leaving the agent with the colleague. See **Ending a call, and removing one person from it**. |
@@ -392,7 +392,7 @@ claims, and both are true at once when a leg answers and never joins. An agent c
 dial's conclusion and says "on the call" only when the person appears on `Task.onCall`; the obvious
 reading of `answered` -- that they are on the line -- is the one it does not make.
 
-**A provider says which outcomes it can tell apart.** No switch distinguishes all five, and a
+**A provider says which outcomes it can tell apart.** No switch distinguishes them all, and a
 provider that cannot tell busy from unreachable must not pick one. The manifest declares
 `dialOutcomes`, and a `dial-outcome` carries only a declared member
 (`event.dialOutcome.undeclared`). The list includes `answered`, or the provider could never state a
@@ -460,7 +460,7 @@ outcome for its dial is refused (`stream.taskUpdated.stage`), as an update that 
 The rule keys on the entry's `dialId`, so an entry the platform added itself, with none, is one
 whose move the stream cannot hold to an outcome: a clean stream proves nothing about ordering there. It is stated rather
 than left to whoever placed the dial because that knowledge lives in one process: after a reload,
-on a second session, or on a supervisor's screen the snapshot is the only source, and a room that
+on a second session, or on a lead's screen the snapshot is the only source, and a room that
 cannot tell ringing from joined says it contains someone who may never arrive. Nobody ringing is
 held (`task.onCall.held.ringing`). A colleague who never answers is a dial that ended: the
 provider restates the room without the entry, and the agent is back with the customer.

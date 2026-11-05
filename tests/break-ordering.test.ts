@@ -317,10 +317,12 @@ describe("lead commands", () => {
   });
   it("accepts an optional expected duration on force-break and rejects timer controls", () => {
     const command = { type: "force-break", memberId: "member", reasonId: "bio" };
-    expect(validateTeamCommand({ command: { ...command, expectedDurationMs: 600000 } }, lead)).toEqual([]);
-    for (const expectedDurationMs of [0, -1, Infinity, NaN, "500", null]) {
-      expect(validateTeamCommand({ command: { ...command, expectedDurationMs } }, lead).map(v => v.rule)).toContain("team.command.expectedDurationMs");
+    expect(validateTeamCommand({ command: { ...command, expectedDurationSeconds: 600 } }, lead)).toEqual([]);
+    for (const expectedDurationSeconds of [0, -1, 1.5, Infinity, NaN, "500", null]) {
+      expect(validateTeamCommand({ command: { ...command, expectedDurationSeconds } }, lead).map(v => v.rule)).toContain("team.command.expectedDurationSeconds");
     }
+    // The milliseconds the command once took are not a second way to say it.
+    expect(validateTeamCommand({ command: { ...command, expectedDurationMs: 600000 } }, lead).map(v => v.rule)).toContain("team.command.field");
     expect(validateTeamCommand({ command: { ...command, endsAutomatically: true } }, lead).map(v => v.rule)).toContain("team.command.field");
   });
   it("checks the forced-break reason and end without assuming the same lead does both", () => {

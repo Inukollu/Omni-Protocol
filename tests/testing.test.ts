@@ -2591,7 +2591,10 @@ describe("testAdapter requires each method the declarations call for", () => {
     expect(await rules({})).toEqual([]);
     expect(await rules({ connection: { getUserDetails: async () => [] } })).toEqual(["connection.getUserDetails.empty"]);
     expect(await rules({ connection: { getUserDetails: async () => [{ id: "Z-9", displayName: "Nobody asked", timeZone: "Pacific/Chatham" }] } })).toEqual(["getUserDetails.unasked"]);
-    expect(await rules({ connection: { getUserDetails: async (ids: string[]) => ids.map(id => ({ id, displayName: "" })) } })).toEqual(["getUserDetails.user.displayName", "getUserDetails.user.timeZone"]);
+    expect(await rules({ connection: { getUserDetails: async (ids: string[]) => ids.map(id => ({ id, displayName: "" })) } })).toEqual(["getUserDetails.user.displayName"]);
+    // A colleague's zone is information only: absent is fine, and a zone that is stated is an IANA name.
+    expect(await rules({ connection: { getUserDetails: async (ids: string[]) => ids.map(id => ({ id, displayName: "Asha" })) } })).toEqual([]);
+    expect(await rules({ connection: { getUserDetails: async (ids: string[]) => ids.map(id => ({ id, displayName: "Asha", timeZone: "+05:30" })) } })).toEqual(["getUserDetails.user.timeZone"]);
     expect(await rules({ connection: { getUserDetails: async () => { throw new Error("directory down"); } } })).toEqual(["connection.getUserDetails.rejected"]);
   });
 

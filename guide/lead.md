@@ -20,7 +20,7 @@ computes nothing. See **`team-updated`** in `guide.md` and its companions.
 
 | Field | Contract |
 | --- | --- |
-| `members` | Every member of this lead's team, whatever their state, each with their open tasks. `[]` says the lead has a team with nobody in it; omitting the team member list says something else entirely — see **The session is the permission** below. |
+| `members` | Every member of this lead's team, whatever their state, each with their open tasks. `[]` says the lead has a team with nobody in it; omitting the team member list says something else entirely — see **The user's capabilities are the permission** below. |
 | `policies` | The team's policy per capability as it stands — the setting, who set it, and `lockedBy` where a level above the team made it theirs to keep. Present where the provider offers policy control; absent where it does not. See **Who decides what an agent may do** in `guide.md`. |
 
 | `TeamMember` field | Contract |
@@ -34,7 +34,7 @@ computes nothing. See **`team-updated`** in `guide.md` and its companions.
 | `request` | Present while the member is asking a lead to join one of their calls: which assignment, the note they wrote, since when. The call named is one their `tasks` carry (`team.member.request.assignment`). Absent when they are not asking. See **Lead assist**. |
 | `nextCall`, `linedUp` | The member's own queue as their own snapshot carries it: their standing ask for the next call, and the call lined up for them. See **The agent's own queue** in `guide/queue.md`. |
 | `phone` | The member's phone as the platform sees it: the same `PhoneState` the member's own snapshot carries, so a lead sees a hardphone that is down, or a call on it that is no task, as the member does. Present where the provider declares `phoneStatus`. See **The phone's own view** in `guide/phone.md`. |
-| `shift` | The member's own history for the day, about the person rather than any one call: `signedInAt`, `signedOutAt` once it has happened, today's totals as the provider counts them — `talkSeconds`, `holdSeconds`, `breakSeconds`, `tasksHandled`, each present only when the provider knows it — and the day's sign-in, sign-out and break `events`, oldest first. The same `Shift` the member's own snapshot carries, the same numbers from the same count. Omitted where the provider cannot say. |
+| `shift` | The member's own history for the day, about the person rather than any one call: `signedInAt`, the day's first sign-in; `signedOutAt`, present only while the member is signed out; today's totals as the provider counts them — `talkSeconds`, `holdSeconds`, `breakSeconds`, `tasksHandled`, each present only when the provider knows it; `running`, the stretches still under way, which the totals leave out; and the day's sign-in, sign-out and break `events`, oldest first. The same instants and count the member's own snapshot carries, cut by the lead's day. Omitted where the provider cannot say. |
 
 Each availability value means one thing:
 
@@ -43,7 +43,7 @@ Each availability value means one thing:
 | `ready` | Signed in, able to take work, none assigned. |
 | `on-task` | Working on at least one task. It says nothing about how many, and nothing about whether more will fit. |
 | `on-break` | Stopped and not taking work, whether they asked or somebody stopped them. The reason lives on their own `BreakState`, not here. |
-| `elsewhere` | Signed in here, and the agent application holds this agent's capacity for another provider (`count: 0`, agent application-stopped): not receiving this provider's work, and not on a break. See **Capacity**. |
+| `elsewhere` | Signed in here, and the agent application holds this agent's capacity for another provider (`count: 0`, stopped by the agent application): not receiving this provider's work, and not on a break. See **Capacity and break actions** in `guide/breaks.md`. |
 | `signed-out` | Known to this team but not signed in to this provider. |
 
 **Publish the whole team once, then each member whole.** Team presence typically reaches an
@@ -68,10 +68,12 @@ part for longer than the delay between them.
 
 **The agent's day is on the wire.** The lead sees `shift` totals as the provider counts them, and
 the agent sees the same: `Snapshot.shift` and `shift-updated` carry the agent's own day in the same
-shape, from the same count, so "calls today: 12" is one number on both screens. The agent computer computes
-nothing of the day; `tasksHandled` moves when a task ends and `talkSeconds` when a leg closes, and
-the active call's running time is the screen's own until then, as **Every screen counts from the
-provider's clock** sets out.
+shape, from the same count, so "calls today: 12" is one number on both screens -- each cut by its
+viewer's day, as **The agent's day** in `guide.md` sets out. The agent computer computes nothing of
+the day. A total stands as of the last `shift-updated`; a stretch still under way is in `running`,
+left out of its total, and the agent computer counts it on from its `since`, on the provider's
+clock, as **Every screen counts from the provider's clock** in `guide.md` sets out. A provider sends
+no timer: the totals move on the events that move them.
 
 **Omit `since` rather than inventing one.** Omni renders it as a duration, so a timestamp
 synthesised from the adapter's own clock at seed time reads as "on task for 0 seconds" for
@@ -127,7 +129,7 @@ assignment from the member alone.
 | `{ type: "lead-features", enabled }` | The team feature on or off. See **The lead switches the feature on and off** above. |
 | `{ type: "decide-break-request", memberId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
 | `{ type: "set-break-policy", policy }` | `approval-required`, `automatically-approved`, or `requests-suspended`. |
-| `{ type: "force-break", memberId, reasonId?, reason?, expectedDurationMs? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. Optional `expectedDurationMs` is advisory; the resulting forced break publishes what is left of it as `expectedEndsInSeconds`, restated on every publication. |
+| `{ type: "force-break", memberId, reasonId?, reason?, expectedDurationSeconds? }` | Puts a member on a break they did not ask for. `reasonId` names a published `BreakReason.id` and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. Optional `expectedDurationSeconds` is advisory; the resulting forced break publishes what is left of it as `expectedEndsInSeconds`, restated on every publication. |
 | `{ type: "end-forced-break", memberId }` | Asks the provider to lift a forced-break restriction a lead asked for, by clearing `BreakState.forced`; one the platform imposed is its own to lift (`team.command.endForcedBreak.provider`, `omni.break-forced-by-provider`). The committed break continues; only the agent resumes work. |
 | `{ type: "join", memberId, assignmentId? }` | Answers the member's request: the provider bridges the lead's channel into the call. See **Lead assist**. |
 | `{ type: "decline", memberId, assignmentId?, reason? }` | Refuses the member's request. |
@@ -161,14 +163,14 @@ flow, in order:
 
 ```ts
 // 1. The agent asks, with a small note. Their task carries `leadAssist` from here on.
-execute({ assignmentId: "alloc-42", command: { type: "lead-assist", action: "request", note: "Refund dispute, needs approval" } })
+execute({ assignmentId: "asg-42", command: { type: "lead-assist", action: "request", note: "Refund dispute, needs approval" } })
 //    task.leadAssist = { stage: "requested", note: "Refund dispute, needs approval", since }
 
 // 2. Every lead with the team feature on sees the request on the member.
-//    team-member-updated: member: { id: "A-1", ..., request: { assignmentId: "alloc-42", note, since } }
+//    team-member-updated: member: { id: "A-1", ..., request: { assignmentId: "asg-42", note, since } }
 
 // 3. A lead joins, or declines.
-executeTeam({ command: { type: "join", memberId: "A-1", assignmentId: "alloc-42" } })
+executeTeam({ command: { type: "join", memberId: "A-1", assignmentId: "asg-42" } })
 executeTeam({ command: { type: "decline", memberId: "A-1", reason: "In a call" } })
 ```
 
@@ -259,10 +261,10 @@ The flow, end to end:
 // 1. The lead, with the feature on, sees a member on-task with their tasks, and picks a call.
 // 2. The lead's channel joins it in silence. Conditions: the lead's voice channel is free --
 //    not on a call, not listening elsewhere. Capacity is not involved: nothing is assigned.
-executeTeam({ command: { type: "listen", memberId: "A-1", assignmentId: "alloc-42" } })
+executeTeam({ command: { type: "listen", memberId: "A-1", assignmentId: "asg-42" } })
 // 3. The provider publishes the member whole on team-member-updated, to every lead; the member carries
-//    listening: [{ leadId: "L-9", assignmentId: "alloc-42", mode: "listen", since }]
-//    -- L-9's application opens openAudio({ assignmentId: "alloc-42" }) on its own connection; every
+//    listening: [{ leadId: "L-9", assignmentId: "asg-42", mode: "listen", since }]
+//    -- L-9's application opens openAudio({ assignmentId: "asg-42" }) on its own connection; every
 //    other lead's shows L-9 on the call and opens nothing.
 // 4. The lead changes how they are heard; the member is published again with the entry's new mode. The audio stays open.
 //    join-call is heard by everyone, so the member's task is also republished with L-9 on onCall as an agent.

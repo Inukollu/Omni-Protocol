@@ -14,6 +14,7 @@ import {
   RECORDING_ACTIONS,
   LEAD_COMMAND_CAPABILITY,
   SHIFT_EVENT_KINDS,
+  SHIFT_FIGURES,
   type RecordingAction,
   type RecordingStatus,
   RECORDING_SIDES,
@@ -131,7 +132,7 @@ const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
 });
 const HISTORY_STEPS = membersOf<HistoryStep>({
   arrived: true, "self-service": true, queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, added: true, unanswered: true,
-  "callback-requested": true,
+  "connected-back": true, "callback-requested": true,
 });
 const CUSTOM_UI_CONTROLS = membersOf<CustomCapability["ui"]["control"]>({ button: true, toggle: true, "menu-item": true });
 const CUSTOM_UI_PLACEMENTS = membersOf<CustomCapability["ui"]["placement"]>({ primary: true, secondary: true, overflow: true });
@@ -1144,8 +1145,8 @@ function validateHistory(value: unknown, path: string, into: Collector, task: { 
     if (entry.by !== undefined) {
       into.require(isUserId(entry.by), "task.history.by", `${at}.by`,
         "by must be a non-empty user id; omit it when the person cannot be identified");
-      // On `arrived`, `self-service` and `queued` nobody takes part, so there is nothing to name.
-      into.require(entry.step !== "arrived" && entry.step !== "self-service" && entry.step !== "queued", "task.history.by.unexpected", `${at}.by`,
+      // On `arrived`, `self-service` and `queued` nobody takes part, and a queue callback is the caller's own choice.
+      into.require(entry.step !== "arrived" && entry.step !== "self-service" && entry.step !== "queued" && entry.step !== "callback-requested", "task.history.by.unexpected", `${at}.by`,
         `${describeValue(entry.step)} names nobody`);
     }
     // A step that dialled says where to and, when a host placed it, which dial; no other step dialled.
@@ -1625,7 +1626,7 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
   const allowed: Record<string, readonly string[]> = {
     "lead-features": ["type", "enabled"],
     "decide-break-request": ["type", "memberId", "decision", "reason"], "set-break-policy": ["type", "policy"],
-    "force-break": ["type", "memberId", "reasonId", "reason", "expectedDurationMs"], "end-forced-break": ["type", "memberId"],
+    "force-break": ["type", "memberId", "reasonId", "reason", "expectedDurationSeconds"], "end-forced-break": ["type", "memberId"],
     join: member, decline: [...member, "reason"], listen: member, coach: member, "join-call": member, leave: member, "take-over-call": member,
     "set-policy": ["type", "capability", "setting"],
   };
@@ -1686,9 +1687,9 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
         "the platform put this member on the break, and it lifts it: a lead ends a break a lead forced");
     }
     if (command.type === "force-break") {
-      if (command.expectedDurationMs !== undefined) into.require(
-        typeof command.expectedDurationMs === "number" && Number.isFinite(command.expectedDurationMs) && command.expectedDurationMs > 0,
-        "team.command.expectedDurationMs", `${path}.expectedDurationMs`, "expectedDurationMs must be positive finite milliseconds; it never resumes the agent");
+      if (command.expectedDurationSeconds !== undefined) into.require(
+        isDurationSeconds(command.expectedDurationSeconds) && (command.expectedDurationSeconds as number) > 0,
+        "team.command.expectedDurationSeconds", `${path}.expectedDurationSeconds`, "expectedDurationSeconds must be a whole number of seconds, more than zero; it never resumes the agent");
       if (command.reasonId !== undefined) into.filled(command.reasonId, "team.command.reasonId", path, "reasonId must not be empty");
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
       into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
@@ -2637,11 +2638,27 @@ function validateShiftInto(value: unknown, path: string, into: Collector, rule: 
       "a member signs out after signing in");
   }
   for (const field of ["talkSeconds", "holdSeconds", "breakSeconds"] as const) {
-    if (value[field] !== undefined) into.require(isDurationSeconds(value[field]), `team.member.shift.${field}`, `${path}.${field}`,
+    if (value[field] !== undefined) into.require(isDurationSeconds(value[field]), `${rule}.${field}`, `${path}.${field}`,
       `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
   }
   if (value.tasksHandled !== undefined) into.require(Number.isInteger(value.tasksHandled) && (value.tasksHandled as number) >= 0,
     `${rule}.tasksHandled`, `${path}.tasksHandled`, "tasksHandled must be a whole number, zero or more, or omitted when unknown");
+  if (value.running !== undefined) {
+    if (!Array.isArray(value.running)) {
+      into.add(`${rule}.running.shape`, `${path}.running`, "running must be an array when present");
+    } else {
+      const seen = new Set<unknown>();
+      value.running.forEach((entry: unknown, index: number) => {
+        const at = `${path}.running[${index}]`;
+        if (!isPlainObject(entry)) { into.add(`${rule}.running.shape`, at, "each running stretch must be an object"); return; }
+        into.oneOf(entry.figure, SHIFT_FIGURES, `${rule}.running.figure`, `${at}.figure`);
+        into.timestamp(entry.since, `${rule}.running.since`, `${at}.since`);
+        into.require(!seen.has(entry.figure), `${rule}.running.duplicate`, `${at}.figure`,
+          `${String(entry.figure)} is already running: a figure has one running stretch at a time`);
+        seen.add(entry.figure);
+      });
+    }
+  }
   if (value.events !== undefined) {
     if (!Array.isArray(value.events)) {
       into.add(`${rule}.events.shape`, `${path}.events`, "events must be an array when present");
@@ -3335,7 +3352,7 @@ export function validateUserDetails(users: unknown, asked: readonly string[], pa
   }
   users.forEach((user: unknown, index: number) => {
     const at = `${path}[${index}]`;
-    validateUser(user, "getUserDetails.user", at, into);
+    validateUser(user, "getUserDetails.user", at, into, false);
     if (isPlainObject(user) && typeof user.id === "string") {
       into.require(asked.includes(user.id), "getUserDetails.unasked", `${at}.id`, `${user.id} was not among the ids asked for`);
     }
@@ -3343,16 +3360,21 @@ export function validateUserDetails(users: unknown, asked: readonly string[], pa
   return into.violations;
 }
 
-function validateUser(value: unknown, rule: string, path: string, into: Collector): void {
+function validateUser(value: unknown, rule: string, path: string, into: Collector, signedIn: boolean): void {
   if (!isPlainObject(value)) {
     into.add(rule, path, "an identity must be an object");
     return;
   }
   into.require(isUserId(value.id), `${rule}.id`, `${path}.id`, "an identity needs a provider-issued user id");
   into.filled(value.displayName, `${rule}.displayName`, `${path}.displayName`, "an identity needs a display name");
-  // Never absent: the host stated the zone at authentication, before this identity existed.
-  into.require(isTimeZone(value.timeZone), `${rule}.timeZone`, `${path}.timeZone`,
-    "every identity carries the agent's time zone as an IANA name, such as Asia/Kolkata; the host stated it at authentication");
+  if (signedIn) {
+    // Never absent: the host stated the zone at authentication, before this identity existed.
+    into.require(isTimeZone(value.timeZone), `${rule}.timeZone`, `${path}.timeZone`,
+      "the signed-in identity carries the session's time zone as an IANA name, such as Asia/Kolkata; the host stated it at authentication");
+  } else if (value.timeZone !== undefined) {
+    into.require(isTimeZone(value.timeZone), `${rule}.timeZone`, `${path}.timeZone`,
+      "a described user's time zone, where the provider knows it, is an IANA name, such as Asia/Kolkata");
+  }
 }
 
 function validateUserCapabilitiesInto(value: unknown, path: string, into: Collector, levels: readonly string[]): void {
@@ -3540,10 +3562,10 @@ export function validateAuthenticationState(state: unknown, path: string, contex
   // Only `authenticated` may carry an expiry, and only the states that know who the agent is
   // may carry an identity. Anything else is a state claiming knowledge it does not have.
   if (state.status === "authenticated" || state.status === "refreshing") {
-    validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
+    validateUser(state.identity, "authentication.identity", `${path}.identity`, into, true);
     validateUserCapabilitiesInto(state.capabilities, `${path}.capabilities`, into, context.levels);
   } else if (state.status === "expired" || state.status === "terminated") {
-    if (state.identity !== undefined) validateUser(state.identity, "authentication.identity", `${path}.identity`, into);
+    if (state.identity !== undefined) validateUser(state.identity, "authentication.identity", `${path}.identity`, into, true);
     if (state.failure !== undefined) {
       validateAuthenticationFailureInto(state.failure, `${path}.failure`, into);
     }
