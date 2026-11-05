@@ -1036,7 +1036,7 @@ type BreakState = {
   canRequestBreak: boolean;
   requestUnavailableReason?: string;
   decisionReason?: string;
-  retryRequestAfterMs?: number;
+  retryRequestInSeconds?: DurationSeconds;
   reasons?: BreakReason[];
   activeReasonId?: string;
   forced?: ForcedBreak;

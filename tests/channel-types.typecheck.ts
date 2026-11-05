@@ -567,8 +567,8 @@ export const retiredBreakRefusal: import("../src/index.js").BreakState = { ...un
 // @ts-expect-error Use on-break, not the retired in-effect approval.
 export const retiredActiveBreakState: import("../src/index.js").BreakStatus = "in-effect";
 
-export const breakRequestRetry: import("../src/index.js").BreakState = { status: "not-requested", canRequestBreak: true, retryRequestAfterMs: 500 };
-// @ts-expect-error BreakState uses retryRequestAfterMs, not the old retryAfterMs field.
+export const breakRequestRetry: import("../src/index.js").BreakState = { status: "not-requested", canRequestBreak: true, retryRequestInSeconds: 300 };
+// @ts-expect-error BreakState uses retryRequestInSeconds, not the old retryAfterMs field.
 export const retiredBreakRetry: import("../src/index.js").BreakState = { ...breakRequestRetry, retryAfterMs: 500 };
 
 // @ts-expect-error BreakState uses status, without an approval alias.

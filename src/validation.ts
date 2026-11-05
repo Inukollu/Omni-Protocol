@@ -1822,11 +1822,13 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     into.require(value.canRequestBreak !== true, "break.requestUnavailableReason.canRequestBreak", `${path}.requestUnavailableReason`,
       "requestUnavailableReason is shown when canRequestBreak is false; omit it while the agent may ask");
   }
-  into.require(!Object.hasOwn(value, "retryAfterMs"), "break.retryRequestAfterMs.renamed", `${path}.retryAfterMs`,
-    "retryAfterMs was renamed to retryRequestAfterMs on BreakState");
-  if (value.retryRequestAfterMs !== undefined) {
-    into.require(typeof value.retryRequestAfterMs === "number" && Number.isFinite(value.retryRequestAfterMs) && value.retryRequestAfterMs >= 0,
-      "break.retryRequestAfterMs", `${path}.retryRequestAfterMs`, "retryRequestAfterMs must be a non-negative number when present");
+  for (const old of ["retryAfterMs", "retryRequestAfterMs"]) {
+    into.require(!Object.hasOwn(value, old), "break.retryRequestInSeconds.renamed", `${path}.${old}`,
+      `${old} is now retryRequestInSeconds on BreakState: whole seconds, as every countdown on this wire`);
+  }
+  if (value.retryRequestInSeconds !== undefined) {
+    into.require(isDurationSeconds(value.retryRequestInSeconds), "break.retryRequestInSeconds", `${path}.retryRequestInSeconds`,
+      "retryRequestInSeconds must be a whole number of seconds, zero or more, when present");
   }
   if (value.activeReasonId !== undefined) {
     into.filled(value.activeReasonId, "break.activeReasonId", `${path}.activeReasonId`,

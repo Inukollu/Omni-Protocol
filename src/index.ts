@@ -1417,7 +1417,8 @@ export interface BreakState {
   /** Shown when `canRequestBreak` is false, such as "Busy hours". */
   requestUnavailableReason?: string;
   decisionReason?: string;
-  retryRequestAfterMs?: number;
+  /** Whole seconds until the agent may ask again, as of this publication and restated on each, when the provider can say. */
+  retryRequestInSeconds?: DurationSeconds;
   /** Not-ready codes this provider offers. Omitted when it defines none. */
   reasons?: BreakReason[];
   /** Which reason the current break is on, a published `BreakReason.id`. Omitted when there is no break; required on a break in effect or starting after the task where the provider publishes `reasons`, a forced one included. */

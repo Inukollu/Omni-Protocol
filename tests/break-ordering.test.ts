@@ -35,14 +35,14 @@ describe("runtime break ordering", () => {
   });
 
   it("validates break retry delays and rejects the old or mixed field", () => {
-    for (const retryRequestAfterMs of [0, 500, 0.5]) {
-      expect(validateBreakStatus({ ...state("not-requested"), retryRequestAfterMs }, [])).toEqual([]);
+    for (const retryRequestInSeconds of [0, 300]) {
+      expect(validateBreakStatus({ ...state("not-requested"), retryRequestInSeconds }, [])).toEqual([]);
     }
-    for (const retryRequestAfterMs of [-1, Infinity, NaN, "500", null]) {
-      expect(validateBreakStatus({ ...state("not-requested"), retryRequestAfterMs }, []).map(v => v.rule)).toContain("break.retryRequestAfterMs");
+    for (const retryRequestInSeconds of [-1, 0.5, Infinity, NaN, "500", null]) {
+      expect(validateBreakStatus({ ...state("not-requested"), retryRequestInSeconds }, []).map(v => v.rule)).toContain("break.retryRequestInSeconds");
     }
-    for (const fields of [{ retryAfterMs: 500 }, { retryAfterMs: 500, retryRequestAfterMs: 500 }]) {
-      expect(validateBreakStatus({ ...state("not-requested"), ...fields }, []).map(v => v.rule)).toContain("break.retryRequestAfterMs.renamed");
+    for (const fields of [{ retryAfterMs: 500 }, { retryRequestAfterMs: 500 }, { retryRequestAfterMs: 500, retryRequestInSeconds: 1 }]) {
+      expect(validateBreakStatus({ ...state("not-requested"), ...fields }, []).map(v => v.rule)).toContain("break.retryRequestInSeconds.renamed");
     }
   });
 
