@@ -70,7 +70,9 @@ describe("Omni protocol", () => {
   it("names every phase for every channel, so no task is ever unlabelled", () => {
     const phases: TaskPhase[] = ["pending", "confirmed", "preview", "in-progress", "paused", "completing"];
     for (const channel of ["voice", "chat", "email"] as const) {
-      expect(Object.keys(DEFAULT_TASK_PHASE_LABELS[channel]).sort()).toEqual([...phases].sort());
+      // Preview is voice only, so only voice labels it.
+      const shown = channel === "voice" ? phases : phases.filter(phase => phase !== "preview");
+      expect(Object.keys(DEFAULT_TASK_PHASE_LABELS[channel]).sort()).toEqual([...shown].sort());
       for (const label of Object.values(DEFAULT_TASK_PHASE_LABELS[channel])) expect(label.trim()).not.toBe("");
       // A reference is shown only when both the value and its label exist, so every default names one.
       expect(DEFAULT_TASK_TYPE_PRESENTATION[channel].referenceLabel).toMatch(/ID$/);
@@ -81,10 +83,11 @@ describe("Omni protocol", () => {
   });
 
   it("names every history step, the call's arrival as the agent says it", () => {
-    const steps: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "added", "unanswered", "callback-requested"];
+    const steps: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "added", "unanswered", "connected-back", "callback-requested"];
     expect(Object.keys(DEFAULT_HISTORY_STEP_LABELS).sort()).toEqual([...steps].sort());
     for (const label of Object.values(DEFAULT_HISTORY_STEP_LABELS)) expect(label.trim()).not.toBe("");
     expect(DEFAULT_HISTORY_STEP_LABELS.arrived).toBe("Incoming call");
+    expect(DEFAULT_HISTORY_STEP_LABELS["connected-back"]).toBe("Reconnected");
   });
 });
 
@@ -337,7 +340,7 @@ describe("historyStepExpectsAPerson", () => {
     for (const step of nobody) expect(historyStepExpectsAPerson(step)).toBe(false);
     // The control that matters: every other step does expect one, so an absent agent on any
     // of them means "handled, could not attribute" rather than "nobody involved".
-    const everyStep: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "added", "unanswered"];
+    const everyStep: HistoryStep[] = ["arrived", "self-service", "queued", "offered", "answered", "held", "muted", "transferred", "added", "unanswered", "connected-back"];
     for (const step of everyStep.filter(step => !nobody.includes(step))) {
       expect(historyStepExpectsAPerson(step)).toBe(true);
     }
@@ -363,7 +366,7 @@ describe("every dial has an outcome", () => {
     expect(CAPABILITY_SOURCES).toEqual(["queue", "dialer", "nobody", "not-yet-read"]);
     expect(HOST_MUTES).toEqual(["stream", "station"]);
     expect(MUTED_BY).toEqual(["host", "station"]);
-    expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "added", "unanswered"]);
+    expect(HISTORY_STEPS_THAT_DIAL).toEqual(["transferred", "added", "unanswered", "connected-back"]);
     for (const step of HISTORY_STEPS_THAT_DIAL) expect(historyStepDials(step)).toBe(true);
     for (const step of ["arrived", "self-service", "queued", "offered", "answered", "held", "muted"] as const) expect(historyStepDials(step)).toBe(false);
   });

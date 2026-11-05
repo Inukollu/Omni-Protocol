@@ -940,6 +940,22 @@ describe("validateTeamMembers", () => {
     expect(check({ type: "shift-updated", shift: { ...day, tasksHandled: 2.5 } })).toEqual(["shift.tasksHandled"]);
     // The member's copy on the lead's list is the same shape under its own rule prefix.
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { ...day, tasksHandled: 2.5 } }] }, "team", { levels: LEVELS }))).toEqual(["team.member.shift.tasksHandled"]);
+    expect(check({ type: "shift-updated", shift: { ...day, talkSeconds: -1 } })).toEqual(["shift.talkSeconds"]);
+  });
+
+  it("carries the stretches still running beside the totals that leave them out, one per figure", () => {
+    const at = "2026-08-21T08:58:12Z";
+    const ticking = manifest({ timeCheck: true });
+    const check = (shift: unknown) => rules(validateEventEnvelope(envelope({ type: "shift-updated", shift }), ticking));
+    const day = { signedInAt: at, talkSeconds: 4210 };
+    expect(check({ ...day, running: [{ figure: "talk", since: "2026-08-21T10:02:00Z" }, { figure: "hold", since: "2026-08-21T10:05:00Z" }] })).toEqual([]);
+    expect(check({ ...day, running: [] })).toEqual([]);
+    expect(check({ ...day, running: { figure: "talk" } })).toEqual(["shift.running.shape"]);
+    expect(check({ ...day, running: [{ figure: "wrap", since: at }] })).toEqual(["shift.running.figure"]);
+    expect(check({ ...day, running: [{ figure: "talk", since: "10:02" }] })).toEqual(["shift.running.since"]);
+    expect(check({ ...day, running: [{ figure: "talk", since: at }, { figure: "talk", since: at }] })).toEqual(["shift.running.duplicate"]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { ...day, running: [{ figure: "break", since: "x" }] } }] }, "team", { levels: LEVELS })))
+      .toEqual(["team.member.shift.running.since"]);
   });
 
   it("counts every duration off the active call from the provider's clock: timeCheck where a running instant is published, providerTime with it", () => {
@@ -1545,6 +1561,10 @@ describe("the other direction, everywhere", () => {
     expect(step({ step: "arrived", by: "A-1" })).toEqual(["task.history.by.unexpected"]);
     expect(step({ step: "self-service", seconds: 45 })).toEqual([]);
     expect(step({ step: "self-service", by: "A-1" })).toEqual(["task.history.by.unexpected"]);
+    // A queue callback is the caller's own choice; a reconnect is the agent's dial.
+    expect(step({ step: "callback-requested" })).toEqual([]);
+    expect(step({ step: "callback-requested", by: "A-1" })).toEqual(["task.history.by.unexpected"]);
+    expect(step({ step: "connected-back", by: "A-1", dialId: "dial-7", contactId: "c-17" })).toEqual([]);
   });
 
   it("starts the record where the call arrived, once", () => {

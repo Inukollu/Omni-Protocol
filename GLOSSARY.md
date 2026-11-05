@@ -59,9 +59,9 @@ for orientation only: each platform's own documentation is the authority on its 
 | **End call** | End the agent's part. The caller carries on to wherever the provider sends them, such as a survey. | *Leave*, *drop*, *hang up* (agent leg only). |
 | **Terminate call** | End the whole call for everyone. | *Disconnect all*, *end conversation*. |
 | **Add to call** | Bring someone onto the call while the agent stays; they leave when the agent ends their part. | *Conference*, *add participant*, *three-way call*. |
-| **Connect back** | Call the customer again after the call has ended, during the wrap. | *Callback from wrap*, *re-dial*. |
-| **Schedule** | Put a follow-up with this customer on the calendar. | *Scheduled callback* (Amazon Connect, Genesys Cloud), *personal callback* (Five9). |
-| **Callback requested** | The customer asked to be called back, or an agent arranged it. | *Queued callback* (Amazon Connect), *callback* (Genesys Cloud), *virtual hold*. |
+| **Reconnect** | Dial a dropped customer back into the same call, during the wrap: `connect-back` on the wire. | *Callback from wrap*, *re-dial*. |
+| **Schedule** | Book a scheduled call with this customer, on the calendar. | *Scheduled callback* (Amazon Connect, Genesys Cloud), *personal callback* (Five9). |
+| **Callback requested** | A waiting customer asked to be called back when an agent is free. | *Queued callback* (Amazon Connect), *callback* (Genesys Cloud), *virtual hold*. |
 
 There is deliberately no **transfer**. An agent who needs help asks a lead, and a call changes
 hands only through routing or a lead's take-over.

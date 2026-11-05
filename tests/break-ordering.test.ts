@@ -35,14 +35,14 @@ describe("runtime break ordering", () => {
   });
 
   it("validates break retry delays and rejects the old or mixed field", () => {
-    for (const retryRequestAfterMs of [0, 500, 0.5]) {
-      expect(validateBreakStatus({ ...state("not-requested"), retryRequestAfterMs }, [])).toEqual([]);
+    for (const retryRequestInSeconds of [0, 300]) {
+      expect(validateBreakStatus({ ...state("not-requested"), retryRequestInSeconds }, [])).toEqual([]);
     }
-    for (const retryRequestAfterMs of [-1, Infinity, NaN, "500", null]) {
-      expect(validateBreakStatus({ ...state("not-requested"), retryRequestAfterMs }, []).map(v => v.rule)).toContain("break.retryRequestAfterMs");
+    for (const retryRequestInSeconds of [-1, 0.5, Infinity, NaN, "500", null]) {
+      expect(validateBreakStatus({ ...state("not-requested"), retryRequestInSeconds }, []).map(v => v.rule)).toContain("break.retryRequestInSeconds");
     }
-    for (const fields of [{ retryAfterMs: 500 }, { retryAfterMs: 500, retryRequestAfterMs: 500 }]) {
-      expect(validateBreakStatus({ ...state("not-requested"), ...fields }, []).map(v => v.rule)).toContain("break.retryRequestAfterMs.renamed");
+    for (const fields of [{ retryAfterMs: 500 }, { retryRequestAfterMs: 500 }, { retryRequestAfterMs: 500, retryRequestInSeconds: 1 }]) {
+      expect(validateBreakStatus({ ...state("not-requested"), ...fields }, []).map(v => v.rule)).toContain("break.retryRequestInSeconds.renamed");
     }
   });
 
@@ -317,10 +317,12 @@ describe("lead commands", () => {
   });
   it("accepts an optional expected duration on force-break and rejects timer controls", () => {
     const command = { type: "force-break", memberId: "member", reasonId: "bio" };
-    expect(validateTeamCommand({ command: { ...command, expectedDurationMs: 600000 } }, lead)).toEqual([]);
-    for (const expectedDurationMs of [0, -1, Infinity, NaN, "500", null]) {
-      expect(validateTeamCommand({ command: { ...command, expectedDurationMs } }, lead).map(v => v.rule)).toContain("team.command.expectedDurationMs");
+    expect(validateTeamCommand({ command: { ...command, expectedDurationSeconds: 600 } }, lead)).toEqual([]);
+    for (const expectedDurationSeconds of [0, -1, 1.5, Infinity, NaN, "500", null]) {
+      expect(validateTeamCommand({ command: { ...command, expectedDurationSeconds } }, lead).map(v => v.rule)).toContain("team.command.expectedDurationSeconds");
     }
+    // The milliseconds the command once took are not a second way to say it.
+    expect(validateTeamCommand({ command: { ...command, expectedDurationMs: 600000 } }, lead).map(v => v.rule)).toContain("team.command.field");
     expect(validateTeamCommand({ command: { ...command, endsAutomatically: true } }, lead).map(v => v.rule)).toContain("team.command.field");
   });
   it("checks the forced-break reason and end without assuming the same lead does both", () => {

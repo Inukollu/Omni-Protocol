@@ -41,8 +41,8 @@ are used precisely throughout and mean nothing looser here.
 | **Provider** | One independently connected external system: a voice platform, a chat platform, a mail platform. |
 | **Adapter** | The package implementing this contract for one provider. One adapter is one provider, so the words are often interchangeable; *provider* names the system, *adapter* the code speaking for it. |
 | **Agent** | The person signed in and taking work. On `onCall`, `agent` is a person on the call by user id; the provider's contacts may include an agent, whom an add to the call then names by contact id. |
-| **Lead** | An agent whose capabilities include `lead`, the lead capabilities they hold for the session. Its presence lets the agent application offer the team feature; the application switches it on with `lead-features` on every connect, and only then does the provider publish the team -- whole on `team-updated`, then one member at a time -- to that sign-in and to nobody else: **the session is the permission**. The lead sees their members with their tasks and stats, and acts on them with the lead capabilities the session holds. |
-| **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol and never sent to a provider. It gates whether an offer may be rejected, whether the agent goes ready on session, and whether tasks are auto-accepted. Where a capability and local policy disagree, the stricter wins. |
+| **Lead** | An agent whose capabilities include `lead`, the lead capabilities they hold for the session. Its presence lets the agent application offer the team feature; the application switches it on with `lead-features` on every connect, and only then does the provider publish the team -- whole on `team-updated`, then one member at a time -- to that sign-in and to nobody else: **the user's capabilities are the permission**. The lead sees their members with their tasks and stats, and acts on them with the lead capabilities the session holds. |
+| **Local policy** | Rules configured by the agent application about this agent, outside the provider protocol. It gates whether an offer may be rejected, whether the agent goes ready on session, and whether tasks are auto-accepted; only that last reaches the provider, as `autoAcceptTasks` at connect, so it can state `acceptance`. Where a capability and local policy disagree, the stricter wins. |
 | **Call** | The caller’s complete phone call, which may continue through IVRs, queues and several agents. The protocol never describes the IVR or the queue; it carries the call's history and details to whichever agent holds it now. |
 | **Assignment** | The call routed to this agent, from the offer until the task ends. It is the one thing that crosses: the provider assigns, names the assignment with `assignmentId`, and that is the only name the agent computer ever uses back. A call that comes back is a new assignment on the same call, and a declined or lapsed offer is an assignment that became nothing more. What the platform calls its own record, and whether it reuses that name, is the adapter's business and unknown to the agent computer. |
 | **Interaction** | The agent's time on the call, from answer until their audio ends: the `in-progress` and `paused` phases. An assignment produces at most one interaction, and a call that returns produces a new assignment and so a new interaction. |
@@ -167,8 +167,10 @@ type TimeZone = string;
 type User = {
   id: UserId;
   displayName: string;
-  timeZone: TimeZone;
+  timeZone?: TimeZone;
 };
+
+type SignedInUser = User & { timeZone: TimeZone };
 
 type Attribute = { key: string; value: string };
 ```
@@ -323,10 +325,10 @@ type LeadCapabilities = {
 type AuthenticationState =
   | { status: "signed-out" }
   | { status: "authenticating" }
-  | { status: "authenticated"; identity: User; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
-  | { status: "refreshing"; identity: User; capabilities: UserCapabilities }
-  | { status: "expired"; identity?: User; failure?: AuthenticationFailure }
-  | { status: "terminated"; by: UserId | "provider"; identity?: User; failure: AuthenticationFailure & { retryable: false } };
+  | { status: "authenticated"; identity: SignedInUser; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "refreshing"; identity: SignedInUser; capabilities: UserCapabilities }
+  | { status: "expired"; identity?: SignedInUser; failure?: AuthenticationFailure }
+  | { status: "terminated"; by: UserId | "provider"; identity?: SignedInUser; failure: AuthenticationFailure & { retryable: false } };
 
 type AuthenticationFailure = {
   code: string;
@@ -477,7 +479,7 @@ type CompleteAuthenticationRequest =
   | { flowId: string; method: "credentials"; values: Readonly<Record<string, string>> };
 
 type CompleteAuthenticationResult =
-  | { status: "authenticated"; identity: User; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
+  | { status: "authenticated"; identity: SignedInUser; capabilities: UserCapabilities; expiresAt?: IsoTimestamp }
   | { status: "rejected"; failure: AuthenticationFailure };
 
 type AuthenticationActionResult =
@@ -536,12 +538,12 @@ type PreferenceResult =
   | { status: "applied" }
   | { status: "failed"; failure: ProtocolFailure };
 
-type Snapshot = {
+type Snapshot<C extends Channel = Channel> = {
   transport: TransportStatus;
   sessionId: string;
   providerTime?: IsoTimestamp;
   break: BreakState;
-  tasks: Task[];
+  tasks: Task<C>[];
   taskCount: number;
   contacts?: ContactEntry[];
   calendar?: ScheduledActivity[];
@@ -554,7 +556,7 @@ type Snapshot = {
 };
 
 type AgentCapacity = {
-  count: number; // absolute ceiling, zero or more; zero is agent application-stopped
+  count: number; // absolute ceiling, zero or more; zero is stopped by the agent application
 };
 
 type CapacityResult = { status: "applied" };
@@ -686,7 +688,7 @@ type BrowserProfileKeyInput = {
 ```
 
 That union is what makes a reusing browser with no scheme fail to compile rather than inherit a
-default — see **Choosing an isolation scheme**.
+default — see **Choosing an isolation scheme** in `guide/agent.md`.
 
 ### Task
 
@@ -723,6 +725,7 @@ type HistoryStep =
   | "transferred"
   | "added"
   | "unanswered"
+  | "connected-back"
   | "callback-requested";
 
 type TaskHistory = {
@@ -915,7 +918,7 @@ type TaskCommandResult =
 
 ### Who decides what an agent may do
 
-An agent agent computer has two managers, not one. **The queue** — a process, a work type — is owned by a
+An agent computer has two managers, not one. **The queue** — a process, a work type — is owned by a
 process manager and **allows** a set of capabilities: hold, connect back, dial, add to call,
 whether the number is visible, the actions it offers, the skills it needs. **The people** are
 managed through the organisation's structure — a team, a location, the organisation itself, in
@@ -1033,7 +1036,7 @@ type BreakState = {
   canRequestBreak: boolean;
   requestUnavailableReason?: string;
   decisionReason?: string;
-  retryRequestAfterMs?: number;
+  retryRequestInSeconds?: DurationSeconds;
   reasons?: BreakReason[];
   activeReasonId?: string;
   forced?: ForcedBreak;
@@ -1136,6 +1139,13 @@ type ShiftEvent = {
   kind: ShiftEventKind;
 };
 
+type ShiftFigure = "talk" | "hold" | "break";
+
+type ShiftRunning = {
+  figure: ShiftFigure;
+  since: IsoTimestamp;
+};
+
 type Shift = {
   signedInAt: IsoTimestamp;
   signedOutAt?: IsoTimestamp;
@@ -1143,6 +1153,7 @@ type Shift = {
   holdSeconds?: DurationSeconds;
   breakSeconds?: DurationSeconds;
   tasksHandled?: number;
+  running?: ShiftRunning[];
   events?: ShiftEvent[];
 };
 
@@ -1182,7 +1193,7 @@ type TeamCallCommand =
 type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
-  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationMs?: number }
+  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationSeconds?: DurationSeconds }
   | { type: "end-forced-break"; memberId: UserId };
 
 type TeamCommand = TeamFeatureCommand | TeamBreakCommand | TeamCallCommand | TeamPolicyCommand;
@@ -1230,16 +1241,16 @@ type QueueSummary = {
 
 type TransportRecovery = "reconnect" | "reauthenticate" | "displaced";
 
-type ProviderEvent =
-  | { type: "snapshot"; reason: "reconnected" | "provider-requested"; snapshot: Snapshot }
+type ProviderEvent<C extends Channel = Channel> =
+  | { type: "snapshot"; reason: "reconnected" | "provider-requested"; snapshot: Snapshot<C> }
   | { type: "transport-status"; status: "connecting" | "active"; message?: string }
   | { type: "transport-status"; status: "error"; recovery: TransportRecovery; message: string }
   | { type: "break-state"; break: BreakState }
   | {
       type: "task-offered";
-      task: Task;
+      task: Task<C>;
     }
-  | { type: "task-updated"; task: Task }
+  | { type: "task-updated"; task: Task<C> }
   | { type: "task-audio-started"; assignmentId: AssignmentId }
   | { type: "task-audio-ended"; assignmentId: AssignmentId }
   | { type: "task-ended"; assignmentId: AssignmentId; outcome: TaskOutcome }
@@ -1259,11 +1270,11 @@ type ProviderEvent =
   | { type: "lined-up"; linedUp?: LinedUpCall }
   | { type: "labels-updated"; labels: Labels };
 
-type ProviderEventEnvelope = {
+type ProviderEventEnvelope<C extends Channel = Channel> = {
   id: string;
   sessionId: string;
   occurredAt: IsoTimestamp;
-  event: ProviderEvent;
+  event: ProviderEvent<C>;
 };
 ```
 
@@ -1384,7 +1395,7 @@ type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
 ```
 
 `HISTORY_STEPS_WITH_A_PERSON` is every `HistoryStep` except `arrived`, `self-service` and `queued`, which nobody
-takes part in, and `callback-requested`, which the caller may choose alone. `historyStepExpectsAPerson()` tests membership.
+takes part in, and `callback-requested`, which is the caller's own choice in the queue. `historyStepExpectsAPerson()` tests membership.
 
 ### Failure and validation
 
@@ -1475,6 +1486,7 @@ const DEFAULT_HISTORY_STEP_LABELS = {
   transferred: "Transferred",
   added: "Added",
   unanswered: "Unanswered",
+  "connected-back": "Reconnected",
   "callback-requested": "Callback requested",
 } as const satisfies Readonly<Record<HistoryStep, string>>;
 ```
@@ -1496,7 +1508,6 @@ const DEFAULT_TASK_PHASE_LABELS = {
   chat: {
     pending: "Incoming Chat",
     confirmed: "Accepted",
-    preview: "Preview",
     "in-progress": "In Chat",
     paused: "Paused",
     completing: "Wrap-up",
@@ -1504,14 +1515,16 @@ const DEFAULT_TASK_PHASE_LABELS = {
   email: {
     pending: "Assigned",
     confirmed: "Accepted",
-    preview: "Preview",
     "in-progress": "Working",
     paused: "Paused",
     completing: "Completing",
   },
-} as const satisfies Readonly<
-  Record<"voice" | "chat" | "email", Readonly<Record<TaskPhase, string>>>
->;
+} as const satisfies {
+  // Preview is voice only: a chat or an email has no record put in front of the agent to call.
+  voice: Readonly<Record<TaskPhase, string>>;
+  chat: Readonly<Record<Exclude<TaskPhase, "preview">, string>>;
+  email: Readonly<Record<Exclude<TaskPhase, "preview">, string>>;
+};
 ```
 
 ### Naming a kind of work
@@ -1903,7 +1916,8 @@ idleCapabilities: {
         "https://*.microsoft.com/*"
       ],
       blockList: ["https://help.example.com/private/*"]
-    }
+    },
+    accessAppliesTo: "all-navigation"
   }
 }
 ```
@@ -2071,7 +2085,7 @@ Creates the provider-scoped authentication session.
 | --- | --- |
 | `protocolVersion` | The negotiated version, fixed for this session. |
 | `sessionId` | Omni-generated identity for this session. The same value Omni later passes as `ConnectContext.sessionId`, and how an adapter ties a connection back to the session that authenticated it. |
-| `timeZone` | The zone the agent's day is reckoned in, as an IANA name from the agent application's clock, stated before any identity exists so the first `authenticated` state already carries it. The same value Omni later passes as `ConnectContext.timeZone`. See **The agent's day**. |
+| `timeZone` | The zone this session sees every day in, as an IANA name from the agent application's clock, stated before any identity exists so the first `authenticated` state already carries it. The same value Omni later passes as `ConnectContext.timeZone`. See **The agent's day**. |
 | `languages` | The languages the agent reads, as BCP 47 tags, most preferred first, from the agent application's own setting: `["hi-IN", "en"]`. Never empty (`context.languages`), each a well-formed tag (`context.languages.tag`), none twice (`context.languages.unique`). The same value Omni later passes as `ConnectContext.languages`. See **The agent's languages**. |
 | `phone` | How this session hears its calls, chosen by the agent application from the manifest's `phones`: required for a voice provider, absent for any other. The same value Omni later passes as `ConnectContext.phone`. See **How the agent hears the call** in `guide/phone.md`. |
 | `secrets` | Omni-provided `SecretStore`, scoped to this provider's manifest id. |
@@ -2097,7 +2111,7 @@ reports later changes.
 | `authenticated` | A usable session exists. Includes the provider identity, the user's `capabilities` for the session, and optional token expiry time. |
 | `refreshing` | The adapter is refreshing its session. Existing provider identity and capabilities remain available, unchanged: a change to either is published as `authenticated`. |
 | `expired` | The session's time ran out, or its refresh is failing. It may include an identity and typed failure. The agent signs in again on the same session, and the workspace stays. |
-| `terminated` | The session was ended from outside this agent computer: by a supervisor, by the agent on another screen, or by the platform itself. `by` says who, a person by `UserId` or `provider` where no person was behind it (`authentication.terminated.by`), and `failure` says why and is never retryable (`authentication.terminated.failure`, `.retryable`). It is never reported as `expired`, which would hide who ended it, nor as `signed-out`, which is the agent's own act. The session's ending is the whole message: the agent application disposes the connection with `disconnect()` and shows `failure.message` on the sign-in, and the adapter reports no transport `error` beside it -- `reauthenticate` would say this session is restored, and it is not. |
+| `terminated` | The session was ended from outside this agent computer: by a lead, by the agent on another screen, or by the platform itself. `by` says who, a person by `UserId` or `provider` where no person was behind it (`authentication.terminated.by`), and `failure` says why and is never retryable (`authentication.terminated.failure`, `.retryable`). It is never reported as `expired`, which would hide who ended it, nor as `signed-out`, which is the agent's own act. The session's ending is the whole message: the agent application disposes the connection with `disconnect()` and shows `failure.message` on the sign-in, and the adapter reports no transport `error` beside it -- `reauthenticate` would say this session is restored, and it is not. |
 
 Omni calls `connect()` only after authentication reaches `authenticated`. Token refresh remains
 adapter-owned; the adapter publishes `refreshing`, followed by `authenticated` or `expired`.
@@ -2118,7 +2132,7 @@ replaces the session" describes is a new `AuthenticationSession` under a new `se
 `signed-out`.
 
 **A sign-in the platform no longer allows is ended, not restored.** A role changed mid-shift can
-take away what the session was built on -- an agent made a supervisor may no longer have a phone, and
+take away what the session was built on -- an agent made a lead may no longer have a phone, and
 the platform refuses to renew the softphone. Retrying cannot help and the same session cannot carry
 on, so the adapter deletes the secrets and publishes `terminated`, `by: "provider"`, with a failure
 in the agent's words: `{ code: "phone-not-allowed", message: "Your sign-in no longer allows a phone.
@@ -2343,8 +2357,8 @@ Creates one live provider connection for the signed-in agent.
 | --- | --- |
 | `protocolVersion` | Version negotiated before authentication. Fixed for this session. |
 | `sessionId` | Omni-generated identity for this session. It is the same value passed as `AuthenticationContext.sessionId`, so an adapter can correlate this connection with the session that authenticated it. Stable across transport reconnects and changed only by a new session. |
-| `autoAcceptTasks` | Agent local policy policy relayed to the provider at sign-in, stated by the agent application on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
-| `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider stores it on the agent and carries it on the identity. See **The agent's day**. |
+| `autoAcceptTasks` | The one piece of local policy relayed to the provider, at connect, stated by the agent application on every connection and never assumed from its absence. When `true`, a pending task states its `acceptance`; when `false`, every task requires agent acceptance. Fixed for this connection, like everything else here: the provider states or omits `acceptance` by the value it was sent, and Omni validates by that same value, not by a policy that has since moved — a change reaches the provider through a fresh `connect()`. |
+| `timeZone` | The same value passed as `AuthenticationContext.timeZone`. The provider carries it on the identity and cuts every day-scoped figure this session reads by it. See **The agent's day**. |
 | `languages` | The same value passed as `AuthenticationContext.languages`. See **The agent's languages**. |
 | `phone` | The same value passed as `AuthenticationContext.phone`: how this session hears its calls. The type ties `host.mute` to it: a `softphone` session's agent application states what its Mute does, and a hardphone or conversation session's agent application cannot, so the omission is a compile error rather than a live seat's discovery. See **The station is the agent application's** in `guide/phone.md`. |
 | `store` | The session's operational store, kept by the agent application for the life of the session, across a reload of the agent application, and cleared at sign-out: where an adapter that composes a record keeps what its platform cannot hold for it, such as the interaction legs an agent application reported. Three functions, by key. Never for anything sensitive, which is `AuthenticationContext.secrets`, a store an agent application may clear aggressively. **A task's keys carry its assignment id and go with the task**: a key written about a task names the assignment id in the key, and is deleted before the task's end is published, so that nothing of a closed task survives its ending and nothing is left for whatever comes next -- a record with legs the agent application never reported against it. A session-scoped key carries no assignment id and outlives any task. The harness requires the store of every connection (`store.shape`, `store.get`, `.set`, `.delete`), watches the one it hands over, and names a task's key still held after `task-ended` (`test.store.retained`) or written about the task after its end -- a persist hung off a timer that saw the task as it was (`test.store.late`). The ordinary late write is the agent application's, not the adapter's: an agent application reports a leg without waiting for the answer, so an unmute can follow `complete` by a tick, and the adapter answers a report about a task that has ended `failed` with `omni.assignment-not-found` and writes nothing -- the agent application ends its own open legs at the task's end, so such a report is the agent application's error to see, and an agent application reads every `recordStep` answer and awaits the one for the leg it closes at a task's end, the only moment a refusal is expected, since a report nobody waits for is an error nobody can see; an adapter that names no task in its keys gets no cleanup check, which is a gap rather than a pass, never an exemption: the obligation is that nothing of a closed task survives its ending, and an adapter that keeps every open task in one session-scoped value owes exactly that inside the value, where the harness cannot look. One key per task, named for it, is the shape the harness can hold, and the shape to reach for. The store lists nothing, so an adapter that needs to find its tasks keeps a session-scoped index of ids beside them; at the task's end it deletes the body first and reindexes after, since a crash between the two then leaves an index naming a task with no body, which a reader skips, where the other order leaves a body for a task that has ended, which is the hazard itself. A reader of the index tolerates an id with no body as an ending that was underway, not as corruption. |
@@ -2358,30 +2372,31 @@ Creates one live provider connection for the signed-in agent.
 Every instant on this wire carries an explicit offset, so a moment is unambiguous everywhere and
 an agent computer renders it in the viewer's clock without help. A **day** is different: hours toward
 target, an answer streak, a per-queue count for today -- anything bucketed by day -- is bucketed
-by somebody's day, and a platform that was never told whose uses its own. An agent in Chennai
-then finds their day rolling at 05:30, and a night shift in Chicago lands in two buckets.
+by somebody's day, and a platform that was never told whose uses its own.
 
-So the agent application says whose day it is, and it says so first. `AuthenticationContext.timeZone` is the
-agent's zone as an IANA name -- `Asia/Kolkata`, `America/Chicago` -- never an offset, since an
-offset cannot survive a daylight-saving boundary and a day boundary is exactly where that bites
-(`context.timeZone`). It is stated before any identity exists, and `ConnectContext.timeZone` is the
-same value again. The provider **stores it on the agent** and carries it as `identity.timeZone` on
-every `authenticated` state and on every `User` it returns from `getUserDetails()`, so a lead
-reading a colleague's yesterday sees the colleague's yesterday and a summary is bucketed by the
-right day after a session has ended. A roaming agent corrects it by signing in from where they are.
+**Every day is the viewer's.** Each person sees every figure cut in their own zone: an agent their
+own day, and a lead a member's day cut by the lead's midnight, not the member's. The instants and
+the count are the same for both; only the day they fall in follows whoever is looking.
 
-**The zone is never absent.** Time zone awareness is a first-party property of this wire, not a
-field to fill in later: an identity without one is refused (`authentication.identity.timeZone`), and
-so is a zone that is not an IANA name, wherever it appears. Nothing is ever assumed in its place --
-not the viewer's browser, which gives a different answer per reader for the same record, and not the
-provider's clock. The harness holds a provider to the round trip: the identity carries the zone the
-agent application stated (`authentication.identity.timeZone.republished`), judged by what the name denotes:
-`Asia/Kolkata` and `Asia/Calcutta` are one zone, and a provider that keeps the canonical name has
-kept the zone. **The round trip is not the store.**
-An adapter that echoes the stated zone back onto the identity passes that check with nothing kept,
-and a lead reading a colleague's day would still get the wrong one. What proves the store is a zone
-the run never sent: a colleague's `User` from `getUserDetails()` carrying theirs. A provider's own
-tests are where that is shown, with a second agent whose zone arrived through another session.
+So the agent application says which zone the session sees days in, and it says so first.
+`AuthenticationContext.timeZone` is that zone as an IANA name -- `Asia/Kolkata`, `America/Chicago` --
+never an offset, since an offset cannot survive a daylight-saving boundary and a day boundary is
+exactly where that bites (`context.timeZone`). It is stated before any identity exists, and
+`ConnectContext.timeZone` is the same value again. The provider carries it as `identity.timeZone`
+on every `authenticated` state, and cuts every day-scoped figure this session reads by it: the
+agent's own `shift`, and every member's `shift` on a lead's team list.
+
+**The zone is never absent from the signed-in identity.** An identity without one is refused
+(`authentication.identity.timeZone`), and so is a zone that is not an IANA name, wherever it
+appears. Nothing is ever assumed in its place -- not the viewer's browser, and not the provider's
+clock. The harness holds a provider to the round trip: the identity carries the zone the agent
+application stated (`authentication.identity.timeZone.republished`), judged by what the name
+denotes: `Asia/Kolkata` and `Asia/Calcutta` are one zone, and a provider that keeps the canonical
+name has kept the zone.
+
+**A colleague's zone is information only.** On a `User` from `getUserDetails()`, `timeZone` is the
+zone that person last signed in from, where the provider knows it, and absent where it does not.
+No figure is cut by it.
 
 ### The agent's languages
 
@@ -2425,7 +2440,7 @@ a capability it agrees with the user's capabilities: a lead's snapshot carries `
 | `nextCall` | The agent's standing ask for the next call, while it stands: `since`. It needs an assignment at work to be next after (`snapshot.nextCall.idle`) and the provider clears it when that assignment ends, when a call is lined up, and when the agent withdraws it. Replaced whole by `next-call`. See **The agent's own queue** in `guide/queue.md`. |
 | `linedUp` | The call waiting in the agent's own queue, while one is: the caller as shown to this audience, the queue, the caller's wait, when it was lined up, and `release` where the provider lets the agent let it go. Not a task yet. Replaced whole by `lined-up`. See **The agent's own queue** in `guide/queue.md`. |
 | `labels` | The signed-in customer's own words for phases, history steps and kinds of work, per language, as its admin set them in the provider. Replaced whole by `labels-updated`. Omitted where the customer set none. See **Presentation labels**. |
-| `shift` | The agent's own day so far, as the provider counts it -- the same `Shift` their lead sees on the team member list, the same numbers from the same count. Replaced whole by `shift-updated`. Omitted only where the provider cannot say. See **The agent's day is on the wire**. |
+| `shift` | The agent's own day so far, as the provider counts it, cut in this session's zone -- the same instants and count their lead sees on the team member list, cut there by the lead's day. Replaced whole by `shift-updated`. Omitted only where the provider cannot say. See **The agent's day is on the wire** in `guide/lead.md`. |
 | `team` | Required `TeamMembers` when the user's capabilities include `lead` and the lead has the team feature on, `members: []` when nobody is in it. Forbidden otherwise — the user's capabilities are the permission, and a lead who turned the feature off gets nothing of the team. |
 
 ## Live connection
@@ -2443,7 +2458,7 @@ surface in one place, and what obliges an adapter to implement each one.
 | `refused(report)` | Always. The agent application tells the adapter what it would not take -- a snapshot it did not replace its state with, an event it dropped -- with every rule broken, so a refusal is visible on both sides. See **What the agent application does with what it refuses**. |
 | `setCapacity(capacity)` | Always. Nothing may be assigned until a capacity is stated, so there is no connection that does not receive it. |
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability** in `guide/agent.md`. |
-| `getUserDetails(ids)` | The adapter publishes any `UserId`: on `ForcedBreak.by` where a person forced it, a team member list, or `history[].by`. Each `User` carries its `timeZone`; a person whose zone the provider cannot name is omitted from the answer, as any unresolvable id is. |
+| `getUserDetails(ids)` | The adapter publishes any `UserId`: on `ForcedBreak.by` where a person forced it, a team member list, or `history[].by`. A `User` carries `timeZone` where the provider knows where that person last signed in from, and omits it where it does not. |
 | `dial(request)` | The manifest declares `idleCapabilities.dial`, and with it `dialOutcomes`. |
 | `requestBreak(request)` | The user's capabilities include `breaks`. |
 | `commitBreak()` | The user's capabilities include `breaks`. Commit and cancel are not optional halves of it. |
@@ -2631,7 +2646,7 @@ Validate requests and responses with `validateProviderTimeCheckRequest` and
 `validateProviderTimeCheckResult`. The agent application also checks the outstanding request, provider/connection
 and session, monotonic elapsed time and cancellation after the await: a late successful response is
 still rejected. Reject samples at or beyond `timeoutMs`, or above `maxRoundTripMs`. Cancel local
-tracking and invalidate estimates on disconnect, logout, policy disable, clock change or clock
+tracking and invalidate estimates on disconnect, sign-out, policy disable, clock change or clock
 jump; late results cannot restore them. Resume with a fresh check after reconnection. Expire a
 sample at `maxSampleAgeMs` using monotonic elapsed time. Failure is visible through the agent application's
 existing diagnostic path, with the estimate unavailable; the next scheduled check can recover.
@@ -2743,7 +2758,7 @@ died; the agent application knows how to run a sign-in. `recovery` joins the two
   re-establishes state exactly as a reconnect snapshot does. `connect()` is once per
   `Connection`, not once per session.
 - **`reauthenticate`** — the provider's authorization lapsed and the same session can be restored: a
-  token rejected, published as `expired`. A session ended from outside -- a remote logout, a
+  token rejected, published as `expired`. A session ended from outside -- a remote sign-out, a
   permission withdrawn -- is `terminated`, which is the whole message and gets no transport `error`
   beside it (see **Authentication state**). Omni
   runs the authentication flow first, on the same session and `sessionId`, never through
@@ -3051,7 +3066,7 @@ member. See **The phone's own view** in `guide/phone.md`.
 The agent's own day, whole, replacing `Snapshot.shift`: emitted whenever a total moves -- a task
 ended, a break ended, a sign-out -- and never to say nothing changed. It carries the same `Shift`
 the agent's lead sees for them on the team member list, so the two screens show one day. See
-**The agent's day is on the wire**.
+**The agent's day is on the wire** in `guide/lead.md`.
 
 ### `labels-updated`
 
@@ -3079,7 +3094,7 @@ wider goes through this key.
 ### `sameCapabilities(a, b)`
 
 Whether two sessions declare the same capabilities, field by field — key order aside, and with
-`team: {}` distinct from `team` absent. It is the comparison an adapter makes before republishing
+`lead: {}` distinct from `lead` absent. It is the comparison an adapter makes before republishing
 `authenticated`, and the one `testAdapter` holds `refreshing` to.
 
 ### `historySpans(steps)`
@@ -3118,7 +3133,7 @@ same exported checks are used by Omni and adapter tests so their interpretations
 | `validateHostMute(mute, softphone)` | What the agent application's Mute does, stated on a softphone session and nowhere else: `stream` or `station` (`host.mute`), required where the agent application holds a microphone (`host.mute.required`) and refused where it does not (`host.mute.unexpected`). The harness holds `ConnectContext.host.mute` to it. |
 | `validateLanguages(languages)` | The agent's languages a host states on both contexts: a non-empty list (`context.languages`) of well-formed BCP 47 tags (`context.languages.tag`), none twice ignoring case (`context.languages.unique`). The harness holds `ConnectContext.languages` to it. |
 | `validateSessionStore(store)` | The session's store the agent application hands every connection: an object with `get`, `set` and `delete` (`store.shape`, `store.get`, `.set`, `.delete`). The harness holds `ConnectContext.store` to it. |
-| `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being agent application-stopped. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
+| `validateCapacity(capacity)` | What the agent application states as capacity: a whole number of zero or more (`capacity.count`), zero being stopped by the agent application. The harness states one on connect and two, one and zero after the test, each answered `applied`, and holds any offer to the count in force (`stream.taskOffered.overCapacity`). |
 | `validateAuthenticationResult(result, method, path, { levels })` | What `start()` or `complete()` answered: a challenge or a rejection, a session or a rejection. A rejection's failure is held to its rules -- an `omni.` code the contract lists, and `omni.phone-not-permitted` never retryable, since the agent's station is configuration. `validateAuthenticationFailure(failure)` is the same check on a failure alone. |
 | `validateRedirectUri(uri, path?)` | A host's fixed redirect URI in one of RFC 8252's forms: `https`, a reverse-domain private-use scheme, or loopback http to `127.0.0.1` or `[::1]`, with no fragment (`redirectUri.*`). |
 | `validateTaskCommand(command, task?, path, { levels })` | What a command needs to be issuable, against the task it names: its own shape -- a dial's `dialId`, an add's contact or number, a schedule's time, a remove naming exactly one person -- and, with the task, the capability the table above gates it on (`command.capability.<name>`, `.locked`), the phase it belongs to (`command.phase.*`, `command.phase.interaction` for every control on the call or the conversation), and the state that has to stand: a lead requested, somebody else still on the call (`command.removeFromCall.alone`), the caller off hold before the agent's part ends (`command.endCall.held`). An agent application validates before sending and an adapter before acting. |
@@ -3215,7 +3230,7 @@ outcome -- stays in `notTested` for every adapter, and a rule about a live call 
 in each adopter's own tests. `{ withCall: true }` closes that: the test takes the first task the
 provider offers through one ordinary lifecycle -- accept it, wait for its audio and open it on a
 softphone, hold and resume where the task offers `hold`, end the call where it offers `endCall`,
-complete it with an outcome where the agent completes -- and holds every step to the rules a
+complete it with an outcome where the agent completes -- and holds every step to the rules an
 agent application holds a provider to. Each command is validated against the task as published
 (`test.command.*`), each answer for its method, a refusal of a control the task offered is a
 violation (`test.command.failed`), and an event the provider owes and never sends is one too

@@ -122,7 +122,7 @@ A preview's deadline is not on the offer. It travels on the task, as `previewEnd
 A provider may withdraw a pending task by emitting `task-ended` with a `cancelled` outcome, `by:
 "provider"`. **`cancelled` says who called the work off**, as `completed` says who completed it:
 `agent` for a decline, `provider` for a withdrawal or a re-route, `party` for a caller who abandoned
-the ring. One word for the three left a supervisor's record unable to tell them apart, so `by` is
+the ring. One word for the three left a lead's record unable to tell them apart, so `by` is
 required and closed (`event.taskEnded.outcome.cancelled.by`). An offer nobody acted on while
 `expiresInSeconds` ran is not cancelled by anyone: it lapses, and ends `expired` naming `pending`.
 
@@ -372,7 +372,7 @@ Migration from the earlier spellings:
 | schedule on voice alone | `schedule` on every channel, under a manifest that declares `calendar` (`task.capability.calendar.required`), bounded by `settleMs` (`test.schedule.unsettled`) |
 | a forced break requesting breaks on the other providers | `setCapacity({ count: 0 })` on every other usable provider (`assertForcedBreakStopsTheRest`) |
 | end-forced-break on a break the platform imposed | refused: `team.command.endForcedBreak.provider`, `omni.break-forced-by-provider` |
-| ForcedBreak.expectedDurationMs | `expectedEndsInSeconds`: seconds left, restated (`break.forced.expectedEndsInSeconds`, `.expectedDurationMs.renamed`); the command keeps `expectedDurationMs` |
+| ForcedBreak.expectedDurationMs | `expectedEndsInSeconds`: seconds left, restated (`break.forced.expectedEndsInSeconds`, `.expectedDurationMs.renamed`); the command's is `expectedDurationSeconds`, in the same unit |
 | MemberShift; the day on the lead's list alone | `Shift`, on `Snapshot.shift` and `shift-updated` for the agent, on `TeamMember.shift` for the lead |
 | TeamMember.listening as this lead's one entry | `MemberListening[]`, every lead's, each with `leadId` (`team.member.listening.leadId`, `.unique`, `.empty`, `.entry`, `.heard`) |
 | a member's history trimmed on the lead's list | the record whole, as the member's computer holds it |
@@ -384,7 +384,7 @@ Migration from the earlier spellings:
 | the phone unspoken | `PhoneState` -- the device, its mute, its channels -- on `Snapshot.phone`, `phone-updated` and `TeamMember.phone`, from a manifest declaring `phoneStatus` (`snapshot.phone.required`, `.unexpected`, `phone.*`, `phone.channel.*`, `event.phone.capability`) |
 | the agent's readiness for the next call read into setCapacity | the agent's own queue: `capabilities.nextCall`, `requestNextCall`/`cancelNextCall`/`releaseLinedUp`, `Snapshot.nextCall` and `linedUp`, the `next-call` and `lined-up` events (`snapshot.nextCall.idle`, `nextCall.*`, `linedUp.*`) |
 | a harness that exercised an adapter, drove a call and evaluated rules | the harness reads as a test: `testAdapter`, `withCall`, `timeoutMs`, `notTested`, `rulesTested`, rules `test.*` (`test.timeout`, `test.offer.expired`, `test.preview.deadline`, ...) |
-| a `callback-requested` step, and a callback task starting its history afresh | a `callback-requested` step (`by` when an agent arranged it); a callback's task carries the earlier call's steps, oldest first |
+| a `callback-requested` step, and a callback task starting its history afresh | a `callback-requested` step, never with `by` (`task.history.by.unexpected`); a callback's task carries the earlier call's steps, oldest first |
 | a recording state with an observation id, an observation instant and a validity window, and the helpers that aged it | `recordings` on the task and on `HostRecordingReport`: a list, each recording with `id`, `follows` (`party` or `agent`), `status` (`starting`, `recording`, `paused`, `not-recording`, `unknown`) and a `reason` where paused or unknown; nothing expires; commands name `follows` for a start and `recordingId` otherwise; `validateRecordings` (`recording.task.renamed` refuses the former field) |
 | a refusal on hold under `omni.command-not-permitted` | `omni.on-hold` |
 | outbound work's terms reported as `queue` | `dialer`: the dialer that declared the task chose its capabilities |
@@ -432,7 +432,7 @@ something else, which will arrive under its own name and must not be folded in h
 It rides in the snapshot and is replaced whole like everything else there.
 
 Steps are `arrived`, `self-service`, `queued`, `offered`, `answered`, `held`, `muted`, `transferred`, `added`,
-`unanswered`, `callback-requested`, and each is defined on `TaskHistoryStep`.
+`unanswered`, `connected-back`, `callback-requested`, and each is defined on `TaskHistoryStep`.
 
 **The record starts where the call started.** `arrived` is the instant the call reached the
 provider, before any menu or queue, and its `seconds`, when the provider measured them, are how
@@ -454,13 +454,20 @@ part, so it has no `by`. `at` is when it began and `seconds`, once it ended, how
 customer routed again after a transfer has a second entry, one per visit, as a second queue is a
 second `queued`. A customer that words it *IVR* for its agents does so in `labels.historySteps`.
 
-**A callback carries the call it comes back to.** When a caller asks to be called back, or an agent
-arranges it, the provider writes a `callback-requested` step: `by` names the agent who arranged it, and
-is absent when the caller chose it in the queue. The callback reaches an agent as a new task, and that
-task's history carries the earlier call's steps, oldest first, the `callback-requested` step among them,
-then the callback's own -- as a hand-over carries the steps before it. The agent opening a callback
-sees that the caller waited and asked, or whose promise they are keeping, and a second try reads as
-one, the way contact-centre platforms keep a callback with its original contact.
+**A reconnect is a dial on the same call.** When the agent dials a dropped caller back into the same
+interaction -- the `connect-back` command, shown as *Reconnect* -- the provider writes a
+`connected-back` step: `by` is the agent, `dialId` the command's, and `contactId` the contact dialled
+where the provider has one. A reconnect that rings out reads as any dial does: its outcome, and an
+`unanswered` step.
+
+**A queue callback carries the call it comes back to.** When a waiting caller asks to be called back
+once an agent is free, the provider writes a `callback-requested` step. It is the caller's own choice,
+so it never names anyone (`task.history.by.unexpected`). The callback reaches an agent as a new task,
+and that task's history carries the earlier call's steps, oldest first, the `callback-requested` step
+among them, then the callback's own -- as a hand-over carries the steps before it. The agent opening a
+callback sees that the caller waited and asked, and a second try reads as one, the way contact-centre
+platforms keep a callback with its original contact. A call booked for later is a scheduled call: the
+`schedule` command, on the calendar, and never a `callback-requested` step.
 
 **One call has one history.** Every task the call reaches restates the earlier steps exactly as they
 stood: the same step, instant, person, dial and destination, and a duration once stated never
@@ -982,8 +989,8 @@ Every task may publish additional provider-specific controls in `capabilities.cu
 capabilities: {
   hold: true,
   custom: [
-    { id: "request-supervisor", ui: { control: "button", label: "Request supervisor", placement: "secondary" } },
-    { id: "mark-vip", ui: { control: "toggle", label: "Mark as VIP", placement: "overflow" } },
+    { id: "send-survey", ui: { control: "button", label: "Send survey", placement: "secondary", render: "inline" } },
+    { id: "mark-vip", ui: { control: "toggle", label: "Mark as VIP", placement: "overflow", render: "inline" } },
   ],
 }
 ```
@@ -1002,7 +1009,7 @@ control and invokes it with the shared custom task command:
 ```ts
 {
   type: "custom",
-  name: "request-supervisor",
+  name: "send-survey",
 }
 ```
 
@@ -1048,23 +1055,22 @@ The one thing the agent application performs physically is the microphone, and t
 
 ### Which commands need a capability
 
-**Presence is the permission** gates the controls a provider chooses to offer. Four commands are
-not among them, because every task has them; each is authorized by a different field the provider
-declared:
+**Presence is the permission** gates the controls a provider chooses to offer. Each command below
+is authorized by what the provider declared, or by the phase it is issued in:
 
 | Command | What makes it available |
 | --- | --- |
 | `answer`, `accept` | Nothing. A task that was offered can be accepted, or offering it meant nothing. |
 | `end-call` | The `endCall` capability: ends my part, the caller continues. Never from hold: a `paused` task is resumed first (`command.endCall.held`), or the caller is left in the hold. |
 | `terminate-call` | The `terminateCall` capability: ends the whole call, every channel on it. |
-| `addToCall` with `action: "remove"` | The `addToCall` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
+| `remove-from-call` | The `addToCall` capability, and somebody else on the call: a remove that would leave the agent alone is `end-call`, and a provider answers it `failed`. |
 | `decline` | The `decline` capability on any channel, **and** Omni local policy permitting it. One word for refusing an offer, whatever the channel. |
 | `dial` | The `preview` phase. A record put in front of an agent is there to be called, so the phase is the gate and there is no capability. It is a dial, with a `dialId` and a `dial-outcome`. |
 | `complete` | A wrap to cut short: any task but a `provider-automatic` one with `wrapAllowance: 0`, under either completion mode (`command.complete.wrapAllowance`). The `outcomes` capability decides whether a code travels with the command, never whether the command exists — a task Omni cannot complete never ends. What travels is what the capability published: a code from its list where it has one (`command.complete.outcome.unknown`), a code at all where it requires one (`.outcome.required`), notes as it said (`.notes.required`, `.notes.unexpected`), and neither where the task declares no outcomes (`.outcome.unexpected`). |
 | `connect-back` | The `connectBack` capability **and** the `completing` phase. It exists to reach the party again after the call, so it has no meaning while the call is up. |
 | `schedule` | The `schedule` capability, on any channel, in `in-progress`, `paused` or `completing`: a follow-up is promised on the call and written up in wrap alike. The manifest declares `calendar` for it to land on. |
 | `lead-assist` with `action: "request"` or `"cancel"` | The `leadAssist` capability. `cancel` needs a request standing -- `Task.leadAssist` with `stage: "requested"`. |
-| `addToCall` with `action: "add"` | Its capability, and a `contactId` from the provider's contacts, or a typed `number` where the capability says `any-number` (`command.addToCall.number.contactsOnly`), never both (`command.addToCall.number.both`). |
+| `add-to-call` | The `addToCall` capability, and a `contactId` from the provider's contacts, or a typed `number` where the capability says `any-number` (`command.addToCall.number.contactsOnly`), never both (`command.addToCall.number.both`). |
 | `custom` | A control the task published under `capabilities.custom`, by its `id` (`command.capability.custom`), carrying a non-empty string for each `required` prompt field and strings for any optional fields supplied (`command.custom.prompt`). A toggle carries its target `on` boolean (`command.custom.on`). |
 | Everything else | Its own named capability. |
 

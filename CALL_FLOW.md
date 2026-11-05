@@ -20,7 +20,7 @@ stateDiagram-v2
   in_progress --> paused: hold
   paused --> in_progress: resume
   in_progress --> completing: end call, or the caller hangs up
-  completing --> in_progress: connect back
+  completing --> in_progress: reconnect
   completing --> [*]: complete (task-ended)
   in_progress --> [*]: completed straight from the call (task-ended)
 
