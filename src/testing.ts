@@ -2299,8 +2299,8 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
 // A request goes not-requested -> awaiting-approval | granted; a commit goes granted ->
 // starting-after-task | on-break; work ending goes starting-after-task -> on-break; a denial,
 // a cancel or an explicit agent end goes back to not-requested; a lead lifting forced status
-// preserves the committed break. A forced break arrives on-break
-// with `forced`. Nothing else is a move the guide describes.
+// preserves the committed break. A forced break arrives on-break with `forced`, and never goes
+// back to not-requested while it is forced. Nothing else is a move the guide describes.
 /** What a stream has said about the agent's break, and the moves it may not make. */
 /**
  * The team as the events left it: whole on `team-updated` and on any snapshot carrying one, then

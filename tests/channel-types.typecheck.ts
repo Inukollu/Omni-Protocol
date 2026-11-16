@@ -399,10 +399,15 @@ export const askingMember: TeamMembers = { members: [{ id: "A-2", availability: 
 // @ts-expect-error renamed away: the requests list is gone; each member carries their own request.
 export const requestList: TeamMembers = { members: [], requests: [] };
 // A break the platform forced itself names no person: `provider` says so.
-export const providerForcedBreak: ForcedBreak = { by: "provider" };
-export const leadForcedBreak: ForcedBreak = { by: "L-9", expectedEndsInSeconds: 600 };
+export const providerForcedBreak: ForcedBreak = { by: "provider", scope: "agent" };
+export const leadForcedBreak: ForcedBreak = { by: "L-9", scope: "agent", endsInSeconds: 600 };
+export const teamForcedBreak: ForcedBreak = { by: "L-9", scope: "team", endsInSeconds: 1800 };
+// @ts-expect-error renamed away: the break is lifted when the time runs out, so it is endsInSeconds.
+export const expectedForcedBreak: ForcedBreak = { by: "L-9", scope: "agent", expectedEndsInSeconds: 600 };
+// @ts-expect-error every forced break says whom it covers.
+export const unscopedForcedBreak: ForcedBreak = { by: "L-9" };
 // @ts-expect-error renamed away: the state says how long is left; the duration asked for is on the lead's command.
-export const durationForcedBreak: ForcedBreak = { by: "L-9", expectedDurationMs: 600000 };
+export const durationForcedBreak: ForcedBreak = { by: "L-9", scope: "agent", expectedDurationMs: 600000 };
 // Every lead on a member's call, each by user id; the application opens its own audio on its own entry.
 export const twoLeadsListening: TeamMembers = { members: [{ id: "A-2", availability: "on-task", listening: [{ leadId: "L-9", assignmentId: "alloc-7", mode: "coach", since: "2026-08-21T09:04:00Z" }, { leadId: "L-4", assignmentId: "alloc-7", mode: "listen", since: "2026-08-21T09:05:00Z" }] }] };
 // @ts-expect-error renamed away: listening is every lead's, as an array naming each.
@@ -517,7 +522,7 @@ export type FormerListenMethod = import("../src/index.js").Connection["executeTe
 // @ts-expect-error The former lead-assist action has no compatibility alias.
 export const retiredLeadTakeOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over" };
 
-export const forcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1" };
+export const forcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", scope: "agent" };
 export const forcedBreakState: import("../src/index.js").BreakState = { status: "on-break", canRequestBreak: false, forced: forcedBreak };
 // @ts-expect-error The old break type has no compatibility alias.
 import type { ImposedBreak } from "../src/index.js";
@@ -529,6 +534,10 @@ export const forceMemberBreak: import("../src/index.js").TeamBreakCommand = { ty
 export const retiredPlaceBreak: import("../src/index.js").TeamBreakCommand = { type: "place", memberId: "member-1" };
 
 export const endMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "end-forced-break", memberId: "member-1" };
+export const forceTeamBreak: import("../src/index.js").TeamBreakCommand = { type: "force-team-break", reasonId: "meeting", durationSeconds: 1800 };
+// @ts-expect-error A team break always has an end, the same for everyone.
+export const endlessTeamBreak: import("../src/index.js").TeamBreakCommand = { type: "force-team-break", reasonId: "meeting" };
+export const endTeamBreak: import("../src/index.js").TeamBreakCommand = { type: "end-team-break" };
 // @ts-expect-error The former release command has no compatibility alias.
 export const retiredReleaseBreak: import("../src/index.js").TeamBreakCommand = { type: "release", memberId: "member-1" };
 
@@ -577,11 +586,11 @@ export const retiredBreakStatusField: import("../src/index.js").BreakState = { s
 // @ts-expect-error BreakApproval was renamed to BreakStatus without an alias.
 import type { BreakApproval } from "../src/index.js";
 
-export const advisoryForcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", expectedEndsInSeconds: 600 };
+export const timedForcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", scope: "agent", endsInSeconds: 600 };
 // @ts-expect-error Forced breaks cannot declare automatic endings.
-export const automaticForcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAutomatically: true };
+export const automaticForcedBreak: import("../src/index.js").ForcedBreak = { by: "lead-1", scope: "agent", endsAutomatically: true };
 // @ts-expect-error A fixed end timestamp cannot resume an agent.
-export const fixedForcedBreakEnd: import("../src/index.js").ForcedBreak = { by: "lead-1", endsAt: "2026-09-11T12:00:00Z" };
+export const fixedForcedBreakEnd: import("../src/index.js").ForcedBreak = { by: "lead-1", scope: "agent", endsAt: "2026-09-11T12:00:00Z" };
 
 // @ts-expect-error Use awaiting-approval, not the retired awaiting-decision status.
 export const retiredAwaitingDecision: import("../src/index.js").BreakStatus = "awaiting-decision";

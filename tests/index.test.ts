@@ -163,6 +163,7 @@ describe("localizedText", () => {
     expect(new Set(OMNI_FAILURE_CODES).size).toBe(OMNI_FAILURE_CODES.length);
     // A recording the provider could not settle either way has a code of its own; a request identity it never had.
     expect(OMNI_FAILURE_CODES).toContain("omni.recording-unsettled");
+    expect(OMNI_FAILURE_CODES).toContain("omni.break-forced");
     expect(OMNI_FAILURE_CODES).not.toContain("omni.recording-unknown-request");
   });
 

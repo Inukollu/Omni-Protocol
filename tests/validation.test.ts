@@ -626,7 +626,7 @@ describe("break state", () => {
   });
 
   it("lets a forced break travel with on-break or starting-after-task, and nothing else", () => {
-    const placed = { by: "lead-3" };
+    const placed = { by: "lead-3", scope: "agent" };
     expect(check({ status: "on-break", forced: placed })).toEqual([]);
     expect(rules(validateSnapshot(snapshot({ break: { status: "starting-after-task", canRequestBreak: false, forced: placed }, tasks: [task()] }), manifest()))).toEqual([]);
     // Beside granted or awaiting-approval the host would commit a break nobody asked for.
@@ -639,31 +639,36 @@ describe("break state", () => {
     const reasons = [{ id: "meal", label: "Meal", kind: "meal" }, { id: "coach", label: "Coaching", kind: "coaching" }];
     expect(check({ status: "on-break", reasons, activeReasonId: "meal" })).toEqual([]);
     expect(check({ status: "on-break", reasons })).toEqual(["break.activeReasonId.required"]);
-    expect(check({ status: "on-break", reasons, forced: { by: "lead-3" } })).toEqual(["break.activeReasonId.required"]);
+    expect(check({ status: "on-break", reasons, forced: { by: "lead-3", scope: "agent" } })).toEqual(["break.activeReasonId.required"]);
     // The platform itself forces a break on its own rule or a schedule: provider, and no person named.
-    expect(check({ status: "on-break", forced: { by: "provider" } })).toEqual([]);
-    expect(check({ status: "on-break", forced: { by: "lead-3" } })).toEqual([]);
-    expect(check({ status: "on-break", forced: { by: "" } })).toEqual(["break.forced.by"]);
+    expect(check({ status: "on-break", forced: { by: "provider", scope: "agent" } })).toEqual([]);
+    expect(check({ status: "on-break", forced: { by: "lead-3", scope: "agent" } })).toEqual([]);
+    expect(check({ status: "on-break", forced: { by: "", scope: "agent" } })).toEqual(["break.forced.by"]);
     // No reasons published, nothing to name; not in effect, nothing to name yet.
     expect(check({ status: "on-break" })).toEqual([]);
     expect(check({ status: "granted", reasons })).toEqual([]);
   });
 
-  it("keeps the actor and accepts only advisory forced-break duration", () => {
+  it("keeps the actor, the scope and the time left of a forced break", () => {
     const forced = (value: unknown) => check({ status: "on-break", forced: value });
-    expect(forced({ by: "lead-3" })).toEqual([]);
+    expect(forced({ by: "lead-3", scope: "agent" })).toEqual([]);
     // How long is left, as seconds from this publication, so every screen counts down the same number.
-    expect(forced({ by: "lead-3", expectedEndsInSeconds: 600 })).toEqual([]);
-    expect(forced({ by: "lead-3", expectedEndsInSeconds: 0 })).toEqual([]);
+    expect(forced({ by: "lead-3", scope: "agent", endsInSeconds: 600 })).toEqual([]);
+    expect(forced({ by: "lead-3", scope: "agent", endsInSeconds: 0 })).toEqual([]);
     expect(forced({})).toContain("break.forced.by");
-    expect(forced({ by: "" })).toContain("break.forced.by");
-    for (const expectedEndsInSeconds of [-1, 1.5, Infinity, NaN, "500", null]) {
-      expect(forced({ by: "lead-3", expectedEndsInSeconds })).toContain("break.forced.expectedEndsInSeconds");
+    expect(forced({ by: "", scope: "agent" })).toContain("break.forced.by");
+    for (const endsInSeconds of [-1, 1.5, Infinity, NaN, "500", null]) {
+      expect(forced({ by: "lead-3", scope: "agent", endsInSeconds })).toContain("break.forced.endsInSeconds");
     }
+    // Every forced break says whom it covers, and a team break always has an end.
+    for (const scope of [undefined, "member", ""]) expect(forced({ by: "lead-3", scope })).toEqual(["break.forced.scope"]);
+    expect(forced({ by: "provider", scope: "team", endsInSeconds: 1800 })).toEqual([]);
+    expect(forced({ by: "provider", scope: "team" })).toEqual(["break.forced.team.endsInSeconds"]);
+    expect(forced({ by: "lead-3", scope: "agent", expectedEndsInSeconds: 600 })).toEqual(["break.forced.expectedEndsInSeconds.renamed"]);
     // The duration asked for travels on the lead's command; the state says what is left.
-    expect(forced({ by: "lead-3", expectedDurationMs: 600000 })).toEqual(["break.forced.expectedDurationMs.renamed"]);
+    expect(forced({ by: "lead-3", scope: "agent", expectedDurationMs: 600000 })).toEqual(["break.forced.expectedDurationMs.renamed"]);
     for (const fields of [{ endsAutomatically: true }, { endsAutomatically: false }, { endsAt: "2026-09-11T10:00:00Z" }]) {
-      expect(forced({ by: "lead-3", ...fields })).toContain("break.forced.manualResume");
+      expect(forced({ by: "lead-3", scope: "agent", ...fields })).toContain("break.forced.manualResume");
     }
   });
 });
@@ -1611,7 +1616,7 @@ describe("the other direction, everywhere", () => {
       rules(validateSnapshot(snapshot({ break: { status: "not-requested", canRequestBreak: true, ...over } }), manifest()));
     expect(check({ canRequestBreak: false, requestUnavailableReason: "Busy hours" })).toEqual([]);
     expect(check({ canRequestBreak: true, requestUnavailableReason: "Busy hours" })).toEqual(["break.requestUnavailableReason.canRequestBreak"]);
-    const placed = { by: "M-1" };
+    const placed = { by: "M-1", scope: "agent" };
     expect(check({ status: "on-break", forced: placed })).toEqual([]);
     expect(check({ status: "not-requested", forced: placed })).toEqual(["break.forced.status"]);
     const reasons = [{ id: "lunch", label: "Lunch" }];
