@@ -453,7 +453,9 @@ export const LEAD_COMMAND_CAPABILITY = {
   "decide-break-request": "decideBreakRequest",
   "set-break-policy": "setBreakPolicy",
   "force-break": "forceBreak",
+  "force-team-break": "forceBreak",
   "end-forced-break": "endForcedBreak",
+  "end-team-break": "endForcedBreak",
   "set-policy": "setPolicy",
 } as const satisfies Record<Exclude<TeamCommand["type"], "lead-features" | "leave">, keyof LeadCapabilities>;
 
@@ -1393,21 +1395,33 @@ export interface BreakRequest {
 }
 
 /**
- * A break forced on the agent; the agent must explicitly resume when ready. A lead's `force-break`
- * is a command to the provider, which forces the break: `by` names the lead who asked it to, or
- * `provider` where the platform itself did, on its own rule or a schedule. The agent sees who, a
- * person is named only when there is one, and a break the platform imposed is the platform's to
- * lift: a lead's `end-forced-break` on it fails with `omni.break-forced-by-provider`.
+ * Whom a forced break covers. `team`: the whole team, to one end for everyone, its clock running
+ * while a member is signed out. `agent`: one agent, its clock counting only while they are signed in.
+ */
+export type ForcedBreakScope = "team" | "agent";
+
+export const FORCED_BREAK_SCOPES = ["team", "agent"] as const satisfies readonly ForcedBreakScope[];
+
+/**
+ * A break forced on the agent, which the agent cannot end. Signing out ends the session, not the
+ * break: the next session's snapshot carries it again while it stands. It is lifted by a lead, by
+ * the platform, or by its time running out; lifting clears `forced` and leaves an ordinary break
+ * the agent ends when ready. A lead's `force-break` or `force-team-break` is a command to the
+ * provider, which forces the break: `by` names the lead who asked it to, or `provider` where the
+ * platform itself did, on its own rule or a schedule. The agent sees who, a person is named only
+ * when there is one, and a break the platform imposed is the platform's to lift: a lead's
+ * `end-forced-break` on it fails with `omni.break-forced-by-provider`.
  */
 export type ForcedBreak = {
   by: UserId | "provider";
+  scope: ForcedBreakScope;
   /**
-   * How long the break is expected to run yet, in whole seconds from this publication, restated
-   * on every publication that carries it so every screen counts down the same number from
-   * receipt. Advisory only: nothing ends the break but the agent. Absent once it has run out, or
-   * where none was expected.
+   * How long the break has left, in whole seconds from this publication, restated on every
+   * publication that carries it so every screen counts down the same number from receipt. When it
+   * runs out the provider lifts the break. Required on a `team` break; absent on an `agent` break
+   * that stands until a lead lifts it.
    */
-  expectedEndsInSeconds?: DurationSeconds;
+  endsInSeconds?: DurationSeconds;
 };
 
 export interface BreakState {
@@ -1675,10 +1689,14 @@ export type TeamCallCommand =
 export type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
-  /** `reason` text is optional. `reasonId` selects a published `BreakReason.id`, required when reasons are published; the forced break carries it as `activeReasonId`. */
-  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationSeconds?: DurationSeconds }
+  /** `reason` text is optional. `reasonId` selects a published `BreakReason.id`, required when reasons are published; the forced break carries it as `activeReasonId`. Without `durationSeconds` it stands until lifted. */
+  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; durationSeconds?: DurationSeconds }
+  /** The whole team, members who sign in while it runs included, to one end `durationSeconds` from now. */
+  | { type: "force-team-break"; reasonId?: string; reason?: string; durationSeconds: DurationSeconds }
   /** Clears forced metadata only; preserves the committed break until the agent explicitly resumes. */
-  | { type: "end-forced-break"; memberId: UserId };
+  | { type: "end-forced-break"; memberId: UserId }
+  /** Lifts the team break for every member, as `end-forced-break` does for one. */
+  | { type: "end-team-break" };
 
 /** Every lead act, as `execute` takes a `TaskCommand`: discriminated by `type`. */
 export type TeamCommand = TeamFeatureCommand | TeamBreakCommand | TeamCallCommand | TeamPolicyCommand;
@@ -1922,6 +1940,8 @@ export const OMNI_FAILURE_CODES = [
   "omni.on-hold",
   /** A lead asked to lift a break the platform itself imposed; the platform lifts its own. */
   "omni.break-forced-by-provider",
+  /** The agent asked to end a break that is still forced; only its lifting does. */
+  "omni.break-forced",
 ] as const;
 
 export type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];

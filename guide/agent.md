@@ -372,7 +372,9 @@ Migration from the earlier spellings:
 | schedule on voice alone | `schedule` on every channel, under a manifest that declares `calendar` (`task.capability.calendar.required`), bounded by `settleMs` (`test.schedule.unsettled`) |
 | a forced break requesting breaks on the other providers | `setCapacity({ count: 0 })` on every other usable provider (`assertForcedBreakStopsTheRest`) |
 | end-forced-break on a break the platform imposed | refused: `team.command.endForcedBreak.provider`, `omni.break-forced-by-provider` |
-| ForcedBreak.expectedDurationMs | `expectedEndsInSeconds`: seconds left, restated (`break.forced.expectedEndsInSeconds`, `.expectedDurationMs.renamed`); the command's is `expectedDurationSeconds`, in the same unit |
+| endBreak on a forced break, Resume offered on one | refused: `break.command.end.forced`, `omni.break-forced`; no Resume while `forced` stands; a sign-out keeps it, and the next session's snapshot carries it again |
+| ForcedBreak.expectedDurationMs, then expectedEndsInSeconds | `endsInSeconds`: seconds left, restated, and the break is lifted when it runs out (`break.forced.endsInSeconds`, `.expectedDurationMs.renamed`, `.expectedEndsInSeconds.renamed`); the command's is `durationSeconds` (`team.command.expectedDurationSeconds.renamed`) |
+| a forced break with no scope | `scope`: `team` to one end for all, or `agent`, counted while signed in (`break.forced.scope`, `break.forced.team.endsInSeconds`); `force-team-break` and `end-team-break` for the team |
 | MemberShift; the day on the lead's list alone | `Shift`, on `Snapshot.shift` and `shift-updated` for the agent, on `TeamMember.shift` for the lead |
 | TeamMember.listening as this lead's one entry | `MemberListening[]`, every lead's, each with `leadId` (`team.member.listening.leadId`, `.unique`, `.empty`, `.entry`, `.heard`) |
 | a member's history trimmed on the lead's list | the record whole, as the member's computer holds it |
@@ -1152,5 +1154,6 @@ react rather than only display the message:
 | `omni.recording-unsettled` | A recording command the provider could not settle either way: a settled `failed`, never a promise left unresolved. See **Independent task recording** in `guide/voice.md`. |
 | `omni.on-hold` | Refused because the caller is on hold: the agent application's own Mute begun on a `paused` task, or `end-call` there. The agent application says resume first. The test expects this code on both (`test.recordStep.held`, `test.command.held`). |
 | `omni.break-forced-by-provider` | A lead asked to lift a break the platform imposed; the platform lifts its own. See **Forced breaks** in `guide/breaks.md`. |
+| `omni.break-forced` | The agent asked to end a break that is still forced. Only lifting it ends it, and signing out does not. See **Forced breaks** in `guide/breaks.md`. |
 
 They are published as `OMNI_FAILURE_CODES`.

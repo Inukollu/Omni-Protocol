@@ -83,7 +83,8 @@ hands only through routing or a lead's take-over.
 | --- | --- | --- |
 | **Capacity** | How many tasks the agent can take at once on this provider. Zero means none. | *Concurrency* (Amazon Connect routing profiles), *capacity* (Twilio, Salesforce), *utilization* (Genesys Cloud). |
 | **Break** | Time away: lunch, training, a personal break. The agent asks, the provider decides. | *Aux* or *auxiliary code* (Avaya and many floors), *presence* such as Break or Meal (Genesys Cloud), *agent status* (Amazon Connect), *unavailable code* (NICE). |
-| **Forced break** | A break a lead or the provider puts the agent on. | *Forced aux*, *supervisor-set status*. |
+| **Forced break** | A break a lead or the provider puts the agent on. The agent cannot end it, and signing out does not clear it. | *Forced aux*, *supervisor-set status*. |
+| **Team break** | A forced break on the whole team, to one end for everyone. Time signed out counts towards it. | *Scheduled break*, *team aux*. |
 | **Next call** | The agent says they are ready for another call before this one ends. | *Request next*, *ready for next*. |
 | **Lined up** | A call waiting in this agent's own queue, held for them. | *Agent queue* or *personal queue* (Amazon Connect), *direct routing*. |
 | **Shift** | The agent's day: when they signed in, their breaks, their totals. | *Schedule adherence* data, *agent state history*. |

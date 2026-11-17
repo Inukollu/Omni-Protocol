@@ -80,6 +80,7 @@ const STATE_SUBJECTS = [
   "task.locked",
   "break.reasons",
   "break.forced",
+  "break.forced.signIn",
   "team.members",
   "team.request",
   "team.tasks",
@@ -254,6 +255,14 @@ export interface TestAdapterOptions {
    * memory has nothing, and is named. Without it the store is required and never read.
    */
   rebuild?: () => Adapter<Channel>;
+  /**
+   * Builds the adapter again after the agent signed out, for a backend that signs the same agent
+   * in again, as a sign-in screen would. Given it, a run whose agent is on a forced break at the end
+   * signs out, signs in, and expects the new session's snapshot to carry the same break, its time
+   * left counted by its kind's clock. Without it, or with no forced break to carry, the run lists
+   * `break.forced.signIn` under `notTested`.
+   */
+  signInAgain?: () => Adapter<Channel>;
   /**
    * The values the queue locks on this session's tasks -- a party's number or email -- as the run's
    * author knows them. A task whose party stands locked may carry none of them anywhere else
@@ -756,6 +765,64 @@ export async function testAdapter<C extends Channel>(
       capacityStated = count;
       const restated = await connection.setCapacity({ count });
       violations.push(...validateResult(restated, "setCapacity", "connection.setCapacity"));
+    }
+
+    // A forced break outlives the session: the agent signs out and in again and finds it waiting,
+    // or signing out would undo any forced break. Its time left runs on while a team break's
+    // members are away, and stands still for an agent's own.
+    if (options.signInAgain !== undefined && clientLive) {
+      const refuse = (rule: string, path: string, message: string) => violations.push({ rule, path, message });
+      const fresh = await connection.snapshot() as unknown;
+      const readAt = Date.now();
+      const before = isRecord(fresh) && isRecord(fresh.break) ? fresh.break : undefined;
+      const forced = before !== undefined && isRecord(before.forced) ? before.forced : undefined;
+      if (before !== undefined && forced !== undefined) {
+        seen.add("break.forced.signIn");
+        ruleTested("test.signIn.rejected");
+        let clean = true;
+        try { unsubscribe?.(); } catch { clean = false; }
+        unsubscribe = undefined;
+        try { await connection.disconnect(); } catch { clean = false; }
+        try {
+          const out = await authentication.signOut() as unknown;
+          ruleTested("test.signIn.signOut");
+          if (!isRecord(out) || out.status !== "applied") refuse("test.signIn.signOut", "test.signIn.signOut",
+            `the agent's Sign out on a forced break answered ${JSON.stringify(out)}: the run cannot sign in again from a session that would not end`);
+        } catch { clean = false; }
+        try { await authentication.close(); } catch { clean = false; }
+        clientLive = false;
+        if (!clean) refuse("test.signIn.rejected", "test.signIn", "signing out on a forced break threw: an unsubscribe, disconnect(), signOut() or close() failed");
+        const outAt = Date.now();
+        try {
+          const again = options.signInAgain() as Adapter<C>;
+          const session = await again.createAuthenticationSession({ ...context, secrets: authenticationSecrets });
+          try {
+            const state = await session.state() as unknown;
+            ruleTested("test.signIn.session");
+            if (!(isRecord(state) && state.status === "authenticated" && isRecord(state.identity) && state.identity.id === current().identity.id)) {
+              refuse("test.signIn.session", "test.signIn.session",
+                `signed in again, the session says ${String(isRecord(state) ? state.status : state)}; the run needs ${String(current().identity.id)} authenticated to see the break`);
+            } else {
+              const inAt = Date.now();
+              const reconnecting = connectingReports(connected, violations);
+              let second: Connection<C>;
+              try { second = await again.connect(reconnecting.context); } finally { reconnecting.settled(); }
+              try {
+                const after = await second.snapshot() as unknown;
+                const gotAt = Date.now();
+                await snapshotRead(second, after, "test.signIn.snapshot");
+                violations.push(...forcedBreakCarried(before, forced, after, { readAt, outAt, inAt, gotAt }));
+              } finally {
+                try { await second.disconnect(); } catch { refuse("test.signIn.rejected", "test.signIn", "disconnecting the signed-in-again client threw"); }
+              }
+            }
+          } finally {
+            try { await session.close(); } catch { refuse("test.signIn.rejected", "test.signIn", "closing the signed-in-again session threw"); }
+          }
+        } catch (error) {
+          refuse("test.signIn.rejected", "test.signIn", `signing in again rejected rather than answered: ${String(error)}`);
+        }
+      }
     }
   } finally {
     let clean = true;
@@ -2299,8 +2366,8 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
 // A request goes not-requested -> awaiting-approval | granted; a commit goes granted ->
 // starting-after-task | on-break; work ending goes starting-after-task -> on-break; a denial,
 // a cancel or an explicit agent end goes back to not-requested; a lead lifting forced status
-// preserves the committed break. A forced break arrives on-break
-// with `forced`. Nothing else is a move the guide describes.
+// preserves the committed break. A forced break arrives on-break with `forced`, and never goes
+// back to not-requested while it is forced. Nothing else is a move the guide describes.
 /** What a stream has said about the agent's break, and the moves it may not make. */
 /**
  * The team as the events left it: whole on `team-updated` and on any snapshot carrying one, then
@@ -2410,6 +2477,42 @@ export function assertAudioFollowsTheTask(envelopes: readonly ProviderEventEnvel
   const found: ProtocolViolation[] = [];
   envelopes.forEach((envelope, index) => found.push(...stream.apply(envelope, `envelopes[${index}]`)));
   assertNoViolations(found, "The audio follows the task");
+}
+
+/**
+ * The break the agent signed out on, held to the one the next session carries: the same forced
+ * break, from the same person, on the same reason, with what is left of its time by its kind's
+ * clock -- a team break's ran on while the agent was away, an agent's own stood still. Each bound
+ * allows a second of rounding at either end.
+ */
+function forcedBreakCarried(before: Record<string, unknown>, forced: Record<string, unknown>, after: unknown,
+  at: { readAt: number; outAt: number; inAt: number; gotAt: number }): ProtocolViolation[] {
+  const found: ProtocolViolation[] = [];
+  const left = typeof forced.endsInSeconds === "number" ? forced.endsInSeconds : undefined;
+  const whole = Math.floor((at.gotAt - at.readAt) / 1000);
+  // A team break that could have run out while the agent was away may rightly be gone.
+  if (forced.scope === "team" && left !== undefined && left - whole <= 1) return found;
+  ruleTested("test.signIn.forcedBreak");
+  const now = isRecord(after) && isRecord(after.break) ? after.break : undefined;
+  const carried = now !== undefined && isRecord(now.forced) ? now.forced : undefined;
+  if (carried === undefined || !(now!.status === "on-break" || now!.status === "starting-after-task")
+    || carried.by !== forced.by || carried.scope !== forced.scope || now!.activeReasonId !== before.activeReasonId) {
+    found.push({ rule: "test.signIn.forcedBreak", path: "test.signIn.snapshot.break",
+      message: `the agent signed out on a ${String(forced.scope)} break forced by ${String(forced.by)}, and the next session's snapshot carries ${carried === undefined ? "no forced break" : `a break forced by ${String(carried.by)}, ${String(carried.scope)}, on ${String(now!.activeReasonId)}`}: signing out ends the session, not the break` });
+    return found;
+  }
+  ruleTested("test.signIn.endsInSeconds");
+  const leftNow = typeof carried.endsInSeconds === "number" ? carried.endsInSeconds : undefined;
+  const signedIn = Math.ceil(((at.outAt - at.readAt) + (at.gotAt - at.inAt)) / 1000);
+  const fault = left === undefined
+    ? (leftNow === undefined ? undefined : `it had no end and now ends in ${leftNow}s`)
+    : leftNow === undefined ? `it had ${left}s left and now states none`
+    : leftNow > left ? `it had ${left}s left and now has ${leftNow}s: time left never grows`
+    : forced.scope === "team" && leftNow > left - whole + 1 ? `it had ${left}s left, ${whole}s passed, and it has ${leftNow}s: a team break's time runs on while the agent is away`
+    : forced.scope === "agent" && leftNow < left - signedIn - 1 ? `it had ${left}s left, the agent was signed in for ${signedIn}s of it, and it has ${leftNow}s: an agent's own break counts only while they are signed in`
+    : undefined;
+  if (fault !== undefined) found.push({ rule: "test.signIn.endsInSeconds", path: "test.signIn.snapshot.break.forced.endsInSeconds", message: fault });
+  return found;
 }
 
 /** The store as handed to the adapter, and the keys it holds at any moment, seen rather than reported. */

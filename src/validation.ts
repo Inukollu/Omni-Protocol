@@ -15,6 +15,7 @@ import {
   LEAD_COMMAND_CAPABILITY,
   SHIFT_EVENT_KINDS,
   SHIFT_FIGURES,
+  FORCED_BREAK_SCOPES,
   type RecordingAction,
   type RecordingStatus,
   RECORDING_SIDES,
@@ -1561,12 +1562,17 @@ function validateForcedBreak(value: unknown, path: string, into: Collector): voi
   into.require(isUserId(value.by) || value.by === "provider", "break.forced.by", `${path}.by`, "a forced break says who forced it: the lead by user id, or provider where the platform did");
   for (const field of ["endsAutomatically", "endsAt"] as const) {
     into.require(!Object.hasOwn(value, field), "break.forced.manualResume", `${path}.${field}`,
-      "automatic ending fields are unsupported; the agent must resume manually");
+      "the end is endsInSeconds, counted from each publication; after it the agent resumes by their own choice");
   }
+  into.oneOf(value.scope, FORCED_BREAK_SCOPES, "break.forced.scope", `${path}.scope`);
+  into.require(value.scope !== "team" || value.endsInSeconds !== undefined, "break.forced.team.endsInSeconds", `${path}.endsInSeconds`,
+    "a team break always has an end: state endsInSeconds on every publication, and lift the break when it runs out");
+  into.require(!Object.hasOwn(value, "expectedEndsInSeconds"), "break.forced.expectedEndsInSeconds.renamed", `${path}.expectedEndsInSeconds`,
+    "expectedEndsInSeconds is now endsInSeconds: the break is lifted when it runs out");
   into.require(!Object.hasOwn(value, "expectedDurationMs"), "break.forced.expectedDurationMs.renamed", `${path}.expectedDurationMs`,
-    "the state says how long is left, as expectedEndsInSeconds; the duration asked for travels on the lead's command alone");
-  if (value.expectedEndsInSeconds !== undefined) into.require(isDurationSeconds(value.expectedEndsInSeconds),
-    "break.forced.expectedEndsInSeconds", `${path}.expectedEndsInSeconds`, "expectedEndsInSeconds is how long the break is expected to run yet: a whole number of seconds, zero or more, counted from this publication");
+    "the state says how long is left, as endsInSeconds; the duration asked for travels on the lead's command alone");
+  if (value.endsInSeconds !== undefined) into.require(isDurationSeconds(value.endsInSeconds),
+    "break.forced.endsInSeconds", `${path}.endsInSeconds`, "endsInSeconds is how long the break has left: a whole number of seconds, zero or more, counted from this publication");
 
 }
 
@@ -1626,7 +1632,8 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
   const allowed: Record<string, readonly string[]> = {
     "lead-features": ["type", "enabled"],
     "decide-break-request": ["type", "memberId", "decision", "reason"], "set-break-policy": ["type", "policy"],
-    "force-break": ["type", "memberId", "reasonId", "reason", "expectedDurationSeconds"], "end-forced-break": ["type", "memberId"],
+    "force-break": ["type", "memberId", "reasonId", "reason", "durationSeconds"], "end-forced-break": ["type", "memberId"],
+    "force-team-break": ["type", "reasonId", "reason", "durationSeconds"], "end-team-break": ["type"],
     join: member, decline: [...member, "reason"], listen: member, coach: member, "join-call": member, leave: member, "take-over-call": member,
     "set-policy": ["type", "capability", "setting"],
   };
@@ -1641,6 +1648,16 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
   }
   for (const key of Object.keys(request)) into.require(key === "command", "team.request.field", `${path}.${key}`, "only command is supported");
   for (const key of Object.keys(command)) into.require(fields.includes(key), "team.command.field", `${path}.${key}`, "field is not supported for this command");
+  if (command.type === "force-break" || command.type === "force-team-break") {
+    into.require(!Object.hasOwn(command, "expectedDurationSeconds"), "team.command.expectedDurationSeconds.renamed", `${path}.expectedDurationSeconds`,
+      "expectedDurationSeconds is now durationSeconds: the break is lifted when it runs out");
+    if (command.durationSeconds !== undefined || command.type === "force-team-break") into.require(
+      isDurationSeconds(command.durationSeconds) && (command.durationSeconds as number) > 0,
+      "team.command.durationSeconds", `${path}.durationSeconds`, "durationSeconds must be a whole number of seconds, more than zero; a team break always states one");
+    if (command.reasonId !== undefined) into.filled(command.reasonId, "team.command.reasonId", path, "reasonId must not be empty");
+  }
+  // A team break names no member: the provider rechecks its reason codes and whether one is running.
+  if (command.type === "force-team-break" || command.type === "end-team-break") return into.violations;
   if (command.reason !== undefined) into.filled(command.reason, "team.command.reason", path, "reason must not be empty");
   if (command.type === "lead-features") {
     into.require(typeof command.enabled === "boolean", "team.command.enabled", `${path}.enabled`, "lead-features says on or off, as a boolean");
@@ -1687,10 +1704,6 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
         "the platform put this member on the break, and it lifts it: a lead ends a break a lead forced");
     }
     if (command.type === "force-break") {
-      if (command.expectedDurationSeconds !== undefined) into.require(
-        isDurationSeconds(command.expectedDurationSeconds) && (command.expectedDurationSeconds as number) > 0,
-        "team.command.expectedDurationSeconds", `${path}.expectedDurationSeconds`, "expectedDurationSeconds must be a whole number of seconds, more than zero; it never resumes the agent");
-      if (command.reasonId !== undefined) into.filled(command.reasonId, "team.command.reasonId", path, "reasonId must not be empty");
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
       into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
         "team.command.reasonId", path, "force-break uses the target's currently published reason codes");
@@ -1762,7 +1775,8 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
     if (method === "endBreak") {
       into.require(status === "starting-after-task" || status === "on-break", "break.command.end.started", path,
         "end a committed break, including a returning provider still finishing work");
-      // A forced break also ends only when the agent explicitly resumes.
+      into.require(state.forced === undefined, "break.command.end.forced", path,
+        "a forced break is not the agent's to end: it ends only when it is lifted");
     }
   }
   return into.violations;
@@ -1786,6 +1800,10 @@ export function validateBreakTransition(before: unknown, after: unknown, path = 
   if (committed && (from === "not-requested" || from === "awaiting-approval") && after.forced === undefined) {
     into.add("stream.breakState.commitBeforeGrant", `${path}.after.status`,
       `${to} follows a commit, and a commit follows granted; the break stood at ${from}`);
+  }
+  if (before.forced !== undefined && from !== "not-requested" && to === "not-requested") {
+    into.add("stream.breakState.forcedEnded", `${path}.after.status`,
+      "a forced break is lifted first, clearing forced, before the break can end");
   }
   const backwards =
     (from === "on-break" && (to === "awaiting-approval" || to === "granted" || to === "starting-after-task")) ||

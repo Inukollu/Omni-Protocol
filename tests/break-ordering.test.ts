@@ -17,13 +17,25 @@ describe("runtime break ordering", () => {
 
   it("keeps a break committed when its forced marker is lifted", () => {
     for (const status of ["on-break", "starting-after-task"] as const) {
-      const forced = { ...state(status), forced: { by: "lead", expectedEndsInSeconds: 1 } };
+      const forced = { ...state(status), forced: { by: "lead", scope: "agent", endsInSeconds: 1 } };
       const lifted = state(status);
       expect(validateBreakTransition(forced, lifted)).toEqual([]);
       const stream = new BreakStream();
       const tasks = status === "starting-after-task" ? [{ id: "work" }] : [];
       expect(stream.seed({ break: forced, tasks })).toEqual([]);
       expect(stream.apply({ event: { type: "break-state", break: lifted } })).toEqual([]);
+    }
+  });
+
+  it("refuses a forced break going straight back to not-requested", () => {
+    for (const status of ["on-break", "starting-after-task"] as const) {
+      const forced = { ...state(status), forced: { by: "lead", scope: "agent" } };
+      expect(validateBreakTransition(state(status), state("not-requested"))).toEqual([]);
+      expect(validateBreakTransition(forced, state("not-requested")).map(v => v.rule)).toEqual(["stream.breakState.forcedEnded"]);
+      const stream = new BreakStream();
+      const tasks = status === "starting-after-task" ? [{ id: "work" }] : [];
+      expect(stream.seed({ break: forced, tasks })).toEqual([]);
+      expect(stream.apply(event("not-requested")).map(v => v.rule)).toEqual(["stream.breakState.forcedEnded"]);
     }
   });
 
@@ -72,7 +84,7 @@ describe("runtime break ordering", () => {
   });
 
   it("rejects the retired break field even beside the new field", () => {
-    const forced = { by: "manager" };
+    const forced = { by: "manager", scope: "agent" };
     for (const fields of [{ imposed: forced }, { imposed: forced, forced }]) {
       const after = { ...state("on-break"), ...fields };
       expect(validateBreakStatus(after, []).map(v => v.rule)).toContain("break.forced.renamed");
@@ -96,7 +108,7 @@ describe("runtime break ordering", () => {
   });
 
   it("allows independently evidenced forced breaks, but rejects malformed forced-break evidence", () => {
-    const after = { ...state("on-break"), forced: { by: "manager" } };
+    const after = { ...state("on-break"), forced: { by: "manager", scope: "agent" } };
     expect(validateBreakTransition(state("not-requested"), after)).toEqual([]);
     expect(validateBreakTransition(state("not-requested"), { ...after, forced: {} })).not.toEqual([]);
   });
@@ -230,9 +242,16 @@ describe("break prerequisites", () => {
     // canRequestBreak is not a withdrawal of an already granted request.
     expect(validateBreakCommand("commitBreak", undefined, { ...state("granted"), canRequestBreak: false }, context)).toEqual([]);
   });
-  it("allows agents to end forced breaks and rejects extra arguments or methods", () => {
-    expect(validateBreakCommand("endBreak", undefined, { ...state("on-break"), forced: { by: "lead" } }, context))
-      .toEqual([]);
+  it("refuses the agent ending a forced break, and allows it once lifted", () => {
+    for (const status of ["on-break", "starting-after-task"] as const) {
+      expect(validateBreakCommand("endBreak", undefined, state(status), context)).toEqual([]);
+      for (const by of ["lead", "provider"]) {
+        expect(validateBreakCommand("endBreak", undefined, { ...state(status), forced: { by, scope: "agent" } }, context).map(v => v.rule))
+          .toEqual(["break.command.end.forced"]);
+      }
+    }
+  });
+  it("rejects extra arguments or methods", () => {
     expect(validateBreakCommand("commitBreak", {}, state("granted"), context)).not.toEqual([]);
     expect(validateBreakCommand("bogus" as BreakMethod, undefined, state("granted"), context)).not.toEqual([]);
   });
@@ -295,13 +314,13 @@ describe("lead commands", () => {
   });
   it("rejects the old team end command and preserves its permission and state gates", () => {
     const command = { type: "end-forced-break", memberId: "member" };
-    const current = { ...lead, memberBreak: { ...state("on-break"), forced: { by: "another-lead" } } };
+    const current = { ...lead, memberBreak: { ...state("on-break"), forced: { by: "another-lead", scope: "agent" } } };
     for (const type of ["release", "end", "end-break"]) {
       expect(validateTeamCommand({ command: { ...command, type } }, current).map(v => v.rule)).toContain("team.command.type");
     }
     expect(validateTeamCommand({ command }, lead).map(v => v.rule)).toContain("team.command.endForcedBreak");
     // A break the platform imposed is the platform's to lift; a lead lifts one a lead asked for.
-    const byProvider = { ...lead, memberBreak: { ...state("on-break"), forced: { by: "provider" } } };
+    const byProvider = { ...lead, memberBreak: { ...state("on-break"), forced: { by: "provider", scope: "agent" } } };
     expect(validateTeamCommand({ command }, byProvider).map(v => v.rule)).toEqual(["team.command.endForcedBreak.provider"]);
     expect(validateTeamCommand({ command }, current)).toEqual([]);
     for (const bad of [context, { ...current, transport: "connecting" }, { ...current, team: { members: [] } }, { ...current, memberBreak: undefined }]) {
@@ -315,22 +334,36 @@ describe("lead commands", () => {
       ...lead, memberBreak: state("not-requested"),
     })).toEqual([]);
   });
-  it("accepts an optional expected duration on force-break and rejects timer controls", () => {
+  it("accepts an optional duration on force-break and rejects timer controls", () => {
     const command = { type: "force-break", memberId: "member", reasonId: "bio" };
-    expect(validateTeamCommand({ command: { ...command, expectedDurationSeconds: 600 } }, lead)).toEqual([]);
-    for (const expectedDurationSeconds of [0, -1, 1.5, Infinity, NaN, "500", null]) {
-      expect(validateTeamCommand({ command: { ...command, expectedDurationSeconds } }, lead).map(v => v.rule)).toContain("team.command.expectedDurationSeconds");
+    expect(validateTeamCommand({ command: { ...command, durationSeconds: 600 } }, lead)).toEqual([]);
+    for (const durationSeconds of [0, -1, 1.5, Infinity, NaN, "500", null]) {
+      expect(validateTeamCommand({ command: { ...command, durationSeconds } }, lead).map(v => v.rule)).toContain("team.command.durationSeconds");
     }
+    expect(validateTeamCommand({ command: { ...command, expectedDurationSeconds: 600 } }, lead).map(v => v.rule)).toContain("team.command.expectedDurationSeconds.renamed");
     // The milliseconds the command once took are not a second way to say it.
     expect(validateTeamCommand({ command: { ...command, expectedDurationMs: 600000 } }, lead).map(v => v.rule)).toContain("team.command.field");
     expect(validateTeamCommand({ command: { ...command, endsAutomatically: true } }, lead).map(v => v.rule)).toContain("team.command.field");
+  });
+  it("forces and lifts a team break, which always has an end and names no member", () => {
+    const force = { type: "force-team-break", reasonId: "meeting", durationSeconds: 1800 };
+    expect(validateTeamCommand({ command: force }, lead)).toEqual([]);
+    expect(validateTeamCommand({ command: { type: "end-team-break" } }, lead)).toEqual([]);
+    const without = { ...lead, authentication: { ...lead.authentication, capabilities: { lead: { join: true } } } };
+    expect(validateTeamCommand({ command: force }, without).map(v => v.rule)).toEqual(["team.command.notGranted"]);
+    expect(validateTeamCommand({ command: { type: "end-team-break" } }, without).map(v => v.rule)).toEqual(["team.command.notGranted"]);
+    for (const durationSeconds of [undefined, 0, 1.5, "1800"]) {
+      expect(validateTeamCommand({ command: { ...force, durationSeconds } }, lead).map(v => v.rule)).toEqual(["team.command.durationSeconds"]);
+    }
+    expect(validateTeamCommand({ command: { ...force, memberId: "member" } }, lead).map(v => v.rule)).toEqual(["team.command.field"]);
+    expect(validateTeamCommand({ command: { type: "end-team-break", memberId: "member" } }, lead).map(v => v.rule)).toEqual(["team.command.field"]);
   });
   it("checks the forced-break reason and end without assuming the same lead does both", () => {
     expect(validateTeamCommand({ command: { type: "force-break", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);
     expect(validateTeamCommand({ command: { type: "force-break", memberId: "member" } }, lead)).not.toEqual([]);
     const end = { command: { type: "end-forced-break", memberId: "member" } };
     expect(validateTeamCommand(end, lead)).not.toEqual([]);
-    expect(validateTeamCommand(end, { ...lead, memberBreak: { ...state("on-break"), forced: { by: "another-lead" } } })).toEqual([]);
+    expect(validateTeamCommand(end, { ...lead, memberBreak: { ...state("on-break"), forced: { by: "another-lead", scope: "agent" } } })).toEqual([]);
   });
   it("validates every break policy and rejects the old command name", () => {
     for (const policy of ["suspended", "requests-blocked", "auto-approve"]) {

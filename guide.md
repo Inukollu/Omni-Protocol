@@ -1026,9 +1026,12 @@ type BreakRequest = {
   reasonId?: string;
 };
 
+type ForcedBreakScope = "team" | "agent";
+
 type ForcedBreak = {
   by: UserId | "provider";
-  expectedEndsInSeconds?: DurationSeconds;
+  scope: ForcedBreakScope;
+  endsInSeconds?: DurationSeconds;
 };
 
 type BreakState = {
@@ -1193,8 +1196,10 @@ type TeamCallCommand =
 type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
-  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; expectedDurationSeconds?: DurationSeconds }
-  | { type: "end-forced-break"; memberId: UserId };
+  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; durationSeconds?: DurationSeconds }
+  | { type: "force-team-break"; reasonId?: string; reason?: string; durationSeconds: DurationSeconds }
+  | { type: "end-forced-break"; memberId: UserId }
+  | { type: "end-team-break" };
 
 type TeamCommand = TeamFeatureCommand | TeamBreakCommand | TeamCallCommand | TeamPolicyCommand;
 
@@ -1390,6 +1395,7 @@ const OMNI_FAILURE_CODES = [
   "omni.recording-unsettled",
   "omni.on-hold",
   "omni.break-forced-by-provider",
+  "omni.break-forced",
 ] as const;
 type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
 ```
@@ -2608,7 +2614,7 @@ and no count. A provider that publishes any of these instants therefore declares
 (`snapshot.providerTime`). Two screens then differ by their delay and nothing else.
 
 **Seconds left are worked out at each publication.** `expiresInSeconds`, `previewEndsInSeconds`,
-`wrapEndsInSeconds` and `expectedEndsInSeconds` are each the provider's arithmetic at the instant
+`wrapEndsInSeconds` and `endsInSeconds` are each the provider's arithmetic at the instant
 of the publication that carries them, never a value copied from an earlier one. A provider that
 builds the next publication by spreading the last one forward hands a reloaded agent computer a countdown
 already spent -- sixty seconds shown beside a lead's screen showing twenty -- and the stream
@@ -2853,7 +2859,7 @@ Normal order is `not-requested` → `awaiting-approval` → `granted` →
 `starting-after-task` → `on-break` → `not-requested`. Auto-approval may go directly to
 `granted`; a commit with no outstanding work may go directly to `on-break`. Denial/cancel
 returns a precommit request to `not-requested`; an explicit agent end returns a committed
-break there. Same-state restatements are allowed. An evidenced forced break is the explicit
+break there, once it is not `forced`. Same-state restatements are allowed. An evidenced forced break is the explicit
 exception to requesting/granting, and must carry its forced actor/state. Neither skipped
 publication nor an agent application-local guess creates another exception. A later normal attempt starts
 from `not-requested`, never by regressing an active break into a request.
