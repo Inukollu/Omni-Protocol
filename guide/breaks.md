@@ -159,7 +159,9 @@ then resumes when ready, as from any break.
 that ends the session and not the break. The provider keeps the break, and the first snapshot of
 the agent's next session carries it again while it stands, `on-break` with the same `forced`,
 `activeReasonId` and what is left of `endsInSeconds` by its kind's clock. Without that, signing
-out and straight back in would undo any forced break.
+out and straight back in would undo any forced break. While the agent is away, the lead's team
+list shows them `signed-out`, not `on-break`: someone who has gone home is not on a break. The
+break is held for their return, not shown.
 
 The expectation is whole seconds still to run, restated on every publication; omission
 means none was stated, or it has run out. Neither its reaching zero nor an overdue indication
