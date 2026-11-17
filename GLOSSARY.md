@@ -45,6 +45,7 @@ for orientation only: each platform's own documentation is the authority on its 
 | **Paused** | The work is on hold: the caller hears hold music, or the chat waits. | *Hold* on a call; *paused* or *parked* on a chat. |
 | **Completing** | The customer has gone and the agent is finishing their notes. | *After-call work* or *ACW* (Amazon Connect, Genesys Cloud, NICE), *wrap-up* (Twilio, Five9), *after conversation work* (Salesforce). |
 | **Wrap allowance** | How long the agent has for that finishing work. | *ACW timeout*, *wrap-up time limit*. |
+| **Wrap overrun** | How far past the wrap allowance the agent is, when the provider waits for them to finish: `wrapOverSeconds` on the wire. | *ACW overrun*, *wrap-up overtime*. |
 | **Outcome** | What the agent records about how the task went. | *Wrap-up code* (Genesys Cloud), *disposition* (Five9, NICE, Twilio), *contact disposition*. |
 | **Task ended** | The task is gone from the agent's screen. | *Contact ended*, *disconnected*, *completed*. |
 

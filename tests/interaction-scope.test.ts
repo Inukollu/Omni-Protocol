@@ -8,6 +8,7 @@ const task: Task<"voice"> = {
   assignmentId: "H2", title: "Interaction", channel: "voice", taskType: "Queue",
   phase: "in-progress", capabilitySource: "queue", capabilities: { endCall: true },
   browsers: [], completionMode: "agent-command",
+  history: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-12" }] },
 };
 const request = { assignmentId: "H2", command: { type: "end-call" } };
 describe("provider interaction controls", () => {

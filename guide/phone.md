@@ -321,7 +321,7 @@ the other three are the states in which nothing can land, each wanting a differe
 connect, from the manifest's phones, as the way the agent hears this provider's calls. A state
 naming the other is the wrong phone (`phone.phone.mismatch`). The phone is the agent's; the session
 is the agent's session with the provider, and what belongs to the session is that choice. `since` is when the status began, counted from the
-provider's clock like every duration off the active call, and omitted rather than invented.
+provider's clock like every running duration, and omitted rather than invented.
 
 **The channels.** The phone has one active audio channel and any number held
 (`phone.channel.active.single`), and a bridge is one channel: a call with people added is one entry, and its

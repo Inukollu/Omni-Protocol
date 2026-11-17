@@ -61,8 +61,8 @@ describe("untrusted values in violation messages", () => {
     const cases: [unknown, (value: unknown) => ProtocolViolation[]][] = [
       [manifest(), value => validateManifest(value)],
       [task(), value => validateTask(value, { levels: LEVELS, channel: "voice" })],
-      [snapshot({ tasks: [task()] }), value => validateSnapshot(value, manifest())],
-      [envelope({ type: "task-updated", task: task() }), value => validateEventEnvelope(value, manifest())],
+      [snapshot({ tasks: [task()], providerTime: CLOCK }), value => validateSnapshot(value, timed())],
+      [envelope({ type: "task-updated", task: task() }), value => validateEventEnvelope(value, timed())],
       [{ status: "authenticated", identity: { id: "A-1", displayName: "Ada", timeZone: "Asia/Kolkata" }, capabilities: {} }, value => validateAuthenticationState(value, "authentication", { levels: LEVELS })],
       [{ status: "failed", failure: { code: "provider.busy", message: "Busy", retryable: true } }, value => validateResult(value, "execute")],
       [{ online: true, audio: { input: { status: "unavailable", reason: "no-device", failure: { code: "device.missing", message: "No microphone", retryable: false } }, output: { status: "available" } } }, value => validateHostReport(value)],
@@ -135,6 +135,8 @@ const task = (over: Record<string, unknown> = {}) => {
     phase: "in-progress",
     completionMode: "agent-command",
     wrapAllowance: 15,
+    // A call under way says when it was answered; the call timer counts from it.
+    ...((over.phase ?? "in-progress") === "in-progress" || over.phase === "paused" ? { history: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-12" }] } } : {}),
     // A completing task with an allowance says how much is left; the fixture's wrap has just begun.
     ...(over.phase === "completing" && (over.wrapAllowance !== undefined || !("wrapAllowance" in over)) && !("wrapEndsInSeconds" in over) ? { wrapEndsInSeconds: (over.wrapAllowance as number | undefined) ?? 15 } : {}),
     ...over,
@@ -149,6 +151,10 @@ const snapshot = (over: Record<string, unknown> = {}) => ({
   taskCount: Array.isArray(over.tasks) ? over.tasks.length : 0,
   ...over,
 });
+
+// A provider whose call timer counts from the answer declares the clock, and states it on every snapshot.
+const CLOCK = "2026-08-21T09:00:00Z";
+const timed = (over: Record<string, unknown> = {}) => manifest({ timeCheck: true, ...over });
 
 const envelope = (event: unknown, over: Record<string, unknown> = {}) => ({
   id: "evt-1",
@@ -288,12 +294,12 @@ describe("validateTask", () => {
     expect(caps({ recording: { lockedBy: "org" } })).toEqual([]);
     expect(caps({ recording: { lockedBy: "region" } })).toEqual(["task.capability.locked.lockedBy.unknown"]);
     // The manifest's ladder is in force on its wire.
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })] }), manifest()))).toEqual([]);
-    const regional = manifest({ orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "region", label: { en: "Your region" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }] });
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "region" } } })] }), regional))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })], providerTime: CLOCK }), timed()))).toEqual([]);
+    const regional = timed({ orgLevels: [{ id: "org", label: { en: "Your organisation" } }, { id: "region", label: { en: "Your region" } }, { id: "team", label: { en: "Your team" } }, { id: "person", label: { en: "You" } }] });
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "region" } } })], providerTime: CLOCK }), regional))).toEqual([]);
     // The ladder is the whole ladder: a level the manifest left out is not in force.
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "district" } } })] }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "site" } } })], providerTime: CLOCK }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { recording: { lockedBy: "district" } } })], providerTime: CLOCK }), regional))).toEqual(["task.capability.locked.lockedBy.unknown"]);
     expect(caps({ recording: { lockedBy: "team", reason: "" } })).toEqual(["task.capability.locked.reason"]);
     expect(caps({ browsers: { lockedBy: "team" } })).toEqual(["task.capability.locked.unexpected"]);
     // lockedBy is the discriminant: a directory carrying it would read as a lock, so it may not.
@@ -308,11 +314,11 @@ describe("validateTask", () => {
     expect(rules(validateTask(task({ channel: "email", capabilities: { schedule: true } }), { levels: LEVELS, channel: "email" }))).toEqual([]);
     // And lands on the calendar, so the manifest has to declare one; a locked schedule is still a declared one.
     const scheduling = task({ capabilities: { schedule: true } });
-    expect(rules(validateSnapshot(snapshot({ tasks: [scheduling], calendar: [] }), manifest({ idleCapabilities: { calendar: true } })))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [scheduling] }), manifest()))).toEqual(["task.capability.calendar.required"]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { schedule: { lockedBy: "team" } } })] }), manifest()))).toEqual(["task.capability.calendar.required"]);
-    expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: scheduling }), manifest()))).toEqual(["task.capability.calendar.required"]);
-    expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: scheduling }), manifest({ idleCapabilities: { calendar: true } })))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [scheduling], calendar: [], providerTime: CLOCK }), timed({ idleCapabilities: { calendar: true } })))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [scheduling], providerTime: CLOCK }), timed()))).toEqual(["task.capability.calendar.required"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { schedule: { lockedBy: "team" } } })], providerTime: CLOCK }), timed()))).toEqual(["task.capability.calendar.required"]);
+    expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: scheduling }), timed()))).toEqual(["task.capability.calendar.required"]);
+    expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: scheduling }), timed({ idleCapabilities: { calendar: true } })))).toEqual([]);
     // A chat task has no recording to lock; the channel rule speaks first.
     expect(rules(validateTask(task({ channel: "chat", capabilities: { recording: { lockedBy: "team" } } }), { levels: LEVELS, channel: "chat" }))).toEqual(["task.capability.channel"]);
   });
@@ -355,11 +361,12 @@ describe("validateTask", () => {
     expect(record({ queueSeconds: 1.5 })).toEqual(["task.history.queueSeconds"]);
     expect(record({ interactionSeconds: "312" })).toEqual(["task.history.interactionSeconds"]);
     expect(record({ transfers: -1 })).toEqual(["task.history.transfers"]);
-    expect(rules(validateTask(task({ history: { transfers: 2 } }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.history.steps.shape"]);
-    expect(rules(validateTask(task({ history: [] }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.history.shape"]);
+    // A record without its steps cannot say the call was answered either.
+    expect(rules(validateTask(task({ history: { transfers: 2 } }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.history.steps.shape", "task.history.answered.required"]);
+    expect(rules(validateTask(task({ history: [] }), { levels: LEVELS, channel: "voice" }))).toEqual(["task.history.shape", "task.history.answered.required"]);
     // The entries moved under steps, and a violation says where it found them.
     const misstep = validateTask(task({ history: { steps: [{ step: "ringing", at: "2026-08-21T09:00:00Z" }] } }), { levels: LEVELS, channel: "voice" });
-    expect(misstep.map(v => `${v.rule} @ ${v.path}`)).toEqual(["task.history.step @ task.history.steps[0].step"]);
+    expect(misstep.map(v => `${v.rule} @ ${v.path}`)).toEqual(["task.history.step @ task.history.steps[0].step", "task.history.answered.required @ task.history"]);
   });
 
   it("records each hold as its own entry, oldest first", () => {
@@ -558,7 +565,7 @@ describe("validateTask", () => {
     // The manifest's ladder reaches the attribute's contact, as it reaches the task's party.
     expect(rules(validateTask(task({ attributes: [{ key: "caller", type: "contact", party: { number: { lockedBy: "region" } } }] }), { channel: "voice", levels: ["team", "person"] }))).toEqual(["contact.number.locked.lockedBy.unknown"]);
     const regional = manifest({ orgLevels: [{ id: "org", label: { en: "Org" } }, { id: "region", label: { en: "Region" } }, { id: "team", label: { en: "Team" } }, { id: "person", label: { en: "You" } }] });
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ attributes: [{ key: "caller", type: "contact", party: { number: { lockedBy: "region" } } }] })] }), regional))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ attributes: [{ key: "caller", type: "contact", party: { number: { lockedBy: "region" } } }] })], providerTime: CLOCK }), { ...regional, timeCheck: true }))).toEqual([]);
     const directory = (m: unknown) => rules(validateSnapshot(snapshot({ contacts: [{ id: "c-1", name: "Maya", number: { lockedBy: "region" } }] }), { ...(m as object), idleCapabilities: { contacts: true } }));
     expect(directory(regional)).toEqual([]);
     expect(directory(manifest())).toEqual(["contact.number.locked.lockedBy.unknown"]);
@@ -588,7 +595,7 @@ describe("break state", () => {
     }
     // A break starting after the task waits on a task: beside one it stands, beside none it is refused, since with
     // nothing outstanding the break is in effect.
-    expect(rules(validateSnapshot(snapshot({ break: { status: "starting-after-task", canRequestBreak: true }, tasks: [task()] }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ break: { status: "starting-after-task", canRequestBreak: true }, tasks: [task()], providerTime: CLOCK }), timed()))).toEqual([]);
     expect(check({ status: "starting-after-task" })).toEqual(["break.starting-after-task.tasks"]);
     {
     }
@@ -602,7 +609,7 @@ describe("break state", () => {
     // A break begins when the work ends. Until then the state is starting-after-task, which may
     // stand beside any task; on-break beside one is a report of a state the agent cannot be in.
     const withTask = (status: string) =>
-      rules(validateSnapshot(snapshot({ tasks: [task()], break: { status, canRequestBreak: true } }), manifest()));
+      rules(validateSnapshot(snapshot({ tasks: [task()], break: { status, canRequestBreak: true }, providerTime: CLOCK }), timed()));
     expect(withTask("starting-after-task")).toEqual([]);
     expect(withTask("granted")).toEqual([]);
     expect(withTask("on-break")).toEqual(["break.on-break.tasks"]);
@@ -628,7 +635,7 @@ describe("break state", () => {
   it("lets a forced break travel with on-break or starting-after-task, and nothing else", () => {
     const placed = { by: "lead-3" };
     expect(check({ status: "on-break", forced: placed })).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ break: { status: "starting-after-task", canRequestBreak: false, forced: placed }, tasks: [task()] }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ break: { status: "starting-after-task", canRequestBreak: false, forced: placed }, tasks: [task()], providerTime: CLOCK }), timed()))).toEqual([]);
     // Beside granted or awaiting-approval the host would commit a break nobody asked for.
     expect(check({ status: "granted", forced: placed })).toEqual(["break.forced.status"]);
     expect(check({ status: "awaiting-approval", forced: placed })).toEqual(["break.forced.status"]);
@@ -714,7 +721,7 @@ describe("validateTeamMembers", () => {
 
   it("carries each member's open tasks, trimmed by the provider, and the lead's own listening", () => {
     const at = "2026-08-21T09:00:00Z";
-    const trimmed = { assignmentId: "alloc-7", title: "Billing call", channel: "voice", taskType: "Billing", phase: "in-progress" };
+    const trimmed = { assignmentId: "alloc-7", title: "Billing call", channel: "voice", taskType: "Billing", phase: "in-progress", history: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-12" }] } };
     const withTasks = (tasks: unknown, over: Record<string, unknown> = {}) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks, ...over }] }, "team", { levels: LEVELS }));
     expect(withTasks([trimmed])).toEqual([]);
     expect(withTasks([])).toEqual([]);
@@ -732,7 +739,7 @@ describe("validateTeamMembers", () => {
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [locked] }] }, "team", { levels: LEVELS, locked: ["+919876543210"] }))).toEqual([]);
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [leaking] }] }, "team", { levels: LEVELS, locked: ["+919876543210"] }))).toEqual(["task.locked.leak"]);
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [{ ...trimmed, party: { name: "Maya Rao", number: "+919876543210" } }] }] }, "team", { levels: LEVELS, locked: ["+919876543210"] }))).toEqual([]);
-    expect(withTasks([{ ...trimmed, history: { steps: [{ step: "held", at, seconds: 12, by: "A-2" }] }, onCall: [{ role: "party", since: at }] }])).toEqual([]);
+    expect(withTasks([{ ...trimmed, history: { steps: [{ step: "answered", at: "2026-08-21T08:59:00Z", by: "A-2" }, { step: "held", at, seconds: 12, by: "A-2" }] }, onCall: [{ role: "party", since: at }] }])).toEqual([]);
     expect(withTasks([{ ...trimmed, audio: "started", phase: "completing" }])).toEqual(["task.audio.completing"]);
     expect(withTasks([{ ...trimmed, phase: "ringing" }])).toEqual(["task.phase"]);
     expect(withTasks([{ ...trimmed, assignmentId: "" }])).toEqual(["task.assignmentId"]);
@@ -797,34 +804,34 @@ describe("validateTeamMembers", () => {
     const at = "2026-08-21T09:00:00Z";
     const working = task({ phase: "in-progress", audio: "started", capabilities: {} });
     // The ask needs an assignment at work to be next after; idle, there is nothing to press.
-    expect(rules(validateSnapshot(snapshot({ tasks: [working], nextCall: { since: at } }), manifest()))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [{ ...working, phase: "completing", audio: "ended", onCall: [], wrapAllowance: 60, wrapEndsInSeconds: 60 }], nextCall: { since: at } }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [working], nextCall: { since: at }, providerTime: CLOCK }), timed()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [{ ...working, phase: "completing", audio: "ended", onCall: [], wrapAllowance: 60, wrapEndsInSeconds: 60 }], nextCall: { since: at }, providerTime: CLOCK }), timed()))).toEqual([]);
     expect(rules(validateSnapshot(snapshot({ nextCall: { since: at } }), manifest()))).toEqual(["snapshot.nextCall.idle"]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [working], nextCall: { since: "now" } }), manifest()))).toEqual(["nextCall.since"]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [working], nextCall: { since: at, assignmentId: "alloc-42" } }), manifest()))).toEqual(["nextCall.field"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [working], nextCall: { since: "now" }, providerTime: CLOCK }), timed()))).toEqual(["nextCall.since"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [working], nextCall: { since: at, assignmentId: "alloc-42" }, providerTime: CLOCK }), timed()))).toEqual(["nextCall.field"]);
     // The lined-up call: not a task, the caller as shown to this audience, the waits, and the release by presence.
     const lined = { party: { name: "Priya S", number: { lockedBy: "org" } }, queue: "Billing", queuedSince: at, since: at, release: true };
-    const busy = (over: Record<string, unknown>) => snapshot({ tasks: [working], ...over });
-    expect(rules(validateSnapshot(busy({ linedUp: lined }), manifest()))).toEqual([]);
-    expect(rules(validateSnapshot(busy({ linedUp: { since: at } }), manifest()))).toEqual([]);
-    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, release: false } }), manifest()))).toEqual(["linedUp.release"]);
-    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, queue: "" } }), manifest()))).toEqual(["linedUp.queue"]);
-    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, queuedSince: "then" } }), manifest()))).toEqual(["linedUp.queuedSince"]);
-    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, since: undefined } }), manifest()))).toEqual(["linedUp.since"]);
-    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, assignmentId: "alloc-57" } }), manifest()))).toEqual(["linedUp.field"]);
-    expect(rules(validateSnapshot(busy({ linedUp: "next" }), manifest()))).toEqual(["linedUp.shape"]);
+    const busy = (over: Record<string, unknown>) => snapshot({ tasks: [working], providerTime: CLOCK, ...over });
+    expect(rules(validateSnapshot(busy({ linedUp: lined }), timed()))).toEqual([]);
+    expect(rules(validateSnapshot(busy({ linedUp: { since: at } }), timed()))).toEqual([]);
+    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, release: false } }), timed()))).toEqual(["linedUp.release"]);
+    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, queue: "" } }), timed()))).toEqual(["linedUp.queue"]);
+    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, queuedSince: "then" } }), timed()))).toEqual(["linedUp.queuedSince"]);
+    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, since: undefined } }), timed()))).toEqual(["linedUp.since"]);
+    expect(rules(validateSnapshot(busy({ linedUp: { ...lined, assignmentId: "alloc-57" } }), timed()))).toEqual(["linedUp.field"]);
+    expect(rules(validateSnapshot(busy({ linedUp: "next" }), timed()))).toEqual(["linedUp.shape"]);
     // A lined-up call needs an agent at work, as the ask does: idle, it is an offer that has not been made.
     expect(rules(validateSnapshot(snapshot({ linedUp: lined }), manifest()))).toEqual(["snapshot.linedUp.idle"]);
     // A break wins: neither the ask nor the lined-up call stands beside a break in flight or in effect.
     const onBreak = (status: string) => ({ status, canRequestBreak: true });
     for (const status of ["awaiting-approval", "granted", "starting-after-task"]) {
-      expect(rules(validateSnapshot(busy({ nextCall: { since: at }, break: onBreak(status) }), manifest())), status).toEqual(["snapshot.nextCall.break"]);
-      expect(rules(validateSnapshot(busy({ linedUp: lined, break: onBreak(status) }), manifest())), status).toEqual(["snapshot.linedUp.break"]);
+      expect(rules(validateSnapshot(busy({ nextCall: { since: at }, break: onBreak(status) }), timed())), status).toEqual(["snapshot.nextCall.break"]);
+      expect(rules(validateSnapshot(busy({ linedUp: lined, break: onBreak(status) }), timed())), status).toEqual(["snapshot.linedUp.break"]);
     }
     // On a break in effect the task at work is itself refused; the queue rules stand beside that.
-    expect(rules(validateSnapshot(busy({ nextCall: { since: at }, break: onBreak("on-break") }), manifest()))).toContain("snapshot.nextCall.break");
-    expect(rules(validateSnapshot(busy({ linedUp: lined, break: onBreak("on-break") }), manifest()))).toContain("snapshot.linedUp.break");
-    expect(rules(validateSnapshot(busy({ nextCall: { since: at }, linedUp: lined, break: onBreak("not-requested") }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(busy({ nextCall: { since: at }, break: onBreak("on-break") }), timed()))).toContain("snapshot.nextCall.break");
+    expect(rules(validateSnapshot(busy({ linedUp: lined, break: onBreak("on-break") }), timed()))).toContain("snapshot.linedUp.break");
+    expect(rules(validateSnapshot(busy({ nextCall: { since: at }, linedUp: lined, break: onBreak("not-requested") }), timed()))).toEqual([]);
     // On their own events, present or cleared; and on the member, as the member's own snapshot carries them.
     const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
     expect(check({ type: "next-call", nextCall: { since: at } })).toEqual([]);
@@ -848,7 +855,8 @@ describe("validateTeamMembers", () => {
   it("carries the phone's own view from a provider that can see it: the device, its mute, its channels, agreeing with the tasks", () => {
     const at = "2026-08-21T09:00:00Z";
     const seeing = manifest({ phoneStatus: true, phones: ["softphone", "hardphone"] });
-    const read = (phone: unknown, over: Record<string, unknown> = {}) => rules(validateSnapshot(snapshot({ phone, ...over }), seeing, "snapshot", { phone: "hardphone" }));
+    // A snapshot carrying calls carries their answers too, so the provider states its clock with them.
+    const read = (phone: unknown, over: Record<string, unknown> = {}) => rules(validateSnapshot(snapshot({ phone, ...over, ...(over.tasks === undefined ? {} : { providerTime: CLOCK }) }), over.tasks === undefined ? seeing : { ...seeing, timeCheck: true }, "snapshot", { phone: "hardphone" }));
     const idle = { phone: "hardphone", status: "ready", channels: [] };
     expect(read(idle)).toEqual([]);
     // Owed by a provider that declared it can see the phone, and by nobody else.
@@ -1027,7 +1035,7 @@ describe("validateSnapshot", () => {
     expect(validateSnapshot(snapshot(), manifest(), "session.snapshot")).toEqual([]);
   });
   it("requires a snapshot to state its task count, reconciled with the tasks it carries", () => {
-    const count = (over: Record<string, unknown> = {}) => rules(validateSnapshot(snapshot(over), manifest()));
+    const count = (over: Record<string, unknown> = {}) => rules(validateSnapshot(snapshot({ providerTime: CLOCK, ...over }), timed()));
     // The helper computes a matching count; both directions on the explicit field.
     expect(count()).toEqual([]);
     expect(count({ tasks: [task()], taskCount: 1 })).toEqual([]);
@@ -1042,7 +1050,7 @@ describe("validateSnapshot", () => {
 
   it("accepts a conforming snapshot", () => {
     expect(validateSnapshot(snapshot(), manifest())).toEqual([]);
-    expect(validateSnapshot(snapshot({ tasks: [task()] }), manifest())).toEqual([]);
+    expect(validateSnapshot(snapshot({ tasks: [task()], providerTime: CLOCK }), timed())).toEqual([]);
   });
 
   it.each([
@@ -1553,7 +1561,8 @@ describe("the other direction, everywhere", () => {
   });
 
   it("names nobody on an arrived, self-service or queued step", () => {
-    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ history: { steps: [{ at: "2026-08-21T09:00:00Z", ...entry }] } }), { ...voice, levels: LEVELS }));
+    // One entry checked on its own, on a call in wrap: no answer is owed to a call that is over.
+    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ phase: "completing", history: { steps: [{ at: "2026-08-21T09:00:00Z", ...entry }] } }), { ...voice, levels: LEVELS }));
     expect(step({ step: "answered", by: "A-1" })).toEqual([]);
     expect(step({ step: "queued" })).toEqual([]);
     expect(step({ step: "queued", by: "A-1" })).toEqual(["task.history.by.unexpected"]);
@@ -1577,7 +1586,7 @@ describe("the other direction, everywhere", () => {
     expect(history([queued, answered])).toEqual([]);
     // Anywhere but first is out of its turn, even at an instant that keeps the order.
     expect(history([queued, { ...arrived, at: "2026-08-21T08:59:10Z" }, answered])).toEqual(["task.history.arrived.first"]);
-    expect(history([arrived, { ...arrived, at: "2026-08-21T08:58:50Z" }, queued])).toEqual(["task.history.arrived.first"]);
+    expect(history([arrived, { ...arrived, at: "2026-08-21T08:58:50Z" }, queued, answered])).toEqual(["task.history.arrived.first"]);
   });
 
   it("records time with the IVR or a bot as self-service, once per visit, on any channel", () => {
@@ -1594,7 +1603,7 @@ describe("the other direction, everywhere", () => {
     // A chat customer with a bot before a person is the same step.
     const chat = { channel: "chat" };
     expect(rules(validateTask(task({ taskType: "Chat", history: { steps: [menu] } }), { ...chat, levels: LEVELS })).filter(rule => rule.startsWith("task.history"))).toEqual([]);
-    expect(rules(validateTask(task({ history: { steps: [{ ...menu, by: "a-17" }] } }), { ...voice, levels: LEVELS }))).toEqual(["task.history.by.unexpected"]);
+    expect(rules(validateTask(task({ history: { steps: [{ ...menu, by: "a-17" }, { step: "answered", at: "2026-08-21T08:59:41Z", by: "a-17" }] } }), { ...voice, levels: LEVELS }))).toEqual(["task.history.by.unexpected"]);
   });
 
   it("declares the capability that shows a task's browsers", () => {
@@ -1647,7 +1656,7 @@ describe("the other direction, everywhere", () => {
   it("lets a call a lead took over sit beside the lead's break, and no other task", () => {
     const at = "2026-08-21T09:05:00Z";
     const taken = task({ assignmentId: "call-1", capabilities: {}, takenOver: { memberId: "A-1", since: at } });
-    const onBreak = (tasks: unknown[]) => rules(validateSnapshot(snapshot({ break: { status: "on-break", canRequestBreak: true }, tasks, taskCount: tasks.length }), manifest()));
+    const onBreak = (tasks: unknown[]) => rules(validateSnapshot(snapshot({ break: { status: "on-break", canRequestBreak: true }, tasks, taskCount: tasks.length, providerTime: CLOCK }), timed()));
     expect(onBreak([taken])).toEqual([]);
     expect(onBreak([task({ assignmentId: "call-2" })])).toEqual(["break.on-break.tasks"]);
     expect(onBreak([taken, task({ assignmentId: "call-2" })])).toEqual(["break.on-break.tasks"]);
@@ -1673,7 +1682,7 @@ describe("the other direction, everywhere", () => {
 
   it("offers a task only before it is under way, with the acceptance the session asked for on the task", () => {
     const offer = (over: Record<string, unknown>, context: Record<string, unknown> = {}) =>
-      rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending", acceptance: "consent", ...over }) }), manifest(), "event", context));
+      rules(validateEventEnvelope(envelope({ type: "task-offered", task: task({ phase: "pending", acceptance: "consent", ...over }) }), timed(), "event", context));
     expect(offer({})).toEqual([]);
     // An offer introduces work nobody has accepted: pending is the only phase it introduces.
     expect(offer({ phase: "confirmed", acceptance: undefined })).toEqual(["event.taskOffered.phase"]);
@@ -2037,7 +2046,7 @@ describe("a transfer is not a command", () => {
 
   it("keeps the record of a transfer the platform made: the step and the total stay", () => {
     // A call changes hands on the platform's own routing; the record says so, and the agent commanded none of it.
-    expect(rules(validateTask(task({ history: { steps: [{ step: "transferred", at: since, contactId: "tier2" }], transfers: 1 } }), { ...voice, levels: LEVELS }))).toEqual([]);
+    expect(rules(validateTask(task({ history: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-12" }, { step: "transferred", at: since, contactId: "tier2" }], transfers: 1 } }), { ...voice, levels: LEVELS }))).toEqual([]);
     expect(rules(validateTaskCommand({ type: "transfer", action: "cold", dialId: "dial-2", contactId: "tier2" }))).toEqual(["command.type"]);
     expect(rules(validateTaskCommand({ type: "transfer", action: "complete" }))).toEqual(["command.type"]);
   });
@@ -2137,13 +2146,13 @@ describe("every dial has an outcome", () => {
   it("requires a task that may dial to come from a manifest that says how a dial ends", () => {
     for (const name of ["connectBack", "addToCall"]) {
       const dials = task({ capabilities: { [name]: name === "connectBack" ? true : { destinations: "contacts-only" } } });
-      expect(rules(validateSnapshot(snapshot({ tasks: [dials] }), dialling()))).toEqual([]);
-      expect(rules(validateSnapshot(snapshot({ tasks: [dials] }), manifest()))).toEqual(["task.capability.dialOutcomes.required"]);
-      expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: dials }), manifest()))).toEqual(["task.capability.dialOutcomes.required"]);
+      expect(rules(validateSnapshot(snapshot({ tasks: [dials], providerTime: CLOCK }), dialling({ timeCheck: true })))).toEqual([]);
+      expect(rules(validateSnapshot(snapshot({ tasks: [dials], providerTime: CLOCK }), timed()))).toEqual(["task.capability.dialOutcomes.required"]);
+      expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: dials }), timed()))).toEqual(["task.capability.dialOutcomes.required"]);
     }
     // A locked control is still a declared one; the queue could unlock it without a manifest change.
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { addToCall: { lockedBy: "team" } } })] }), manifest()))).toEqual(["task.capability.dialOutcomes.required"]);
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { hold: true } })] }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { addToCall: { lockedBy: "team" } } })], providerTime: CLOCK }), timed()))).toEqual(["task.capability.dialOutcomes.required"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ capabilities: { hold: true } })], providerTime: CLOCK }), timed()))).toEqual([]);
     // Without a manifest to ask, the question is not asked.
     expect(rules(validateTask(task({ capabilities: { addToCall: { destinations: "contacts-only" } } }), { ...voice, levels: LEVELS }))).toEqual([]);
   });
@@ -2189,7 +2198,8 @@ describe("every dial has an outcome", () => {
   });
 
   it("lets a step that dialled say which dial and where, and no other step", () => {
-    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ history: { steps: [{ at: "2026-08-21T09:00:00Z", by: "A-1", ...entry }] } }), { ...voice, levels: LEVELS }));
+    // One entry checked on its own, on a call in wrap: no answer is owed to a call that is over.
+    const step = (entry: Record<string, unknown>) => rules(validateTask(task({ phase: "completing", history: { steps: [{ at: "2026-08-21T09:00:00Z", by: "A-1", ...entry }] } }), { ...voice, levels: LEVELS }));
     for (const dialled of ["transferred", "added", "unanswered"]) {
       expect(step({ step: dialled, dialId: "dial-7f2", contactId: "tier2" })).toEqual([]);
       expect(step({ step: dialled, contactId: "tier2" })).toEqual([]);
@@ -2228,7 +2238,7 @@ describe("consulting a lead", () => {
   it("carries a member's request on the member, naming the assignment the lead would join", () => {
     const since = "2026-08-21T09:04:00Z";
     const request = { assignmentId: "alloc-42", note: "Refund dispute", since };
-    const trimmed = { assignmentId: "alloc-42", title: "Billing call", channel: "voice", taskType: "Billing", phase: "in-progress" };
+    const trimmed = { assignmentId: "alloc-42", title: "Billing call", channel: "voice", taskType: "Billing", phase: "in-progress", history: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-12" }] } };
     const asking = (over: Record<string, unknown> = {}) => [{ id: "A-1", availability: "on-task", request: { ...request, ...over } }];
     const lead = { capabilities: { lead: EVERY_LEAD_CAPABILITY } };
     const agent = { capabilities: {} };
@@ -2635,7 +2645,9 @@ describe("preview: the agent presses Call", () => {
     expect(wrapping({ wrapEndsInSeconds: 0 })).toEqual([]);
     expect(wrapping({ wrapEndsInSeconds: undefined })).toEqual(["task.completing.wrapEndsInSeconds.required"]);
     for (const bad of ["soon", 1.5, -1]) expect(wrapping({ wrapEndsInSeconds: bad })).toEqual(["task.completing.wrapEndsInSeconds"]);
-    expect(wrapping({ completionMode: "agent-command", wrapAllowance: 120, wrapEndsInSeconds: 0 })).toEqual([]);
+    // Past the expected wrap, the task says how far over it is.
+    expect(wrapping({ completionMode: "agent-command", wrapAllowance: 120, wrapEndsInSeconds: 0, wrapOverSeconds: 0 })).toEqual([]);
+    expect(wrapping({ completionMode: "agent-command", wrapAllowance: 120, wrapEndsInSeconds: 0 })).toEqual(["task.completing.wrapOverSeconds.required"]);
     expect(wrapping({ completionMode: "agent-command", wrapAllowance: undefined })).toEqual([]);
     expect(wrapping({ completionMode: "agent-command", wrapAllowance: undefined, wrapEndsInSeconds: 5 })).toEqual(["task.completing.wrapEndsInSeconds.unexpected"]);
     expect(rules(validateTask(task({ phase: "in-progress", completionMode: "provider-automatic", wrapAllowance: 60, wrapEndsInSeconds: 60 }), { ...voice, levels: LEVELS }))).toEqual(["task.completing.wrapEndsInSeconds.unexpected"]);
@@ -2752,7 +2764,7 @@ describe("validateTask capabilitySource", () => {
 
 describe("history and assignment API migration", () => {
   it("rejects former task history fields instead of silently ignoring their facts", () => {
-    const history = { steps: [], interactionSeconds: 12 };
+    const history = { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-12" }], interactionSeconds: 12 };
     expect(validateTask(task({ history: history }), { levels: LEVELS, channel: "voice" })).toEqual([]);
     for (const former of ["handlingHistory", "interactionHistory"]) {
       for (const value of [undefined, history]) {
@@ -2905,5 +2917,72 @@ describe("validateRedirectUri", () => {
     expect(check("/auth/acme-voice")).toEqual(["redirectUri"]);
     expect(check("")).toEqual(["redirectUri"]);
     expect(check(undefined)).toEqual(["redirectUri"]);
+  });
+});
+
+describe("every screen counts a call from the provider's answer", () => {
+  const voice = { channel: "voice", levels: LEVELS };
+  const answered = { step: "answered", at: "2026-08-21T09:00:00Z", by: "A-12" };
+  const check = (over: Record<string, unknown>, context: { channel: string; levels: string[] } = voice) =>
+    rules(validateTask(task(over), context));
+
+  it("requires a call under way to carry its answered step, and nothing else to", () => {
+    for (const phase of ["in-progress", "paused"]) {
+      expect(check({ phase, history: { steps: [answered] } })).toEqual([]);
+      expect(check({ phase, history: { steps: [] } })).toEqual(["task.history.answered.required"]);
+      expect(check({ phase, history: undefined })).toEqual(["task.history.answered.required"]);
+      // Another step does not stand in for the answer.
+      expect(check({ phase, history: { steps: [{ step: "queued", at: "2026-08-21T08:59:00Z", seconds: 60 }] } })).toEqual(["task.history.answered.required"]);
+    }
+    // A call in wrap is over, so no timer runs on it.
+    expect(check({ phase: "completing", history: undefined })).toEqual([]);
+    // Off voice, the rule is not asked.
+    expect(check({ channel: "chat", taskType: "Chat", phase: "in-progress", history: undefined, capabilities: {} }, { channel: "chat", levels: LEVELS })).toEqual([]);
+  });
+
+  it("asks for the provider's clock wherever a call under way carries its answer or a leg still running", () => {
+    const at = "2026-08-21T09:00:00Z";
+    const wrapUp = { phase: "completing", audio: "ended", onCall: [] };
+    // A task with no instant to count from needs no clock: the control.
+    expect(rules(validateSnapshot(snapshot({ tasks: [task(wrapUp)] }), manifest()))).toEqual([]);
+    // An answer in the record of a call in wrap is an instant shown, not a timer: still no clock.
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ ...wrapUp, history: { steps: [answered] } })] }), manifest()))).toEqual([]);
+    // The same answer on a call under way is one.
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ history: { steps: [answered] } })] }), manifest()))).toEqual(["manifest.timeCheck.required"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ history: { steps: [answered] } })], providerTime: CLOCK }), timed()))).toEqual([]);
+    // So is a hold still running, and a closed one is not.
+    const holding = (seconds?: number) => task({ phase: "paused", history: { steps: [answered, { step: "held", at: "2026-08-21T09:01:00Z", by: "A-12", ...(seconds === undefined ? {} : { seconds }) }] } });
+    expect(rules(validateSnapshot(snapshot({ tasks: [holding()] }), manifest()))).toEqual(["manifest.timeCheck.required"]);
+    expect(rules(validateSnapshot(snapshot({ tasks: [holding()], providerTime: CLOCK }), timed()))).toEqual([]);
+    // The same on an event, and on a lead's copy of the member's call.
+    expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: task() }), manifest()))).toEqual(["manifest.timeCheck.required"]);
+    expect(rules(validateEventEnvelope(envelope({ type: "task-updated", task: task() }), timed()))).toEqual([]);
+    const member = { id: "A-2", availability: "on-task", tasks: [{ assignmentId: "alloc-7", title: "Billing call", channel: "voice", taskType: "Billing", phase: "in-progress", history: { steps: [answered] } }] };
+    const lead = { capabilities: { lead: EVERY_LEAD_CAPABILITY }, leadFeatures: true };
+    expect(rules(validateSnapshot(snapshot({ team: { members: [member] } }), manifest(), "snapshot", lead))).toEqual(["manifest.timeCheck.required"]);
+    expect(rules(validateSnapshot(snapshot({ team: { members: [member] }, providerTime: at }), timed(), "snapshot", lead))).toEqual([]);
+  });
+
+  it("says how far over the expected wrap a task is, once none is left", () => {
+    const wrap = (over: Record<string, unknown>) =>
+      check({ phase: "completing", audio: "ended", onCall: [], completionMode: "agent-command", wrapAllowance: 60, ...over });
+    expect(wrap({ wrapEndsInSeconds: 0, wrapOverSeconds: 0 })).toEqual([]);
+    expect(wrap({ wrapEndsInSeconds: 0, wrapOverSeconds: 95 })).toEqual([]);
+    expect(wrap({ wrapEndsInSeconds: 0 })).toEqual(["task.completing.wrapOverSeconds.required"]);
+    for (const bad of [1.5, -1, "late"]) expect(wrap({ wrapEndsInSeconds: 0, wrapOverSeconds: bad })).toEqual(["task.completing.wrapOverSeconds"]);
+    // While wrap is left there is nothing over, and a provider that ends the task at zero never runs over.
+    expect(wrap({ wrapEndsInSeconds: 20 })).toEqual([]);
+    expect(wrap({ wrapEndsInSeconds: 20, wrapOverSeconds: 5 })).toEqual(["task.completing.wrapOverSeconds.unexpected"]);
+    expect(wrap({ completionMode: "provider-automatic", wrapEndsInSeconds: 0 })).toEqual([]);
+    expect(wrap({ completionMode: "provider-automatic", wrapEndsInSeconds: 0, wrapOverSeconds: 5 })).toEqual(["task.completing.wrapOverSeconds.unexpected"]);
+    expect(check({ phase: "in-progress", wrapOverSeconds: 5 })).toEqual(["task.completing.wrapOverSeconds.unexpected"]);
+    // A lead's copy may leave the mode out: it may carry the overrun, and is not held to it.
+    const onTeam = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", tasks: [{
+      assignmentId: "alloc-7", title: "Billing call", channel: "voice", taskType: "Billing", phase: "completing", wrapAllowance: 60, wrapEndsInSeconds: 0, ...over,
+    }] }] }, "team", { levels: LEVELS }));
+    expect(onTeam({ wrapOverSeconds: 30 })).toEqual([]);
+    expect(onTeam({})).toEqual([]);
+    expect(onTeam({ completionMode: "agent-command" })).toEqual(["task.completing.wrapOverSeconds.required"]);
+    expect(onTeam({ wrapOverSeconds: 1.5 })).toEqual(["task.completing.wrapOverSeconds"]);
   });
 });
