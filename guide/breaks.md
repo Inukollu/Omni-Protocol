@@ -163,6 +163,16 @@ out and straight back in would undo any forced break. While the agent is away, t
 list shows them `signed-out`, not `on-break`: someone who has gone home is not on a break. The
 break is held for their return, not shown.
 
+`testAdapter` holds a provider to this when given `signInAgain`, a way to build the adapter again
+that signs the same agent in, as a sign-in screen would. A run that ends with the agent on a
+forced break signs out, signs in again, and reads the new session's snapshot. That snapshot
+carries the same break, from the same person, on the same reason, or the run names it
+(`test.signIn.forcedBreak`). Its time left is held to its kind's clock: a team break's ran on
+while the agent was away, an agent's own stood still, and neither grows
+(`test.signIn.endsInSeconds`). A sign-in that does not come back as the same agent is named too
+(`test.signIn.session`). A run without `signInAgain`, or with no forced break to carry, lists
+`break.forced.signIn` under `notTested`: the rule was not checked, and the result says so.
+
 The expectation is whole seconds still to run, restated on every publication; omission
 means none was stated, or it has run out. Neither its reaching zero nor an overdue indication
 authorizes the agent application or provider to end the break, restore availability, or route
