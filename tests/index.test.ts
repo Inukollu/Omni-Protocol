@@ -322,11 +322,12 @@ describe("historySpans", () => {
       { step: "held", at: "2026-08-21T09:01:00Z", by: "a-17" },
     ];
     const spans = historySpans(steps);
-    expect(spans.map(span => [span.step, span.entries.length, span.seconds])).toEqual([
-      ["arrived", 1, 2], ["self-service", 2, 30], ["queued", 1, 30],
-      // An answer still running, and a hold still running, leave their spans without a total rather than one that misses them.
-      ["answered", 1, undefined], ["held", 2, undefined],
+    expect(spans.map(span => [span.step, span.entries.map(entry => entry.seconds)])).toEqual([
+      ["arrived", [2]], ["self-service", [3, 27]], ["queued", [30]],
+      ["answered", [undefined]], ["held", [20, undefined]],
     ]);
+    // A span states no total of its own: the screen shows the provider's seconds, entry by entry.
+    expect(spans.every(span => !("seconds" in span))).toBe(true);
     expect(spans.map(span => span.at)).toEqual(["2026-08-21T08:58:40Z", "2026-08-21T08:58:42Z", "2026-08-21T08:59:12Z", "2026-08-21T08:59:42Z", "2026-08-21T09:00:00Z"]);
     // The same step apart is two spans: grouping is only of neighbours.
     expect(historySpans([hold, answered, { ...hold, seconds: 5 }]).map(span => span.step)).toEqual(["held", "answered", "held"]);

@@ -15,7 +15,7 @@ const task = (recordings: Recording[] = [recording()]): Task<"voice"> => ({
   assignmentId: "assignment-1", channel: "voice", title: "Call", taskType: "call",
   phase: "in-progress", audio: "started", capabilitySource: "queue", completionMode: "agent-command", browsers: [],
   capabilities: { recording: { provider: actions, host: { ...actions, storageId: "recordings" } } },
-  recordings,
+  recordings, history: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-12" }] },
 });
 const command = (action: RecordingAction, source: "provider" | "host" = "provider"): RecordingCommand => ({
   type: "recording", source, action,

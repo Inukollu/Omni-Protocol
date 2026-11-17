@@ -19,6 +19,7 @@ const voiceTask = {
   browsers: [],
   completionMode: "agent-command",
   wrapAllowance: 60,
+  history: { steps: [{ step: "answered", at: "2026-08-21T09:00:00Z", by: "A-12" }] },
 } satisfies Task<"voice">;
 
 const statusEvent = {
@@ -621,6 +622,22 @@ describe("TaskStream places a dial outcome", () => {
     expect(rulesOf(s.resync({ tasks: [{ ...voiceTask, phase: "completing", audio: "ended", onCall: [], wrapAllowance: 60, wrapEndsInSeconds: 60 }] }, "snapshot"))).toEqual([]);
   });
 
+  it("holds how far over the expected wrap to the provider's own clock: between two publications it gains at least the seconds that passed", () => {
+    const s = new TaskStream();
+    const over = (wrapOverSeconds: number) => ({ ...voiceTask, phase: "completing" as const, audio: "ended" as const, onCall: [], wrapAllowance: 60, wrapEndsInSeconds: 0, wrapOverSeconds });
+    const wrap = (id: string, occurredAt: string, wrapOverSeconds: number): ProviderEventEnvelope<"voice"> => ({ id, sessionId: "session-1", occurredAt,
+      event: { type: "task-updated", task: over(wrapOverSeconds) } });
+    s.seed({ tasks: [over(0)] });
+    expect(rulesOf(s.apply(wrap("o1", "2026-08-21T09:00:00Z", 10)))).toEqual([]);
+    // Forty seconds later on the provider's clock, a copied 10 is named; 50 is how far over; 49 is rounding.
+    expect(rulesOf(s.apply(wrap("o2", "2026-08-21T09:00:40Z", 10)))).toEqual(["stream.overrun.copied"]);
+    expect(rulesOf(s.apply(wrap("o3", "2026-08-21T09:00:40Z", 50)))).toEqual([]);
+    expect(rulesOf(s.apply(wrap("o4", "2026-08-21T09:01:00Z", 69)))).toEqual([]);
+    // A resync from a provider with a clock is held the same way; one without a clock is not.
+    expect(rulesOf(s.resync({ providerTime: "2026-08-21T09:01:30Z", tasks: [over(69)] }, "snapshot"))).toEqual(["stream.overrun.copied"]);
+    expect(rulesOf(s.resync({ tasks: [over(69)] }, "snapshot"))).toEqual([]);
+  });
+
   it("knows a dial from the record or from who is on the call, which is how a dial made before a take-over is placed", () => {
     const inherited: Task<"voice"> = { ...voiceTask, onCall: [{ role: "added", contactId: "tier2", dialId: "dial-3c9", stage: "joined", since: at }],
       history: { steps: [{ step: "unanswered", at, by: "A-1", dialId: "dial-1a0", contactId: "tier3" }] } };
@@ -1125,10 +1142,12 @@ describe("testAdapter", () => {
     const withPreview = { ...conformingSnapshot, tasks: [previewed], taskCount: 1 } satisfies Snapshot<"voice">;
     const update = (task: Task<"voice">): ProviderEventEnvelope<"voice"> =>
       ({ id: "evt-spread", sessionId: "session-1", occurredAt: "2026-08-21T09:01:30Z", event: { type: "task-updated", task } });
-    const spread = await rules({ snapshot: withPreview, emit: listener => listener(update({ ...previewed, phase: "in-progress" })) });
+    // The call is answered on the way: a call under way carries its answered step whichever way it began.
+    const history = { steps: [{ step: "answered" as const, at: "2026-08-21T09:01:30Z" }] };
+    const spread = await rules({ snapshot: withPreview, emit: listener => listener(update({ ...previewed, phase: "in-progress", history })) });
     expect(spread).toEqual(["task.preview.deadline.unexpected"]);
     // The control: the same move with both fields dropped is exactly what the guide asks for.
-    const dropped = await rules({ snapshot: withPreview, emit: listener => listener(update({ ...previewed, phase: "in-progress", previewEndsInSeconds: undefined, atDeadline: undefined })) });
+    const dropped = await rules({ snapshot: withPreview, emit: listener => listener(update({ ...previewed, phase: "in-progress", history, previewEndsInSeconds: undefined, atDeadline: undefined })) });
     expect(dropped).toEqual([]);
   });
 
@@ -1322,8 +1341,8 @@ describe("testAdapter tests one call", () => {
     preview?: { atDeadline: "provider-dials" | "host-dials" | "waits"; seconds: number; honoured: boolean };
     /** Where this adapter keeps the host's legs: in its own closure, or in the session's store handed to it. */
     legsIn?: "memory" | "store";
-    /** How a second instance misbehaves: another provider's manifest, a record missing the answer, a snapshot that miscounts. */
-    reloadAs?: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "audio-throws" | "without-refused";
+    /** How a second instance misbehaves: another provider's manifest, a record whose answer moved, a snapshot that miscounts. */
+    reloadAs?: "another-provider" | "answer-moved" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "audio-throws" | "without-refused";
     /** A provider that takes the host's late closing report as the leg's duration, overwriting what it closed at audio end, and restates the record. */
     overwritesLateClose?: boolean;
     /** A provider whose store keys never name the task, or name it only as a run of characters inside another id: the harness can see nothing of them, and says so. */
@@ -1391,15 +1410,19 @@ describe("testAdapter tests one call", () => {
       ({ step: "muted" as const, ...leg, ...(script.leavesMuteOpen && phase === "completing" ? { seconds: undefined } : {}), by: "1042", mutedBy: script.restateHistory === "with-mute-by-station" ? "station" as const : leg.mutedBy });
     // The hold as the record carries it: open while the task is paused, closed with its duration on resume, unless the provider forgets.
     let held: { at: string; seconds?: number } | undefined;
-    const history = () => script.restateHistory === undefined ? undefined
-      : { steps: [{ step: "answered" as const, at }, ...(held === undefined ? [] : [{ step: "held" as const, ...held, by: "1042" }]), ...(muted !== undefined && script.restateHistory !== "without-mute" ? [legEntry(muted)] : []),
-        ...(closedAtEnd !== undefined && script.restateHistory !== "without-mute" ? [{ step: "muted" as const, ...closedAtEnd, by: "1042" }] : [])] };
+    // A call under way carries its record, answered step first, so the call timer counts from the provider's answer: every provider restates it.
+    // A reload that misread the answer restates it at another instant, the same on everything it publishes.
+    const answeredAt = isSecond && script.reloadAs === "answer-moved" ? "2026-08-21T08:59:59Z" : at;
+    const history = () => ({ steps: [{ step: "answered" as const, at: answeredAt }, ...(held === undefined ? [] : [{ step: "held" as const, ...held, by: "1042" }]), ...(muted !== undefined && script.restateHistory !== "without-mute" ? [legEntry(muted)] : []),
+        ...(closedAtEnd !== undefined && script.restateHistory !== "without-mute" ? [{ step: "muted" as const, ...closedAtEnd, by: "1042" }] : [])] });
     // What a second instance knows: the platform's open task, and the legs it can reach -- the store's, or its own empty memory.
     let disposed = false;
     // Whether the call's audio is up on this instance's account: it ends, closing the host's open leg at that
     // instant, before any ending the provider publishes, since a voice task ends after its audio and never around it.
     let audioUp = false;
     const endAudio = () => {
+      // A hold still open when the audio ends is closed by the provider at that instant, as any open leg is.
+      if (held !== undefined && held.seconds === undefined) held = { ...held, seconds: 5 };
       if (openLeg !== undefined) { closedAtEnd = { ...openLeg, seconds: script.leavesHostLegOpen ? undefined : 1 }; openLeg = undefined; }
       emit({ type: "task-audio-ended", assignmentId: myAssignment });
       audioUp = false;
@@ -1414,7 +1437,8 @@ describe("testAdapter tests one call", () => {
       const kept = script.legsIn === "store" && given !== undefined ? await given.get(legKey) : undefined;
       if (kept !== undefined) muted = JSON.parse(kept) as { at: string; seconds: number; mutedBy: "host" | "station" };
       const legs = muted === undefined ? [] : [legEntry(muted)];
-      const steps = [...(script.reloadAs === "without-answered" ? [] : [{ step: "answered" as const, at }]), ...legs];
+      // A call under way always carries its answer; a reload that misread it restates it at another instant, and the one first published is gone.
+      const steps = [{ step: "answered" as const, at: answeredAt }, ...legs];
       // A reloaded instance that forgot the audio was up, or that reads the task as not yet begun, serves a snapshot that lost state.
       const audio = script.reloadAs === "without-audio" ? {} : { audio: "started" };
       const phase = script.reloadAs === "gone-backwards" ? "confirmed" : "in-progress";
@@ -1427,7 +1451,7 @@ describe("testAdapter tests one call", () => {
       const begun = over.phase !== "pending" && over.phase !== "confirmed";
       // A completing task says how much of its wrap is left; the fixture's wrap has just begun.
       const wrap = over.phase === "completing" ? { wrapEndsInSeconds: base.wrapAllowance } : {};
-      return { ...base, ...(begun && script.restateHistory !== undefined ? { history: history() } : {}), ...wrap, ...over } as unknown as Task<"voice">;
+      return { ...base, ...(begun ? { history: history() } : {}), ...wrap, ...over } as unknown as Task<"voice">;
     };
     const emit = (event: ProviderEventEnvelope<"voice">["event"]) => listener?.({ id: id(), sessionId: "session-1", occurredAt: at, event });
     const room = [{ role: "party" as const, since: at }, { role: "agent" as const, userId: "1042", since: at }];
@@ -1768,14 +1792,14 @@ describe("testAdapter tests one call", () => {
   });
 
   it("holds the second adapter to what the first was: the same provider, a snapshot that stands, a record that lost nothing", async () => {
-    const misbehaving = async (reloadAs: "another-provider" | "without-answered" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "without-refused") => {
+    const misbehaving = async (reloadAs: "another-provider" | "answer-moved" | "miscounted" | "signed-out" | "reminted" | "without-audio" | "gone-backwards" | "audio-unavailable" | "without-refused") => {
       const store = memoryStore();
       const script = { restateHistory: "with-mute" as const, legsIn: "store" as const, platform: { open: false }, reloadAs };
       return (await testAdapter(testable(script), { ...context, store }, { collectOnly: true, withCall: true, timeoutMs: 200, rebuild: () => testable(script) })).violations.map(v => v.rule);
     };
     expect(await misbehaving("another-provider")).toEqual(["test.reload.manifest"]);
     // A record that shrank across the reload is named by the stream, as on any resync, and by the test's check of the leg's word.
-    expect(await misbehaving("without-answered")).toEqual(["stream.snapshot.history", "test.reload.history"]);
+    expect(await misbehaving("answer-moved")).toEqual(["stream.snapshot.history", "test.reload.history"]);
     expect(await misbehaving("miscounted")).toEqual(["snapshot.taskCount.mismatch"]);
     // The reload is a restore before it is anything else: a second adapter that does not come up signed in as this session is named first.
     expect(await misbehaving("signed-out")).toEqual(["test.reload.session", "stream.taskOffered.unended"]);
@@ -2015,7 +2039,8 @@ describe("testAdapter tests one call", () => {
     // update that did it, and the complete command lands on a task that fails validation. The test does
     // not also wait out the clock for an ending the rule has already named as missing: no test.timeout.
     const rules = (await viaCall(testable({ completesAroundAudio: true }))).violations.map(v => v.rule);
-    expect(rules).toEqual(["task.audio.completing", "task.onCall.ended", "stream.taskUpdated.audioOpen", "command.task", "stream.taskOffered.unended"]);
+    // Its record, restated on the completing task, also lacks the host's muted leg: the audio never ended, so the open leg was never closed into it.
+    expect(rules).toEqual(["task.audio.completing", "task.onCall.ended", "stream.taskUpdated.audioOpen", "command.task", "test.recordStep.history", "stream.taskOffered.unended"]);
   });
 
   it("sends hold in confirmed too, where the provider publishes it, and names an adapter that applies it there", async () => {
@@ -2641,7 +2666,7 @@ describe("assertHistoryAgreesAcrossTasks", () => {
     expect(() => assertHistoryAgreesAcrossTasks(withSteps("a-1", [first, answered]), withSteps("a-2", [first, { ...answered, by: "a-99" }]))).toThrow(/steps\[1\]\.by/);
     expect(() => assertHistoryAgreesAcrossTasks(withSteps("a-1", [first]), withSteps("a-2", [{ ...first, seconds: 40 }]))).toThrow(/does not change/);
     expect(() => assertHistoryAgreesAcrossTasks(withSteps("a-1", [first, answered]), withSteps("a-2", [first]))).toThrow(/carries every earlier step/);
-    expect(() => assertHistoryAgreesAcrossTasks({ ...voiceTask, assignmentId: "a-1" } as unknown as Task, withSteps("a-2", [first]))).toThrow(/no history/);
+    expect(() => assertHistoryAgreesAcrossTasks({ ...voiceTask, assignmentId: "a-1", history: undefined } as unknown as Task, withSteps("a-2", [first]))).toThrow(/no history/);
   });
 });
 

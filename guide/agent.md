@@ -263,8 +263,8 @@ so a `provider-automatic` task with `wrapAllowance: 0` publishes no `outcomes` a
 
 **The allowance means one thing per mode.** Under `provider-automatic` it is what the provider
 acts on: the task ends when it runs out. Under `agent-command` it is the expected wrap, stated so
-the agent can see it: the agent computer counts it down and, past zero, shows how far over they are, and
-nothing acts on it -- the task waits for `complete` however long that takes, with its outcomes
+the agent can see it: the agent computer counts it down and, past zero, shows how far over they are,
+counting on from the task's `wrapOverSeconds`, and nothing acts on it -- the task waits for `complete` however long that takes, with its outcomes
 collected whenever the agent gives them. A provider that would end the task at a time is
 `provider-automatic`.
 
@@ -274,7 +274,9 @@ carries it, as `previewEndsInSeconds` is on a preview. An agent computer that re
 number on the snapshot; a lead's screen finds it on the member; neither starts a clock of its own,
 and both count down from receipt. Under `provider-automatic` the provider ends the task when it
 reaches zero; under `agent-command` it is the expected wrap left, `0` once overrun, and nothing
-acts on it. Off voice, where `completing` is the provider's word that interaction ended, the field
+acts on it. Once it is `0` under `agent-command`, the task also carries `wrapOverSeconds`: how far
+past the expected wrap it is, restated on every publication the same way, so a reloaded screen
+does not start the overrun from nought (`task.completing.wrapOverSeconds.required`, `.unexpected`). Off voice, where `completing` is the provider's word that interaction ended, the field
 arrives with that word, so the clock starts nowhere else.
 
 `wrapAllowance` is fixed, and when it starts depends on whether the channel carries real-time
@@ -309,7 +311,7 @@ outcome, and complete the task.
 
 `0` means no wrap under `provider-automatic`: the provider completes the task at the end of the
 interaction, and `complete` has nothing to cut short. Under `agent-command` it is an expected wrap
-of nothing -- the agent computer shows the overrun from the start -- and the task still waits for `complete`.
+of nothing -- the agent computer shows the overrun from the start, from `wrapOverSeconds` -- and the task still waits for `complete`.
 
 There is no value meaning "unlimited", because a number that is not a duration would be read as
 one. A provider that imposes no deadline says so by **omitting** `wrapAllowance`, which
@@ -501,11 +503,12 @@ entries, one per join. Order is enforced: an entry earlier than the one before i
 are two holds, the way Amazon Connect counts holds per contact, and two queues say which queue the
 call waited in. The agent sees consecutive entries of one step as one span: `historySpans(steps)`
 groups them, as Genesys Cloud keeps segments apart in its record and joins them in the agent's
-timeline. A provider never merges entries to get that look. **Intervals between steps are the agent application's to subtract**, never a
-total the provider adds: *time to offer*, from the call joining its queue to the agent's screen lighting
-up, is the `offered` entry's `at` minus the last `queued` entry's, and the ring is outside it.
-`queueSeconds` keeps the industry's meaning -- the whole wait until somebody answered -- and is not
-that interval. **The second is the record's grain.** A duration is a positive whole number of
+timeline. A provider never merges entries to get that look. **A screen shows the instants and the
+provider's own figures, and works out no interval between steps**: a wait such as *time to offer*,
+from the call joining its queue to the agent's screen lighting up, is a figure the provider's
+reports may count from a different step, so a screen that subtracted one `at` from another could
+show a number the provider never would. A desk that wants such a wait shown needs the provider to
+state it. `queueSeconds` keeps the industry's meaning -- the whole wait until somebody answered. **The second is the record's grain.** A duration is a positive whole number of
 seconds, and nought is refused because it claims no time; a leg that happened is stated at the
 grain: rounded to the nearest second, and a leg that rounds to nought is stated as `1`, the error
 being under the contract's resolution, where dropping the entry would say the leg never happened.
@@ -541,10 +544,14 @@ If two distinct entries would collide under the history's `(step, at)` key, do n
 or combine them: report the representation conflict. No ambiguous event is silently accepted.
 
 **Interaction time is anchored, not restarted.** It runs from the
-`answered` step's `at` — from the task's first `in-progress` where the provider reports no
-history — until the task's audio ends, and a hold neither pauses nor resets it: the hold's own
+`answered` step's `at` until the task's audio ends, and a hold neither pauses nor resets it: the hold's own
 duration is the `held` entry's `seconds`, and an agent computer that restarts its counter on resume is
-counting the wrong thing.
+counting the wrong thing. There is no fallback to the moment a screen first saw the task in
+progress: that moment is the screen's, and a screen that reloads twenty minutes in would show a
+call five seconds old. So a voice call under way -- `in-progress` or `paused` -- carries its
+`answered` step (`task.history.answered.required`), and the provider that publishes it declares
+`timeCheck`, as any provider publishing a running instant does. See **Every screen counts from the
+provider's clock** in `guide.md`.
 
 `muted` is there because the mute is the agent application's and never the provider's — see **The station is
 the agent application's** — so without a step the provider, which alone keeps the task's record, would have no

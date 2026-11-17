@@ -749,7 +749,6 @@ type TaskHistoryStep = {
 type HistorySpan = {
   step: HistoryStep;
   at: IsoTimestamp;
-  seconds?: DurationSeconds;
   entries: TaskHistoryStep[];
 };
 
@@ -811,6 +810,7 @@ type Task<C extends Channel = Channel> = {
   previewEndsInSeconds?: DurationSeconds;
   atDeadline?: PreviewDeadline;
   wrapEndsInSeconds?: DurationSeconds;
+  wrapOverSeconds?: DurationSeconds;
   reference?: string;
   attributes?: TaskAttribute[];
   history?: TaskHistory;
@@ -1124,6 +1124,7 @@ type MemberTask<C extends Channel = Channel> = {
   completionMode?: CompletionMode;
   wrapAllowance?: DurationSeconds;
   wrapEndsInSeconds?: DurationSeconds;
+  wrapOverSeconds?: DurationSeconds;
 } & (C extends "voice"
   ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
   : { onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
@@ -1829,7 +1830,7 @@ compile time.
 | `phones` | Voice only, and required there: the phones this platform can put an agent on, `softphone` (the call's audio lands in the agent application) and/or `hardphone` (a handset the platform rings; the agent application shows the call and opens nothing). The agent application picks one per session. See **How the agent hears the call** in `guide/phone.md`. |
 | `phoneStatus` | Voice only, declared by presence as `true`: the platform sees the phone itself -- its registration, its do-not-disturb, its hook, its calls -- and publishes it as `Snapshot.phone` and `phone-updated`. A platform that cannot see the phone omits it, and then publishes no phone (`manifest.phoneStatus`). See **The phone's own view** in `guide/phone.md`. |
 | `dialOutcomes` | Voice only. How a dial can end on this platform, as it distinguishes them: `answered` and at least one way of not reaching the destination. Required of a provider that dials at all — an idle dialpad, or tasks that add to the call or call back — and a `dial-outcome` carries only a declared member. See **Every dial has an outcome** in `guide/voice.md`. |
-| `timeCheck` | `true`: implements `checkTime` and states `providerTime` on every snapshot. Required of a provider that publishes an instant the agent computer renders as a running duration -- a member's `since`, a `listening[].since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts from the provider's clock (`manifest.timeCheck.required`); agent application polling is independently opt-in. See **Every screen counts from the provider's clock**. |
+| `timeCheck` | `true`: implements `checkTime` and states `providerTime` on every snapshot. Required of a provider that publishes an instant the agent computer renders as a running duration -- a member's `since`, a `listening[].since`, an `onCall.since`, a shift's `signedInAt`, the `answered` step of a call under way, or a hold or mute still running -- so every screen counts from the provider's clock (`manifest.timeCheck.required`); agent application polling is independently opt-in. See **Every screen counts from the provider's clock**. |
 | `timestampAuthority` | Optional `"provider"`: provider timestamps are final; agent application instants are advisory. Omission makes no trust promise. |
 | `runningStepReports` | The provider takes running reports of an agent application-performed step — `recordStep` with `seconds` so far and no `ended`. Omitted, the agent application sends exactly two reports per leg, when it began and when it ended, and a running one is refused. See **The agent application records what it performs** in `guide/agent.md`. |
 | `settleMs` | Required. How long after `applied` the wire shows what the provider did: the `task-ended` after a `complete`, the `calendar-updated` after a `schedule`. A positive whole number of milliseconds (`manifest.settleMs`). Stated per provider, since platforms settle at different speeds. See **`task-ended`**. |
@@ -2577,7 +2578,7 @@ The current exceptions and their reasons are:
 
 | Case | Exception and reason |
 | --- | --- |
-| Agent application display of provider deadlines (`expiresInSeconds`, `previewEndsInSeconds`, `wrapEndsInSeconds`) | Each is seconds from the publication that carried it, counted down on the agent computer from receipt: the provider's own arithmetic, so no clock is compared and the transport delay is the only error. The countdown estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
+| Agent application display of provider deadlines (`expiresInSeconds`, `previewEndsInSeconds`, `wrapEndsInSeconds`, and `wrapOverSeconds` past the wrap) | Each is seconds from the publication that carried it, counted down -- or, for the overrun, on -- on the agent computer from receipt: the provider's own arithmetic, so no clock is compared and the transport delay is the only error. The countdown estimates the display only; it does not establish that the provider acted. Without usable time, show timing uncertainty. |
 | Agent application-triggered preview end | The agent computer counts `previewEndsInSeconds` down from receipt and issues `dial` when it reaches zero: the provider owns the deadline and the agent computer owns the trigger. It does not dial before the countdown has run out, and a reload restarts it from the next publication. |
 | Direct snapshot reads and method requests/results | These are reads/operations, not event envelopes, and their current types have no general event timestamp. A snapshot event still carries `occurredAt`; embedded source instants remain unchanged. Do not treat a method result or read completion time as an occurrence boundary. |
 | Agent application-provided provider-clock estimate | Best-effort ISO time may be supplied by the agent application for optional comparisons; it is not a source observation or accuracy guarantee. The reason is that the agent application does not own the provider clock. |
@@ -2593,25 +2594,30 @@ source-measured durations where required; timestamp subtraction is not a substit
 
 Two screens watching the same agent -- their own computer, their lead's, a manager's on another floor
 -- must show the same numbers. Delay between them is fine; arithmetic that differs is not. So
-nothing the agent computer shows is its own count, with one exception: the running duration of the active
-task or call, which a screen times itself from the moment it saw the call begin -- the
-`task-audio-started` on a softphone, the answer it sent on a hardphone -- and which two such
-screens may therefore disagree on, since their clocks differ. That is the whole exception. A call
-a screen found already up -- on a connect or reconnect snapshot, on a lead's list, after a reload
--- is counted from the provider's `answered` step's `at` against the provider's clock, like every
-other duration, so a reloaded agent computer shows 12:40 beside the lead's 12:40 and not 0:05. And a leg
-that has closed shows the provider's `seconds` on every screen, never the count a screen kept.
-Everything else comes from the wire.
+nothing the agent computer shows is its own count. **The one sum a screen does is the tick**: it
+adds the seconds that have passed to a figure the provider stated, so a running duration moves
+without a trip to the provider every second. The figure and the clock it ticks on are both the
+provider's. The call under way is no exception: its timer counts from the provider's `answered`
+step's `at` against the provider's clock, never from the moment a screen saw the call begin, so the
+agent's own screen, a reloaded one and a lead's all show 12:40 together and none shows 0:05. A voice call
+under way -- `in-progress` or `paused` -- therefore carries its `answered` step (`task.history.answered.required`), and a screen
+with no answered step shows no timer rather than one of its own. A leg that has closed shows the
+provider's `seconds` on every screen, never a count a screen kept. Everything else comes from the
+wire.
 
-Durations off the active call -- how long a member has been `on-break` from their `since`, how
-long a lead has been listening, how long since `signedInAt` -- are counted from the provider's
+Every running duration -- the call under way from its answer, a hold or mute still running from its
+`at`, how long a member has been `on-break` from their `since`, how long a lead has been
+listening, how long since `signedInAt` -- is counted from the provider's
 clock, never the screen's. The agent computer keeps the latest provider instant it has received -- a
 snapshot's `providerTime`, an envelope's `occurredAt`, a `checkTime` result -- with the monotonic
 elapsed time since receipt, and renders every such duration from that; a sample older than
 `maxSampleAgeMs` is refreshed with `checkTime`. Without a usable sample the agent computer shows the instant
 and no count. A provider that publishes any of these instants therefore declares `timeCheck`
 (`manifest.timeCheck.required`) and states `providerTime` on every snapshot
-(`snapshot.providerTime`). Two screens then differ by their delay and nothing else.
+(`snapshot.providerTime`). Two screens then differ by their delay and nothing else. Nothing
+assumes the screen's clock is set right, by NTP or otherwise: the screen's wall clock is never
+read for a duration, only its monotonic timer since a provider sample, so a computer whose clock
+is minutes out still shows the provider's numbers.
 
 **Seconds left are worked out at each publication.** `expiresInSeconds`, `previewEndsInSeconds`,
 `wrapEndsInSeconds` and `endsInSeconds` are each the provider's arithmetic at the instant
@@ -2622,7 +2628,11 @@ names it: between two publications of one countdown the value loses at least the
 provider's own clock says passed, within a second of rounding (`stream.countdown.copied`, on an
 update against the last publication, and on a snapshot from a provider with a clock against its
 `providerTime`). Under `agent-command` the wrap's value reaches `0` and stays there while the agent
-overruns; that is the true value, not a copy.
+overruns; that is the true value, not a copy. From then on the task carries `wrapOverSeconds`, how
+far past the expected wrap it is at that publication (`task.completing.wrapOverSeconds.required`),
+so a screen that reloads mid-overrun shows the same overrun as one that watched it happen. It
+counts the other way and is held the other way: between two publications it gains at least the
+seconds that passed, within a second of rounding (`stream.overrun.copied`).
 
 **A deadline stated is a deadline kept.** The provider that says how long an offer has ends it
 `expired` when it runs out, and the test holds it to that: where the first offer carries
@@ -3106,10 +3116,14 @@ Whether two sessions declare the same capabilities, field by field — key order
 ### `historySpans(steps)`
 
 Groups a record's consecutive entries of one step into a `HistorySpan` each — `step`, the first
-entry's `at`, `seconds` summed when every entry states one and absent when any does not, and the
-`entries` themselves — so every agent application shows *Self-service · 30s* once where the
-record has two self-service entries in a row. Only neighbours are grouped: a hold, an answer and
-another hold are three spans. See **Shown as spans** in `guide/agent.md`.
+entry's `at`, and the `entries` themselves — so every agent application shows *Self-service*
+once where the record has two self-service entries in a row, with each entry's own `seconds`.
+A span states no total: the provider rounds each entry to the second, so a sum of them could
+differ from the provider's own. Only neighbours are grouped: a hold, an answer and another hold
+are three spans. See **Shown as spans** in `guide/agent.md`.
+
+Migration: a span no longer carries a `seconds` total. Show each entry's `seconds`, or a total
+the provider states.
 
 ## Runtime validation
 

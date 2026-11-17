@@ -1337,12 +1337,28 @@ export class TaskStream {
       if (before !== undefined) {
         ruleTested("stream.countdown.copied");
         const elapsed = Math.floor((atMs - before.atMs) / 1000);
-        if (elapsed > 0 && value > before.value - elapsed + 1) {
+        // A countdown stops at nought: an agent-command wrap that runs over restates `0`, the true value.
+        if (elapsed > 0 && value > Math.max(0, before.value - elapsed) + 1) {
           refuse("stream.countdown.copied", `${at}.${field}`,
             `${id} said ${field} ${before.value} at ${new Date(before.atMs).toISOString()} and ${value} at ${new Date(atMs).toISOString()}: ${elapsed}s passed on the provider's clock and the countdown lost fewer; seconds left are worked out at each publication, never copied from the one before`);
         }
       }
       known.set(field, { value, atMs });
+    }
+    // How far over the expected wrap counts the other way: it gains at least the seconds that passed.
+    const over = task.wrapOverSeconds;
+    if (typeof over !== "number") known.delete("wrapOverSeconds");
+    else {
+      const before = known.get("wrapOverSeconds");
+      if (before !== undefined) {
+        ruleTested("stream.overrun.copied");
+        const elapsed = Math.floor((atMs - before.atMs) / 1000);
+        if (elapsed > 0 && over < before.value + elapsed - 1) {
+          refuse("stream.overrun.copied", `${at}.wrapOverSeconds`,
+            `${id} said wrapOverSeconds ${before.value} at ${new Date(before.atMs).toISOString()} and ${over} at ${new Date(atMs).toISOString()}: ${elapsed}s passed on the provider's clock and the overrun gained fewer; it is worked out at each publication, never copied from the one before`);
+        }
+      }
+      known.set("wrapOverSeconds", { value: over, atMs });
     }
     this.countdowns.set(id, known);
   }

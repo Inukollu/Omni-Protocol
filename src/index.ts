@@ -279,7 +279,8 @@ export interface Manifest<C extends Channel = Channel> {
   /**
    * Implements `checkTime`, and states `providerTime` on every snapshot. Required of a provider
    * that publishes an instant the agent computer renders as a running duration -- a member's `since`, a
-   * lead's `listening.since`, an `onCall.since`, a shift's `signedInAt` -- so every screen counts
+   * lead's `listening.since`, an `onCall.since`, a shift's `signedInAt`, the `answered` step of a
+   * call under way, or a hold or mute still running -- so every screen counts
    * from the provider's clock and two screens differ by their delay alone.
    */
   timeCheck?: true;
@@ -1188,6 +1189,12 @@ export type Task<C extends Channel = Channel> = {
    * once overrun, and nothing acts on it.
    */
   wrapEndsInSeconds?: DurationSeconds;
+  /**
+   * Under `agent-command`, once `wrapEndsInSeconds` is `0`: how far past the expected wrap the task
+   * is, in whole seconds at this publication, restated on every publication that carries it, so a
+   * reloaded agent computer and a lead's screen count on from the same number.
+   */
+  wrapOverSeconds?: DurationSeconds;
   /** The identifier an agent reads back to a customer, where the provider has one. */
   reference?: string;
   attributes?: TaskAttribute[];
@@ -1565,6 +1572,8 @@ export type MemberTask<C extends Channel = Channel> = {
   completionMode?: CompletionMode;
   wrapAllowance?: DurationSeconds;
   wrapEndsInSeconds?: DurationSeconds;
+  /** How far past the expected wrap, as on the member's own task. */
+  wrapOverSeconds?: DurationSeconds;
 } & (C extends "voice"
   ? { onCall?: OnCall[]; leadAssist?: TaskLeadAssist; takenOver?: TaskTakenOver; audio?: TaskAudioState }
   : { onCall?: never; leadAssist?: never; takenOver?: never; audio?: never });
@@ -1816,7 +1825,7 @@ export interface Snapshot<C extends Channel = Channel> {
   sessionId: string;
   /**
    * The provider's own instant of this read, required of a provider that declares `timeCheck`:
-   * every duration the agent computer renders off the active call is counted from the provider's clock, and
+   * every running duration the agent computer renders, the call under way included, is counted from the provider's clock, and
    * this sample saves a `checkTime` for it. Every envelope's `occurredAt` is a sample too.
    */
   providerTime?: IsoTimestamp;
@@ -2152,13 +2161,12 @@ true satisfies [Exclude<HistoryStep, "arrived" | "self-service" | "queued" | "ca
 /**
  * Consecutive entries of one step, shown as one span. The record keeps an entry per occurrence --
  * two holds are counted as two -- and this is how the agent sees them: once, from the first
- * entry's `at`, lasting the sum of their `seconds` when every entry states one, and with no
- * duration when any does not, never a sum that silently leaves a running leg out.
+ * entry's `at`, with each entry's own `seconds`. A span states no total: summing durations the
+ * provider rounded one by one could show a number its own record never would.
  */
 export interface HistorySpan {
   step: HistoryStep;
   at: IsoTimestamp;
-  seconds?: DurationSeconds;
   entries: TaskHistoryStep[];
 }
 
@@ -2169,11 +2177,6 @@ export function historySpans(steps: readonly TaskHistoryStep[]): HistorySpan[] {
     const last = spans[spans.length - 1];
     if (last !== undefined && last.step === entry.step) last.entries.push(entry);
     else spans.push({ step: entry.step, at: entry.at, entries: [entry] });
-  }
-  for (const span of spans) {
-    if (span.entries.every(entry => entry.seconds !== undefined)) {
-      span.seconds = span.entries.reduce((total, entry) => total + (entry.seconds as number), 0);
-    }
   }
   return spans;
 }

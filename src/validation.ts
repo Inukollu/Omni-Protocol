@@ -1430,6 +1430,24 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
     into.add("task.completing.wrapEndsInSeconds.unexpected", `${path}.wrapEndsInSeconds`,
       task.phase === "completing" ? "no wrap allowance was stated, so there is nothing to count down" : "wrapEndsInSeconds belongs to a completing task; before the wrap there is nothing to count");
   }
+  // Past the expected wrap, how far over travels too: a screen that reloads mid-overrun reads 0 left
+  // and could not otherwise say by how much.
+  const overrun = task.phase === "completing" && task.completionMode !== "provider-automatic" && task.wrapEndsInSeconds === 0;
+  if (overrun) {
+    if (task.wrapOverSeconds === undefined) {
+      // A lead's copy may leave the mode out; the member's own task states it, and is held to it.
+      if (task.completionMode === "agent-command") {
+        into.add("task.completing.wrapOverSeconds.required", `${path}.wrapOverSeconds`,
+          "the expected wrap has run out, so the task says how far over it is: a reloaded agent computer and a lead's screen count on from the same number");
+      }
+    } else {
+      into.require(isDurationSeconds(task.wrapOverSeconds), "task.completing.wrapOverSeconds", `${path}.wrapOverSeconds`,
+        "wrapOverSeconds is how far past the expected wrap the task is: a whole number of seconds, zero or more, counted at this publication");
+    }
+  } else if (task.wrapOverSeconds !== undefined) {
+    into.add("task.completing.wrapOverSeconds.unexpected", `${path}.wrapOverSeconds`,
+      "wrapOverSeconds belongs to a completing agent-command task whose wrapEndsInSeconds is 0; before the wrap runs out there is nothing over");
+  }
 
   // The channel is fixed per provider by its manifest, so a task claiming another one is a
   // task Omni would render with the wrong controls.
@@ -1454,6 +1472,14 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   if (context.member !== true) validateBrowsers(task.browsers, `${path}.browsers`, into);
   validateTaskAttributes(task.attributes, `${path}.attributes`, into, context.levels);
   validateHistory(task.history, `${path}.history`, into, { phase: task.phase, audio: task.audio });
+  // The call timer starts from the provider's answer, never from when a screen saw the call: a call
+  // under way says when it was answered, so every screen shows the same time on it.
+  if (context.channel === "voice" && (task.phase === "in-progress" || task.phase === "paused")) {
+    into.require(isPlainObject(task.history) && Array.isArray(task.history.steps)
+      && task.history.steps.some((entry: unknown) => isPlainObject(entry) && entry.step === "answered"),
+    "task.history.answered.required", `${path}.history`,
+    "a call under way carries its answered step: the call timer counts from the provider's answer on the provider's clock, and no screen times the call itself");
+  }
   validateOnCall(task.onCall, context.channel, `${path}.onCall`, into);
   // Audio and onCall describe this agent's interaction, not the continuing caller journey.
   // Once the interaction's audio ends or it enters wrap, its live room is cleared. Other
@@ -2555,7 +2581,7 @@ function carriesRunningInstant(value: unknown): boolean {
     ...(Array.isArray(value.tasks) ? value.tasks : []),
     ...(isPlainObject(value.task) ? [value.task] : []),
   ];
-  if (tasks.some(task => isPlainObject(task) && Array.isArray(task.onCall) && task.onCall.some((who: unknown) => isPlainObject(who) && who.since !== undefined))) return true;
+  if (tasks.some(taskCarriesRunningInstant)) return true;
   const members = [
     ...(isPlainObject(value.team) && Array.isArray(value.team.members) ? value.team.members : []),
     ...(isPlainObject(value.member) ? [value.member] : []),
@@ -2563,14 +2589,27 @@ function carriesRunningInstant(value: unknown): boolean {
   return members.some(member => isPlainObject(member) && (member.since !== undefined
     || (Array.isArray(member.listening) && member.listening.some((entry: unknown) => isPlainObject(entry) && entry.since !== undefined))
     || (isPlainObject(member.shift) && member.shift.signedInAt !== undefined)
-    || (Array.isArray(member.tasks) && member.tasks.some((task: unknown) => isPlainObject(task) && Array.isArray(task.onCall) && task.onCall.some((who: unknown) => isPlainObject(who) && who.since !== undefined)))));
+    || (Array.isArray(member.tasks) && member.tasks.some(taskCarriesRunningInstant))));
+}
+
+/**
+ * A task a screen times from a provider instant: someone's `since` on the call, its answer while the
+ * call is under way, or a hold or mute still running. An answer in the record of a task in wrap, or
+ * one offered on, is an instant shown, not a timer.
+ */
+function taskCarriesRunningInstant(task: unknown): boolean {
+  if (!isPlainObject(task)) return false;
+  if (Array.isArray(task.onCall) && task.onCall.some((who: unknown) => isPlainObject(who) && who.since !== undefined)) return true;
+  const underWay = task.phase === "in-progress" || task.phase === "paused";
+  return isPlainObject(task.history) && Array.isArray(task.history.steps) && task.history.steps.some((entry: unknown) =>
+    isPlainObject(entry) && ((underWay && entry.step === "answered") || ((entry.step === "held" || entry.step === "muted") && entry.seconds === undefined)));
 }
 
 /** A running duration is counted from the provider's clock: a provider that publishes one declares timeCheck. */
 function requireClockInto(value: unknown, manifest: unknown, path: string, into: Collector): void {
   if (!isPlainObject(manifest) || manifest.timeCheck === true || !carriesRunningInstant(value)) return;
   into.add("manifest.timeCheck.required", path,
-    "this publishes an instant the agent computer renders as a running duration -- a since, a signedInAt -- and the manifest declares no timeCheck: every screen counts such a duration from the provider's clock, so the provider states one");
+    "this publishes an instant the agent computer renders as a running duration -- a since, a signedInAt, a call's answer -- and the manifest declares no timeCheck: every screen counts such a duration from the provider's clock, so the provider states one");
 }
 
 /** The agent's standing ask for the next call: since when. */
