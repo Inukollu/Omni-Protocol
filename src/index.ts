@@ -814,6 +814,10 @@ export interface OutcomeCode {
 }
 
 export interface OutcomeRules {
+  /**
+   * The agent's `complete` carries a code. A person's close chooses an outcome; only the provider's
+   * own close, when a `provider-automatic` wrap runs out, may carry none.
+   */
   required?: boolean;
   notes?: "required" | "optional" | "none";
   codes?: OutcomeCode[];
