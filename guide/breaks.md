@@ -44,6 +44,14 @@ it; it sends the commit again only from a reconnect snapshot that shows the gran
 refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest period is not
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
+**The provider's own reasons are offered to nobody.** A break the platform puts the agent on
+itself -- a phone that will not register, a station still being set up -- still needs a reason,
+since `activeReasonId` names every break where reasons are published. Mark it `providerOnly`. Omni
+leaves it out of the agent's choices and out of a lead's `force-break`, and a request or a
+`force-break` naming it is refused (`break.request.reasonId.providerOnly`,
+`team.command.reasonId.providerOnly`). It is never `alwaysAvailable`
+(`break.reason.providerOnly.alwaysAvailable`).
+
 ### Forced breaks
 
 Migration: the former awaiting-decision value is now `awaiting-approval` in break status
@@ -134,6 +142,7 @@ a display name.
 break in progress or about to be; beside `granted` or `awaiting-approval` the agent application would read a
 request the agent never made and commit it (`break.forced.status`). Where the provider publishes
 `reasons`, the lead's `force-break` named one, and the member's state carries it as `activeReasonId`.
+A break the platform forced itself names one of its `providerOnly` reasons.
 
 For example:
 
@@ -314,7 +323,7 @@ request object only to the request method, and undefined to the other three.
 
 | Method | Required current state |
 | --- | --- |
-| `requestBreak` | `not-requested`; selected current reason code when codes exist; `canRequestBreak` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
+| `requestBreak` | `not-requested`; selected current reason code when codes exist, never a `providerOnly` one; `canRequestBreak` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
 | `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `canRequestBreak` does not revoke the grant. |
 | `cancelBreak` | `awaiting-approval` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
 | `endBreak` | `on-break` or `starting-after-task` during reconciliation, and not `forced` (`break.command.end.forced`): the agent ends a break they asked for, or one whose restriction was lifted. |
@@ -397,6 +406,7 @@ break: {
   reasons: [
     { id: "lunch", label: "Lunch", kind: "meal" },
     { id: "rest",  label: "Mandatory rest period", kind: "rest", alwaysAvailable: true },
+    { id: "no-phone", label: "No phone", kind: "technical", providerOnly: true },
   ]
 }
 ```

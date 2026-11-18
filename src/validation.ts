@@ -1727,6 +1727,8 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
       const reasons = Array.isArray(state.reasons) ? state.reasons : [];
       into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
         "team.command.reasonId", path, "force-break uses the target's currently published reason codes");
+      into.require(!reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId && r.providerOnly === true),
+        "team.command.reasonId.providerOnly", path, "this reason is the provider's own: the platform puts a member on it, and a lead does not");
     }
   } else if (command.type === "join" || command.type === "decline") {
     const asked = isPlainObject(target) && isPlainObject(target.request) ? target.request : undefined;
@@ -1784,6 +1786,8 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
     if (state.reasons !== undefined) into.require(selected !== undefined, "break.request.reasonId", path,
       "choose a currently published reasonId; free text is not a substitute");
     else into.require(request.reasonId === undefined, "break.request.reasonId.unexpected", path, "no reason codes were published");
+    into.require(!(isPlainObject(selected) && selected.providerOnly === true), "break.request.reasonId.providerOnly", path,
+      "this reason is the provider's own: it puts the agent on it, and nobody asks for it");
     into.require(state.canRequestBreak === true || (isPlainObject(selected) && selected.alwaysAvailable === true),
       "break.request.canRequestBreak", path, "asking is disabled except for the selected alwaysAvailable reason");
   } else {
@@ -1910,6 +1914,13 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     if (reason.alwaysAvailable !== undefined) {
       into.require(reason.alwaysAvailable === true, "break.reason.alwaysAvailable", `${at}.alwaysAvailable`,
         "alwaysAvailable is declared by presence: send true or omit it");
+    }
+    if (reason.providerOnly !== undefined) {
+      into.require(reason.providerOnly === true, "break.reason.providerOnly", `${at}.providerOnly`,
+        "providerOnly is declared by presence: send true or omit it");
+      // Nobody may ask for the provider's own reason, so nothing can keep it on offer.
+      into.require(reason.alwaysAvailable === undefined, "break.reason.providerOnly.alwaysAvailable", `${at}.alwaysAvailable`,
+        "a providerOnly reason is offered to nobody, so it cannot be alwaysAvailable");
     }
   });
   // The active reason is one of the published ones, or it is a reason Omni cannot name.

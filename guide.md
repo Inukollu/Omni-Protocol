@@ -1019,6 +1019,7 @@ type BreakReason = {
   group?: string;
   kind?: BreakKind;
   alwaysAvailable?: true;
+  providerOnly?: true;
 };
 
 type BreakRequest = {
