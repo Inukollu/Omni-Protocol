@@ -1549,9 +1549,10 @@ describe("the other direction, everywhere", () => {
   it("gives a required outcome to the agent to complete, and a wrap to collect it in", () => {
     const codes = [{ id: "resolved", label: "Resolved" }];
     const under = (over: Record<string, unknown>) => rules(validateTask(task({ capabilities: { outcomes: { required: true, codes } }, ...over }), { ...voice, levels: LEVELS }));
-    // A required code is the agent's to give, so the task waits for the agent's complete.
+    // A required code binds the agent's complete, under either mode: the provider's own close at
+    // the end of a provider-automatic wrap carries none.
     expect(under({ completionMode: "agent-command" })).toEqual([]);
-    expect(under({ completionMode: "provider-automatic", wrapAllowance: 30 })).toEqual(["task.outcomes.required.mode"]);
+    expect(under({ completionMode: "provider-automatic", wrapAllowance: 30 })).toEqual([]);
     // Optional outcomes may ride on a task the provider completes itself: the agent gives one if in time.
     expect(rules(validateTask(task({ capabilities: { outcomes: { codes } }, completionMode: "provider-automatic", wrapAllowance: 30 }), { ...voice, levels: LEVELS }))).toEqual([]);
     // No wrap, nowhere to take a code: provider-automatic with wrapAllowance 0 publishes no outcomes, whatever the policy.
@@ -2342,6 +2343,10 @@ describe("validateTaskCommand", () => {
     expect(cmd({ type: "complete", outcome: "escalated" }, wrapping(codes))).toEqual(["command.complete.outcome.unknown"]);
     expect(cmd({ type: "complete" }, wrapping({ ...codes, required: true }))).toEqual(["command.complete.outcome.required"]);
     expect(cmd({ type: "complete", outcome: "resolved" }, wrapping({ ...codes, required: true }))).toEqual([]);
+    // The same binds the agent's early close of a wrap the provider would end itself: a person's close chooses a code.
+    const enforced = (outcomes: unknown) => ({ ...wrapping(outcomes), completionMode: "provider-automatic", wrapAllowance: 30, wrapEndsInSeconds: 12 });
+    expect(cmd({ type: "complete" }, enforced({ ...codes, required: true }))).toEqual(["command.complete.outcome.required"]);
+    expect(cmd({ type: "complete", outcome: "resolved" }, enforced({ ...codes, required: true }))).toEqual([]);
     expect(cmd({ type: "complete", outcome: "resolved", notes: "Called back" }, wrapping({ ...codes, notes: "optional" }))).toEqual([]);
     expect(cmd({ type: "complete", outcome: "resolved", notes: "Called back" }, wrapping({ ...codes, notes: "none" }))).toEqual(["command.complete.notes.unexpected"]);
     expect(cmd({ type: "complete", outcome: "resolved" }, wrapping({ ...codes, notes: "required" }))).toEqual(["command.complete.notes.required"]);

@@ -164,7 +164,7 @@ time. Runtime conformance checks also require the task channel to match its prov
 | `previewEndsInSeconds` | Voice only, in `preview`: how long the preparation has left, in whole seconds from this publication, restated on every publication that carries it. Absent, the agent has as long as they need without a preparation countdown. Always with `atDeadline`. See **Preview: the agent presses Call** in `guide/voice.md`. |
 | `atDeadline` | Voice only, in `preview`, with `previewEndsInSeconds`: what the system does when it runs out -- `provider-dials` makes the provider initiate dialing, `host-dials` makes the agent application issue Call, `waits` keeps the task in preview awaiting the agent. |
 | `reference` | Optional agent-facing reference such as a case, call, conversation, ticket, or message number. It is distinct from the protocol `id`. |
-| `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one, and takes the agent's `complete` as finishing early. A required outcome is the agent's to give, so it needs `agent-command` (`task.outcomes.required.mode`). |
+| `completionMode` | `agent-command` waits for the channel's `complete` command; `provider-automatic` completes without one, and takes the agent's `complete` as finishing early. A required outcome binds the agent's `complete` under either mode. |
 | `wrapAllowance` | Fixed time allowed to complete the task after primary interaction ends. For real-time audio, it begins after `task-audio-ended`. Required under `provider-automatic`, where the provider acts on it. Optional under `agent-command`: omitted says the provider imposes no deadline, and Omni counts nothing down; stated, it is the expected wrap, shown and never acted on. `0` under `provider-automatic` is no wrap at all, so such a task publishes no `outcomes` (`task.outcomes.wrapAllowance`). |
 | `wrapEndsInSeconds` | In `completing`, wherever `wrapAllowance` is stated: how much of the wrap is left, in whole seconds from this publication, restated on every publication that carries it (`task.completing.wrapEndsInSeconds`, `.required`, `.unexpected`). A reloaded agent computer and a lead's screen count down the same number. See **Completion timing**. |
 | `attributes` | Optional ordered, typed `TaskAttribute` entries with keys unique within the task. Each contact or timestamp is a separate array item; new attribute shapes require new union members. |
@@ -254,10 +254,17 @@ with no wrap at all -- `provider-automatic` with `wrapAllowance: 0` -- has nothi
 the command is refused there (`command.complete.wrapAllowance`). An ending the agent asked for says
 so, `completed` with `by: "agent"`, whichever mode the task was under.
 
-**A required outcome is the agent's to give.** A task whose `outcomes` says `required: true` waits
-for a code the agent chooses, so it completes on the agent's command: `provider-automatic` cannot
-wait for it, and the pair is refused (`task.outcomes.required.mode`). Optional outcomes may ride on
-a task the provider completes itself; the agent gives one if in time. And a code is given in wrap,
+Migration: a required outcome under `provider-automatic` is no longer refused; the former
+`task.outcomes.required.mode` rule is gone.
+
+**A required outcome binds the agent's close.** `required: true` says the agent's `complete`
+carries a code from the list (`command.complete.outcome.required`): a person who closes the task
+chooses how it went. It says nothing about the provider's own close. Under `agent-command` the
+task waits for the agent, so every close carries a code. Under `provider-automatic` the agent may
+still close early, with a code, and when the wrap runs out the provider closes it with none, since
+nobody chose one. The agent computer reads `required` and asks for a code before it sends
+`complete`, so the agent is never told one is needed only after pressing it. Optional outcomes
+ride on either mode; the agent gives one if they want to. And a code is given in wrap,
 so a `provider-automatic` task with `wrapAllowance: 0` publishes no `outcomes` at all
 (`task.outcomes.wrapAllowance`).
 

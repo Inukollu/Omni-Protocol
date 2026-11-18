@@ -1521,12 +1521,6 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
   if (capabilities.browsers === true && Array.isArray(task.browsers) && task.browsers.length === 0) {
     into.add("task.browsers.required", `${path}.browsers`, "a task that declares capabilities.browsers supplies at least one; with none, omit the capability");
   }
-  // An outcome is given in wrap, by the agent: a provider that completes the task itself cannot
-  // wait for one, and a task with no wrap has nowhere to take one.
-  if (isPlainObject(capabilities.outcomes) && capabilities.outcomes.required === true) {
-    into.require(task.completionMode !== "provider-automatic", "task.outcomes.required.mode", `${path}.capabilities.outcomes.required`,
-      "a required outcome is the agent's to give, so the task completes on the agent's command; provider-automatic completion cannot wait for it");
-  }
   // Under agent-command the allowance is the expected wrap, shown and never acted on: the agent
   // completes whenever they are done, so there is always a wrap to collect the code in.
   if (capabilities.outcomes !== undefined) {
