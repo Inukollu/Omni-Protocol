@@ -305,6 +305,8 @@ const busy: PhoneState = { phone: "hardphone", status: "ready", muted: true, cha
 const internal: PhoneState = { phone: "hardphone", status: "ready", channels: [{ state: "active", since: "2026-09-12T11:02:00Z" }] };
 // a hardphone the platform lost
 const down: PhoneState = { phone: "hardphone", status: "unregistered", since: "2026-09-12T10:41:00Z", channels: [] };
+// a platform that sees the registration but not the calls on the device
+const unseen: PhoneState = { phone: "softphone", status: "unregistered", since: "2026-09-12T10:41:00Z" };
 ```
 
 **The device.** `status` is the phone itself: `ready` is registered and usable, idle or busy, and
@@ -332,6 +334,14 @@ started, `held` with the task `paused`, `ringing` with the task `pending` or its
 `onCall`; and a task with its audio started has a channel (`phone.channel.missing`), since the
 phone carries every call the agent computer is on. A channel naming no task is the phone's alone, and the
 agent computer shows it as a call it cannot act on.
+
+**Omitted only where the provider cannot see them.** Some platforms know whether the phone is
+registered but not which calls are on it: an internal call, a lead's listening leg. Such a
+provider still declares `phoneStatus` and publishes the status, and leaves `channels` out. Omitted
+and empty are different claims: `[]` says the phone is idle, and no `channels` says nothing about
+its calls, so none of the channel checks apply. Present, the list is every call on the device.
+Leaving the status out instead would hide a phone that cannot take a call, which is the one thing
+the agent and the lead most need to see.
 
 **The mute is the phone's, and it silences whatever is active.** It is one flag on the phone, not
 a property of a channel: whichever channel is active is silent while it is set, and the held

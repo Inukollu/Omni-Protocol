@@ -217,7 +217,7 @@ type PhoneState = {
   status: PhoneStatus;
   muted?: true;
   since?: IsoTimestamp;
-  channels: PhoneChannel[];
+  channels?: PhoneChannel[];
 };
 
 type IdleCapabilities<C extends Channel = Channel> = {
