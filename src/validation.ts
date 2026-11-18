@@ -2667,8 +2667,11 @@ function validatePhoneStateInto(value: unknown, path: string, context: ReaderCon
   }
   if (value.since !== undefined) into.timestamp(value.since, "phone.since", `${path}.since`);
   // The phone's own calls: one active at most, any number held, and none on a phone that cannot carry one.
-  if (!Array.isArray(value.channels)) {
-    into.add("phone.channels.shape", `${path}.channels`, "channels is the phone's calls, an array: [] when idle");
+  // Omitted, the provider cannot see the device's calls, and there is nothing to hold them to.
+  if (value.channels === undefined) {
+    // The status still stands on its own.
+  } else if (!Array.isArray(value.channels)) {
+    into.add("phone.channels.shape", `${path}.channels`, "channels is the phone's calls, an array: [] when idle, omitted only where the provider cannot see them");
   } else {
     let active = 0;
     value.channels.forEach((channel: unknown, index: number) => {

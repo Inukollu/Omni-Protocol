@@ -206,8 +206,11 @@ export interface PhoneState {
   muted?: true;
   /** When the status began, counted from the provider's clock. Omitted rather than invented. */
   since?: IsoTimestamp;
-  /** The calls on the phone; `[]` when idle. None under `unregistered` or `off-hook`. */
-  channels: PhoneChannel[];
+  /**
+   * The calls on the phone; `[]` when idle. None under `unregistered` or `off-hook`. Omitted only
+   * where the provider cannot see the calls on the device: present, it is every one of them.
+   */
+  channels?: PhoneChannel[];
 }
 
 /** Every idle capability a provider may declare. Only voice may `dial`; the channel arm says so. */

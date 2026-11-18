@@ -898,6 +898,12 @@ describe("validateTeamMembers", () => {
     expect(read({ ...idle, channels: [{ state: "active", since: at, assignmentId: "alloc-42" }] }, both)).toEqual(["phone.channel.missing"]);
     expect(read({ ...idle, channels: [] }, { tasks: [working] })).toEqual(["phone.channel.missing"]);
     expect(read({ ...idle, channels: [{ state: "active", since: at, assignmentId: "alloc-99" }] }, { tasks: [working] })).toEqual(["phone.channel.assignment", "phone.channel.missing"]);
+    // A provider that cannot see the device's calls leaves channels out: the status stands alone, and
+    // no channel check applies -- where the same call with channels: [] is a call the phone forgot.
+    const { channels: _unseen, ...unseen } = idle;
+    expect(read({ ...unseen, status: "unregistered", since: at })).toEqual([]);
+    expect(read(unseen, { tasks: [working] })).toEqual([]);
+    expect(read({ ...unseen, channels: null })).toEqual(["phone.channels.shape"]);
     const offered = { ...task({ phase: "pending", acceptance: "consent", capabilities: {} }), assignmentId: "alloc-44" };
     expect(read({ ...idle, channels: [{ state: "ringing", since: at, assignmentId: "alloc-44" }] }, { tasks: [offered] })).toEqual([]);
     // On its own event, from a provider that declared it; and on the member, as the member's own agent computer holds it.
