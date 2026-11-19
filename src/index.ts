@@ -1401,8 +1401,9 @@ export interface BreakReason {
   alwaysAvailable?: true;
   /**
    * The platform's own: a break the provider puts the agent on itself, such as a phone that will
-   * not register. Nobody asks for it or forces it, so neither the agent nor a lead is offered it; it
-   * names a break the provider forced, `forced.by: "provider"`.
+   * not register, or a call that rang out. Nobody asks for it or forces it, so neither the agent nor
+   * a lead is offered it. The break it names may be forced, `forced.by: "provider"`, or one the agent
+   * ends when ready.
    */
   providerOnly?: true;
 }

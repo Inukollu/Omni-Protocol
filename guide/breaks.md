@@ -45,8 +45,10 @@ refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest 
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
 **The provider's own reasons are offered to nobody.** A break the platform puts the agent on
-itself -- a phone that will not register, a station still being set up -- still needs a reason,
-since `activeReasonId` names every break where reasons are published. Mark it `providerOnly`. Omni
+itself -- a phone that will not register, a station still being set up, a call that rang out
+unanswered -- still needs a reason, since `activeReasonId` names every break where reasons are
+published. Mark it `providerOnly`. The break may be forced, when only the platform can lift it, or
+an ordinary one the agent ends when ready: the flag says who chose the reason, not who ends it. Omni
 leaves it out of the agent's choices and out of a lead's `force-break`, and a request or a
 `force-break` naming it is refused (`break.request.reasonId.providerOnly`,
 `team.command.reasonId.providerOnly`). It is never `alwaysAvailable`
