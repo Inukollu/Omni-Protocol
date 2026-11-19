@@ -239,6 +239,10 @@ describe("break prerequisites", () => {
       expect(validateBreakCommand("requestBreak", request, current, context)).not.toEqual([]);
     }
     expect(validateBreakCommand("requestBreak", { reasonId: "bio" }, state("not-requested"), context)).not.toEqual([]);
+    // The provider's own reason is offered to nobody, even where asking is open.
+    const own = { ...state("not-requested"), reasons: [{ id: "lunch", label: "Lunch" }, { id: "no-phone", label: "No phone", providerOnly: true }] };
+    expect(validateBreakCommand("requestBreak", { reasonId: "lunch" }, own, context)).toEqual([]);
+    expect(validateBreakCommand("requestBreak", { reasonId: "no-phone" }, own, context).map(v => v.rule)).toEqual(["break.request.reasonId.providerOnly"]);
     // canRequestBreak is not a withdrawal of an already granted request.
     expect(validateBreakCommand("commitBreak", undefined, { ...state("granted"), canRequestBreak: false }, context)).toEqual([]);
   });
@@ -327,6 +331,12 @@ describe("lead commands", () => {
       expect(validateTeamCommand({ command }, bad)).not.toEqual([]);
     }
     expect(validateTeamCommand({ command }, { ...current, memberBreak: { ...current.memberBreak, status: "starting-after-task" } })).toEqual([]);
+  });
+  it("refuses a lead forcing the provider's own reason", () => {
+    const own = { ...lead, memberBreak: { ...state("not-requested"), reasons: [{ id: "bio", label: "Bio" }, { id: "no-phone", label: "No phone", providerOnly: true }] } };
+    expect(validateTeamCommand({ command: { type: "force-break", memberId: "member", reasonId: "bio" } }, own)).toEqual([]);
+    expect(validateTeamCommand({ command: { type: "force-break", memberId: "member", reasonId: "no-phone" } }, own).map(v => v.rule))
+      .toEqual(["team.command.reasonId.providerOnly"]);
   });
   it("allows a lead to force a break without explanatory text", () => {
     expect(validateTeamCommand({ command: { type: "force-break", memberId: "member", reasonId: "bio" } }, lead)).toEqual([]);

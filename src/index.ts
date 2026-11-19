@@ -1399,6 +1399,12 @@ export interface BreakReason {
   kind?: BreakKind;
   /** Survives `canRequestBreak: false`: a mandatory rest is not something a busy hour can cancel. */
   alwaysAvailable?: true;
+  /**
+   * The platform's own: a break the provider puts the agent on itself, such as a phone that will
+   * not register. Nobody asks for it or forces it, so neither the agent nor a lead is offered it; it
+   * names a break the provider forced, `forced.by: "provider"`.
+   */
+  providerOnly?: true;
 }
 
 export interface BreakRequest {

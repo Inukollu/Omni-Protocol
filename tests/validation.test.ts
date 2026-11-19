@@ -630,6 +630,16 @@ describe("break state", () => {
     expect(reasons([{ id: "a", label: "A" }, { id: "a", label: "Again" }])).toContain("break.reason.unique");
     expect(reasons([{ id: "rest", label: "Rest", alwaysAvailable: false }])).toContain("break.reason.alwaysAvailable");
     expect(reasons([{ id: "rest", label: "Rest", alwaysAvailable: true }])).toEqual([]);
+    expect(reasons([{ id: "no-phone", label: "No phone", providerOnly: true }])).toEqual([]);
+    expect(reasons([{ id: "no-phone", label: "No phone", providerOnly: false }])).toContain("break.reason.providerOnly");
+    expect(reasons([{ id: "no-phone", label: "No phone", providerOnly: true, alwaysAvailable: true }]))
+      .toEqual(["break.reason.providerOnly.alwaysAvailable"]);
+  });
+
+  it("names a provider-forced break by the provider's own reason", () => {
+    const reasons = [{ id: "lunch", label: "Lunch" }, { id: "no-phone", label: "No phone", kind: "technical", providerOnly: true }];
+    expect(check({ status: "on-break", reasons, activeReasonId: "no-phone", forced: { by: "provider", scope: "agent" } })).toEqual([]);
+    expect(check({ status: "on-break", reasons, forced: { by: "provider", scope: "agent" } })).toContain("break.activeReasonId.required");
   });
 
   it("lets a forced break travel with on-break or starting-after-task, and nothing else", () => {
