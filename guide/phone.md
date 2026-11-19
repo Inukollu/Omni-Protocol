@@ -89,7 +89,7 @@ says -- at once, or when the agent presses Ready -- as **The agent becomes ready
 
 | Situation | What Omni sends |
 | --- | --- |
-| Connecting | Nothing. No capacity has been stated, so nothing may be assigned. |
+| Connecting | Nothing. No capacity has been stated, so nothing may be assigned, and a lead sees the agent as `elsewhere`. |
 | Connected and idle | `setCapacity({ count: n })`, with the agent application's report already available to consult. |
 | A task starts or ends | Nothing. The provider counts its own against the ceiling. |
 | The agent's provisioned capacity changes | `setCapacity({ count: n })` |

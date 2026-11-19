@@ -1533,7 +1533,11 @@ export type LinedUpReleaseResult =
 // Team.
 // ---------------------------------------------------------------------------
 
-/** `elsewhere`: signed in here, and the host holds this agent's capacity for another provider (`count: 0`, host-stopped); not receiving this provider's work. */
+/**
+ * `elsewhere`: signed in here, and the host gives this provider no capacity -- none stated yet since
+ * the connection, or `count: 0` while it holds the agent for another provider; not receiving this
+ * provider's work, and not on a break.
+ */
 export type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "elsewhere" | "signed-out";
 
 export interface TeamMember {
