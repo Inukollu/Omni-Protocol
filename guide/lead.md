@@ -43,7 +43,7 @@ Each availability value means one thing:
 | `ready` | Signed in, able to take work, none assigned. |
 | `on-task` | Working on at least one task. It says nothing about how many, and nothing about whether more will fit. |
 | `on-break` | Stopped and not taking work, whether they asked or somebody stopped them. The reason lives on their own `BreakState`, not here. |
-| `elsewhere` | Signed in here, and the agent application holds this agent's capacity for another provider (`count: 0`, stopped by the agent application): not receiving this provider's work, and not on a break. See **Capacity and break actions** in `guide/breaks.md`. |
+| `elsewhere` | Signed in here, and the agent application gives this provider no capacity: none stated yet since the connection, or `count: 0` while it holds the agent for another provider. Not receiving this provider's work, and not on a break. A provider that holds the agent out of work until the first capacity arrives shows them here, never as `ready`. See **Capacity and break actions** in `guide/breaks.md`. |
 | `signed-out` | Known to this team but not signed in to this provider. |
 
 **Publish the whole team once, then each member whole.** Team presence typically reaches an
