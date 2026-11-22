@@ -1,6 +1,6 @@
 # Pending — Omni-Protocol
 
-Last updated 2026-11-21.
+Last updated 2026-11-22.
 
 - **Scan items against PURPOSE.md, for Vasu:** provider-worded phases, provider list order, provider-drawn controls, state said twice, the lead's "working kind" break, migration history in the guide, edge-case ceremony, thin chat and email files.
 - **Call history and missed calls:** in scope (25 Oct); shape not yet designed.
