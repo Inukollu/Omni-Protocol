@@ -980,11 +980,39 @@ describe("validateTeamMembers", () => {
     expect(check({ ...day, running: [{ figure: "talk", since: "2026-08-21T10:02:00Z" }, { figure: "hold", since: "2026-08-21T10:05:00Z" }] })).toEqual([]);
     expect(check({ ...day, running: [] })).toEqual([]);
     expect(check({ ...day, running: { figure: "talk" } })).toEqual(["shift.running.shape"]);
-    expect(check({ ...day, running: [{ figure: "wrap", since: at }] })).toEqual(["shift.running.figure"]);
+    expect(check({ ...day, running: [{ figure: "lunch", since: at }] })).toEqual(["shift.running.figure"]);
+    for (const figure of ["wrap", "preview", "signed-in"]) expect(check({ ...day, running: [{ figure, since: at }] })).toEqual([]);
+    // Time signed in stops running at sign-out.
+    expect(check({ ...day, signedOutAt: "2026-08-21T17:00:00Z", running: [{ figure: "signed-in", since: at }] })).toEqual(["shift.running.signedOut"]);
+    expect(check({ ...day, signedOutAt: "2026-08-21T17:00:00Z", running: [{ figure: "wrap", since: at }] })).toEqual([]);
     expect(check({ ...day, running: [{ figure: "talk", since: "10:02" }] })).toEqual(["shift.running.since"]);
     expect(check({ ...day, running: [{ figure: "talk", since: at }, { figure: "talk", since: at }] })).toEqual(["shift.running.duplicate"]);
     expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { ...day, running: [{ figure: "break", since: "x" }] } }] }, "team", { levels: LEVELS })))
       .toEqual(["team.member.shift.running.since"]);
+  });
+
+  it("carries the day panel's figures as the provider counts them, the break split adding up to the break total", () => {
+    const at = "2026-08-21T08:58:12Z";
+    const ticking = manifest({ timeCheck: true });
+    const check = (shift: unknown) => rules(validateEventEnvelope(envelope({ type: "shift-updated", shift }), ticking));
+    const day = { signedInAt: at, breakSeconds: 1800 };
+    const figures = { wrapSeconds: 600, previewSeconds: 120, signedInSeconds: 14400, averageHandleSeconds: 310 };
+    expect(check({ ...day, ...figures, breaks: [{ reasonId: "lunch", seconds: 1500 }, { reasonId: "provider.no-phone", seconds: 300 }] })).toEqual([]);
+    for (const [field, value] of Object.entries(figures)) {
+      expect(check({ ...day, [field]: value + 0.5 })).toEqual([`shift.${field}`]);
+      expect(check({ ...day, [field]: -1 })).toEqual([`shift.${field}`]);
+    }
+    // One count, so the split and the total cannot disagree on any screen.
+    expect(check({ ...day, breaks: [{ reasonId: "lunch", seconds: 1500 }] })).toEqual(["shift.breaks.total"]);
+    expect(check({ signedInAt: at, breaks: [{ reasonId: "lunch", seconds: 1500 }] })).toEqual(["shift.breaks.total"]);
+    expect(check({ ...day, breaks: [{ reasonId: "lunch", seconds: 900 }, { reasonId: "lunch", seconds: 900 }] })).toEqual(["shift.breaks.duplicate"]);
+    expect(check({ ...day, breaks: [{ reasonId: "", seconds: 1800 }] })).toEqual(["shift.breaks.reasonId"]);
+    expect(check({ ...day, breaks: [{ reasonId: "lunch", seconds: 1800.5 }] })).toEqual(["shift.breaks.seconds"]);
+    expect(check({ ...day, breaks: { lunch: 1800 } })).toEqual(["shift.breaks.shape"]);
+    expect(check({ ...day, breaks: [] })).toEqual(["shift.breaks.total"]);
+    expect(check({ signedInAt: at, breakSeconds: 0, breaks: [] })).toEqual([]);
+    expect(rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", shift: { ...day, breaks: [{ reasonId: "lunch", seconds: 1 }] } }] }, "team", { levels: LEVELS })))
+      .toEqual(["team.member.shift.breaks.total"]);
   });
 
   it("counts every duration off the active call from the provider's clock: timeCheck where a running instant is published, providerTime with it", () => {

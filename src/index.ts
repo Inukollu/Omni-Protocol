@@ -1619,10 +1619,17 @@ export interface ShiftEvent {
   kind: ShiftEventKind;
 }
 
-/** A day's total that can be running now: talk, hold, or break. */
-export type ShiftFigure = "talk" | "hold" | "break";
+/** A day's total that can be running now: talk, hold, break, wrap, preview, or the time signed in. */
+export type ShiftFigure = "talk" | "hold" | "break" | "wrap" | "preview" | "signed-in";
 
-export const SHIFT_FIGURES = ["talk", "hold", "break"] as const satisfies readonly ShiftFigure[];
+export const SHIFT_FIGURES = ["talk", "hold", "break", "wrap", "preview", "signed-in"] as const satisfies readonly ShiftFigure[];
+
+/** Today's break time on one reason, as the provider counts it. */
+export interface ShiftBreak {
+  /** A `BreakReason.id` the provider published today, `providerOnly` ones included. */
+  reasonId: string;
+  seconds: DurationSeconds;
+}
 
 /**
  * A stretch still running, which its total leaves out: the agent computer counts it on from `since`,
@@ -1650,7 +1657,17 @@ export interface Shift {
   holdSeconds?: DurationSeconds;
   /** Every break the member was on today, including time held elsewhere for a break another provider forced: the provider counts it under a break kind of its own. */
   breakSeconds?: DurationSeconds;
+  /** `breakSeconds` by reason, each reason once; together they make `breakSeconds` exactly. */
+  breaks?: ShiftBreak[];
+  /** Time in wrap, after the call and before the task closed. */
+  wrapSeconds?: DurationSeconds;
+  /** Time in preview, before the agent placed an outbound call. */
+  previewSeconds?: DurationSeconds;
+  /** All time signed in today, breaks, wrap and preview included. */
+  signedInSeconds?: DurationSeconds;
   tasksHandled?: number;
+  /** Today's average handle time as the provider counts it: the agent computer shows it and never derives it. */
+  averageHandleSeconds?: DurationSeconds;
   /** The totals still running, at most one per figure; each total above leaves its running stretch out. */
   running?: ShiftRunning[];
   events?: ShiftEvent[];

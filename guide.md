@@ -1144,7 +1144,12 @@ type ShiftEvent = {
   kind: ShiftEventKind;
 };
 
-type ShiftFigure = "talk" | "hold" | "break";
+type ShiftFigure = "talk" | "hold" | "break" | "wrap" | "preview" | "signed-in";
+
+type ShiftBreak = {
+  reasonId: string;
+  seconds: DurationSeconds;
+};
 
 type ShiftRunning = {
   figure: ShiftFigure;
@@ -1157,7 +1162,12 @@ type Shift = {
   talkSeconds?: DurationSeconds;
   holdSeconds?: DurationSeconds;
   breakSeconds?: DurationSeconds;
+  breaks?: ShiftBreak[];
+  wrapSeconds?: DurationSeconds;
+  previewSeconds?: DurationSeconds;
+  signedInSeconds?: DurationSeconds;
   tasksHandled?: number;
+  averageHandleSeconds?: DurationSeconds;
   running?: ShiftRunning[];
   events?: ShiftEvent[];
 };
