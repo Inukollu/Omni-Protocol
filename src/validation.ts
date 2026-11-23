@@ -2704,12 +2704,37 @@ function validateShiftInto(value: unknown, path: string, into: Collector, rule: 
     into.require(Date.parse(value.signedOutAt as string) >= Date.parse(value.signedInAt as string), `${rule}.signedOutAt.order`, `${path}.signedOutAt`,
       "a member signs out after signing in");
   }
-  for (const field of ["talkSeconds", "holdSeconds", "breakSeconds"] as const) {
+  for (const field of ["talkSeconds", "holdSeconds", "breakSeconds", "wrapSeconds", "previewSeconds", "signedInSeconds", "averageHandleSeconds"] as const) {
     if (value[field] !== undefined) into.require(isDurationSeconds(value[field]), `${rule}.${field}`, `${path}.${field}`,
       `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
   }
   if (value.tasksHandled !== undefined) into.require(Number.isInteger(value.tasksHandled) && (value.tasksHandled as number) >= 0,
     `${rule}.tasksHandled`, `${path}.tasksHandled`, "tasksHandled must be a whole number, zero or more, or omitted when unknown");
+  if (value.breaks !== undefined) {
+    if (!Array.isArray(value.breaks)) {
+      into.add(`${rule}.breaks.shape`, `${path}.breaks`, "breaks must be an array when present");
+    } else {
+      const reasons = new Set<unknown>();
+      let sum = 0;
+      let whole = true;
+      value.breaks.forEach((entry: unknown, index: number) => {
+        const at = `${path}.breaks[${index}]`;
+        if (!isPlainObject(entry)) { into.add(`${rule}.breaks.shape`, at, "each break total must be an object"); whole = false; return; }
+        into.filled(entry.reasonId, `${rule}.breaks.reasonId`, `${at}.reasonId`, "a break total names the reason it counts");
+        into.require(!reasons.has(entry.reasonId), `${rule}.breaks.duplicate`, `${at}.reasonId`,
+          `${String(entry.reasonId)} is already counted: each reason has one total`);
+        reasons.add(entry.reasonId);
+        if (into.require(isDurationSeconds(entry.seconds), `${rule}.breaks.seconds`, `${at}.seconds`,
+          "seconds must be a whole number of seconds, zero or more")) sum += entry.seconds as number;
+        else whole = false;
+      });
+      // Two figures the provider sends about one day cannot disagree on any screen.
+      into.require(value.breakSeconds !== undefined, `${rule}.breaks.total`, `${path}.breakSeconds`,
+        "breaks splits breakSeconds by reason, so breakSeconds is sent with it");
+      if (whole && isDurationSeconds(value.breakSeconds)) into.require(sum === value.breakSeconds, `${rule}.breaks.total`, `${path}.breaks`,
+        `the break totals add up to ${sum} seconds, but breakSeconds says ${String(value.breakSeconds)}: they are one count`);
+    }
+  }
   if (value.running !== undefined) {
     if (!Array.isArray(value.running)) {
       into.add(`${rule}.running.shape`, `${path}.running`, "running must be an array when present");
@@ -2723,6 +2748,8 @@ function validateShiftInto(value: unknown, path: string, into: Collector, rule: 
         into.require(!seen.has(entry.figure), `${rule}.running.duplicate`, `${at}.figure`,
           `${String(entry.figure)} is already running: a figure has one running stretch at a time`);
         seen.add(entry.figure);
+        into.require(!(entry.figure === "signed-in" && value.signedOutAt !== undefined), `${rule}.running.signedOut`, `${at}.figure`,
+          "the member is signed out, so their time signed in is not running");
       });
     }
   }

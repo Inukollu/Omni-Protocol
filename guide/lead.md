@@ -34,7 +34,7 @@ computes nothing. See **`team-updated`** in `guide.md` and its companions.
 | `request` | Present while the member is asking a lead to join one of their calls: which assignment, the note they wrote, since when. The call named is one their `tasks` carry (`team.member.request.assignment`). Absent when they are not asking. See **Lead assist**. |
 | `nextCall`, `linedUp` | The member's own queue as their own snapshot carries it: their standing ask for the next call, and the call lined up for them. See **The agent's own queue** in `guide/queue.md`. |
 | `phone` | The member's phone as the platform sees it: the same `PhoneState` the member's own snapshot carries, so a lead sees a hardphone that is down, or a call on it that is no task, as the member does. Present where the provider declares `phoneStatus`. See **The phone's own view** in `guide/phone.md`. |
-| `shift` | The member's own history for the day, about the person rather than any one call: `signedInAt`, the day's first sign-in; `signedOutAt`, present only while the member is signed out; today's totals as the provider counts them — `talkSeconds`, `holdSeconds`, `breakSeconds`, `tasksHandled`, each present only when the provider knows it; `running`, the stretches still under way, which the totals leave out; and the day's sign-in, sign-out and break `events`, oldest first. The same instants and count the member's own snapshot carries, cut by the lead's day. Omitted where the provider cannot say. |
+| `shift` | The member's own history for the day, about the person rather than any one call: `signedInAt`, the day's first sign-in; `signedOutAt`, present only while the member is signed out; today's totals as the provider counts them — `talkSeconds`, `holdSeconds`, `breakSeconds` and its split by reason in `breaks`, `wrapSeconds`, `previewSeconds`, `signedInSeconds`, `tasksHandled` and `averageHandleSeconds`, each present only when the provider knows it; `running`, the stretches still under way, which the totals leave out; and the day's sign-in, sign-out and break `events`, oldest first. The same instants and count the member's own snapshot carries, cut by the lead's day. Omitted where the provider cannot say. |
 
 Each availability value means one thing:
 
@@ -74,6 +74,27 @@ the day. A total stands as of the last `shift-updated`; a stretch still under wa
 left out of its total, and the agent computer counts it on from its `since`, on the provider's
 clock, as **Every screen counts from the provider's clock** in `guide.md` sets out. A provider sends
 no timer: the totals move on the events that move them.
+
+**Every figure the panel shows is one the provider sends.** The only sum on the agent computer is
+a running stretch added to its own total for the tick. Anything else -- an average handle time, a
+share of the day on break -- is a figure only the provider can count, so it sends it as its own
+field: `averageHandleSeconds` is today's average as the provider counts it, and the agent computer
+never divides one total by another to make it. A panel that cannot find a figure on the wire shows
+none.
+
+**The totals:**
+
+| Figure | What it counts | Running as |
+| --- | --- | --- |
+| `talkSeconds` | Time on calls. | `talk` |
+| `holdSeconds` | Time with a caller on hold. | `hold` |
+| `breakSeconds` | Every stretch the member's `BreakState` showed `on-break`, and time held elsewhere for a break another provider forced. Nothing else: the time before the first capacity is `elsewhere`, not a break. | `break` |
+| `breaks` | `breakSeconds` by `reasonId`, one entry per reason, adding up to it exactly (`shift.breaks.total`). Time held for another provider goes under one of the provider's `providerOnly` reasons. | the running `break`, on the `activeReasonId` the member's `BreakState` names |
+| `wrapSeconds` | Time in wrap: after the call, before the task closed. | `wrap` |
+| `previewSeconds` | Time in preview, before the agent placed an outbound call. | `preview` |
+| `signedInSeconds` | All time signed in today, breaks, wrap and preview included. Not running while the member is signed out (`shift.running.signedOut`). | `signed-in` |
+| `tasksHandled` | Tasks closed today. | -- |
+| `averageHandleSeconds` | Today's average handle time, as the provider counts it. | -- |
 
 **Omit `since` rather than inventing one.** Omni renders it as a duration, so a timestamp
 synthesised from the adapter's own clock at seed time reads as "on task for 0 seconds" for
