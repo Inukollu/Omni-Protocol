@@ -3,7 +3,7 @@ import type { BreakStatus, BreakState } from "../src/index.js";
 import { validateBreakTransition, validateBreakCommand, validateBreakStatus, validateTeamCommand, validateResult, type BreakMethod } from "../src/validation.js";
 import { BreakStream } from "../src/testing.js";
 
-const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, forceBreak: true, endForcedBreak: true, setPolicy: true } as const;
+const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, forceBreak: true, endForcedBreak: true, ban: true, setPolicy: true } as const;
 
 const state = (status: BreakStatus): BreakState => ({ status, canRequestBreak: true });
 const event = (status: BreakStatus) => ({ event: { type: "break-state", break: state(status) } });
@@ -255,6 +255,13 @@ describe("break prerequisites", () => {
       }
     }
   });
+  it("refuses the agent resuming while banned, and allows it once the ban is lifted", () => {
+    expect(validateBreakCommand("endBreak", undefined, state("on-break"), { ...context, ban: { by: "lead" } }).map(v => v.rule))
+      .toEqual(["break.command.end.banned"]);
+    expect(validateBreakCommand("endBreak", undefined, state("on-break"), context)).toEqual([]);
+    // A ban stops work, not asking: the break request is the provider's to answer.
+    expect(validateBreakCommand("requestBreak", {}, state("not-requested"), { ...context, ban: { by: "lead" } })).toEqual([]);
+  });
   it("rejects extra arguments or methods", () => {
     expect(validateBreakCommand("commitBreak", {}, state("granted"), context)).not.toEqual([]);
     expect(validateBreakCommand("bogus" as BreakMethod, undefined, state("granted"), context)).not.toEqual([]);
@@ -331,6 +338,24 @@ describe("lead commands", () => {
       expect(validateTeamCommand({ command }, bad)).not.toEqual([]);
     }
     expect(validateTeamCommand({ command }, { ...current, memberBreak: { ...current.memberBreak, status: "starting-after-task" } })).toEqual([]);
+  });
+  it("places a ban on a member without one, and lifts only a ban the list shows", () => {
+    const rules = (found: readonly { rule: string }[]) => found.map(violation => violation.rule);
+    const ban = { command: { type: "ban", memberId: "member", reason: "Compliance review", durationSeconds: 3600 } };
+    const lift = { command: { type: "lift-ban", memberId: "member" } };
+    const banned = { ...lead, team: { members: [{ id: "member", availability: "signed-out", ban: { by: "lead" } }] } };
+    expect(rules(validateTeamCommand(ban, lead))).toEqual([]);
+    expect(rules(validateTeamCommand({ command: { type: "ban", memberId: "member" } }, lead))).toEqual([]);
+    expect(rules(validateTeamCommand(ban, banned))).toEqual(["team.command.ban.standing"]);
+    expect(rules(validateTeamCommand(lift, banned))).toEqual([]);
+    expect(rules(validateTeamCommand(lift, lead))).toEqual(["team.command.liftBan"]);
+    expect(rules(validateTeamCommand({ command: { ...ban.command, durationSeconds: 0 } }, lead))).toEqual(["team.command.durationSeconds"]);
+    expect(rules(validateTeamCommand({ command: { ...ban.command, reason: "" } }, lead))).toEqual(["team.command.reason"]);
+    expect(rules(validateTeamCommand({ command: { ...lift.command, reason: "x" } }, banned))).toEqual(["team.command.field"]);
+    // Placing and lifting a ban is one capability, and only a lead holding it sends either.
+    const without = { ...lead, authentication: { ...lead.authentication, capabilities: { lead: { forceBreak: true } } } };
+    expect(rules(validateTeamCommand(ban, without))).toEqual(["team.command.notGranted"]);
+    expect(rules(validateTeamCommand(lift, { ...banned, authentication: without.authentication }))).toEqual(["team.command.notGranted"]);
   });
   it("refuses a lead forcing the provider's own reason", () => {
     const own = { ...lead, memberBreak: { ...state("not-requested"), reasons: [{ id: "bio", label: "Bio" }, { id: "no-phone", label: "No phone", providerOnly: true }] } };

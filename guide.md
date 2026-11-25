@@ -26,7 +26,7 @@ every cross-reference names the file it points into.
 | `guide/chat.md` | **Chat.** What is true of a chat and of nothing else. |
 | `guide/email.md` | **Email.** What is true of an email and of nothing else. |
 | `guide/queue.md` | **The agent's own queue.** The next call, lined up for this agent while they finish the one they are on: the ask, the lined-up call, and the release. |
-| `guide/breaks.md` | **Breaks.** Asking for a break, a break forced on the agent, capacity, and one break across several providers. |
+| `guide/breaks.md` | **Breaks.** Asking for a break, a break forced on the agent, a ban, capacity, and one break across several providers. |
 | `guide/lead.md` | **Team leads.** The lead's own surface: the team member list, the lead's commands, lead assist, listening to a call. |
 
 ## Terms
@@ -319,6 +319,7 @@ type LeadCapabilities = {
   setBreakPolicy?: true;
   forceBreak?: true;
   endForcedBreak?: true;
+  ban?: true;
   setPolicy?: true;
 };
 
@@ -551,6 +552,7 @@ type Snapshot<C extends Channel = Channel> = {
   phone?: PhoneState;
   nextCall?: NextCallRequest;
   linedUp?: LinedUpCall;
+  ban?: Ban;
   team?: TeamMembers;
   labels?: Labels;
 };
@@ -1046,6 +1048,12 @@ type BreakState = {
   forced?: ForcedBreak;
 };
 
+type Ban = {
+  by: UserId | "provider";
+  reason?: string;
+  endsInSeconds?: DurationSeconds;
+};
+
 type BreakRequestResult =
   | { status: "requested" }
   | { status: "failed"; failure: ProtocolFailure };
@@ -1090,7 +1098,7 @@ type LinedUpReleaseResult =
 ### Team
 
 ```ts
-type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "elsewhere" | "signed-out";
+type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "elsewhere" | "banned" | "signed-out";
 
 type TeamMember = {
   id: UserId;
@@ -1104,6 +1112,7 @@ type TeamMember = {
   phone?: PhoneState;
   nextCall?: NextCallRequest;
   linedUp?: LinedUpCall;
+  ban?: Ban;
 };
 
 type MemberRequest = {
@@ -1211,7 +1220,9 @@ type TeamBreakCommand =
   | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; durationSeconds?: DurationSeconds }
   | { type: "force-team-break"; reasonId?: string; reason?: string; durationSeconds: DurationSeconds }
   | { type: "end-forced-break"; memberId: UserId }
-  | { type: "end-team-break" };
+  | { type: "end-team-break" }
+  | { type: "ban"; memberId: UserId; reason?: string; durationSeconds?: DurationSeconds }
+  | { type: "lift-ban"; memberId: UserId };
 
 type TeamCommand = TeamFeatureCommand | TeamBreakCommand | TeamCallCommand | TeamPolicyCommand;
 
@@ -1284,6 +1295,7 @@ type ProviderEvent<C extends Channel = Channel> =
   | { type: "shift-updated"; shift: Shift }
   | { type: "phone-updated"; phone: PhoneState }
   | { type: "next-call"; nextCall?: NextCallRequest }
+  | { type: "ban-updated"; ban?: Ban }
   | { type: "lined-up"; linedUp?: LinedUpCall }
   | { type: "labels-updated"; labels: Labels };
 
@@ -1408,6 +1420,7 @@ const OMNI_FAILURE_CODES = [
   "omni.on-hold",
   "omni.break-forced-by-provider",
   "omni.break-forced",
+  "omni.banned",
 ] as const;
 type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
 ```
@@ -2169,7 +2182,7 @@ to infer them from what arrives later.
 | --- | --- |
 | `breaks` | This session may request a break. Requires the four break methods on the connection. |
 | `nextCall` | The platform lines calls up for this agent: pressing Next call while on a call puts the next queued call in the agent's own queue, to start when their wrap ends unless somebody else takes it first. Requires `requestNextCall`, `cancelNextCall` and `releaseLinedUp` on the connection. See **The agent's own queue** in `guide/queue.md`. |
-| `lead` | This session leads a team, with the `LeadCapabilities` it holds for the whole session: one key per lead command it allows -- `join`, `decline`, `listen`, `coach`, `joinCall`, `takeOverCall`, `decideBreakRequest`, `setBreakPolicy`, `forceBreak`, `endForcedBreak`, `setPolicy` -- each by presence, at least one (`authentication.capability.lead.*`). Switching the team feature and leaving a call are every lead's and are not listed. Its presence turns on the team feature in the agent application, which offers only the lead commands the lead holds; any other is refused before it is sent (`team.command.notGranted`). A team lead may hold listen, coach and break decisions, a floor manager all of them. While the lead has the feature on, the provider publishes a `TeamMembers` object to them on every snapshot — `members: []` when nobody is in it — and to nobody else. Requires `executeTeam`. See **Team leads** in `guide/lead.md`. |
+| `lead` | This session leads a team, with the `LeadCapabilities` it holds for the whole session: one key per lead command it allows -- `join`, `decline`, `listen`, `coach`, `joinCall`, `takeOverCall`, `decideBreakRequest`, `setBreakPolicy`, `forceBreak`, `endForcedBreak`, `ban`, `setPolicy` -- each by presence, at least one (`authentication.capability.lead.*`). Switching the team feature and leaving a call are every lead's and are not listed. Its presence turns on the team feature in the agent application, which offers only the lead commands the lead holds; any other is refused before it is sent (`team.command.notGranted`). A team lead may hold listen, coach and break decisions, a floor manager all of them. While the lead has the feature on, the provider publishes a `TeamMembers` object to them on every snapshot — `members: []` when nobody is in it — and to nobody else. Requires `executeTeam`. See **Team leads** in `guide/lead.md`. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
 A session action is available only when both the capability and Omni local policy permit it.
@@ -2457,6 +2470,7 @@ a capability it agrees with the user's capabilities: a lead's snapshot carries `
 | `phone` | The phone as the platform sees it -- the device, whether it can take a call, its own mute where observed -- from a provider whose manifest declares `phoneStatus`; required there (`snapshot.phone.required`) and forbidden otherwise (`snapshot.phone.unexpected`). Replaced whole by `phone-updated`. See **The phone's own view** in `guide/phone.md`. |
 | `nextCall` | The agent's standing ask for the next call, while it stands: `since`. It needs an assignment at work to be next after (`snapshot.nextCall.idle`) and the provider clears it when that assignment ends, when a call is lined up, and when the agent withdraws it. Replaced whole by `next-call`. See **The agent's own queue** in `guide/queue.md`. |
 | `linedUp` | The call waiting in the agent's own queue, while one is: the caller as shown to this audience, the queue, the caller's wait, when it was lined up, and `release` where the provider lets the agent let it go. Not a task yet. Replaced whole by `lined-up`. See **The agent's own queue** in `guide/queue.md`. |
+| `ban` | The agent's ban, while one stands: who placed it, why, and how long it has left. Nothing is offered beside it (`snapshot.ban.pending`), and no next call is asked for or lined up (`snapshot.ban.next`). Replaced whole by `ban-updated`. See **Bans** in `guide/breaks.md`. |
 | `labels` | The signed-in customer's own words for phases, history steps and kinds of work, per language, as its admin set them in the provider. Replaced whole by `labels-updated`. Omitted where the customer set none. See **Presentation labels**. |
 | `shift` | The agent's own day so far, as the provider counts it, cut in this session's zone -- the same instants and count their lead sees on the team member list, cut there by the lead's day. Replaced whole by `shift-updated`. Omitted only where the provider cannot say. See **The agent's day is on the wire** in `guide/lead.md`. |
 | `team` | Required `TeamMembers` when the user's capabilities include `lead` and the lead has the team feature on, `members: []` when nobody is in it. Forbidden otherwise — the user's capabilities are the permission, and a lead who turned the feature off gets nothing of the team. |

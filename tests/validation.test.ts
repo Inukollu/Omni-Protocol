@@ -1683,6 +1683,36 @@ describe("the other direction, everywhere", () => {
     expect(check({ reasons: [] })).toEqual(["break.reasons.empty"]);
   });
 
+  it("holds a ban to its shape, stops new work beside it, and shows it on the member", () => {
+    const ban = { by: "M-1", reason: "Compliance review", endsInSeconds: 3600 };
+    const at = "2026-08-21T09:00:00Z";
+    const working = task({ phase: "in-progress", audio: "started", capabilities: {} });
+    expect(rules(validateSnapshot(snapshot({ ban }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ ban: { by: "provider" } }), manifest()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ ban: "yes" }), manifest()))).toEqual(["ban.shape"]);
+    expect(rules(validateSnapshot(snapshot({ ban: { ...ban, by: "" } }), manifest()))).toEqual(["ban.by"]);
+    expect(rules(validateSnapshot(snapshot({ ban: { ...ban, reason: "" } }), manifest()))).toEqual(["ban.reason"]);
+    expect(rules(validateSnapshot(snapshot({ ban: { ...ban, endsInSeconds: 1.5 } }), manifest()))).toEqual(["ban.endsInSeconds"]);
+    expect(rules(validateSnapshot(snapshot({ ban: { ...ban, until: at } }), manifest()))).toEqual(["ban.field"]);
+    // A task in hand runs to its end; an offer and the agent's own queue do not stand beside a ban.
+    expect(rules(validateSnapshot(snapshot({ ban, tasks: [working], providerTime: CLOCK }), timed()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ ban, tasks: [task({ phase: "pending" })] }), manifest()))).toContain("snapshot.ban.pending");
+    expect(rules(validateSnapshot(snapshot({ tasks: [task({ phase: "pending" })] }), manifest()))).not.toContain("snapshot.ban.pending");
+    expect(rules(validateSnapshot(snapshot({ ban, tasks: [working], nextCall: { since: at }, providerTime: CLOCK }), timed()))).toEqual(["snapshot.ban.next"]);
+    expect(rules(validateSnapshot(snapshot({ ban, tasks: [working], linedUp: { since: at }, providerTime: CLOCK }), timed()))).toEqual(["snapshot.ban.next"]);
+    // On its own event, present or lifted.
+    const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
+    expect(check({ type: "ban-updated", ban })).toEqual([]);
+    expect(check({ type: "ban-updated" })).toEqual([]);
+    expect(check({ type: "ban-updated", ban: { by: "M-1", endsInSeconds: -1 } })).toEqual(["ban.endsInSeconds"]);
+    // On the member: banned with nothing in hand, on-task with a task, or signed out; and banned means a ban.
+    const member = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", ...over }] }, "team", { levels: LEVELS }));
+    for (const availability of ["banned", "on-task", "signed-out"]) expect(member({ availability, ban }), availability).toEqual([]);
+    for (const availability of ["ready", "on-break", "elsewhere"]) expect(member({ availability, ban }), availability).toEqual(["team.member.ban.availability"]);
+    expect(member({ availability: "banned" })).toEqual(["team.member.ban.required"]);
+    expect(member({ availability: "banned", ban: { by: "" } })).toEqual(["ban.by"]);
+  });
+
   it("lets only an outstanding request appear on a team member", () => {
     const member = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", ...over }] }, "team", { levels: LEVELS }));
     for (const status of ["awaiting-approval", "granted", "starting-after-task"]) expect(member({ break: status })).toEqual([]);

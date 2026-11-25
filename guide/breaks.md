@@ -1,6 +1,6 @@
 # `@xema/omni-protocol`: Breaks
 
-Asking for a break, a break forced on the agent, capacity, and one break across several providers. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
+Asking for a break, a break forced on the agent, a ban, capacity, and one break across several providers. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
 
 ## Breaks
 
@@ -122,10 +122,10 @@ Migration: `ForcedBreak` now says whom it covers, as `scope` (`break.forced.scop
 
 **There are two kinds, by `scope`.**
 
-| `scope` | Covers | Its end | Signed-out time |
-| --- | --- | --- | --- |
-| `team` | The whole team, members who sign in while it runs included. A lead's `force-team-break`, or a break the platform schedules. | One end for everyone, always stated (`break.forced.team.endsInSeconds`). | Counts. A member who signs back in after the end finds no break. |
-| `agent` | One agent. A lead's `force-break`, or a hold the platform puts on one agent. | A length, where one was given; without one it stands until lifted. | Does not count. The clock stops at sign-out and goes on at the next sign-in, so thirty minutes means thirty minutes signed in. |
+| `scope` | Covers | Its end |
+| --- | --- | --- |
+| `team` | The whole team, members who sign in while it runs included. A lead's `force-team-break`, or a break the platform schedules. | One end for everyone, always stated (`break.forced.team.endsInSeconds`). |
+| `agent` | One agent. A lead's `force-break`, or a hold the platform puts on one agent. | A length, where one was given; without one it stands until lifted. |
 
 `endsInSeconds` is how long the break has left: whole seconds from the publication that carries
 it, restated on every publication, so every screen -- the agent's, reloaded or not, and every
@@ -166,23 +166,21 @@ with `omni.break-forced` and leaves the break as it was.
 its own, or `endsInSeconds` running out clears `forced` and leaves an ordinary break. The agent
 then resumes when ready, as from any break.
 
-**Signing out does not end it.** The agent may sign out on a forced break, as at any time, but
-that ends the session and not the break. The provider keeps the break, and the first snapshot of
-the agent's next session carries it again while it stands, `on-break` with the same `forced`,
-`activeReasonId` and what is left of `endsInSeconds` by its kind's clock. Without that, signing
-out and straight back in would undo any forced break. While the agent is away, the lead's team
-list shows them `signed-out`, not `on-break`: someone who has gone home is not on a break. The
-break is held for their return, not shown.
+**Signing out ends it.** The agent may sign out on a forced break, as at any time, and the break
+ends with the session: signed-out time is never break time, and counts in no `breakSeconds`. The
+agent's next session starts with no forced break of its own. A team break still running takes in
+a member who signs in, as it takes in anyone, for the time it has left. Keeping an agent from work
+across sessions is a ban, not a break -- see **Bans** below.
 
 `testAdapter` holds a provider to this when given `signInAgain`, a way to build the adapter again
 that signs the same agent in, as a sign-in screen would. A run that ends with the agent on a
-forced break signs out, signs in again, and reads the new session's snapshot. That snapshot
-carries the same break, from the same person, on the same reason, or the run names it
-(`test.signIn.forcedBreak`). Its time left is held to its kind's clock: a team break's ran on
-while the agent was away, an agent's own stood still, and neither grows
-(`test.signIn.endsInSeconds`). A sign-in that does not come back as the same agent is named too
-(`test.signIn.session`). A run without `signInAgain`, or with no forced break to carry, lists
-`break.forced.signIn` under `notTested`: the rule was not checked, and the result says so.
+forced break signs out, signs in again, and reads the new session's snapshot. An agent's own
+forced break is gone from it, and a team break still running is there, from the same person, on
+the same reason, or the run names it (`test.signIn.forcedBreak`). The team break's time left ran
+on while the agent was away, and never grows (`test.signIn.endsInSeconds`). A sign-in that does
+not come back as the same agent is named too (`test.signIn.session`). A run without
+`signInAgain`, or with no forced break to carry, lists `break.forced.signIn` under `notTested`:
+the rule was not checked, and the result says so.
 
 The expectation is whole seconds still to run, restated on every publication; omission
 means none was stated, or it has run out. Neither its reaching zero nor an overdue indication
@@ -238,6 +236,52 @@ here: the provider observed it.
 `ForcedBreak.by` says who forced it: a lead, by user id, or `provider` where the platform itself
 did -- on its own rule, a schedule, a compliance hold. The agent sees who, and `getUserDetails()`
 is owed for a person, never for `provider` (`break.forced.by`).
+
+### Bans
+
+A ban keeps an agent from work. They may sign in, but they take no new work from the provider
+until the ban is lifted. It is not a break: it counts in no break figure, and a banned agent's
+day goes on in `signedInSeconds` alone. It arrives as `Snapshot.ban`, replaced whole by
+`ban-updated`, and no `ban` means none stands.
+
+| Field | Contract |
+| --- | --- |
+| `by` | The lead who placed it, by user id, or `provider` where the platform did (`ban.by`). `getUserDetails()` is owed for a person. |
+| `reason` | Optional words saying why, shown to the agent and their leads (`ban.reason`). |
+| `endsInSeconds` | How long it has left, in whole seconds from this publication, restated on each (`ban.endsInSeconds`). Its clock runs while the agent is signed out. When it runs out, the provider lifts the ban. Absent, it stands until a lead lifts it. |
+
+For example:
+
+```ts
+ban: {
+  by: "manager-1042",
+  reason: "Compliance review",
+  endsInSeconds: 3600
+}
+```
+
+**While a ban stands, nothing new starts.** The provider offers nothing, withdraws an offer the ban
+overtook (`snapshot.ban.pending`), and clears any next call asked for or lined up
+(`snapshot.ban.next`). A dial, a Resume or an offer that raced the ban answers `failed` with
+`omni.banned`. The agent application offers no Resume and no dial, and refuses both before they are
+sent (`break.command.end.banned` for Resume). A task in hand runs to its end: the ban stops new work,
+not the call under way.
+
+**A ban stops the agent everywhere.** Like a forced break, it is about the agent, not one provider.
+The agent application states `setCapacity({ count: 0 })` on every other usable provider holding
+capacity, whose team lists then show the agent as `elsewhere`. When the ban lifts, it restates
+their capacity.
+
+**Signing out does not end a ban.** The provider keeps it, and the first snapshot of the agent's
+next session carries it again while it stands. Without that, signing out and straight back in would
+undo any ban. `testAdapter` holds a provider to this when given `signInAgain`: a run that ends with
+the agent banned signs out, signs in again, and expects the same ban, placed by the same person,
+its time left having run on and never grown (`test.signIn.ban`). A run without `signInAgain`, or
+with no ban to carry, lists `ban.signIn` under `notTested`.
+
+**A lead places and lifts it.** A lead holding the `ban` capability sends `ban` and `lift-ban`; see
+**Lead commands** in `guide/lead.md`. Lifting changes nothing else. An agent on a break when the ban
+lifts resumes when ready, and one who was not takes work again.
 
 ## Capacity and break actions
 

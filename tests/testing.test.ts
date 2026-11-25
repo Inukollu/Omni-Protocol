@@ -1163,17 +1163,17 @@ describe("testAdapter", () => {
       "event.task-audio-started", "event.task-audio-ended", "event.task-ended", "event.dial-outcome", "event.announcement", "event.queue-summary",
       "event.diagnostic", "event.team-updated", "event.team-member-updated", "event.team-member-removed", "event.team-policies-updated",
       "event.contacts-updated", "event.calendar-updated", "event.shift-updated", "event.phone-updated", "event.next-call", "event.lined-up",
-      "event.labels-updated",
+      "event.ban-updated", "event.labels-updated",
     ];
     // The rich task carries browsers, history, an outcome policy, add-to-call destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "break.forced.signIn", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "break.forced.signIn", "ban", "ban.signIn", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.ban", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.history", "task.onCall", "task.leadAssist", "task.takenOver",
-      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "break.forced.signIn", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp",
+      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.forced", "break.forced.signIn", "ban", "ban.signIn", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.ban",
       "shift", "phone", "nextCall", "linedUp", "labels", "contacts", "calendar", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot, or on the team that
@@ -1184,9 +1184,9 @@ describe("testAdapter", () => {
     } satisfies Snapshot<"voice">;
     const asking = teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "on-task", request: { assignmentId: "alloc-42", since: "2026-08-21T09:04:00Z" } }] } });
     expect(state(await run({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: reached, emitOnLeadFeatures: listener => listener(asking) })))
-      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.forced.signIn", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
+      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.forced.signIn", "ban", "ban.signIn", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.ban", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
     const withTeam = await run({ capabilities: { lead: EVERY_LEAD_CAPABILITY } });
-    expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "break.forced.signIn", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
+    expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "break.forced.signIn", "ban", "ban.signIn", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.ban", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
     expect(events(withTeam)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
     const oneByOne = await run({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, emitOnLeadFeatures: listener => {
       listener(teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } }));
@@ -1194,7 +1194,7 @@ describe("testAdapter", () => {
       listener(teamEvent("evt-gone", { type: "team-member-removed", memberId: "A-2" }));
       listener(teamEvent("evt-policies", { type: "team-policies-updated", policies: { hold: { setting: "off", setBy: "team" } } }));
     } });
-    expect(state(oneByOne)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "break.forced.signIn", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "phone", "nextCall", "linedUp", "labels"]);
+    expect(state(oneByOne)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.forced", "break.forced.signIn", "ban", "ban.signIn", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.ban", "phone", "nextCall", "linedUp", "labels"]);
     expect(events(oneByOne)).toEqual(everyEvent.filter(subject => !subject.startsWith("event.team-")));
   });
 
@@ -2670,50 +2670,66 @@ describe("assertHistoryAgreesAcrossTasks", () => {
   });
 });
 
-describe("testAdapter signs out on a forced break and in again", () => {
-  const onBreak = (forced: Record<string, unknown> | undefined) =>
-    ({ ...minimalSnapshot, break: { status: "on-break", canRequestBreak: true, ...(forced === undefined ? {} : { forced }) } }) as Snapshot<"voice">;
+describe("testAdapter signs out on a forced break or a ban and in again", () => {
+  const onBreak = (forced: Record<string, unknown> | undefined, ban?: Record<string, unknown>) =>
+    ({ ...minimalSnapshot, break: { status: "on-break", canRequestBreak: true, ...(forced === undefined ? {} : { forced }) }, ...(ban === undefined ? {} : { ban }) }) as Snapshot<"voice">;
   const run = async (before: Snapshot<"voice">, after: Snapshot<"voice"> | undefined, overrides: AdapterOverrides = {}) =>
     testAdapter(makeAdapter({ manifest: plainManifest, snapshot: before, ...overrides }).adapter, contextFor(plainManifest),
       { collectOnly: true, ...(after === undefined ? {} : { signInAgain: () => makeAdapter({ manifest: plainManifest, snapshot: after, ...overrides }).adapter }) });
   const rulesOf = async (...args: Parameters<typeof run>) => (await run(...args)).violations.map(v => v.rule);
+  const agent = { by: "provider", scope: "agent", endsInSeconds: 600 };
+  const team = { by: "provider", scope: "team", endsInSeconds: 600 };
 
-  it("passes a break carried into the next session, and names one that signing out cleared", async () => {
-    for (const forced of [{ by: "provider", scope: "agent" }, { by: "provider", scope: "agent", endsInSeconds: 600 }, { by: "provider", scope: "team", endsInSeconds: 600 }]) {
-      const result = await run(onBreak(forced), onBreak(forced));
+  it("passes an agent's forced break that signing out ended, and names one the next session still carries", async () => {
+    for (const forced of [{ by: "provider", scope: "agent" }, agent]) {
+      const result = await run(onBreak(forced), onBreak(undefined));
       expect(result.violations).toEqual([]);
       expect(result.rulesTested.has("test.signIn.forcedBreak")).toBe(true);
       expect(result.notTested).not.toContain("break.forced.signIn");
-      expect(await rulesOf(onBreak(forced), onBreak(undefined))).toEqual(["test.signIn.forcedBreak"]);
-      expect(await rulesOf(onBreak(forced), onBreak({ ...forced, by: "provider", scope: forced.scope === "team" ? "agent" : "team", endsInSeconds: 600 }))).toEqual(["test.signIn.forcedBreak"]);
+      expect(await rulesOf(onBreak(forced), onBreak(forced))).toEqual(["test.signIn.forcedBreak"]);
     }
   });
 
-  it("holds the time left to its kind's clock", async () => {
-    const agent = { by: "provider", scope: "agent", endsInSeconds: 600 };
-    const team = { by: "provider", scope: "team", endsInSeconds: 600 };
-    // An agent's own break stands still while they are away; a team break's runs on; neither grows.
-    expect(await rulesOf(onBreak(agent), onBreak({ ...agent, endsInSeconds: 500 }))).toEqual(["test.signIn.endsInSeconds"]);
-    expect(await rulesOf(onBreak(agent), onBreak({ ...agent, endsInSeconds: 700 }))).toEqual(["test.signIn.endsInSeconds"]);
-    expect(await rulesOf(onBreak(agent), onBreak({ by: "provider", scope: "agent" }))).toEqual(["test.signIn.endsInSeconds"]);
-    expect(await rulesOf(onBreak(team), onBreak({ ...team, endsInSeconds: 599 }))).toEqual([]);
+  it("carries a team break still running, its time having run on", async () => {
+    expect(await rulesOf(onBreak(team), onBreak(team))).toEqual([]);
+    expect(await rulesOf(onBreak(team), onBreak(undefined))).toEqual(["test.signIn.forcedBreak"]);
+    expect(await rulesOf(onBreak(team), onBreak({ ...team, scope: "agent" }))).toEqual(["test.signIn.forcedBreak"]);
     expect(await rulesOf(onBreak(team), onBreak({ ...team, endsInSeconds: 700 }))).toEqual(["test.signIn.endsInSeconds"]);
     // A team break that could have run out while the agent was away may rightly be gone.
     expect(await rulesOf(onBreak({ ...team, endsInSeconds: 1 }), onBreak(undefined))).toEqual([]);
   });
 
-  it("lists the step as not tested without a forced break or a way to sign in again", async () => {
+  it("carries a ban into the next session, its time having run on and never grown", async () => {
+    const ban = { by: "M-1", reason: "Compliance review", endsInSeconds: 600 };
+    const result = await run(onBreak(undefined, ban), onBreak(undefined, ban));
+    expect(result.violations).toEqual([]);
+    expect(result.rulesTested.has("test.signIn.ban")).toBe(true);
+    expect(result.notTested).not.toContain("ban.signIn");
+    expect(result.notTested).toContain("break.forced.signIn");
+    expect(await rulesOf(onBreak(undefined, ban), onBreak(undefined))).toEqual(["test.signIn.ban"]);
+    expect(await rulesOf(onBreak(undefined, ban), onBreak(undefined, { ...ban, by: "provider" }))).toEqual(["test.signIn.ban"]);
+    expect(await rulesOf(onBreak(undefined, ban), onBreak(undefined, { ...ban, endsInSeconds: 700 }))).toEqual(["test.signIn.ban"]);
+    expect(await rulesOf(onBreak(undefined, ban), onBreak(undefined, { by: "M-1" }))).toEqual(["test.signIn.ban"]);
+    expect(await rulesOf(onBreak(undefined, { by: "M-1" }), onBreak(undefined, { by: "M-1" }))).toEqual([]);
+    expect(await rulesOf(onBreak(undefined, { ...ban, endsInSeconds: 1 }), onBreak(undefined))).toEqual([]);
+  });
+
+  it("lists the step as not tested without a forced break, a ban, or a way to sign in again", async () => {
     const forced = { by: "provider", scope: "agent" };
-    expect((await run(onBreak(forced), undefined)).notTested).toContain("break.forced.signIn");
-    const notForced = await run(onBreak(undefined), onBreak(undefined));
-    expect(notForced.notTested).toContain("break.forced.signIn");
-    expect(notForced.rulesTested.has("test.signIn.forcedBreak")).toBe(false);
+    const without = await run(onBreak(forced, { by: "M-1" }), undefined);
+    expect(without.notTested).toContain("break.forced.signIn");
+    expect(without.notTested).toContain("ban.signIn");
+    const neither = await run(onBreak(undefined), onBreak(undefined));
+    expect(neither.notTested).toContain("break.forced.signIn");
+    expect(neither.notTested).toContain("ban.signIn");
+    expect(neither.rulesTested.has("test.signIn.forcedBreak")).toBe(false);
+    expect(neither.rulesTested.has("test.signIn.ban")).toBe(false);
   });
 
   it("names a sign-in that does not come back as the same agent", async () => {
     const forced = { by: "provider", scope: "agent" };
     const result = await testAdapter(makeAdapter({ manifest: plainManifest, snapshot: onBreak(forced) }).adapter, contextFor(plainManifest),
-      { collectOnly: true, signInAgain: () => makeAdapter({ manifest: plainManifest, snapshot: onBreak(forced), authenticated: false }).adapter });
+      { collectOnly: true, signInAgain: () => makeAdapter({ manifest: plainManifest, snapshot: onBreak(undefined), authenticated: false }).adapter });
     expect(result.violations.map(v => v.rule)).toEqual(["test.signIn.session"]);
   });
 });

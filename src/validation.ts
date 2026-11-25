@@ -129,7 +129,7 @@ const BREAK_APPROVALS = membersOf<BreakStatus>({
   "not-requested": true, "awaiting-approval": true, granted: true, "starting-after-task": true, "on-break": true,
 });
 const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
-  ready: true, "on-task": true, "on-break": true, elsewhere: true, "signed-out": true,
+  ready: true, "on-task": true, "on-break": true, elsewhere: true, banned: true, "signed-out": true,
 });
 const HISTORY_STEPS = membersOf<HistoryStep>({
   arrived: true, "self-service": true, queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, added: true, unanswered: true,
@@ -1596,6 +1596,22 @@ function validateForcedBreak(value: unknown, path: string, into: Collector): voi
 
 }
 
+/** The agent's ban: who placed it, the words why, and what is left of it. */
+export function validateBan(value: unknown, path = "ban"): ProtocolViolation[] {
+  const into = new Collector();
+  validateBanInto(value, path, into);
+  return into.violations;
+}
+
+function validateBanInto(value: unknown, path: string, into: Collector): void {
+  if (!isPlainObject(value)) { into.add("ban.shape", path, "a ban must be an object; with no ban, send none"); return; }
+  into.require(isUserId(value.by) || value.by === "provider", "ban.by", `${path}.by`, "a ban says who placed it: the lead by user id, or provider where the platform did");
+  if (value.reason !== undefined) into.filled(value.reason, "ban.reason", `${path}.reason`, "a reason must not be empty when present");
+  if (value.endsInSeconds !== undefined) into.require(isDurationSeconds(value.endsInSeconds), "ban.endsInSeconds", `${path}.endsInSeconds`,
+    "endsInSeconds is how long the ban has left: a whole number of seconds, zero or more, counted from this publication");
+  for (const key of Object.keys(value)) into.require(["by", "reason", "endsInSeconds"].includes(key), "ban.field", `${path}.${key}`, "unsupported field on a ban");
+}
+
 /** Checks break status against the full currently retained task set, after a transaction. */
 export function validateBreakStatus(state: unknown, tasks: unknown, path = "snapshot"): ProtocolViolation[] {
   const into = new Collector();
@@ -1654,6 +1670,7 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
     "decide-break-request": ["type", "memberId", "decision", "reason"], "set-break-policy": ["type", "policy"],
     "force-break": ["type", "memberId", "reasonId", "reason", "durationSeconds"], "end-forced-break": ["type", "memberId"],
     "force-team-break": ["type", "reasonId", "reason", "durationSeconds"], "end-team-break": ["type"],
+    ban: ["type", "memberId", "reason", "durationSeconds"], "lift-ban": ["type", "memberId"],
     join: member, decline: [...member, "reason"], listen: member, coach: member, "join-call": member, leave: member, "take-over-call": member,
     "set-policy": ["type", "capability", "setting"],
   };
@@ -1709,7 +1726,15 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
     if (tasks !== undefined) into.require(tasks.some((task: unknown) => isPlainObject(task) && task.assignmentId === command.assignmentId),
       "team.command.assignmentId.unknown", `${path}.assignmentId`, "the assignment named is not one the team member list shows the member holding");
   }
-  if (command.type === "decide-break-request") {
+  if (command.type === "ban") {
+    if (command.durationSeconds !== undefined) into.require(isDurationSeconds(command.durationSeconds) && (command.durationSeconds as number) > 0,
+      "team.command.durationSeconds", `${path}.durationSeconds`, "durationSeconds must be a whole number of seconds, more than zero");
+    into.require(!(isPlainObject(target) && target.ban !== undefined), "team.command.ban.standing", path,
+      "this member is banned already: lift the ban before placing another");
+  } else if (command.type === "lift-ban") {
+    into.require(isPlainObject(target) && target.ban !== undefined, "team.command.liftBan", path,
+      "lift a ban the team member list shows on the member, and this member has none");
+  } else if (command.type === "decide-break-request") {
     into.require(command.decision === "granted" || command.decision === "denied", "team.command.decision", path, "decide granted or denied");
     into.require(isPlainObject(target) && target.break === "awaiting-approval", "team.command.awaiting", path,
       "decide only a currently awaiting-approval request");
@@ -1801,6 +1826,8 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
         "end a committed break, including a returning provider still finishing work");
       into.require(state.forced === undefined, "break.command.end.forced", path,
         "a forced break is not the agent's to end: it ends only when it is lifted");
+      into.require(context.ban === undefined, "break.command.end.banned", path,
+        "the agent is banned: they resume only once the ban is lifted");
     }
   }
   return into.violations;
@@ -2115,6 +2142,14 @@ function validateTeamMemberInto(member: unknown, at: string, context: TeamValida
   if (member.shift !== undefined) validateShiftInto(member.shift, `${at}.shift`, into, "team.member.shift");
   // The member's phone as the platform sees it, the same state the member's own agent computer holds.
   if (member.phone !== undefined) validatePhoneStateInto(member.phone, `${at}.phone`, {}, into);
+  // A banned member signed in holds a task in hand or nothing, and is shown as banned while they hold none.
+  if (member.ban !== undefined) {
+    validateBanInto(member.ban, `${at}.ban`, into);
+    into.require(member.availability === "banned" || member.availability === "on-task" || member.availability === "signed-out",
+      "team.member.ban.availability", `${at}.availability`, "a banned member is banned, on-task with a task in hand, or signed-out");
+  } else {
+    into.require(member.availability !== "banned", "team.member.ban.required", `${at}.availability`, "a member shown as banned carries the ban");
+  }
   // The member's own queue, as their own snapshot carries it.
   if (member.nextCall !== undefined) validateNextCallInto(member.nextCall, `${at}.nextCall`, into);
   if (member.linedUp !== undefined) validateLinedUpInto(member.linedUp, `${at}.linedUp`, into, context.levels);
@@ -2163,6 +2198,14 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   const atWork = Array.isArray(snapshot.tasks) && snapshot.tasks.some((task: unknown) => isPlainObject(task) && (task.phase === "in-progress" || task.phase === "paused" || task.phase === "completing"));
   const breakStatus = isPlainObject(snapshot.break) ? snapshot.break.status : undefined;
   const breakStands = typeof breakStatus === "string" && breakStatus !== "not-requested";
+  // A ban stops new work: nothing offered, nothing asked for or lined up next.
+  if (snapshot.ban !== undefined) {
+    validateBanInto(snapshot.ban, `${path}.ban`, into);
+    into.require(!(Array.isArray(snapshot.tasks) && snapshot.tasks.some((task: unknown) => isPlainObject(task) && task.phase === "pending")),
+      "snapshot.ban.pending", `${path}.tasks`, "a banned agent is offered nothing: the provider withdraws an offer the ban overtook");
+    into.require(snapshot.nextCall === undefined && snapshot.linedUp === undefined, "snapshot.ban.next", path,
+      "a banned agent has no next call asked for or lined up: the provider clears them");
+  }
   if (snapshot.nextCall !== undefined) {
     validateNextCallInto(snapshot.nextCall, `${path}.nextCall`, into);
     into.require(atWork, "snapshot.nextCall.idle", `${path}.nextCall`,
@@ -2509,6 +2552,9 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
       break;
     case "next-call":
       if (event.nextCall !== undefined) validateNextCallInto(event.nextCall, `${at}.nextCall`, into);
+      break;
+    case "ban-updated":
+      if (event.ban !== undefined) validateBanInto(event.ban, `${at}.ban`, into);
       break;
     case "lined-up":
       if (event.linedUp !== undefined) validateLinedUpInto(event.linedUp, `${at}.linedUp`, into, levels);

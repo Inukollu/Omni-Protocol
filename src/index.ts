@@ -443,6 +443,7 @@ export interface LeadCapabilities {
   setBreakPolicy?: true;
   forceBreak?: true;
   endForcedBreak?: true;
+  ban?: true;
   setPolicy?: true;
 }
 
@@ -460,6 +461,8 @@ export const LEAD_COMMAND_CAPABILITY = {
   "force-team-break": "forceBreak",
   "end-forced-break": "endForcedBreak",
   "end-team-break": "endForcedBreak",
+  ban: "ban",
+  "lift-ban": "ban",
   "set-policy": "setPolicy",
 } as const satisfies Record<Exclude<TeamCommand["type"], "lead-features" | "leave">, keyof LeadCapabilities>;
 
@@ -1416,18 +1419,18 @@ export interface BreakRequest {
 }
 
 /**
- * Whom a forced break covers. `team`: the whole team, to one end for everyone, its clock running
- * while a member is signed out. `agent`: one agent, its clock counting only while they are signed in.
+ * Whom a forced break covers. `team`: the whole team, members who sign in while it runs included,
+ * to one end for everyone. `agent`: one agent. Signing out ends either for the agent who signs out.
  */
 export type ForcedBreakScope = "team" | "agent";
 
 export const FORCED_BREAK_SCOPES = ["team", "agent"] as const satisfies readonly ForcedBreakScope[];
 
 /**
- * A break forced on the agent, which the agent cannot end. Signing out ends the session, not the
- * break: the next session's snapshot carries it again while it stands. It is lifted by a lead, by
- * the platform, or by its time running out; lifting clears `forced` and leaves an ordinary break
- * the agent ends when ready. A lead's `force-break` or `force-team-break` is a command to the
+ * A break forced on the agent, which the agent cannot end. Signing out ends it, and signed-out time
+ * is never break time; keeping an agent from work across sessions is a `Ban`. It is lifted by a
+ * lead, by the platform, or by its time running out; lifting clears `forced` and leaves an ordinary
+ * break the agent ends when ready. A lead's `force-break` or `force-team-break` is a command to the
  * provider, which forces the break: `by` names the lead who asked it to, or `provider` where the
  * platform itself did, on its own rule or a schedule. The agent sees who, a person is named only
  * when there is one, and a break the platform imposed is the platform's to lift: a lead's
@@ -1460,6 +1463,25 @@ export interface BreakState {
   activeReasonId?: string;
   forced?: ForcedBreak;
 }
+
+/**
+ * The agent may not work: signed in or not, they take no new work from this provider. It offers
+ * nothing and refuses a dial with `omni.banned`; the agent application offers no Resume and no dial,
+ * and stops the agent on every other provider as for a forced break. A task in hand runs to its end.
+ * Signing out does not end a ban. It is not a break: its time counts in no break figure. `by` names
+ * the lead who placed it, or `provider` where the platform did.
+ */
+export type Ban = {
+  by: UserId | "provider";
+  /** Display-ready words saying why, shown to the agent and their leads. */
+  reason?: string;
+  /**
+   * How long the ban has left, in whole seconds from this publication, restated on every
+   * publication that carries it. Its clock runs while the agent is signed out. When it runs out
+   * the provider lifts the ban. Absent, it stands until a lead lifts it.
+   */
+  endsInSeconds?: DurationSeconds;
+};
 
 /** Capacity is a statement, not a request: it is taken, never refused. A provider that cannot carry the count assigns within what it can and says so on a `diagnostic`. */
 export type CapacityResult = { status: "applied" };
@@ -1536,9 +1558,9 @@ export type LinedUpReleaseResult =
 /**
  * `elsewhere`: signed in here, and the host gives this provider no capacity -- none stated yet since
  * the connection, or `count: 0` while it holds the agent for another provider; not receiving this
- * provider's work, and not on a break.
+ * provider's work, and not on a break. `banned`: signed in, under a `Ban`, and holding no task.
  */
-export type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "elsewhere" | "signed-out";
+export type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "elsewhere" | "banned" | "signed-out";
 
 export interface TeamMember {
   id: UserId;
@@ -1561,6 +1583,8 @@ export interface TeamMember {
   nextCall?: NextCallRequest;
   /** The call lined up in the member's own queue, as their own snapshot carries it. */
   linedUp?: LinedUpCall;
+  /** The member's ban, as their own snapshot carries it; shown while they are signed out too, so a lead can lift it. */
+  ban?: Ban;
 }
 
 /** This member asking their lead to join a call: which assignment, the note they wrote, since when. */
@@ -1740,7 +1764,11 @@ export type TeamBreakCommand =
   /** Clears forced metadata only; preserves the committed break until the agent explicitly resumes. */
   | { type: "end-forced-break"; memberId: UserId }
   /** Lifts the team break for every member, as `end-forced-break` does for one. */
-  | { type: "end-team-break" };
+  | { type: "end-team-break" }
+  /** Bans the member from work. `reason` is shown to them. Without `durationSeconds` it stands until lifted. */
+  | { type: "ban"; memberId: UserId; reason?: string; durationSeconds?: DurationSeconds }
+  /** Lifts the member's ban. Nothing else changes: an agent on a break resumes when ready. */
+  | { type: "lift-ban"; memberId: UserId };
 
 /** Every lead act, as `execute` takes a `TaskCommand`: discriminated by `type`. */
 export type TeamCommand = TeamFeatureCommand | TeamBreakCommand | TeamCallCommand | TeamPolicyCommand;
@@ -1879,6 +1907,8 @@ export interface Snapshot<C extends Channel = Channel> {
   nextCall?: NextCallRequest;
   /** The call waiting in the agent's own queue, while one is; replaced whole by `lined-up`. */
   linedUp?: LinedUpCall;
+  /** The agent's ban, while one stands; replaced whole by `ban-updated`. */
+  ban?: Ban;
   team?: TeamMembers;
   /** The signed-in customer's own words, from its admin's settings; replaced whole by `labels-updated`. Omitted where it set none. */
   labels?: Labels;
@@ -1951,6 +1981,7 @@ export type ProviderEvent<C extends Channel = Channel> =
   | { type: "phone-updated"; phone: PhoneState }
   /** The agent's ask for the next call as it now stands: present while it stands, absent once met, withdrawn or outlived. */
   | { type: "next-call"; nextCall?: NextCallRequest }
+  | { type: "ban-updated"; ban?: Ban }
   /** The agent's own queue as it now stands: the call lined up for them, or nothing. */
   | { type: "lined-up"; linedUp?: LinedUpCall }
   /** The customer's words as its admin now has them, whole: present with what it set, empty when it set nothing. */
@@ -1986,6 +2017,8 @@ export const OMNI_FAILURE_CODES = [
   "omni.break-forced-by-provider",
   /** The agent asked to end a break that is still forced; only its lifting does. */
   "omni.break-forced",
+  /** The agent is banned: no Resume, no dial and no new work until the ban is lifted. */
+  "omni.banned",
 ] as const;
 
 export type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
