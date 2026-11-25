@@ -30,6 +30,25 @@ describe("runtime break ordering", () => {
     expect(stream.apply({ event: { type: "break-state", break: own } })).toEqual([]);
   });
 
+  it("makes a missed offer on a softphone tools not ready, and only on a hardphone a break", () => {
+    const reasons = [{ id: "lunch", label: "Lunch" }, { id: "no-answer", label: "No answer", providerOnly: true }];
+    const missed = { ...state("on-break"), reasons, activeReasonId: "no-answer" };
+    const held = { ...missed, type: "tools-not-ready" as const };
+    const softphone = new BreakStream({ softphone: true });
+    expect(softphone.seed({ break: { ...state("not-requested"), reasons }, tasks: [] })).toEqual([]);
+    expect(softphone.apply({ event: { type: "break-state", break: missed } }).map(v => v.rule)).toEqual(["stream.breakState.softphone"]);
+    expect(softphone.seed({ break: missed, tasks: [] }).map(v => v.rule)).toEqual(["stream.breakState.softphone"]);
+    expect(softphone.seed({ break: { ...state("not-requested"), reasons }, tasks: [] })).toEqual([]);
+    expect(softphone.apply({ event: { type: "break-state", break: held } })).toEqual([]);
+    // The agent's own break is theirs on any phone.
+    const lunch = new BreakStream({ softphone: true });
+    lunch.seed({ break: { ...state("granted"), reasons, activeReasonId: "lunch" }, tasks: [] });
+    expect(lunch.apply({ event: { type: "break-state", break: { ...state("on-break"), reasons, activeReasonId: "lunch" } } })).toEqual([]);
+    const hardphone = new BreakStream({ softphone: false });
+    hardphone.seed({ break: { ...state("not-requested"), reasons }, tasks: [] });
+    expect(hardphone.apply({ event: { type: "break-state", break: missed } })).toEqual([]);
+  });
+
   it("says which kind every break in effect is, and carries a ban's terms on a ban alone", () => {
     const ban = { by: "lead", reason: "Compliance review", endsInSeconds: 3600 };
     const tools = [{ id: "no-phone", label: "No phone", providerOnly: true }, { id: "lunch", label: "Lunch" }];

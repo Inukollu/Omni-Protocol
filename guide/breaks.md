@@ -49,7 +49,7 @@ something a busy hour can cancel, and Omni keeps offering those while the rest a
 **The provider's own reasons are offered to nobody.** Tools not ready -- a phone that will not
 register, a station being set up -- still needs a reason, since `activeReasonId` names it where
 reasons are published, and so does the one break the platform places itself, after an offer rang
-out unanswered. Mark it `providerOnly`: the flag says the platform chose it. Omni
+out unanswered on a hardphone. Mark it `providerOnly`: the flag says the platform chose it. Omni
 leaves it out of the agent's choices and out of a lead's `ask-break`, and a request or an ask
 naming it is refused
 (`break.request.reasonId.providerOnly`, `team.command.reasonId.providerOnly`). It is never `alwaysAvailable`
@@ -59,8 +59,10 @@ naming it is refused
 
 A break is the agent's own: their time away from work, which counts as break time and reaches
 every provider they work. Nobody else puts them on one, with one exception: after an offer rang out
-unanswered, the platform puts the agent on a break on its own reason, and the agent ends it when
-they are back. A lead who wants the agent somewhere else --
+unanswered on a hardphone, the platform puts the agent on a break on its own reason, and the agent
+ends it when they are back. A hardphone is one the agent could have answered. On a softphone the
+agent had no choice, so a missed offer there is tools not ready, not a break: on a softphone
+session, a `break` on a `providerOnly` reason is refused (`stream.breakState.softphone`). A lead who wants the agent somewhere else --
 training, a meeting, a coaching session -- asks, and the agent answers. The agent has a say because
 the hours are theirs.
 
@@ -121,7 +123,7 @@ agent is on one, or on none.
 
 | `type` | What it is | Who starts it | Who ends it | Reaches | Counts as | Signing out |
 | --- | --- | --- | --- | --- | --- | --- |
-| `break` | Time off work | The agent, asking or accepting a lead's ask; or the platform, after an offer rang out unanswered | The agent | Every provider they work; the platform's own, this provider | `breakSeconds` | Ends it |
+| `break` | Time off work | The agent, asking or accepting a lead's ask; or the platform, after an offer rang out unanswered on a hardphone | The agent | Every provider they work; the platform's own, this provider | `breakSeconds` | Ends it |
 | `ban` | A lead's judgement, or the platform's, that the agent may not take this provider's work | A lead, or the platform | Whoever placed it, or its time running out | This provider alone | `banSeconds` | Does not end it |
 | `tools-not-ready` | The agent's tools cannot carry this provider's work | The platform | The platform, when the tools are ready | This provider alone | `toolsNotReadySeconds` | Ends it |
 
@@ -133,7 +135,7 @@ A task in hand runs to its end first, as `starting-after-task`, whatever the kin
 
 The platform cannot give the agent work because their tools are not ready: a phone that will not
 register, a microphone it cannot reach, a station still being set up, an agent application that is
-not ready. Nobody chose it, so it is not a break, and nobody judged the agent, so it is not a ban.
+not ready, an offer a softphone missed. Nobody chose it, so it is not a break, and nobody judged the agent, so it is not a ban.
 It is on one of the platform's own reasons, marked `providerOnly`
 (`break.activeReasonId.toolsNotReady`), which the agent application shows by its label.
 
@@ -213,7 +215,8 @@ now has its own place:
 | A lead taking the agent away, such as for training | `ask-break`: the agent accepts or declines |
 | A lead stopping the agent from working | `ban`, on this provider only |
 | The platform holding the agent until its tools are ready | `type: "tools-not-ready"`, which the platform ends |
-| The platform's short break after an offer rang out, which the agent clears with Resume | `type: "break"`, on a `providerOnly` reason |
+| The platform's short break after an offer rang out on a hardphone, which the agent clears with Resume | `type: "break"`, on a `providerOnly` reason |
+| The same hold after an offer a softphone missed | `type: "tools-not-ready"`, which the platform ends |
 | A team break | One ask per member, from the lead's desk |
 
 Every break in effect now says its `type` (`break.type.required`). A platform hold that becomes tools

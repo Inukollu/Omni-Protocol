@@ -1381,10 +1381,11 @@ export type BreakStatus =
  * What kind of time away a break in effect is. They never overlap: the agent is on one, or on none.
  * `break`: time off work, counted as break time; the agent asked for it, or accepted a lead's ask,
  * and it reaches every provider they work -- or, the one exception, the platform put them on it
- * after an offer rang out unanswered, on a `providerOnly` reason. The agent ends it. `ban`: a lead or
+ * after an offer rang out unanswered on a hardphone, on a `providerOnly` reason. The agent ends it. `ban`: a lead or
  * the platform keeps the agent from this provider's work; it survives sign-out, ends any break the
  * agent was on, and is lifted, never ended by the agent. `tools-not-ready`: the agent's tools cannot
- * carry this provider's work -- a phone that will not register, a station being set up; the platform
+ * carry this provider's work -- a phone that will not register, a station being set up, an offer a
+ * softphone missed, which the agent had no choice in; the platform
  * ends it when the tools are ready. A ban and tools not ready reach this provider alone, and neither
  * counts as break time.
  */
@@ -1416,7 +1417,7 @@ export interface BreakReason {
   alwaysAvailable?: true;
   /**
    * The platform's own: what `tools-not-ready` is on, such as a phone that will not register, and
-   * the one `break` the platform places, after an offer rang out unanswered. Nobody asks for it, so
+   * the one `break` the platform places, after an offer rang out unanswered on a hardphone. Nobody asks for it, so
    * neither the agent nor a lead is offered it.
    */
   providerOnly?: true;

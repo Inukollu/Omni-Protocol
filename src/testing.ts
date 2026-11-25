@@ -305,7 +305,7 @@ export async function testAdapter<C extends Channel>(
   const events: ProviderEventEnvelope<C>[] = [];
   const seen = new Set<ContractSubject>();
   const stream = new TaskStream();
-  const breaks = new BreakStream();
+  const breaks = new BreakStream({ softphone: adapter.manifest.channel === "voice" && context.phone === "softphone" });
   const team = new TeamStream();
   let seeded = false;
   const duringRead: ProviderEventEnvelope<C>[] = [];
@@ -2450,6 +2450,20 @@ export class TeamStream {
 export class BreakStream {
   private state: unknown;
   private recovery = true;
+  private readonly softphone: boolean;
+
+  /** On a softphone the agent had no say in a missed offer, so the platform's own break is tools not ready. */
+  constructor(session: { softphone?: boolean } = {}) {
+    this.softphone = session.softphone === true;
+  }
+
+  private onThisPhone(state: unknown, path: string): ProtocolViolation[] {
+    if (!this.softphone || !isRecord(state) || state.type !== "break") return [];
+    const reasons = Array.isArray(state.reasons) ? state.reasons : [];
+    const placed = reasons.some(r => isRecord(r) && r.id === state.activeReasonId && r.providerOnly === true);
+    return placed ? [{ rule: "stream.breakState.softphone", path: `${path}.type`,
+      message: "on a softphone the agent could not answer or not answer, so the platform's hold after a missed offer is tools-not-ready, not a break" }] : [];
+  }
 
   /** True until a validated authoritative snapshot establishes a usable baseline. */
   get needsRecovery(): boolean { return this.recovery; }
@@ -2458,6 +2472,7 @@ export class BreakStream {
   seed(snapshot: unknown): ProtocolViolation[] {
     const state = isRecord(snapshot) ? snapshot.break : undefined;
     const found = validateBreakTransition(state, state, "snapshot.break");
+    found.push(...this.onThisPhone(state, "snapshot.break"));
     if (found.length) { this.recovery = true; return found; }
     this.state = state;
     this.recovery = false;
@@ -2474,6 +2489,7 @@ export class BreakStream {
     if (this.recovery) return [{ rule: "stream.breakState.baseline", path: `${path}.event.break`,
       message: "a validated authoritative snapshot is required before accepting break updates" }];
     const found = validateBreakTransition(this.state, event.break, `${path}.event.break`);
+    found.push(...this.onThisPhone(event.break, `${path}.event.break`));
     if (found.length) this.recovery = true;
     else this.state = event.break;
     return found;
