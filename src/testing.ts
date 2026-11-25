@@ -79,10 +79,10 @@ const STATE_SUBJECTS = [
   "task.custom",
   "task.locked",
   "break.reasons",
-  "break.forced",
-  "break.forced.signIn",
+  "break.ask",
   "ban",
   "ban.signIn",
+  "toolsNotReady",
   "team.members",
   "team.request",
   "team.tasks",
@@ -91,7 +91,9 @@ const STATE_SUBJECTS = [
   "team.phone",
   "team.nextCall",
   "team.linedUp",
+  "team.breakAsk",
   "team.ban",
+  "team.toolsNotReady",
   "shift",
   "phone",
   "nextCall",
@@ -108,7 +110,7 @@ const EVENT_TYPES: Record<ProviderEvent["type"], true> = {
   "task-audio-started": true, "task-audio-ended": true, "task-ended": true, "dial-outcome": true, announcement: true, "queue-summary": true, diagnostic: true,
   "team-updated": true, "team-member-updated": true, "team-member-removed": true, "team-policies-updated": true,
   "contacts-updated": true, "calendar-updated": true, "shift-updated": true, "phone-updated": true, "next-call": true, "lined-up": true,
-  "ban-updated": true, "labels-updated": true,
+   "labels-updated": true,
 };
 export type ContractSubject = (typeof STATE_SUBJECTS)[number] | `event.${ProviderEvent["type"]}`;
 const CONTRACT_SUBJECTS: readonly ContractSubject[] = [
@@ -147,7 +149,9 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
 function observeBreak(value: unknown, seen: Set<ContractSubject>): void {
   if (!isRecord(value)) return;
   if (some(value.reasons)) seen.add("break.reasons");
-  if (value.forced !== undefined) seen.add("break.forced");
+  if (value.ask !== undefined) seen.add("break.ask");
+  if (value.type === "ban") seen.add("ban");
+  if (value.type === "tools-not-ready") seen.add("toolsNotReady");
 }
 
 function observeMember(member: unknown, seen: Set<ContractSubject>): void {
@@ -159,7 +163,9 @@ function observeMember(member: unknown, seen: Set<ContractSubject>): void {
   if (member.phone !== undefined) seen.add("team.phone");
   if (member.nextCall !== undefined) seen.add("team.nextCall");
   if (member.linedUp !== undefined) seen.add("team.linedUp");
+  if (member.breakAsk !== undefined) seen.add("team.breakAsk");
   if (member.ban !== undefined) seen.add("team.ban");
+  if (member.availability === "tools-not-ready") seen.add("team.toolsNotReady");
 }
 
 function observePolicies(value: unknown, seen: Set<ContractSubject>): void {
@@ -184,7 +190,6 @@ function observeSnapshot(value: unknown, seen: Set<ContractSubject>): void {
   if (value.phone !== undefined) seen.add("phone");
   if (value.nextCall !== undefined) seen.add("nextCall");
   if (value.linedUp !== undefined) seen.add("linedUp");
-  if (value.ban !== undefined) seen.add("ban");
   if (value.labels !== undefined) seen.add("labels");
 }
 
@@ -206,7 +211,6 @@ function observeEvent(envelope: unknown, seen: Set<ContractSubject>): void {
     case "phone-updated": seen.add("phone"); break;
     case "next-call": if (event.nextCall !== undefined) seen.add("nextCall"); break;
     case "lined-up": if (event.linedUp !== undefined) seen.add("linedUp"); break;
-    case "ban-updated": if (event.ban !== undefined) seen.add("ban"); break;
     case "labels-updated": seen.add("labels"); break;
     default: break;
   }
@@ -263,11 +267,10 @@ export interface TestAdapterOptions {
   rebuild?: () => Adapter<Channel>;
   /**
    * Builds the adapter again after the agent signed out, for a backend that signs the same agent
-   * in again, as a sign-in screen would. Given it, a run whose agent is on a forced break or banned
-   * at the end signs out, signs in, and reads the new session's snapshot: an agent's forced break is
-   * gone, a team break still running is carried, and a ban is carried, their time left having run
-   * on while the agent was away. Without it, the run lists `break.forced.signIn` and `ban.signIn`
-   * under `notTested`, and either one it had nothing to carry for.
+   * in again, as a sign-in screen would. Given it, a run whose agent is banned at the end signs out,
+   * signs in, and expects the new session's snapshot to carry the same ban, its time left having
+   * run on while the agent was away. Without it, or with no ban to carry, the run lists
+   * `ban.signIn` under `notTested`.
    */
   signInAgain?: () => Adapter<Channel>;
   /**
@@ -375,9 +378,9 @@ export async function testAdapter<C extends Channel>(
     };
     const requireCapabilityMethods = (on: Connection<C>, capabilities: UserCapabilities) => {
       if (capabilities.breaks === true) {
-        // The four stand or fall together: `granted` is a promise to honour a later commit, and
+        // The five stand or fall together: `granted` is a promise to honour a later commit, and
         // an adapter with requestBreak but no commitBreak leaves an agent a break that never starts.
-        for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak"] as const) {
+        for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak", "answerBreakAsk"] as const) {
           requireMethod(on, method, "the user's capabilities include breaks");
         }
       }
@@ -774,19 +777,15 @@ export async function testAdapter<C extends Channel>(
       violations.push(...validateResult(restated, "setCapacity", "connection.setCapacity"));
     }
 
-    // Signing out ends an agent's forced break, and a ban outlives it: the agent signs out and in
-    // again and finds the ban waiting, or signing out would undo any ban. A team break still
-    // running takes the agent back in. Time left runs on while the agent is away.
+    // A ban outlives the session: the agent signs out and in again and finds it waiting, or
+    // signing out would undo any ban. Its time left runs on while the agent is away.
     if (options.signInAgain !== undefined && clientLive) {
       const refuse = (rule: string, path: string, message: string) => violations.push({ rule, path, message });
       const fresh = await connection.snapshot() as unknown;
       const readAt = Date.now();
-      const before = isRecord(fresh) && isRecord(fresh.break) ? fresh.break : undefined;
-      const forced = before !== undefined && isRecord(before.forced) ? before.forced : undefined;
-      const ban = isRecord(fresh) && isRecord(fresh.ban) ? fresh.ban : undefined;
-      if (forced !== undefined || ban !== undefined) {
-        if (forced !== undefined) seen.add("break.forced.signIn");
-        if (ban !== undefined) seen.add("ban.signIn");
+      const ban = isRecord(fresh) && isRecord(fresh.break) && isRecord(fresh.break.ban) ? fresh.break.ban : undefined;
+      if (ban !== undefined) {
+        seen.add("ban.signIn");
         ruleTested("test.signIn.rejected");
         let clean = true;
         try { unsubscribe?.(); } catch { clean = false; }
@@ -801,7 +800,6 @@ export async function testAdapter<C extends Channel>(
         try { await authentication.close(); } catch { clean = false; }
         clientLive = false;
         if (!clean) refuse("test.signIn.rejected", "test.signIn", "signing out threw: an unsubscribe, disconnect(), signOut() or close() failed");
-        const outAt = Date.now();
         try {
           const again = options.signInAgain() as Adapter<C>;
           const session = await again.createAuthenticationSession({ ...context, secrets: authenticationSecrets });
@@ -812,7 +810,6 @@ export async function testAdapter<C extends Channel>(
               refuse("test.signIn.session", "test.signIn.session",
                 `signed in again, the session says ${String(isRecord(state) ? state.status : state)}; the run needs ${String(current().identity.id)} authenticated to read what the session carries`);
             } else {
-              const inAt = Date.now();
               const reconnecting = connectingReports(connected, violations);
               let second: Connection<C>;
               try { second = await again.connect(reconnecting.context); } finally { reconnecting.settled(); }
@@ -820,9 +817,7 @@ export async function testAdapter<C extends Channel>(
                 const after = await second.snapshot() as unknown;
                 const gotAt = Date.now();
                 await snapshotRead(second, after, "test.signIn.snapshot");
-                const at = { readAt, outAt, inAt, gotAt };
-                if (before !== undefined && forced !== undefined) violations.push(...forcedBreakAfterSignIn(before, forced, after, at));
-                if (ban !== undefined) violations.push(...banCarried(ban, after, at));
+                violations.push(...banCarried(ban, after, { readAt, gotAt }));
               } finally {
                 try { await second.disconnect(); } catch { refuse("test.signIn.rejected", "test.signIn", "disconnecting the signed-in-again client threw"); }
               }
@@ -881,22 +876,26 @@ export async function testAdapter<C extends Channel>(
  * its shape.
  */
 function publishesUserIds(snapshot: Snapshot | undefined): boolean {
-  if (snapshot?.break?.forced?.by !== undefined && snapshot.break.forced.by !== "provider") return true;
+  if (snapshot?.break?.ask?.by !== undefined) return true;
+  if (snapshot?.break?.ban?.by !== undefined && snapshot.break.ban.by !== "provider") return true;
   if (teamNamesUsers(snapshot?.team)) return true;
   if (!Array.isArray(snapshot?.tasks)) return false;
   return snapshot.tasks.some(taskNamesUsers);
 }
 
-/** Every UserId a snapshot publishes: on the record, the room, a lead request, a forced break, the team member list. */
+/** Every UserId a snapshot publishes: on the record, the room, a lead request, an ask, a ban, the team member list. */
 function userIdsIn(snapshot: Snapshot | undefined): string[] {
   const ids = new Set<string>();
   const add = (value: unknown) => { if (typeof value === "string" && value.length > 0) ids.add(value); };
-  if (snapshot?.break?.forced?.by !== "provider") add(snapshot?.break?.forced?.by);
+  add(snapshot?.break?.ask?.by);
+  if (snapshot?.break?.ban?.by !== "provider") add(snapshot?.break?.ban?.by);
   const team = snapshot?.team as Record<string, unknown> | undefined;
   if (isRecord(team)) {
     for (const member of Array.isArray(team.members) ? team.members : []) {
       if (!isRecord(member)) continue;
       add(member.id);
+      if (isRecord(member.breakAsk)) add(member.breakAsk.by);
+      if (isRecord(member.ban) && member.ban.by !== "provider") add(member.ban.by);
       for (const entry of Array.isArray(member.listening) ? member.listening : []) if (isRecord(entry)) add(entry.leadId);
     }
   }
@@ -938,7 +937,8 @@ function eventNamesUsers(envelope: unknown): boolean {
   if (!isRecord(event)) return false;
   switch (event.type) {
     case "snapshot": return publishesUserIds(event.snapshot as Snapshot);
-    case "break-state": return isRecord(event.break) && isRecord(event.break.forced) && event.break.forced.by !== undefined && event.break.forced.by !== "provider";
+    case "break-state": return isRecord(event.break) && ((isRecord(event.break.ask) && event.break.ask.by !== undefined)
+      || (isRecord(event.break.ban) && event.break.ban.by !== undefined && event.break.ban.by !== "provider"));
     case "task-offered":
     case "task-updated": return taskNamesUsers(event.task);
     case "team-updated": return teamNamesUsers(event.team);
@@ -2392,9 +2392,9 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
 
 // A request goes not-requested -> awaiting-approval | granted; a commit goes granted ->
 // starting-after-task | on-break; work ending goes starting-after-task -> on-break; a denial,
-// a cancel or an explicit agent end goes back to not-requested; a lead lifting forced status
-// preserves the committed break. A forced break arrives on-break with `forced`, and never goes
-// back to not-requested while it is forced. Nothing else is a move the guide describes.
+// a cancel or an explicit agent end goes back to not-requested; an accepted ask is a grant. The
+// platform's own break, on a providerOnly reason, arrives on-break unasked. Nothing else is a move
+// the guide describes.
 /** What a stream has said about the agent's break, and the moves it may not make. */
 /**
  * The team as the events left it: whole on `team-updated` and on any snapshot carrying one, then
@@ -2483,7 +2483,7 @@ export class BreakStream {
 /**
  * A break follows its requests. Given a provider's stream -- seeded with its initial snapshot,
  * either supplied separately or carried by a snapshot event -- every `break-state` moves the way the guide describes: a commit's states only
- * after a grant, never backwards, and a break forced on the agent arriving in effect with `forced`.
+ * after a grant, never backwards, and only the platform's own break arriving in effect unasked.
  */
 export function assertBreakFollowsItsRequests(envelopes: readonly ProviderEventEnvelope[], snapshot?: Snapshot): void {
   const stream = new BreakStream();
@@ -2506,38 +2506,6 @@ export function assertAudioFollowsTheTask(envelopes: readonly ProviderEventEnvel
   assertNoViolations(found, "The audio follows the task");
 }
 
-/**
- * The forced break the agent signed out on, held to what the next session carries. Signing out ended
- * an agent's own; a team break still running takes them back in, from the same person, on the same
- * reason, its time left having run on while they were away. Each bound allows a second of rounding.
- */
-function forcedBreakAfterSignIn(before: Record<string, unknown>, forced: Record<string, unknown>, after: unknown,
-  at: { readAt: number; gotAt: number }): ProtocolViolation[] {
-  const found: ProtocolViolation[] = [];
-  const now = isRecord(after) && isRecord(after.break) ? after.break : undefined;
-  const carried = now !== undefined && isRecord(now.forced) ? now.forced : undefined;
-  ruleTested("test.signIn.forcedBreak");
-  if (forced.scope !== "team") {
-    if (carried !== undefined && carried.scope === "agent") found.push({ rule: "test.signIn.forcedBreak", path: "test.signIn.snapshot.break.forced",
-      message: `the agent signed out on their own break forced by ${String(forced.by)}, and the next session still carries one: signing out ends it, and a ban is what keeps an agent from work across sessions` });
-    return found;
-  }
-  const left = typeof forced.endsInSeconds === "number" ? forced.endsInSeconds : undefined;
-  const whole = Math.floor((at.gotAt - at.readAt) / 1000);
-  // A team break that could have run out while the agent was away may rightly be gone.
-  if (left !== undefined && left - whole <= 1) return found;
-  if (carried === undefined || !(now!.status === "on-break" || now!.status === "starting-after-task")
-    || carried.by !== forced.by || carried.scope !== "team" || now!.activeReasonId !== before.activeReasonId) {
-    found.push({ rule: "test.signIn.forcedBreak", path: "test.signIn.snapshot.break",
-      message: `the agent signed out on a team break forced by ${String(forced.by)} that is still running, and the next session's snapshot carries ${carried === undefined ? "no forced break" : `a break forced by ${String(carried.by)}, ${String(carried.scope)}, on ${String(now!.activeReasonId)}`}: a member who signs in while a team break runs is on it` });
-    return found;
-  }
-  ruleTested("test.signIn.endsInSeconds");
-  const fault = timeLeftRanOn(left, carried.endsInSeconds, whole, "break");
-  if (fault !== undefined) found.push({ rule: "test.signIn.endsInSeconds", path: "test.signIn.snapshot.break.forced.endsInSeconds", message: fault });
-  return found;
-}
-
 /** The ban the agent signed out under, held to the one the next session carries: the same ban, its time left having run on. */
 function banCarried(ban: Record<string, unknown>, after: unknown, at: { readAt: number; gotAt: number }): ProtocolViolation[] {
   const found: ProtocolViolation[] = [];
@@ -2546,14 +2514,14 @@ function banCarried(ban: Record<string, unknown>, after: unknown, at: { readAt: 
   // A ban that could have run out while the agent was away may rightly be gone.
   if (left !== undefined && left - whole <= 1) return found;
   ruleTested("test.signIn.ban");
-  const carried = isRecord(after) && isRecord(after.ban) ? after.ban : undefined;
+  const carried = isRecord(after) && isRecord(after.break) && after.break.type === "ban" && isRecord(after.break.ban) ? after.break.ban : undefined;
   if (carried === undefined || carried.by !== ban.by) {
-    found.push({ rule: "test.signIn.ban", path: "test.signIn.snapshot.ban",
+    found.push({ rule: "test.signIn.ban", path: "test.signIn.snapshot.break.ban",
       message: `the agent signed out under a ban placed by ${String(ban.by)}, and the next session's snapshot carries ${carried === undefined ? "none" : `one placed by ${String(carried.by)}`}: signing out does not end a ban` });
     return found;
   }
   const fault = timeLeftRanOn(left, carried.endsInSeconds, whole, "ban");
-  if (fault !== undefined) found.push({ rule: "test.signIn.ban", path: "test.signIn.snapshot.ban.endsInSeconds", message: fault });
+  if (fault !== undefined) found.push({ rule: "test.signIn.ban", path: "test.signIn.snapshot.break.ban.endsInSeconds", message: fault });
   return found;
 }
 
@@ -2647,32 +2615,6 @@ export interface BreakCandidate {
 
 const usableSession = (status: AuthenticationState["status"]): boolean =>
   status === "authenticated" || status === "refreshing";
-
-/**
- * A break one provider forces stops the agent everywhere: the host states a capacity of zero on
- * every other usable provider holding capacity -- taken, never refused, and nothing the agent can
- * cancel -- and on the forcing provider states nothing, since the break itself holds the agent
- * there. A provider whose session is not usable is left alone, as a break attempt leaves it.
- */
-export function assertForcedBreakStopsTheRest(forcedOn: string, candidates: readonly BreakCandidate[], stopped: readonly string[]): void {
-  if (!candidates.some(candidate => candidate.id === forcedOn)) throw new Error(`${forcedOn} is not a provider the host knows`);
-  const chosen = new Set(stopped);
-  for (const id of stopped) {
-    if (!candidates.some(candidate => candidate.id === id)) throw new Error(`${id} is not a provider the host knows`);
-  }
-  if (chosen.has(forcedOn)) throw new Error(`${forcedOn} forced the break and holds the agent itself: its capacity is not restated`);
-  for (const candidate of candidates) {
-    if (candidate.id === forcedOn) continue;
-    const expected = usableSession(candidate.authentication) && candidate.holdsCapacity;
-    if (expected && !chosen.has(candidate.id)) {
-      throw new Error(`${candidate.id} can give the agent work and must be stopped: capacity 0 stated`);
-    }
-    if (!expected && chosen.has(candidate.id)) {
-      const why = usableSession(candidate.authentication) ? "holds no capacity" : `is ${candidate.authentication}`;
-      throw new Error(`${candidate.id} ${why} and is not stopped: there is nothing to stop`);
-    }
-  }
-}
 
 /**
  * A break attempt asks every connected provider from which the agent can currently receive work.

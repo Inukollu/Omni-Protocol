@@ -15,7 +15,6 @@ import {
   LEAD_COMMAND_CAPABILITY,
   SHIFT_EVENT_KINDS,
   SHIFT_FIGURES,
-  FORCED_BREAK_SCOPES,
   type RecordingAction,
   type RecordingStatus,
   RECORDING_SIDES,
@@ -24,6 +23,7 @@ import {
   RECORDING_UNKNOWN_REASONS,
   ALLOWED_BROWSER_URL_SCHEMES,
   BREAK_KINDS,
+  BREAK_TYPES,
   BROWSER_ISOLATION_SCHEMES,
   HISTORY_STEPS_THAT_DIAL,
   IDLE_CAPABILITIES,
@@ -129,7 +129,7 @@ const BREAK_APPROVALS = membersOf<BreakStatus>({
   "not-requested": true, "awaiting-approval": true, granted: true, "starting-after-task": true, "on-break": true,
 });
 const TEAM_AVAILABILITIES = membersOf<TeamMemberAvailability>({
-  ready: true, "on-task": true, "on-break": true, elsewhere: true, banned: true, "signed-out": true,
+  ready: true, "on-task": true, "on-break": true, elsewhere: true, banned: true, "tools-not-ready": true, "signed-out": true,
 });
 const HISTORY_STEPS = membersOf<HistoryStep>({
   arrived: true, "self-service": true, queued: true, offered: true, answered: true, held: true, muted: true, transferred: true, added: true, unanswered: true,
@@ -1574,29 +1574,35 @@ function validateTaskInto(task: unknown, context: TaskValidationContext, path: s
 // Breaks, team, snapshot.
 // ---------------------------------------------------------------------------
 
-function validateForcedBreak(value: unknown, path: string, into: Collector): void {
-  if (!isPlainObject(value)) {
-    into.add("break.forced.shape", path, "a forced break must be an object");
+/**
+ * A lead's ask, as the member's own break state or the lead's team list carries it: an id, the lead,
+ * the reason it names -- published, and never the provider's own -- and since when.
+ */
+function validateBreakAskInto(value: unknown, path: string, into: Collector, reasons: unknown, member: boolean): void {
+  if (!isPlainObject(value)) { into.add("break.ask.shape", path, "an ask must be an object; with no ask, send none"); return; }
+  into.filled(value.id, "break.ask.id", `${path}.id`, "an ask needs an id: the answer names it");
+  into.require(isUserId(value.by), "break.ask.by", `${path}.by`, "an ask names the lead who asked, by user id");
+  if (value.reason !== undefined) into.filled(value.reason, "break.ask.reason", `${path}.reason`, "a reason must not be empty when present");
+  if (value.durationSeconds !== undefined) into.require(isDurationSeconds(value.durationSeconds) && (value.durationSeconds as number) > 0,
+    "break.ask.durationSeconds", `${path}.durationSeconds`, "durationSeconds is how long the lead expects: a whole number of seconds, more than zero");
+  into.timestamp(value.since, "break.ask.since", `${path}.since`);
+  if (member && value.declinedAt !== undefined) into.timestamp(value.declinedAt, "break.ask.declinedAt", `${path}.declinedAt`);
+  const fields = ["id", "by", "reasonId", "reason", "durationSeconds", "since", ...(member ? ["declinedAt"] : [])];
+  for (const key of Object.keys(value)) into.require(fields.includes(key), "break.ask.field", `${path}.${key}`, "unsupported field on an ask");
+  // The lead's list carries no reason codes; the member's own break state does.
+  if (member) return;
+  if (reasons === undefined) {
+    into.require(value.reasonId === undefined, "break.ask.reasonId", `${path}.reasonId`, "no reason codes are published, so an ask names none");
     return;
   }
-  into.require(isUserId(value.by) || value.by === "provider", "break.forced.by", `${path}.by`, "a forced break says who forced it: the lead by user id, or provider where the platform did");
-  for (const field of ["endsAutomatically", "endsAt"] as const) {
-    into.require(!Object.hasOwn(value, field), "break.forced.manualResume", `${path}.${field}`,
-      "the end is endsInSeconds, counted from each publication; after it the agent resumes by their own choice");
-  }
-  into.oneOf(value.scope, FORCED_BREAK_SCOPES, "break.forced.scope", `${path}.scope`);
-  into.require(value.scope !== "team" || value.endsInSeconds !== undefined, "break.forced.team.endsInSeconds", `${path}.endsInSeconds`,
-    "a team break always has an end: state endsInSeconds on every publication, and lift the break when it runs out");
-  into.require(!Object.hasOwn(value, "expectedEndsInSeconds"), "break.forced.expectedEndsInSeconds.renamed", `${path}.expectedEndsInSeconds`,
-    "expectedEndsInSeconds is now endsInSeconds: the break is lifted when it runs out");
-  into.require(!Object.hasOwn(value, "expectedDurationMs"), "break.forced.expectedDurationMs.renamed", `${path}.expectedDurationMs`,
-    "the state says how long is left, as endsInSeconds; the duration asked for travels on the lead's command alone");
-  if (value.endsInSeconds !== undefined) into.require(isDurationSeconds(value.endsInSeconds),
-    "break.forced.endsInSeconds", `${path}.endsInSeconds`, "endsInSeconds is how long the break has left: a whole number of seconds, zero or more, counted from this publication");
-
+  const list = Array.isArray(reasons) ? reasons : [];
+  const named = list.find((r: unknown) => isPlainObject(r) && r.id === value.reasonId);
+  into.require(isPlainObject(named), "break.ask.reasonId", `${path}.reasonId`, "an ask names one of the published reasons: the break it asks for is on it");
+  into.require(!(isPlainObject(named) && named.providerOnly === true), "break.ask.reasonId.providerOnly", `${path}.reasonId`,
+    "this reason is the provider's own: the platform puts the agent on it, and a lead does not ask for it");
 }
 
-/** The agent's ban: who placed it, the words why, and what is left of it. */
+/** A provider's ban on the agent: who placed it, the words why, and what is left of it. */
 export function validateBan(value: unknown, path = "ban"): ProtocolViolation[] {
   const into = new Collector();
   validateBanInto(value, path, into);
@@ -1646,7 +1652,7 @@ export function validateBreakStatus(state: unknown, tasks: unknown, path = "snap
 
 /**
  * Checks a lead command before dispatch, against the current authentication, transport and team
- * member list (`team`) and, for force-break and end-forced-break, the target's full `memberBreak`.
+ * member list (`team`) and, for ask-break, the target's full `memberBreak`.
  * The authority is the lead capability the command needs, on the session's `lead`; the provider rechecks the target and the state
  * atomically, since a team member list is not authority to act after it has changed.
  */
@@ -1668,8 +1674,7 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
   const allowed: Record<string, readonly string[]> = {
     "lead-features": ["type", "enabled"],
     "decide-break-request": ["type", "memberId", "decision", "reason"], "set-break-policy": ["type", "policy"],
-    "force-break": ["type", "memberId", "reasonId", "reason", "durationSeconds"], "end-forced-break": ["type", "memberId"],
-    "force-team-break": ["type", "reasonId", "reason", "durationSeconds"], "end-team-break": ["type"],
+    "ask-break": ["type", "memberId", "reasonId", "reason", "durationSeconds"], "withdraw-break-ask": ["type", "memberId"],
     ban: ["type", "memberId", "reason", "durationSeconds"], "lift-ban": ["type", "memberId"],
     join: member, decline: [...member, "reason"], listen: member, coach: member, "join-call": member, leave: member, "take-over-call": member,
     "set-policy": ["type", "capability", "setting"],
@@ -1685,16 +1690,9 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
   }
   for (const key of Object.keys(request)) into.require(key === "command", "team.request.field", `${path}.${key}`, "only command is supported");
   for (const key of Object.keys(command)) into.require(fields.includes(key), "team.command.field", `${path}.${key}`, "field is not supported for this command");
-  if (command.type === "force-break" || command.type === "force-team-break") {
-    into.require(!Object.hasOwn(command, "expectedDurationSeconds"), "team.command.expectedDurationSeconds.renamed", `${path}.expectedDurationSeconds`,
-      "expectedDurationSeconds is now durationSeconds: the break is lifted when it runs out");
-    if (command.durationSeconds !== undefined || command.type === "force-team-break") into.require(
-      isDurationSeconds(command.durationSeconds) && (command.durationSeconds as number) > 0,
-      "team.command.durationSeconds", `${path}.durationSeconds`, "durationSeconds must be a whole number of seconds, more than zero; a team break always states one");
-    if (command.reasonId !== undefined) into.filled(command.reasonId, "team.command.reasonId", path, "reasonId must not be empty");
-  }
-  // A team break names no member: the provider rechecks its reason codes and whether one is running.
-  if (command.type === "force-team-break" || command.type === "end-team-break") return into.violations;
+  if (command.durationSeconds !== undefined) into.require(isDurationSeconds(command.durationSeconds) && (command.durationSeconds as number) > 0,
+    "team.command.durationSeconds", `${path}.durationSeconds`, "durationSeconds must be a whole number of seconds, more than zero");
+  if (command.reasonId !== undefined) into.filled(command.reasonId, "team.command.reasonId", path, "reasonId must not be empty");
   if (command.reason !== undefined) into.filled(command.reason, "team.command.reason", path, "reason must not be empty");
   if (command.type === "lead-features") {
     into.require(typeof command.enabled === "boolean", "team.command.enabled", `${path}.enabled`, "lead-features says on or off, as a boolean");
@@ -1727,34 +1725,37 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
       "team.command.assignmentId.unknown", `${path}.assignmentId`, "the assignment named is not one the team member list shows the member holding");
   }
   if (command.type === "ban") {
-    if (command.durationSeconds !== undefined) into.require(isDurationSeconds(command.durationSeconds) && (command.durationSeconds as number) > 0,
-      "team.command.durationSeconds", `${path}.durationSeconds`, "durationSeconds must be a whole number of seconds, more than zero");
     into.require(!(isPlainObject(target) && target.ban !== undefined), "team.command.ban.standing", path,
       "this member is banned already: lift the ban before placing another");
   } else if (command.type === "lift-ban") {
-    into.require(isPlainObject(target) && target.ban !== undefined, "team.command.liftBan", path,
+    const ban = isPlainObject(target) ? target.ban : undefined;
+    into.require(ban !== undefined, "team.command.liftBan", path,
       "lift a ban the team member list shows on the member, and this member has none");
+    // The platform lifts a ban it placed itself, such as a phone that will not register.
+    into.require(!(isPlainObject(ban) && ban.by === "provider"), "team.command.liftBan.provider", path,
+      "the platform placed this ban, and it lifts it: a lead lifts a ban a lead placed");
+  } else if (command.type === "withdraw-break-ask") {
+    into.require(isPlainObject(target) && target.breakAsk !== undefined, "team.command.withdrawBreakAsk", path,
+      "withdraw an ask the team member list shows on the member, and this member has none");
   } else if (command.type === "decide-break-request") {
     into.require(command.decision === "granted" || command.decision === "denied", "team.command.decision", path, "decide granted or denied");
     into.require(isPlainObject(target) && target.break === "awaiting-approval", "team.command.awaiting", path,
       "decide only a currently awaiting-approval request");
-  } else if (command.type === "force-break" || command.type === "end-forced-break") {
+  } else if (command.type === "ask-break") {
+    // One ask at a time, to a member with no break of their own under way; a declined one is replaced.
+    const asked = isPlainObject(target) && isPlainObject(target.breakAsk) ? target.breakAsk : undefined;
+    into.require(asked === undefined || asked.declinedAt !== undefined, "team.command.askBreak.standing", path,
+      "this member has an ask standing: withdraw it, or wait for the answer, before asking again");
+    into.require(isPlainObject(target) && target.break === undefined && target.ban === undefined
+      && !["on-break", "banned", "tools-not-ready", "signed-out"].includes(target.availability as string),
+      "team.command.askBreak.member", path, "ask a member who is signed in, not banned, with nothing in effect and no break of their own under way");
     validateBreakState(context.memberBreak, `${path}.memberBreak`, into);
     const state = isPlainObject(context.memberBreak) ? context.memberBreak : {};
-    if (command.type === "end-forced-break") {
-      into.require(state.forced !== undefined && (state.status === "on-break" || state.status === "starting-after-task"),
-        "team.command.endForcedBreak", path, "lift a current forced-break restriction without resuming the agent");
-      // The platform lifts a break it imposed itself; a lead lifts one a lead asked for.
-      into.require(!(isPlainObject(state.forced) && state.forced.by === "provider"), "team.command.endForcedBreak.provider", path,
-        "the platform put this member on the break, and it lifts it: a lead ends a break a lead forced");
-    }
-    if (command.type === "force-break") {
-      const reasons = Array.isArray(state.reasons) ? state.reasons : [];
-      into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
-        "team.command.reasonId", path, "force-break uses the target's currently published reason codes");
-      into.require(!reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId && r.providerOnly === true),
-        "team.command.reasonId.providerOnly", path, "this reason is the provider's own: the platform puts a member on it, and a lead does not");
-    }
+    const reasons = Array.isArray(state.reasons) ? state.reasons : [];
+    into.require(state.reasons === undefined ? command.reasonId === undefined : reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId),
+      "team.command.reasonId", path, "ask-break names one of the target's currently published reason codes");
+    into.require(!reasons.some((r: unknown) => isPlainObject(r) && r.id === command.reasonId && r.providerOnly === true),
+      "team.command.reasonId.providerOnly", path, "this reason is the provider's own: the platform puts a member on it, and a lead does not ask for it");
   } else if (command.type === "join" || command.type === "decline") {
     const asked = isPlainObject(target) && isPlainObject(target.request) ? target.request : undefined;
     into.require(asked !== undefined && (command.assignmentId === undefined || asked.assignmentId === command.assignmentId),
@@ -1768,7 +1769,7 @@ export function validateTeamCommand(request: unknown, context: unknown, path = "
 }
 
 /** The four agent break methods; this is a validation API, not a wire command. */
-export type BreakMethod = "requestBreak" | "commitBreak" | "cancelBreak" | "endBreak";
+export type BreakMethod = "requestBreak" | "commitBreak" | "cancelBreak" | "endBreak" | "answerBreakAsk";
 
 /**
  * Validate immediately before dispatch against current provider state. Context must contain
@@ -1790,7 +1791,7 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
   into.require(isPlainObject(auth.capabilities) && auth.capabilities.breaks === true, "break.command.capability", path,
     "the session must declare breaks");
   into.require(context.transport === "active", "break.command.transport", path, "break commands require active transport");
-  if (!["requestBreak", "commitBreak", "cancelBreak", "endBreak"].includes(method)) {
+  if (!["requestBreak", "commitBreak", "cancelBreak", "endBreak", "answerBreakAsk"].includes(method)) {
     into.add("break.command.method", path, "unknown break method");
     return into.violations;
   }
@@ -1815,6 +1816,12 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
       "this reason is the provider's own: it puts the agent on it, and nobody asks for it");
     into.require(state.canRequestBreak === true || (isPlainObject(selected) && selected.alwaysAvailable === true),
       "break.request.canRequestBreak", path, "asking is disabled except for the selected alwaysAvailable reason");
+  } else if (method === "answerBreakAsk") {
+    if (!isPlainObject(request)) { into.add("break.answer.shape", path, "answerBreakAsk takes the ask's id and the answer"); return into.violations; }
+    for (const key of Object.keys(request)) into.require(key === "askId" || key === "answer", "break.answer.field", `${path}.${key}`, "an answer carries only askId and answer");
+    into.require(request.answer === "accepted" || request.answer === "declined", "break.answer.answer", `${path}.answer`, "answer accepted or declined");
+    into.require(isPlainObject(state.ask) && state.ask.id === request.askId, "break.command.answer.ask", path,
+      "answer the ask the break state carries: this one is not standing");
   } else {
     into.require(request === undefined, "break.command.arguments", path, "this break method takes no arguments");
     if (method === "commitBreak") into.require(status === "granted" || status === "starting-after-task" || status === "on-break",
@@ -1824,8 +1831,8 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
     if (method === "endBreak") {
       into.require(status === "starting-after-task" || status === "on-break", "break.command.end.started", path,
         "end a committed break, including a returning provider still finishing work");
-      into.require(state.forced === undefined, "break.command.end.forced", path,
-        "a forced break is not the agent's to end: it ends only when it is lifted");
+      into.require(state.type === undefined || state.type === "break", "break.command.end.type", path,
+        state.type === "ban" ? "a ban is lifted, never ended by the agent" : "the platform ends tools not ready when the tools are ready");
     }
   }
   return into.violations;
@@ -1846,13 +1853,13 @@ export function validateBreakTransition(before: unknown, after: unknown, path = 
   const from = before.status as BreakStatus;
   const to = after.status as BreakStatus;
   const committed = to === "starting-after-task" || to === "on-break";
-  if (committed && (from === "not-requested" || from === "awaiting-approval") && after.forced === undefined) {
+  // A break follows a grant, but for the one the platform places on its own reason. A ban and tools
+  // not ready arrive unasked, and a ban ends a break the agent was on.
+  const reasons = Array.isArray(after.reasons) ? after.reasons : [];
+  const placed = reasons.some((r: unknown) => isPlainObject(r) && r.id === after.activeReasonId && r.providerOnly === true);
+  if (committed && after.type === "break" && before.type !== "break" && from !== "granted" && !placed) {
     into.add("stream.breakState.commitBeforeGrant", `${path}.after.status`,
-      `${to} follows a commit, and a commit follows granted; the break stood at ${from}`);
-  }
-  if (before.forced !== undefined && from !== "not-requested" && to === "not-requested") {
-    into.add("stream.breakState.forcedEnded", `${path}.after.status`,
-      "a forced break is lifted first, clearing forced, before the break can end");
+      `the agent's own break follows a commit, and a commit follows granted; the break stood at ${from}${before.type === undefined ? "" : `, ${String(before.type)}`}`);
   }
   const backwards =
     (from === "on-break" && (to === "awaiting-approval" || to === "granted" || to === "starting-after-task")) ||
@@ -1868,8 +1875,8 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     into.add("break.shape", path, "break state must be an object");
     return;
   }
-  into.require(!Object.hasOwn(value, "imposed"), "break.forced.renamed", `${path}.imposed`,
-    "imposed was renamed to forced; use only forced");
+  for (const retired of ["imposed", "forced"]) into.require(!Object.hasOwn(value, retired), "break.forced.retired", `${path}.${retired}`,
+    "forced breaks are retired: a lead asks the agent to take a break (ask), or bans them on this provider (Snapshot.ban)");
   into.require(!Object.hasOwn(value, "approval"), "break.status.renamed", `${path}.approval`,
     "BreakState.approval was renamed to status; use only status");
   into.oneOf(value.status, BREAK_APPROVALS, "break.status", `${path}.status`);
@@ -1905,13 +1912,25 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
     into.require(value.status !== "not-requested", "break.activeReasonId.status", `${path}.activeReasonId`,
       "activeReasonId must be omitted when no break is requested or in effect");
   }
-  if (value.forced !== undefined) {
-    validateForcedBreak(value.forced, `${path}.forced`, into);
-    // A forced break is a break somebody forced; beside `not-requested` there is no break.
-    // A forced break is a break in progress or about to be: it travels with on-break or
-    // starting-after-task and nothing else. Beside granted, the host would commit a break nobody asked for.
-    into.require(value.status === "on-break" || value.status === "starting-after-task", "break.forced.status", `${path}.forced`,
-      `a forced break is in effect or starting after the task; ${describeValue(value.status)} says the agent asked, or that there is none`);
+  // A break in effect says which kind it is, and only a ban carries a ban's terms.
+  const committed = value.status === "on-break" || value.status === "starting-after-task";
+  if (value.type !== undefined) {
+    into.oneOf(value.type, BREAK_TYPES, "break.type", `${path}.type`);
+    into.require(committed, "break.type.status", `${path}.type`, "type says what a break in effect is: with no break in effect, send none");
+  } else {
+    into.require(!committed, "break.type.required", `${path}.type`, `a break ${describeValue(value.status)} says which kind it is: break, ban or tools-not-ready`);
+  }
+  if (value.ban !== undefined) {
+    validateBanInto(value.ban, `${path}.ban`, into);
+    into.require(value.type === "ban", "break.ban.type", `${path}.ban`, "a ban's terms travel with type ban, and only with it");
+  } else {
+    into.require(value.type !== "ban", "break.ban.required", `${path}.ban`, "a ban says who placed it: send its terms as ban");
+  }
+  // A lead's ask stands only while the agent has no break of their own under way.
+  if (value.ask !== undefined) {
+    validateBreakAskInto(value.ask, `${path}.ask`, into, value.reasons, false);
+    into.require(value.status === "not-requested", "break.ask.status", `${path}.ask`,
+      `an ask stands only beside not-requested: a break ${describeValue(value.status)} answers or overtakes it`);
   }
 
   if (value.reasons === undefined) return;
@@ -1948,16 +1967,22 @@ function validateBreakState(value: unknown, path: string, into: Collector): void
         "a providerOnly reason is offered to nobody, so it cannot be alwaysAvailable");
     }
   });
-  // The active reason is one of the published ones, or it is a reason Omni cannot name.
+  // The active reason is one of the published ones, or it is a reason Omni cannot name. Tools not
+  // ready are always on the platform's own reason.
   if (typeof value.activeReasonId === "string" && value.activeReasonId.length > 0) {
     into.require(seen.has(value.activeReasonId), "break.activeReasonId.known", `${path}.activeReasonId`,
       `activeReasonId names a reason the provider did not publish: ${value.activeReasonId}`);
+    const active = value.reasons.find((r: unknown) => isPlainObject(r) && r.id === value.activeReasonId);
+    const own = isPlainObject(active) && active.providerOnly === true;
+    if (value.type === "tools-not-ready") into.require(own || active === undefined, "break.activeReasonId.toolsNotReady", `${path}.activeReasonId`,
+      "tools not ready is on one of the platform's own reasons, marked providerOnly");
+    into.require(value.type !== "ban", "break.activeReasonId.ban", `${path}.activeReasonId`, "a ban says why in ban.reason, and names no break reason");
   }
-  // A break in effect, or about to be, on a provider that publishes reasons is on one of them: an
-  // forced one included, since the lead's force-break command named it. A break of no kind is a break whose
+  // A break in effect, or about to be, on a provider that publishes reasons is on one of them: the
+  // platform's own included, and one a lead asked for, whose ask named it. A break of no kind is a break whose
   // rules -- who may listen through it, whether it counts -- nobody can apply.
   ruleTested("break.activeReasonId.required");
-  if (seen.size > 0 && (value.status === "on-break" || value.status === "starting-after-task")) {
+  if (seen.size > 0 && (value.status === "on-break" || value.status === "starting-after-task") && value.type !== "ban") {
     into.require(typeof value.activeReasonId === "string" && value.activeReasonId.length > 0, "break.activeReasonId.required", `${path}.activeReasonId`,
       `a break ${describeValue(value.status)} on a provider that publishes reasons names the one it is on`);
   }
@@ -2148,6 +2173,14 @@ function validateTeamMemberInto(member: unknown, at: string, context: TeamValida
   } else {
     into.require(member.availability !== "banned", "team.member.ban.required", `${at}.availability`, "a member shown as banned carries the ban");
   }
+  // A lead's ask: standing while the member is signed in with no break of their own, or declined.
+  if (member.breakAsk !== undefined) {
+    validateBreakAskInto(member.breakAsk, `${at}.breakAsk`, into, undefined, true);
+    if (isPlainObject(member.breakAsk) && member.breakAsk.declinedAt === undefined) {
+      into.require(member.break === undefined && member.availability !== "on-break" && member.availability !== "signed-out",
+        "team.member.breakAsk.standing", `${at}.breakAsk`, "an ask stands only for a member signed in with no break of their own: a break or a sign-out ends it");
+    }
+  }
   // The member's own queue, as their own snapshot carries it.
   if (member.nextCall !== undefined) validateNextCallInto(member.nextCall, `${at}.nextCall`, into);
   if (member.linedUp !== undefined) validateLinedUpInto(member.linedUp, `${at}.linedUp`, into, context.levels);
@@ -2196,14 +2229,6 @@ export function validateSnapshot(snapshot: unknown, manifest: unknown, path = "s
   const atWork = Array.isArray(snapshot.tasks) && snapshot.tasks.some((task: unknown) => isPlainObject(task) && (task.phase === "in-progress" || task.phase === "paused" || task.phase === "completing"));
   const breakStatus = isPlainObject(snapshot.break) ? snapshot.break.status : undefined;
   const breakStands = typeof breakStatus === "string" && breakStatus !== "not-requested";
-  // A ban stops new work: nothing offered, nothing asked for or lined up next.
-  if (snapshot.ban !== undefined) {
-    validateBanInto(snapshot.ban, `${path}.ban`, into);
-    into.require(!(Array.isArray(snapshot.tasks) && snapshot.tasks.some((task: unknown) => isPlainObject(task) && task.phase === "pending")),
-      "snapshot.ban.pending", `${path}.tasks`, "a banned agent is offered nothing: the provider withdraws an offer the ban overtook");
-    into.require(snapshot.nextCall === undefined && snapshot.linedUp === undefined, "snapshot.ban.next", path,
-      "a banned agent has no next call asked for or lined up: the provider clears them");
-  }
   if (snapshot.nextCall !== undefined) {
     validateNextCallInto(snapshot.nextCall, `${path}.nextCall`, into);
     into.require(atWork, "snapshot.nextCall.idle", `${path}.nextCall`,
@@ -2551,9 +2576,6 @@ export function validateEventEnvelope(envelope: unknown, manifest: unknown, path
     case "next-call":
       if (event.nextCall !== undefined) validateNextCallInto(event.nextCall, `${at}.nextCall`, into);
       break;
-    case "ban-updated":
-      if (event.ban !== undefined) validateBanInto(event.ban, `${at}.ban`, into);
-      break;
     case "lined-up":
       if (event.linedUp !== undefined) validateLinedUpInto(event.linedUp, `${at}.linedUp`, into, levels);
       break;
@@ -2748,7 +2770,7 @@ function validateShiftInto(value: unknown, path: string, into: Collector, rule: 
     into.require(Date.parse(value.signedOutAt as string) >= Date.parse(value.signedInAt as string), `${rule}.signedOutAt.order`, `${path}.signedOutAt`,
       "a member signs out after signing in");
   }
-  for (const field of ["talkSeconds", "holdSeconds", "breakSeconds", "wrapSeconds", "previewSeconds", "signedInSeconds", "averageHandleSeconds"] as const) {
+  for (const field of ["talkSeconds", "holdSeconds", "breakSeconds", "banSeconds", "toolsNotReadySeconds", "wrapSeconds", "previewSeconds", "signedInSeconds", "averageHandleSeconds"] as const) {
     if (value[field] !== undefined) into.require(isDurationSeconds(value[field]), `${rule}.${field}`, `${path}.${field}`,
       `${field} must be a whole number of seconds, zero or more, or omitted when unknown`);
   }
@@ -2792,8 +2814,9 @@ function validateShiftInto(value: unknown, path: string, into: Collector, rule: 
         into.require(!seen.has(entry.figure), `${rule}.running.duplicate`, `${at}.figure`,
           `${String(entry.figure)} is already running: a figure has one running stretch at a time`);
         seen.add(entry.figure);
-        into.require(!(entry.figure === "signed-in" && value.signedOutAt !== undefined), `${rule}.running.signedOut`, `${at}.figure`,
-          "the member is signed out, so their time signed in is not running");
+        // Signed out, no figure runs: the time is nobody's, a ban's included.
+        into.require(!((entry.figure === "signed-in" || entry.figure === "ban" || entry.figure === "tools-not-ready") && value.signedOutAt !== undefined),
+          `${rule}.running.signedOut`, `${at}.figure`, `the member is signed out, so their ${String(entry.figure)} time is not running`);
       });
     }
   }
@@ -3361,6 +3384,7 @@ export type ResultMethod =
   | "commitBreak"
   | "cancelBreak"
   | "endBreak"
+  | "answerBreakAsk"
   | "requestNextCall"
   | "cancelNextCall"
   | "releaseLinedUp"
@@ -3380,6 +3404,7 @@ const RESULT_STATUSES: Record<ResultMethod, { success: string; failure: string |
   commitBreak: { success: "committed", failure: "failed" },
   cancelBreak: { success: "cancelled", failure: "failed" },
   endBreak: { success: "ended", failure: "failed" },
+  answerBreakAsk: { success: "answered", failure: "failed" },
   requestNextCall: { success: "requested", failure: "failed" },
   cancelNextCall: { success: "cancelled", failure: "failed" },
   releaseLinedUp: { success: "released", failure: "failed" },

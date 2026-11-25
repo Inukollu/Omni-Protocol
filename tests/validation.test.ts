@@ -38,7 +38,7 @@ import {
   type ProtocolViolation,
 } from "../src/validation.js";
 
-const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, forceBreak: true, endForcedBreak: true, setPolicy: true } as const;
+const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, askBreak: true, ban: true, setPolicy: true } as const;
 
 const LEVELS = ["org", "site", "team", "person"];
 
@@ -591,12 +591,12 @@ describe("break state", () => {
 
   it("accepts each approval and rejects one the contract dropped", () => {
     for (const status of ["not-requested", "awaiting-approval", "granted", "on-break"]) {
-      expect(check({ status })).toEqual([]);
+      expect(check({ status, ...(status === "on-break" ? { type: "break" } : {}) })).toEqual([]);
     }
     // A break starting after the task waits on a task: beside one it stands, beside none it is refused, since with
     // nothing outstanding the break is in effect.
-    expect(rules(validateSnapshot(snapshot({ break: { status: "starting-after-task", canRequestBreak: true }, tasks: [task()], providerTime: CLOCK }), timed()))).toEqual([]);
-    expect(check({ status: "starting-after-task" })).toEqual(["break.starting-after-task.tasks"]);
+    expect(rules(validateSnapshot(snapshot({ break: { status: "starting-after-task", type: "break", canRequestBreak: true }, tasks: [task()], providerTime: CLOCK }), timed()))).toEqual([]);
+    expect(check({ status: "starting-after-task", type: "break" })).toEqual(["break.starting-after-task.tasks"]);
     {
     }
     // "approved" and "denied" were the previous vocabulary. Accepting them would let two
@@ -609,17 +609,17 @@ describe("break state", () => {
     // A break begins when the work ends. Until then the state is starting-after-task, which may
     // stand beside any task; on-break beside one is a report of a state the agent cannot be in.
     const withTask = (status: string) =>
-      rules(validateSnapshot(snapshot({ tasks: [task()], break: { status, canRequestBreak: true }, providerTime: CLOCK }), timed()));
+      rules(validateSnapshot(snapshot({ tasks: [task()], break: { status, canRequestBreak: true, ...(status === "on-break" || status === "starting-after-task" ? { type: "break" } : {}) }, providerTime: CLOCK }), timed()));
     expect(withTask("starting-after-task")).toEqual([]);
     expect(withTask("granted")).toEqual([]);
     expect(withTask("on-break")).toEqual(["break.on-break.tasks"]);
-    expect(check({ status: "on-break" })).toEqual([]);
+    expect(check({ status: "on-break", type: "break" })).toEqual([]);
   });
 
   it("reports an active reason only when a break is happening", () => {
     expect(check({ status: "not-requested", activeReasonId: "lunch" })).toContain("break.activeReasonId.status");
-    expect(check({ status: "on-break", activeReasonId: "lunch" })).toEqual([]);
-    expect(check({ status: "on-break", activeReasonId: "" })).toContain("break.activeReasonId");
+    expect(check({ status: "on-break", type: "break", activeReasonId: "lunch" })).toEqual([]);
+    expect(check({ status: "on-break", type: "break", activeReasonId: "" })).toContain("break.activeReasonId");
   });
 
   it("validates break reasons and their kinds", () => {
@@ -636,57 +636,57 @@ describe("break state", () => {
       .toEqual(["break.reason.providerOnly.alwaysAvailable"]);
   });
 
-  it("names a provider-forced break by the provider's own reason", () => {
+  it("names tools not ready by the provider's own reason, and a ban by its own words", () => {
     const reasons = [{ id: "lunch", label: "Lunch" }, { id: "no-phone", label: "No phone", kind: "technical", providerOnly: true }];
-    expect(check({ status: "on-break", reasons, activeReasonId: "no-phone", forced: { by: "provider", scope: "agent" } })).toEqual([]);
-    expect(check({ status: "on-break", reasons, forced: { by: "provider", scope: "agent" } })).toContain("break.activeReasonId.required");
+    expect(check({ status: "on-break", type: "tools-not-ready", reasons, activeReasonId: "no-phone" })).toEqual([]);
+    expect(check({ status: "on-break", type: "tools-not-ready", reasons })).toContain("break.activeReasonId.required");
+    expect(check({ status: "on-break", type: "ban", reasons, ban: { by: "provider", reason: "Compliance hold" } })).toEqual([]);
+    // The one break the platform places is on its own reason too, after an offer rang out.
+    expect(check({ status: "on-break", type: "break", reasons, activeReasonId: "no-phone" })).toEqual([]);
   });
 
-  it("lets a forced break travel with on-break or starting-after-task, and nothing else", () => {
-    const placed = { by: "lead-3", scope: "agent" };
-    expect(check({ status: "on-break", forced: placed })).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ break: { status: "starting-after-task", canRequestBreak: false, forced: placed }, tasks: [task()], providerTime: CLOCK }), timed()))).toEqual([]);
-    // Beside granted or awaiting-approval the host would commit a break nobody asked for.
-    expect(check({ status: "granted", forced: placed })).toEqual(["break.forced.status"]);
-    expect(check({ status: "awaiting-approval", forced: placed })).toEqual(["break.forced.status"]);
-    expect(check({ status: "not-requested", forced: placed })).toEqual(["break.forced.status"]);
+  it("carries a ban's terms: who placed it, the words why, and the time left", () => {
+    const banned = (ban: unknown) => check({ status: "on-break", type: "ban", ban });
+    expect(banned({ by: "lead-3" })).toEqual([]);
+    expect(banned({ by: "provider", reason: "Compliance hold", endsInSeconds: 0 })).toEqual([]);
+    expect(banned("x")).toEqual(["ban.shape"]);
+    expect(banned({})).toEqual(["ban.by"]);
+    expect(banned({ by: "lead-3", reason: "" })).toEqual(["ban.reason"]);
+    for (const endsInSeconds of [-1, 1.5, Infinity, NaN, "500", null]) expect(banned({ by: "lead-3", endsInSeconds })).toEqual(["ban.endsInSeconds"]);
+    expect(banned({ by: "lead-3", until: "2026-11-26T09:00:00Z" })).toEqual(["ban.field"]);
   });
 
-  it("requires a break in effect on a provider that publishes reasons to name the one it is on, a forced one included", () => {
+  it("holds a lead's ask to its shape, beside no break, on a reason the agent could ask for", () => {
+    const ask = { id: "ask-1", by: "lead-3", reasonId: "lunch", reason: "Training, room 4", durationSeconds: 1800, since: "2026-11-25T14:00:00Z" };
+    const reasons = [{ id: "lunch", label: "Lunch" }, { id: "no-phone", label: "No phone", providerOnly: true }];
+    const asked = (value: unknown, over: Record<string, unknown> = {}) => check({ reasons, ask: value, ...over });
+    expect(asked(ask)).toEqual([]);
+    expect(asked("x")).toEqual(["break.ask.shape"]);
+    expect(asked({ ...ask, id: "" })).toEqual(["break.ask.id"]);
+    expect(asked({ ...ask, by: "" })).toEqual(["break.ask.by"]);
+    expect(asked({ ...ask, reason: "" })).toEqual(["break.ask.reason"]);
+    expect(asked({ ...ask, durationSeconds: 0 })).toEqual(["break.ask.durationSeconds"]);
+    expect(asked({ ...ask, since: "soon" })).toEqual(["break.ask.since"]);
+    expect(asked({ ...ask, declinedAt: "2026-11-25T14:01:00Z" })).toEqual(["break.ask.field"]);
+    expect(asked({ ...ask, reasonId: "tea" })).toEqual(["break.ask.reasonId"]);
+    expect(asked({ ...ask, reasonId: "no-phone" })).toEqual(["break.ask.reasonId.providerOnly"]);
+    expect(check({ ask: { ...ask, reasonId: undefined } })).toEqual([]);
+    expect(check({ ask })).toEqual(["break.ask.reasonId"]);
+    expect(asked(ask, { status: "granted" })).toEqual(["break.ask.status"]);
+  });
+
+  it("refuses a forced break, which is retired", () => {
+    expect(check({ status: "on-break", type: "break", forced: { by: "lead-3", scope: "agent" } })).toEqual(["break.forced.retired"]);
+  });
+
+  it("requires a break in effect on a provider that publishes reasons to name the one it is on, a ban excepted", () => {
     const reasons = [{ id: "meal", label: "Meal", kind: "meal" }, { id: "coach", label: "Coaching", kind: "coaching" }];
-    expect(check({ status: "on-break", reasons, activeReasonId: "meal" })).toEqual([]);
-    expect(check({ status: "on-break", reasons })).toEqual(["break.activeReasonId.required"]);
-    expect(check({ status: "on-break", reasons, forced: { by: "lead-3", scope: "agent" } })).toEqual(["break.activeReasonId.required"]);
-    // The platform itself forces a break on its own rule or a schedule: provider, and no person named.
-    expect(check({ status: "on-break", forced: { by: "provider", scope: "agent" } })).toEqual([]);
-    expect(check({ status: "on-break", forced: { by: "lead-3", scope: "agent" } })).toEqual([]);
-    expect(check({ status: "on-break", forced: { by: "", scope: "agent" } })).toEqual(["break.forced.by"]);
+    expect(check({ status: "on-break", type: "break", reasons, activeReasonId: "meal" })).toEqual([]);
+    expect(check({ status: "on-break", type: "break", reasons })).toEqual(["break.activeReasonId.required"]);
+    expect(check({ status: "on-break", type: "ban", reasons, ban: { by: "lead-3" } })).toEqual([]);
     // No reasons published, nothing to name; not in effect, nothing to name yet.
-    expect(check({ status: "on-break" })).toEqual([]);
+    expect(check({ status: "on-break", type: "break" })).toEqual([]);
     expect(check({ status: "granted", reasons })).toEqual([]);
-  });
-
-  it("keeps the actor, the scope and the time left of a forced break", () => {
-    const forced = (value: unknown) => check({ status: "on-break", forced: value });
-    expect(forced({ by: "lead-3", scope: "agent" })).toEqual([]);
-    // How long is left, as seconds from this publication, so every screen counts down the same number.
-    expect(forced({ by: "lead-3", scope: "agent", endsInSeconds: 600 })).toEqual([]);
-    expect(forced({ by: "lead-3", scope: "agent", endsInSeconds: 0 })).toEqual([]);
-    expect(forced({})).toContain("break.forced.by");
-    expect(forced({ by: "", scope: "agent" })).toContain("break.forced.by");
-    for (const endsInSeconds of [-1, 1.5, Infinity, NaN, "500", null]) {
-      expect(forced({ by: "lead-3", scope: "agent", endsInSeconds })).toContain("break.forced.endsInSeconds");
-    }
-    // Every forced break says whom it covers, and a team break always has an end.
-    for (const scope of [undefined, "member", ""]) expect(forced({ by: "lead-3", scope })).toEqual(["break.forced.scope"]);
-    expect(forced({ by: "provider", scope: "team", endsInSeconds: 1800 })).toEqual([]);
-    expect(forced({ by: "provider", scope: "team" })).toEqual(["break.forced.team.endsInSeconds"]);
-    expect(forced({ by: "lead-3", scope: "agent", expectedEndsInSeconds: 600 })).toEqual(["break.forced.expectedEndsInSeconds.renamed"]);
-    // The duration asked for travels on the lead's command; the state says what is left.
-    expect(forced({ by: "lead-3", scope: "agent", expectedDurationMs: 600000 })).toEqual(["break.forced.expectedDurationMs.renamed"]);
-    for (const fields of [{ endsAutomatically: true }, { endsAutomatically: false }, { endsAt: "2026-09-11T10:00:00Z" }]) {
-      expect(forced({ by: "lead-3", scope: "agent", ...fields })).toContain("break.forced.manualResume");
-    }
   });
 });
 
@@ -838,7 +838,7 @@ describe("validateTeamMembers", () => {
     // A lined-up call needs an agent at work, as the ask does: idle, it is an offer that has not been made.
     expect(rules(validateSnapshot(snapshot({ linedUp: lined }), manifest()))).toEqual(["snapshot.linedUp.idle"]);
     // A break wins: neither the ask nor the lined-up call stands beside a break in flight or in effect.
-    const onBreak = (status: string) => ({ status, canRequestBreak: true });
+    const onBreak = (status: string) => ({ status, canRequestBreak: true, ...(status === "on-break" || status === "starting-after-task" ? { type: "break" } : {}) });
     for (const status of ["awaiting-approval", "granted", "starting-after-task"]) {
       expect(rules(validateSnapshot(busy({ nextCall: { since: at }, break: onBreak(status) }), timed())), status).toEqual(["snapshot.nextCall.break"]);
       expect(rules(validateSnapshot(busy({ linedUp: lined, break: onBreak(status) }), timed())), status).toEqual(["snapshot.linedUp.break"]);
@@ -1252,7 +1252,7 @@ describe("validateEventEnvelope", () => {
   it("validates each event type", () => {
     expect(check({ type: "snapshot", reason: "reconnected", snapshot: snapshot() })).toEqual([]);
     expect(check({ type: "snapshot", reason: "because", snapshot: snapshot() })).toContain("event.snapshot.reason");
-    expect(check({ type: "break-state", break: { status: "on-break", canRequestBreak: false } })).toEqual([]);
+    expect(check({ type: "break-state", break: { status: "on-break", type: "break", canRequestBreak: false } })).toEqual([]);
     expect(check({ type: "task-offered", task: task({ phase: "pending", acceptance: "consent" }) })).toEqual([]);
     expect(check({ type: "task-offered", task: task({ phase: "pending", acceptance: "whenever" }) })).toContain("task.acceptance");
     expect(check({ type: "task-audio-ended", assignmentId: "alloc-42" })).toEqual([]);
@@ -1670,48 +1670,43 @@ describe("the other direction, everywhere", () => {
       rules(validateSnapshot(snapshot({ break: { status: "not-requested", canRequestBreak: true, ...over } }), manifest()));
     expect(check({ canRequestBreak: false, requestUnavailableReason: "Busy hours" })).toEqual([]);
     expect(check({ canRequestBreak: true, requestUnavailableReason: "Busy hours" })).toEqual(["break.requestUnavailableReason.canRequestBreak"]);
-    const placed = { by: "M-1", scope: "agent" };
-    expect(check({ status: "on-break", forced: placed })).toEqual([]);
-    expect(check({ status: "not-requested", forced: placed })).toEqual(["break.forced.status"]);
+    expect(check({ status: "on-break", type: "ban", ban: { by: "M-1" } })).toEqual([]);
+    expect(check({ status: "not-requested", type: "ban", ban: { by: "M-1" } })).toEqual(["break.type.status"]);
     const reasons = [{ id: "lunch", label: "Lunch" }];
-    expect(check({ status: "on-break", reasons, activeReasonId: "lunch" })).toEqual([]);
-    expect(check({ status: "on-break", activeReasonId: "lunch" })).toEqual([]);
-    expect(check({ status: "on-break", reasons, activeReasonId: "tea" })).toEqual(["break.activeReasonId.known"]);
+    expect(check({ status: "on-break", type: "break", reasons, activeReasonId: "lunch" })).toEqual([]);
+    expect(check({ status: "on-break", type: "break", activeReasonId: "lunch" })).toEqual([]);
+    expect(check({ status: "on-break", type: "break", reasons, activeReasonId: "tea" })).toEqual(["break.activeReasonId.known"]);
     // A provider with no reasons omits the field; the empty list is a second spelling of that.
     expect(check({ reasons })).toEqual([]);
     expect(check({})).toEqual([]);
     expect(check({ reasons: [] })).toEqual(["break.reasons.empty"]);
   });
 
-  it("holds a ban to its shape, stops new work beside it, and shows it on the member", () => {
-    const ban = { by: "M-1", reason: "Compliance review", endsInSeconds: 3600 };
+  it("stops new work beside a ban as beside any break in effect, and shows it on the member", () => {
     const at = "2026-08-21T09:00:00Z";
+    const ban = { by: "M-1", reason: "Compliance review", endsInSeconds: 3600 };
+    const banned = { status: "on-break", type: "ban", canRequestBreak: false, ban };
     const working = task({ phase: "in-progress", audio: "started", capabilities: {} });
-    expect(rules(validateSnapshot(snapshot({ ban }), manifest()))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ ban: { by: "provider" } }), manifest()))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ ban: "yes" }), manifest()))).toEqual(["ban.shape"]);
-    expect(rules(validateSnapshot(snapshot({ ban: { ...ban, by: "" } }), manifest()))).toEqual(["ban.by"]);
-    expect(rules(validateSnapshot(snapshot({ ban: { ...ban, reason: "" } }), manifest()))).toEqual(["ban.reason"]);
-    expect(rules(validateSnapshot(snapshot({ ban: { ...ban, endsInSeconds: 1.5 } }), manifest()))).toEqual(["ban.endsInSeconds"]);
-    expect(rules(validateSnapshot(snapshot({ ban: { ...ban, until: at } }), manifest()))).toEqual(["ban.field"]);
-    // A task in hand runs to its end; an offer and the agent's own queue do not stand beside a ban.
-    expect(rules(validateSnapshot(snapshot({ ban, tasks: [working], providerTime: CLOCK }), timed()))).toEqual([]);
-    expect(rules(validateSnapshot(snapshot({ ban, tasks: [task({ phase: "pending" })] }), manifest()))).toContain("snapshot.ban.pending");
-    expect(rules(validateSnapshot(snapshot({ tasks: [task({ phase: "pending" })] }), manifest()))).not.toContain("snapshot.ban.pending");
-    expect(rules(validateSnapshot(snapshot({ ban, tasks: [working], nextCall: { since: at }, providerTime: CLOCK }), timed()))).toEqual(["snapshot.ban.next"]);
-    expect(rules(validateSnapshot(snapshot({ ban, tasks: [working], linedUp: { since: at }, providerTime: CLOCK }), timed()))).toEqual(["snapshot.ban.next"]);
-    // On its own event, present or lifted.
-    const check = (event: unknown) => rules(validateEventEnvelope(envelope(event), manifest()));
-    expect(check({ type: "ban-updated", ban })).toEqual([]);
-    expect(check({ type: "ban-updated" })).toEqual([]);
-    expect(check({ type: "ban-updated", ban: { by: "M-1", endsInSeconds: -1 } })).toEqual(["ban.endsInSeconds"]);
+    expect(rules(validateSnapshot(snapshot({ break: banned }), manifest()))).toEqual([]);
+    // A task in hand runs to its end first: the ban is starting after it.
+    expect(rules(validateSnapshot(snapshot({ break: { ...banned, status: "starting-after-task" }, tasks: [working], providerTime: CLOCK }), timed()))).toEqual([]);
+    expect(rules(validateSnapshot(snapshot({ break: banned, tasks: [working], providerTime: CLOCK }), timed()))).toContain("break.on-break.tasks");
+    expect(rules(validateSnapshot(snapshot({ break: { ...banned, status: "starting-after-task" }, tasks: [working], nextCall: { since: at }, providerTime: CLOCK }), timed()))).toContain("snapshot.nextCall.break");
     // On the member: banned with nothing in hand, on-task with a task, or signed out; and banned means a ban.
     const member = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", ...over }] }, "team", { levels: LEVELS }));
     for (const availability of ["banned", "on-task", "signed-out"]) expect(member({ availability, ban }), availability).toEqual([]);
-    for (const availability of ["ready", "on-break", "elsewhere"]) expect(member({ availability, ban }), availability).toEqual(["team.member.ban.availability"]);
+    for (const availability of ["ready", "on-break", "elsewhere", "tools-not-ready"]) expect(member({ availability, ban }), availability).toEqual(["team.member.ban.availability"]);
     expect(member({ availability: "banned" })).toEqual(["team.member.ban.required"]);
     expect(member({ availability: "banned", ban: { by: "" } })).toEqual(["ban.by"]);
+    expect(member({ availability: "tools-not-ready" })).toEqual([]);
+    // A lead's ask on the member: standing while they are here with no break, or declined, with when.
+    const ask = { id: "ask-1", by: "L-9", since: at };
+    expect(member({ availability: "ready", breakAsk: ask })).toEqual([]);
+    expect(member({ availability: "on-break", breakAsk: ask })).toEqual(["team.member.breakAsk.standing"]);
+    expect(member({ availability: "signed-out", breakAsk: { ...ask, declinedAt: at } })).toEqual([]);
+    expect(member({ availability: "ready", breakAsk: { ...ask, declinedAt: "then" } })).toEqual(["break.ask.declinedAt"]);
   });
+
 
   it("lets only an outstanding request appear on a team member", () => {
     const member = (over: Record<string, unknown>) => rules(validateTeamMembers({ members: [{ id: "A-2", availability: "on-task", ...over }] }, "team", { levels: LEVELS }));
@@ -1736,7 +1731,7 @@ describe("the other direction, everywhere", () => {
   it("lets a call a lead took over sit beside the lead's break, and no other task", () => {
     const at = "2026-08-21T09:05:00Z";
     const taken = task({ assignmentId: "call-1", capabilities: {}, takenOver: { memberId: "A-1", since: at } });
-    const onBreak = (tasks: unknown[]) => rules(validateSnapshot(snapshot({ break: { status: "on-break", canRequestBreak: true }, tasks, taskCount: tasks.length, providerTime: CLOCK }), timed()));
+    const onBreak = (tasks: unknown[]) => rules(validateSnapshot(snapshot({ break: { status: "on-break", type: "break", canRequestBreak: true }, tasks, taskCount: tasks.length, providerTime: CLOCK }), timed()));
     expect(onBreak([taken])).toEqual([]);
     expect(onBreak([task({ assignmentId: "call-2" })])).toEqual(["break.on-break.tasks"]);
     expect(onBreak([taken, task({ assignmentId: "call-2" })])).toEqual(["break.on-break.tasks"]);
@@ -2937,7 +2932,7 @@ describe("every refusal of the wrong shape names its rule", () => {
   const ev = (event: Record<string, unknown>) => validateEventEnvelope(envelope(event), manifest({ idleCapabilities: { calendar: true } }));
   const at = "2026-08-21T09:00:00Z";
   const summary = { title: "Voice", waitingCount: 0, updatedAt: at, metrics: [] };
-  const breakOn = { status: "on-break", canRequestBreak: false, activeReasonId: "lunch", reasons: [{ id: "lunch", label: "Lunch", kind: "meal" }] };
+  const breakOn = { status: "on-break", type: "break", canRequestBreak: false, activeReasonId: "lunch", reasons: [{ id: "lunch", label: "Lunch", kind: "meal" }] };
   const rows: [string, () => ProtocolViolation[], () => ProtocolViolation[], string][] = [
     ["contact attributes", () => validateContact({ name: "A", attributes: "x" }, LEVELS), () => validateContact({ name: "A", attributes: [] }, LEVELS), "attributes.shape"],
     ["contact attribute", () => validateContact({ name: "A", attributes: ["x"] }, LEVELS), () => validateContact({ name: "A", attributes: [] }, LEVELS), "attribute.shape"],
@@ -2960,7 +2955,7 @@ describe("every refusal of the wrong shape names its rule", () => {
     ["on the call", () => t({ onCall: "x" }), () => t({ onCall: [] }), "task.onCall.shape"],
     ["lead assist", () => t({ capabilities: { leadAssist: true }, leadAssist: "x" }), () => t({ capabilities: { leadAssist: true } }), "task.leadAssist.shape"],
     ["taken over", () => t({ takenOver: "x" }), () => t({ takenOver: { memberId: "A-1", since: at } }), "task.takenOver.shape"],
-    ["forced break", () => snap({ break: { ...breakOn, forced: "x" } }), () => snap({ break: breakOn }), "break.forced.shape"],
+    ["ban", () => snap({ break: { ...breakOn, type: "ban", activeReasonId: undefined, ban: "x" } }), () => snap({ break: { ...breakOn, type: "ban", activeReasonId: undefined, ban: { by: "M-1" } } }), "ban.shape"],
     ["break reasons", () => snap({ break: { status: "not-requested", canRequestBreak: true, reasons: "x" } }), () => snap({}), "break.reasons.shape"],
     ["break reason", () => snap({ break: { status: "not-requested", canRequestBreak: true, reasons: ["x"] } }), () => snap({}), "break.reason.shape"],
     ["team", () => validateTeamMembers("x", "team", { levels: LEVELS }), () => validateTeamMembers({ members: [] }, "team", { levels: LEVELS }), "team.shape"],
