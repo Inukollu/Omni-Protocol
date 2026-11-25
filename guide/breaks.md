@@ -1,6 +1,6 @@
 # `@xema/omni-protocol`: Breaks
 
-The three kinds of time away -- a break, a ban, tools not ready -- a lead asking the agent to take a break, capacity, and one break across several providers. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
+The three kinds of time away -- a break, a ban, tools not ready -- a lead prompting the agent to take a break, capacity, and one break across several providers. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
 
 ## Breaks
 
@@ -20,7 +20,7 @@ nothing while none are being accepted — so they are not published separately.
 | `activeReasonId` | The `BreakReason.id` the current break is on. Omitted when there is no break. Required on a break `on-break` or `starting-after-task` where the provider publishes `reasons`, tools not ready included and a ban excepted (`break.activeReasonId.required`): a break with a kind the provider cannot name is a break whose rules nobody can apply. |
 | `type` | Which kind of time away a break in effect is: `break`, `ban` or `tools-not-ready`. See **Three kinds of time away**. |
 | `ban` | A ban's terms, with `type: "ban"` alone. See **Bans**. |
-| `ask` | A lead's ask that the agent take a break, while it stands. See **A lead asks for a break**. |
+| `pendingPrompt` | A lead's prompt that the agent take a break, while it stands. See **A lead prompts a break**. |
 
 A request can be waiting for two unrelated things, and they are separate values because
 rendering one as the other tells an agent to wait for somebody who is never coming:
@@ -50,39 +50,42 @@ something a busy hour can cancel, and Omni keeps offering those while the rest a
 register, a station being set up -- still needs a reason, since `activeReasonId` names it where
 reasons are published, and so does the one break the platform places itself, after an offer rang
 out unanswered on a hardphone. Mark it `providerOnly`: the flag says the platform chose it. Omni
-leaves it out of the agent's choices and out of a lead's `ask-break`, and a request or an ask
+leaves it out of the agent's choices and out of a lead's `prompt-break`, and a request or a prompt
 naming it is refused
 (`break.request.reasonId.providerOnly`, `team.command.reasonId.providerOnly`). It is never `alwaysAvailable`
 (`break.reason.providerOnly.alwaysAvailable`).
 
-### A lead asks for a break
+### A lead prompts a break
 
 A break is the agent's own: their time away from work, which counts as break time and reaches
 every provider they work. Nobody else puts them on one, with one exception: after an offer rang out
 unanswered on a hardphone, the platform puts the agent on a break on its own reason, and the agent
 ends it when they are back. A hardphone is one the agent could have answered. On a softphone the
 agent had no choice, so a missed offer there is tools not ready, not a break: on a softphone
-session, a `break` on a `providerOnly` reason is refused (`stream.breakState.softphone`). A lead who wants the agent somewhere else --
-training, a meeting, a coaching session -- asks, and the agent answers. The agent has a say because
-the hours are theirs.
+session, a `break` on a `providerOnly` reason is refused (`stream.breakState.softphone`).
 
-The ask arrives on the agent's own break state as `BreakState.ask`, and travels with `break-state`
-like the rest of it.
+A lead who wants the agent somewhere else -- training, a meeting, a coaching session -- prompts a
+break, and the agent answers. The agent has a say because the hours are theirs. Prompting is an act,
+not a kind of break: an accepted prompt is the agent's own break, and nothing on it records the
+prompt.
+
+The prompt arrives on the agent's own break state as `BreakState.pendingPrompt`, and travels with
+`break-state` like the rest of it.
 
 | Field | Contract |
 | --- | --- |
-| `id` | Names this ask (`break.ask.id`). The answer names it. |
-| `by` | The lead who asked, by user id (`break.ask.by`). `getUserDetails()` is owed for them. |
-| `reasonId` | The break it asks for: one of the published reasons, required where reasons are published, and never a `providerOnly` one (`break.ask.reasonId`, `.providerOnly`). |
-| `reason` | Optional. The lead's words, shown to the agent (`break.ask.reason`). |
-| `durationSeconds` | Optional. How long the lead expects it to take, for the agent to decide by (`break.ask.durationSeconds`). It ends nothing: the agent ends their break. |
-| `since` | When the lead asked (`break.ask.since`). |
+| `id` | Names this prompt (`break.pendingPrompt.id`). The answer names it. |
+| `by` | The lead who prompted it, by user id (`break.pendingPrompt.by`). `getUserDetails()` is owed for them. |
+| `reasonId` | The break it prompts: one of the published reasons, required where reasons are published, and never a `providerOnly` one (`break.pendingPrompt.reasonId`, `.providerOnly`). |
+| `reason` | Optional. The lead's words, shown to the agent (`break.pendingPrompt.reason`). |
+| `durationSeconds` | Optional. How long the lead expects it to take, for the agent to decide by (`break.pendingPrompt.durationSeconds`). It ends nothing: the agent ends their break. |
+| `since` | When the lead prompted it (`break.pendingPrompt.since`). |
 
 For example:
 
 ```ts
-ask: {
-  id: "ask-77",
+pendingPrompt: {
+  id: "prompt-77",
   by: "manager-1042",
   reasonId: "training",
   reason: "New billing flow, room 4",
@@ -91,29 +94,29 @@ ask: {
 }
 ```
 
-**The agent answers it.** The agent application shows the ask with Accept and Decline, and sends
-the answer as `answerBreakAsk({ askId, answer })`. An answer that names an ask the break state does
-not carry is refused before it is sent (`break.command.answer.ask`), and a provider that receives
-one answers `failed` with `omni.break-ask-gone`.
+**The agent answers it.** The agent application shows the prompt with Accept and Decline, and sends
+the answer as `answerPrompt({ promptId, answer })`. An answer that names a prompt the break state
+does not carry is refused before it is sent (`break.command.answer.prompt`), and a provider that
+receives one answers `failed` with `omni.prompt-gone`.
 
-- **Accepted**, it is the agent's break, already approved. The provider clears the ask and moves
-  the break to `granted`, on the ask's reason. From there it is any grant: the agent application
-  commits it on every provider the agent works, as **One break across several providers** below
-  sets out, and the break starts at once, or as `starting-after-task` while a task is in hand.
-  The agent ends it when they are back, as they end any break.
-- **Declined**, the provider clears the ask, and the break state says nothing more.
+- **Accepted**, it is the agent's own request for that break, already approved. The provider clears
+  the prompt and moves the break to `granted`, on the prompt's reason. From there it is any grant:
+  the agent application commits it on every provider the agent works, as **One break across several
+  providers** below sets out, and the break starts at once, or as `starting-after-task` while a task
+  is in hand. The agent ends it when they are back, as they end any break.
+- **Declined**, the provider clears the prompt, and the break state says nothing more.
 
-**One ask at a time, and only while there is no break.** An ask stands beside `not-requested` and
-nothing else (`break.ask.status`). It goes when the agent answers it, when the lead withdraws it,
-when the agent takes a break of their own anyway, and when they sign out: an ask is for the session
-it was made in.
+**One prompt at a time, and only while there is no break.** A prompt stands beside `not-requested`
+and nothing else (`break.pendingPrompt.status`). It goes when the agent answers it, when the lead
+withdraws it, when the agent takes a break of their own anyway, and when they sign out: a prompt is
+for the session it was made in. A failover within that session keeps it.
 
-**The lead sees the answer.** The member's entry on the lead's team list carries the ask as
-`breakAsk`, standing while the member has not answered. A declined ask stays there with
-`declinedAt` until the lead withdraws it or asks again, so a lead can tell "no" from "not yet". An
-accepted ask is gone from the list, and the member's break shows instead. The lead sends
-`ask-break` and `withdraw-break-ask`; see **Lead commands** in `guide/lead.md`. A lead asking the
-whole team asks each member: one ask, and one answer, per person.
+**The lead sees the answer.** The member's entry on the lead's team list carries the prompt as
+`pendingPrompt`, standing while the member has not answered. A declined prompt stays there with
+`declinedAt` until the lead withdraws it or prompts again, so a lead can tell "no" from "not yet".
+An accepted prompt is gone from the list, and the member's break shows instead. The lead sends
+`prompt-break` and `withdraw-prompt`; see **Lead commands** in `guide/lead.md`. A lead prompting the
+whole team prompts each member: one prompt, and one answer, per person.
 
 ### Three kinds of time away
 
@@ -123,7 +126,7 @@ agent is on one, or on none.
 
 | `type` | What it is | Who starts it | Who ends it | Reaches | Counts as | Signing out |
 | --- | --- | --- | --- | --- | --- | --- |
-| `break` | Time off work | The agent, asking or accepting a lead's ask; or the platform, after an offer rang out unanswered on a hardphone | The agent | Every provider they work; the platform's own, this provider | `breakSeconds` | Ends it |
+| `break` | Time off work | The agent, asking or accepting a lead's prompt; or the platform, after an offer rang out unanswered on a hardphone | The agent | Every provider they work; the platform's own, this provider | `breakSeconds` | Ends it |
 | `ban` | A lead's judgement, or the platform's, that the agent may not take this provider's work | A lead, or the platform | Whoever placed it, or its time running out | This provider alone | `banSeconds` | Does not end it |
 | `tools-not-ready` | The agent's tools cannot carry this provider's work | The platform | The platform, when the tools are ready | This provider alone | `toolsNotReadySeconds` | Ends it |
 
@@ -172,10 +175,10 @@ break: {
 ```
 
 **A ban ends a break.** An agent on a break of their own when the ban comes is on the ban instead,
-and the break time stops there. A lead's ask standing is withdrawn. While banned the agent cannot
-ask for a break, accept an ask, or end the ban: the agent application offers none of those, and the
-provider answers any that arrives `failed` with `omni.banned`. A lead cannot ask a banned member
-(`team.command.askBreak.member`). A ban replaces tools not ready too; when it lifts and the tools are
+and the break time stops there. A lead's prompt standing is withdrawn. While banned the agent cannot
+ask for a break, accept a prompt, or end the ban: the agent application offers none of those, and the
+provider answers any that arrives `failed` with `omni.banned`. A lead cannot prompt a banned member
+(`team.command.promptBreak.member`). A ban replaces tools not ready too; when it lifts and the tools are
 still not ready, tools not ready follows.
 
 **While a ban stands, nothing new starts here.** The provider offers nothing, and clears any next
@@ -212,12 +215,12 @@ now has its own place:
 
 | Was | Now |
 | --- | --- |
-| A lead taking the agent away, such as for training | `ask-break`: the agent accepts or declines |
+| A lead taking the agent away, such as for training | `prompt-break`: the agent accepts or declines |
 | A lead stopping the agent from working | `ban`, on this provider only |
 | The platform holding the agent until its tools are ready | `type: "tools-not-ready"`, which the platform ends |
 | The platform's short break after an offer rang out on a hardphone, which the agent clears with Resume | `type: "break"`, on a `providerOnly` reason |
 | The same hold after an offer a softphone missed | `type: "tools-not-ready"`, which the platform ends |
-| A team break | One ask per member, from the lead's desk |
+| A team break | One prompt per member, from the lead's desk |
 
 Every break in effect now says its `type` (`break.type.required`). A platform hold that becomes tools
 not ready, or a ban, stops counting as break time and counts in its own figure, `toolsNotReadySeconds`
@@ -355,7 +358,7 @@ Use `validateBreakCommand(method, request, state, context)` from the validation 
 before any agent break dispatch. The context supplies current authentication and transport, and
 the manifest's `levels` the session is validated against;
 all five methods require the live session's break capability and active transport. Pass the
-request object to the request method and the answer to `answerBreakAsk`, and undefined to the other three.
+request object to the request method and the answer to `answerPrompt`, and undefined to the other three.
 
 | Method | Required current state |
 | --- | --- |
@@ -363,14 +366,14 @@ request object to the request method and the answer to `answerBreakAsk`, and und
 | `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `canRequestBreak` does not revoke the grant. |
 | `cancelBreak` | `awaiting-approval` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
 | `endBreak` | `on-break` or `starting-after-task` during reconciliation, on a `break`; never a ban or tools not ready (`break.command.end.type`). |
-| `answerBreakAsk` | A standing `ask` with the id the answer names (`break.command.answer.ask`), and an answer of `accepted` or `declined` (`break.answer.answer`). |
+| `answerPrompt` | A standing `pendingPrompt` with the id the answer names (`break.command.answer.prompt`), and an answer of `accepted` or `declined` (`break.answer.answer`). |
 
 Use `validateTeamCommand(request, context)` before every lead act, its context carrying the manifest's `levels` as the break check's does: the team feature switch, break
-decisions, asking a member for a break and withdrawing the ask, banning and unblocking, policy, and every act on a member's call. It requires
+decisions, prompting a member's break and withdrawing the prompt, banning and unblocking, policy, and every act on a member's call. It requires
 the live `lead` capability the command needs and active transport, a current team member list for any command naming a
-member, and the target's complete break state for an ask. Approve/deny requires an
-awaiting decision; an ask uses the target's reason codes and needs a member signed in with no break of their own and no ask
-standing (`team.command.askBreak.member`, `.standing`); a withdrawal needs the ask on the list; a ban needs none standing, and
+member, and the target's complete break state for a prompt. Approve/deny requires an
+awaiting decision; a prompt uses the target's reason codes and needs a member signed in with no break of their own and no prompt
+standing (`team.command.promptBreak.member`, `.standing`); a withdrawal needs the prompt on the list; a ban needs none standing, and
 an lift-ban a lead's ban on the list; join and decline need the member's request on the list; coach, join-call
 and leave need the lead already on that member's call; an assignment named must be one the list
 shows the member holding. The context's target state must belong to the named member; that
@@ -393,13 +396,13 @@ required; per-provider validation does not implement the multi-provider coordina
 ### `requestBreak(request)`
 
 **Explanatory text is optional.** An agent may omit `BreakRequest.reason` for any break type.
-A lead may likewise omit reason text from `ask-break`. Do not require a text explanation
-just because a break is agent-requested or asked for by a lead. If supplied, text must be nonempty; omit
+A lead may likewise omit reason text from `prompt-break`. Do not require a text explanation
+just because a break is agent-requested or prompted by a lead. If supplied, text must be nonempty; omit
 it rather than sending an empty string. A selected `reasonId` identifies a published break
 choice and is separate from this optional text.
 
 With published choices, `{ reasonId: "lunch" }` is a valid request without explanation;
-without published choices, `{}` is valid. A lead can similarly send an `ask-break` command
+without published choices, `{}` is valid. A lead can similarly send an `prompt-break` command
 with its member ID and, where required, the selected reason ID, without reason text.
 
 Requests permission to stop the agent later; it does not itself stop work. The provider continues

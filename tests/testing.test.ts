@@ -4,7 +4,7 @@ import type { SessionStore, Refusal, PhoneState, SecretStore, AuthenticationCont
 import { validateTask } from "../src/validation.js";
 import { memoryStore, assertHistoryAgreesAcrossTasks, assertAuthenticationRestoreAndExpiry, assertBrowserProfileIsolation, assertCapabilityWithdrawal, assertTaskCapabilityWithdrawal, assertCommandRefusedAfterWithdrawal, assertBreakBeginsAfterTask, assertBreakFollowsItsRequests, assertBreakAttemptProviders, assertAudioFollowsTheTask, assertDeniedAndRetriedBreak, assertDuplicateEventDelivery, assertNoBrowserProfileKeyCollisions, assertReconnectWithMissedAssignments, ProtocolConformanceError, testAdapter, assertReached, type ContractSubject, stillHost, TaskStream } from "../src/testing.js";
 
-const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, askBreak: true, ban: true, setPolicy: true } as const;
+const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, promptBreak: true, ban: true, setPolicy: true } as const;
 
 const LEVELS = ["org", "site", "team", "person"];
 
@@ -250,9 +250,9 @@ describe("assertBreakFollowsItsRequests", () => {
     // The platform's own break: in effect with nobody asking, on a providerOnly reason, and ended by the agent.
     const own = { reasons: [{ id: "no-answer", label: "No answer", providerOnly: true }], activeReasonId: "no-answer" };
     expect(rulesOf(() => assertBreakFollowsItsRequests([state("on-break", own), state("not-requested", { reasons: own.reasons })], idle))).toEqual([]);
-    // A lead's ask, accepted: it is a grant, committed as any grant is.
-    const ask = { id: "ask-1", by: "M-1", since: at };
-    expect(rulesOf(() => assertBreakFollowsItsRequests([state("not-requested", { ask }), state("granted"), state("on-break"), state("not-requested", {}, "ended")], idle))).toEqual([]);
+    // A lead's prompt, accepted: it is a grant, committed as any grant is.
+    const ask = { id: "prompt-1", by: "M-1", since: at };
+    expect(rulesOf(() => assertBreakFollowsItsRequests([state("not-requested", { pendingPrompt: ask }), state("granted"), state("on-break"), state("not-requested", {}, "ended")], idle))).toEqual([]);
     // A reconnect snapshot resets where the break stands; the same state twice is nothing.
     const reconnect: ProviderEventEnvelope<"voice"> = { id: "r", sessionId: "session-1", occurredAt: at, event: { type: "snapshot", reason: "reconnected", snapshot: { ...idle, break: { status: "granted", canRequestBreak: true } } } };
     expect(rulesOf(() => assertBreakFollowsItsRequests([reconnect, state("starting-after-task"), state("starting-after-task", {}, "again")], idle))).toEqual([]);
@@ -1004,7 +1004,7 @@ function makeAdapter(overrides: AdapterOverrides = {}) {
         commitBreak: async () => ({ status: "committed" }),
         cancelBreak: async () => ({ status: "cancelled" }),
         endBreak: async () => ({ status: "ended" }),
-        answerBreakAsk: async () => ({ status: "answered" }),
+        answerPrompt: async () => ({ status: "answered" }),
         requestNextCall: async () => ({ status: "requested" }),
         cancelNextCall: async () => ({ status: "cancelled" }),
         releaseLinedUp: async () => ({ status: "released" }),
@@ -1137,7 +1137,7 @@ describe("testAdapter", () => {
 
   it("says what the run never reached, so a clean result is read for what it covers", async () => {
     // The rich fixture carries a task, a contact and an activity but no team member list, no break reasons,
-    // no lead's ask, no ban, and delivers no event; the bare fixture reaches nothing at all.
+    // no lead's prompt, no ban, and delivers no event; the bare fixture reaches nothing at all.
     const run = async (overrides: AdapterOverrides) =>
       (await testAdapter(makeAdapter(overrides).adapter, context, { collectOnly: true })).notTested;
     const state = (subjects: readonly ContractSubject[]) => subjects.filter(subject => !subject.startsWith("event."));
@@ -1152,25 +1152,25 @@ describe("testAdapter", () => {
     // The rich task carries browsers, history, an outcome policy, add-to-call destinations and a
     // custom control, but no attributes and nobody on the call, no lead asked for, and nobody assisted.
     const rich = await run({});
-    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.ask", "ban", "ban.signIn", "toolsNotReady", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.breakAsk", "team.ban", "team.toolsNotReady", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
+    expect(state(rich)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.pendingPrompt", "ban", "ban.signIn", "toolsNotReady", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.pendingPrompt", "team.ban", "team.toolsNotReady", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
     expect(events(rich)).toEqual(everyEvent);
     const bare = await run({ manifest: plainManifest, snapshot: minimalSnapshot });
     expect(state(bare)).toEqual([
       "tasks", "task.browsers", "task.attributes", "task.history", "task.onCall", "task.leadAssist", "task.takenOver",
-      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.ask", "ban", "ban.signIn", "toolsNotReady", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.breakAsk", "team.ban", "team.toolsNotReady",
+      "task.audio", "task.acceptance", "task.outcomes", "task.destinations", "task.custom", "task.locked", "break.reasons", "break.pendingPrompt", "ban", "ban.signIn", "toolsNotReady", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.pendingPrompt", "team.ban", "team.toolsNotReady",
       "shift", "phone", "nextCall", "linedUp", "labels", "contacts", "calendar", "team.policies",
     ]);
     // Each subject drops out exactly when the run meets it -- on the snapshot, or on the team that
     // arrives once the feature is switched on.
     const reached = {
       ...conformingSnapshot,
-      break: { status: "not-requested", canRequestBreak: true, reasons: [{ id: "lunch", label: "Lunch" }], ask: { id: "ask-1", by: "M-1", reasonId: "lunch", since: "2026-08-21T09:04:00Z" } },
+      break: { status: "not-requested", canRequestBreak: true, reasons: [{ id: "lunch", label: "Lunch" }], pendingPrompt: { id: "prompt-1", by: "M-1", reasonId: "lunch", since: "2026-08-21T09:04:00Z" } },
     } satisfies Snapshot<"voice">;
     const asking = teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "on-task", request: { assignmentId: "alloc-42", since: "2026-08-21T09:04:00Z" } }] } });
     expect(state(await run({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, snapshot: reached, emitOnLeadFeatures: listener => listener(asking) })))
-      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "ban", "ban.signIn", "toolsNotReady", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.breakAsk", "team.ban", "team.toolsNotReady", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
+      .toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "ban", "ban.signIn", "toolsNotReady", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.pendingPrompt", "team.ban", "team.toolsNotReady", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
     const withTeam = await run({ capabilities: { lead: EVERY_LEAD_CAPABILITY } });
-    expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.ask", "ban", "ban.signIn", "toolsNotReady", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.breakAsk", "team.ban", "team.toolsNotReady", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
+    expect(state(withTeam)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.pendingPrompt", "ban", "ban.signIn", "toolsNotReady", "team.members", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.pendingPrompt", "team.ban", "team.toolsNotReady", "phone", "nextCall", "linedUp", "labels", "team.policies"]);
     expect(events(withTeam)).toEqual(everyEvent.filter(subject => subject !== "event.team-updated"));
     const oneByOne = await run({ capabilities: { lead: EVERY_LEAD_CAPABILITY }, emitOnLeadFeatures: listener => {
       listener(teamEvent("evt-team", { type: "team-updated", team: { members: [{ id: "A-2", availability: "ready" }] } }));
@@ -1178,7 +1178,7 @@ describe("testAdapter", () => {
       listener(teamEvent("evt-gone", { type: "team-member-removed", memberId: "A-2" }));
       listener(teamEvent("evt-policies", { type: "team-policies-updated", policies: { hold: { setting: "off", setBy: "team" } } }));
     } });
-    expect(state(oneByOne)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.ask", "ban", "ban.signIn", "toolsNotReady", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.breakAsk", "team.ban", "team.toolsNotReady", "phone", "nextCall", "linedUp", "labels"]);
+    expect(state(oneByOne)).toEqual(["task.attributes", "task.onCall", "task.leadAssist", "task.takenOver", "task.acceptance", "task.locked", "break.reasons", "break.pendingPrompt", "ban", "ban.signIn", "toolsNotReady", "team.request", "team.tasks", "team.listening", "team.shift", "team.phone", "team.nextCall", "team.linedUp", "team.pendingPrompt", "team.ban", "team.toolsNotReady", "phone", "nextCall", "linedUp", "labels"]);
     expect(events(oneByOne)).toEqual(everyEvent.filter(subject => !subject.startsWith("event.team-")));
   });
 
@@ -2070,7 +2070,7 @@ describe("testAdapter requires each method the declarations call for", () => {
   it("all five break methods together, when the session declares breaks", async () => {
     // Requesting without committing is the failure the guide names: a break granted that can
     // never start. Each of the five is required on its own.
-    for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak", "answerBreakAsk"] as const) {
+    for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak", "answerPrompt"] as const) {
       expect(await rules({ connection: { [method]: undefined } })).toContain(`connection.${method}.required`);
       expect(await rules({ capabilities: {}, connection: { [method]: undefined } })).not.toContain(`connection.${method}.required`);
     }
@@ -2284,7 +2284,7 @@ describe("testAdapter requires each method the declarations call for", () => {
     // The conforming snapshot carries call-42 in progress; its audio may end. A task the stream
     // never introduced may not; the same events before any snapshot are judged alone.
     const at = "2026-08-21T09:05:00Z";
-    const ended = (taskId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${taskId}`, sessionId: "session-1", occurredAt: at, event: { type: "task-audio-ended", assignmentId: taskId === "call-42" ? "alloc-42" : `${taskId}-a` } });
+    const ended = (tpromptId: string): ProviderEventEnvelope<"voice"> => ({ id: `evt-${tpromptId}`, sessionId: "session-1", occurredAt: at, event: { type: "task-audio-ended", assignmentId: tpromptId === "call-42" ? "alloc-42" : `${tpromptId}-a` } });
     // Delivered from setCapacity, which the harness calls after the snapshot; before it, the
     // stream has no beginning and the same events are judged alone.
     const after = (envelope: ProviderEventEnvelope<"voice">): AdapterOverrides => {
@@ -2585,11 +2585,11 @@ describe("testAdapter requires each method the declarations call for", () => {
   });
 
   it("getUserDetails(), when the snapshot publishes a UserId anywhere", async () => {
-    // The conforming snapshot names A-1 in a history step; a team member list, a lead's ask and a lead's ban count too.
+    // The conforming snapshot names A-1 in a history step; a team member list, a lead's prompt and a lead's ban count too.
     expect(await rules({ connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
     const teamMembers = { ...minimalSnapshot, team: { members: [{ id: "A-2", availability: "on-task" }] } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: teamMembers, connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
-    const asked = { ...minimalSnapshot, break: { status: "not-requested", canRequestBreak: true, ask: { id: "ask-1", by: "M-1", since: "2026-08-21T09:04:00Z" } } } satisfies Snapshot<"voice">;
+    const asked = { ...minimalSnapshot, break: { status: "not-requested", canRequestBreak: true, pendingPrompt: { id: "prompt-1", by: "M-1", since: "2026-08-21T09:04:00Z" } } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: asked, connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
     const banned = { ...minimalSnapshot, break: { status: "on-break", canRequestBreak: false, type: "ban", ban: { by: "M-1" } } } satisfies Snapshot<"voice">;
     expect(await rules({ snapshot: banned, connection: { getUserDetails: undefined } })).toContain("connection.getUserDetails.required");
@@ -2632,7 +2632,7 @@ describe("testAdapter requires each method the declarations call for", () => {
       snapshot: minimalSnapshot,
       connection: {
         getUserDetails: undefined, dial: undefined, requestBreak: undefined, commitBreak: undefined,
-        cancelBreak: undefined, endBreak: undefined, answerBreakAsk: undefined, executeTeam: undefined, openAudio: undefined,
+        cancelBreak: undefined, endBreak: undefined, answerPrompt: undefined, executeTeam: undefined, openAudio: undefined,
       },
     });
     expect(found).toEqual([]);

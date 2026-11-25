@@ -14,7 +14,7 @@ const request = { assignmentId: "H2", command: { type: "end-call" } };
 describe("provider interaction controls", () => {
   it("requires the exact task and assignment rather than the caller journey or old interaction", () => {
     expect(validateTaskCommandRequest(request, task, "request", { levels: LEVELS })).toEqual([]);
-    for (const ids of [{ taskId: "journey" }, { taskId: "H1" }, { assignmentId: "H1" }])
+    for (const ids of [{ tpromptId: "journey" }, { tpromptId: "H1" }, { assignmentId: "H1" }])
       expect(validateTaskCommandRequest({ ...request, ...ids }, task, "request", { levels: LEVELS })).not.toEqual([]);
     expect(validateTaskCommandRequest(request, undefined, "request", { levels: LEVELS })).not.toEqual([]);
     expect(validateTaskCommandRequest(null, task, "request", { levels: LEVELS })).not.toEqual([]);

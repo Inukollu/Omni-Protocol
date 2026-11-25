@@ -441,7 +441,7 @@ export interface LeadCapabilities {
   takeOverCall?: true;
   decideBreakRequest?: true;
   setBreakPolicy?: true;
-  askBreak?: true;
+  promptBreak?: true;
   ban?: true;
   setPolicy?: true;
 }
@@ -456,8 +456,8 @@ export const LEAD_COMMAND_CAPABILITY = {
   "take-over-call": "takeOverCall",
   "decide-break-request": "decideBreakRequest",
   "set-break-policy": "setBreakPolicy",
-  "ask-break": "askBreak",
-  "withdraw-break-ask": "askBreak",
+  "prompt-break": "promptBreak",
+  "withdraw-prompt": "promptBreak",
   ban: "ban",
   "lift-ban": "ban",
   "set-policy": "setPolicy",
@@ -1379,7 +1379,7 @@ export type BreakStatus =
 
 /**
  * What kind of time away a break in effect is. They never overlap: the agent is on one, or on none.
- * `break`: time off work, counted as break time; the agent asked for it, or accepted a lead's ask,
+ * `break`: time off work, counted as break time; the agent asked for it, or accepted a lead's prompt,
  * and it reaches every provider they work -- or, the one exception, the platform put them on it
  * after an offer rang out unanswered on a hardphone, on a `providerOnly` reason. The agent ends it. `ban`: a lead or
  * the platform keeps the agent from this provider's work; it survives sign-out, ends any break the
@@ -1431,13 +1431,14 @@ export interface BreakRequest {
 }
 
 /**
- * A lead asking the agent to take a break, such as for training: who asked, on which reason, and
- * since when. It is the agent's to answer. Accepted, it is their break, already approved -- `granted`,
+ * A lead prompting the agent to take a break, such as for training: who prompted it, on which reason,
+ * and since when. It is the agent's to answer. Prompting is an act, not a kind of break: accepted, it
+ * is the agent's own break, already approved, and nothing on it records the prompt -- `granted`,
  * committed as any grant is; declined, it is gone. It stands only while the agent has no break of
- * their own under way, one at a time, and does not survive sign-out.
+ * their own under way, one at a time, and does not survive sign-out; a failover keeps it.
  */
-export interface BreakAsk {
-  /** Names this ask, unique among the agent's asks on this provider; an answer names it. */
+export interface PendingPrompt {
+  /** Names this prompt, unique among the agent's prompts on this provider; an answer names it. */
   id: string;
   by: UserId;
   /** The published `BreakReason.id` the break would be on, where the provider publishes reasons; never a `providerOnly` one. */
@@ -1450,13 +1451,13 @@ export interface BreakAsk {
 }
 
 /** The ask as the lead's team list carries it: declined, it stays with when, until the lead withdraws it or asks again. */
-export interface MemberBreakAsk extends BreakAsk {
+export interface MemberPendingPrompt extends PendingPrompt {
   declinedAt?: IsoTimestamp;
 }
 
-export type BreakAskAnswer = { askId: string; answer: "accepted" | "declined" };
+export type PromptAnswer = { promptId: string; answer: "accepted" | "declined" };
 
-export type BreakAskAnswerResult =
+export type PromptAnswerResult =
   | { status: "answered" }
   | { status: "failed"; failure: ProtocolFailure };
 
@@ -1481,8 +1482,8 @@ export interface BreakState {
   activeReasonId?: string;
   /** Who banned the agent, why, and for how long: present with `type: "ban"`, and only then. */
   ban?: Ban;
-  /** A lead's ask, while it stands; the agent answers it with `answerBreakAsk`. */
-  ask?: BreakAsk;
+  /** A lead's prompt, while it stands; the agent answers it with `answerPrompt`. */
+  pendingPrompt?: PendingPrompt;
 }
 
 /**
@@ -1605,7 +1606,7 @@ export interface TeamMember {
   /** The call lined up in the member's own queue, as their own snapshot carries it. */
   linedUp?: LinedUpCall;
   /** A lead's ask on the member: standing, as their own break state carries it, or declined. */
-  breakAsk?: MemberBreakAsk;
+  pendingPrompt?: MemberPendingPrompt;
   /** The member's ban, as their own break state carries it; shown while they are signed out too, so a lead can lift it. */
   ban?: Ban;
 }
@@ -1784,10 +1785,10 @@ export type TeamCallCommand =
 export type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
-  /** Asks the member to take a break. `reasonId` selects a published `BreakReason.id`, required when reasons are published; `reason` is the lead's words. The member answers it. */
-  | { type: "ask-break"; memberId: UserId; reasonId?: string; reason?: string; durationSeconds?: DurationSeconds }
+  /** Prompts the member to take a break. `reasonId` selects a published `BreakReason.id`, required when reasons are published; `reason` is the lead's words. The member answers it. */
+  | { type: "prompt-break"; memberId: UserId; reasonId?: string; reason?: string; durationSeconds?: DurationSeconds }
   /** Withdraws the member's ask, standing or declined. */
-  | { type: "withdraw-break-ask"; memberId: UserId }
+  | { type: "withdraw-prompt"; memberId: UserId }
   /** Stops this provider giving the member work. `reason` is shown to them. Without `durationSeconds` it stands until lifted. */
   | { type: "ban"; memberId: UserId; reason?: string; durationSeconds?: DurationSeconds }
   /** Lifts a ban a lead placed. Tools not ready follow if they still are; otherwise the agent takes work again. */
@@ -2033,12 +2034,12 @@ export const OMNI_FAILURE_CODES = [
   "omni.recording-unsettled",
   /** Refused because the caller is on hold: the host's Mute, or end-call, waits for resume. */
   "omni.on-hold",
-  /** The agent is banned here: a dial, a break request or a lead's ask, or an offer that raced the ban; or a lead lifting a ban the platform placed. */
+  /** The agent is banned here: a dial, a break request or a lead's prompt, or an offer that raced the ban; or a lead lifting a ban the platform placed. */
   "omni.banned",
   /** The agent's tools are not ready for this provider's work: a dial, or an offer that raced it. */
   "omni.tools-not-ready",
-  /** The agent answered an ask that is no longer standing: answered already, withdrawn, or overtaken by a break. */
-  "omni.break-ask-gone",
+  /** The agent answered a prompt that is no longer standing: answered already, withdrawn, or overtaken by a break. */
+  "omni.prompt-gone",
 ] as const;
 
 export type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
@@ -2095,7 +2096,7 @@ export interface Connection<C extends Channel = Channel> {
   execute(request: TaskCommandRequest<C>): Promise<TaskCommandResult>;
   disconnect(): Promise<void>;
 
-  /** Required of any adapter publishing a `UserId` -- on an ask, a ban, a team member list, or history. */
+  /** Required of any adapter publishing a `UserId` -- on a prompt, a ban, a team member list, or history. */
   getUserDetails?(ids: UserId[]): Promise<User[]>;
   /** Required when the manifest declares `idleCapabilities.dial`. */
   dial?(request: DialRequest): Promise<DialResult>;
@@ -2109,8 +2110,8 @@ export interface Connection<C extends Channel = Channel> {
   commitBreak?(): Promise<BreakCommitResult>;
   cancelBreak?(): Promise<BreakCancelResult>;
   endBreak?(): Promise<BreakEndResult>;
-  /** The agent's answer to a lead's ask: accepted, it is their break, already approved. */
-  answerBreakAsk?(answer: BreakAskAnswer): Promise<BreakAskAnswerResult>;
+  /** The agent's answer to a lead's prompt: accepted, it is their break, already approved. */
+  answerPrompt?(answer: PromptAnswer): Promise<PromptAnswerResult>;
 
   /**
    * The three stand together with `capabilities.nextCall`. Next call asks for the next queued

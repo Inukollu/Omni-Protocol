@@ -38,7 +38,7 @@ import {
   type ProtocolViolation,
 } from "../src/validation.js";
 
-const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, askBreak: true, ban: true, setPolicy: true } as const;
+const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, promptBreak: true, ban: true, setPolicy: true } as const;
 
 const LEVELS = ["org", "site", "team", "person"];
 
@@ -656,23 +656,23 @@ describe("break state", () => {
     expect(banned({ by: "lead-3", until: "2026-11-26T09:00:00Z" })).toEqual(["ban.field"]);
   });
 
-  it("holds a lead's ask to its shape, beside no break, on a reason the agent could ask for", () => {
-    const ask = { id: "ask-1", by: "lead-3", reasonId: "lunch", reason: "Training, room 4", durationSeconds: 1800, since: "2026-11-25T14:00:00Z" };
+  it("holds a lead's prompt to its shape, beside no break, on a reason the agent could ask for", () => {
+    const ask = { id: "prompt-1", by: "lead-3", reasonId: "lunch", reason: "Training, room 4", durationSeconds: 1800, since: "2026-11-25T14:00:00Z" };
     const reasons = [{ id: "lunch", label: "Lunch" }, { id: "no-phone", label: "No phone", providerOnly: true }];
-    const asked = (value: unknown, over: Record<string, unknown> = {}) => check({ reasons, ask: value, ...over });
+    const asked = (value: unknown, over: Record<string, unknown> = {}) => check({ reasons, pendingPrompt: value, ...over });
     expect(asked(ask)).toEqual([]);
-    expect(asked("x")).toEqual(["break.ask.shape"]);
-    expect(asked({ ...ask, id: "" })).toEqual(["break.ask.id"]);
-    expect(asked({ ...ask, by: "" })).toEqual(["break.ask.by"]);
-    expect(asked({ ...ask, reason: "" })).toEqual(["break.ask.reason"]);
-    expect(asked({ ...ask, durationSeconds: 0 })).toEqual(["break.ask.durationSeconds"]);
-    expect(asked({ ...ask, since: "soon" })).toEqual(["break.ask.since"]);
-    expect(asked({ ...ask, declinedAt: "2026-11-25T14:01:00Z" })).toEqual(["break.ask.field"]);
-    expect(asked({ ...ask, reasonId: "tea" })).toEqual(["break.ask.reasonId"]);
-    expect(asked({ ...ask, reasonId: "no-phone" })).toEqual(["break.ask.reasonId.providerOnly"]);
-    expect(check({ ask: { ...ask, reasonId: undefined } })).toEqual([]);
-    expect(check({ ask })).toEqual(["break.ask.reasonId"]);
-    expect(asked(ask, { status: "granted" })).toEqual(["break.ask.status"]);
+    expect(asked("x")).toEqual(["break.pendingPrompt.shape"]);
+    expect(asked({ ...ask, id: "" })).toEqual(["break.pendingPrompt.id"]);
+    expect(asked({ ...ask, by: "" })).toEqual(["break.pendingPrompt.by"]);
+    expect(asked({ ...ask, reason: "" })).toEqual(["break.pendingPrompt.reason"]);
+    expect(asked({ ...ask, durationSeconds: 0 })).toEqual(["break.pendingPrompt.durationSeconds"]);
+    expect(asked({ ...ask, since: "soon" })).toEqual(["break.pendingPrompt.since"]);
+    expect(asked({ ...ask, declinedAt: "2026-11-25T14:01:00Z" })).toEqual(["break.pendingPrompt.field"]);
+    expect(asked({ ...ask, reasonId: "tea" })).toEqual(["break.pendingPrompt.reasonId"]);
+    expect(asked({ ...ask, reasonId: "no-phone" })).toEqual(["break.pendingPrompt.reasonId.providerOnly"]);
+    expect(check({ pendingPrompt: { ...ask, reasonId: undefined } })).toEqual([]);
+    expect(check({ pendingPrompt: ask })).toEqual(["break.pendingPrompt.reasonId"]);
+    expect(asked(ask, { status: "granted" })).toEqual(["break.pendingPrompt.status"]);
   });
 
   it("refuses a forced break, which is retired", () => {
@@ -1194,7 +1194,7 @@ describe("validateEventEnvelope", () => {
     expect(check({ ...diagnostic, assignmentId: "alloc-77" })).toEqual([]);
     // A task is named by its assignment alone; the retired name is refused beside it.
     expect(check({ ...diagnostic, assignmentId: "" })).toEqual(["event.diagnostic.assignmentId"]);
-    expect(check({ ...diagnostic, assignmentId: "alloc-77", taskId: "call-77" })).toEqual(["event.assignmentId.renamed"]);
+    expect(check({ ...diagnostic, assignmentId: "alloc-77", tpromptId: "call-77" })).toEqual(["event.assignmentId.renamed"]);
     expect(check({ ...diagnostic, expected: "" })).toEqual(["event.diagnostic.expected"]);
     expect(check({ ...diagnostic, observed: undefined })).toEqual(["event.diagnostic.observed"]);
   });
@@ -1257,7 +1257,7 @@ describe("validateEventEnvelope", () => {
     expect(check({ type: "task-offered", task: task({ phase: "pending", acceptance: "whenever" }) })).toContain("task.acceptance");
     expect(check({ type: "task-audio-ended", assignmentId: "alloc-42" })).toEqual([]);
     expect(check({ type: "task-audio-ended", assignmentId: "" })).toContain("event.taskAudioEnded.assignmentId");
-    expect(check({ type: "task-audio-ended", assignmentId: "alloc-42", taskId: "call-42" })).toContain("event.assignmentId.renamed");
+    expect(check({ type: "task-audio-ended", assignmentId: "alloc-42", tpromptId: "call-42" })).toContain("event.assignmentId.renamed");
     expect(check({ type: "task-audio-started", assignmentId: "alloc-42" })).toEqual([]);
     expect(check({ type: "task-audio-started", assignmentId: "" })).toContain("event.taskAudioStarted.assignmentId");
     expect(check({ type: "announcement", text: "Hello", announcedAt: "2026-08-21T09:00:00Z" })).toEqual([]);
@@ -1367,7 +1367,7 @@ describe("validateHistoryReport", () => {
     expect(report({ ended: false })).toEqual(["historyReport.ended"]);
     expect(report({ seconds: 0 })).toEqual(["historyReport.seconds"]);
     expect(report({ assignmentId: "" })).toEqual(["historyReport.assignmentId"]);
-    expect(report({ taskId: "call-42" })).toEqual(["historyReport.assignmentId.renamed"]);
+    expect(report({ tpromptId: "call-42" })).toEqual(["historyReport.assignmentId.renamed"]);
     expect(report({ step: "whispered" })).toEqual(["historyReport.step"]);
     expect(report({ at: "now" })).toEqual(["historyReport.at"]);
     expect(rules(validateHistoryReport("muted"))).toEqual(["historyReport.shape"]);
@@ -1700,11 +1700,11 @@ describe("the other direction, everywhere", () => {
     expect(member({ availability: "banned", ban: { by: "" } })).toEqual(["ban.by"]);
     expect(member({ availability: "tools-not-ready" })).toEqual([]);
     // A lead's ask on the member: standing while they are here with no break, or declined, with when.
-    const ask = { id: "ask-1", by: "L-9", since: at };
-    expect(member({ availability: "ready", breakAsk: ask })).toEqual([]);
-    expect(member({ availability: "on-break", breakAsk: ask })).toEqual(["team.member.breakAsk.standing"]);
-    expect(member({ availability: "signed-out", breakAsk: { ...ask, declinedAt: at } })).toEqual([]);
-    expect(member({ availability: "ready", breakAsk: { ...ask, declinedAt: "then" } })).toEqual(["break.ask.declinedAt"]);
+    const ask = { id: "prompt-1", by: "L-9", since: at };
+    expect(member({ availability: "ready", pendingPrompt: ask })).toEqual([]);
+    expect(member({ availability: "on-break", pendingPrompt: ask })).toEqual(["team.member.pendingPrompt.standing"]);
+    expect(member({ availability: "signed-out", pendingPrompt: { ...ask, declinedAt: at } })).toEqual([]);
+    expect(member({ availability: "ready", pendingPrompt: { ...ask, declinedAt: "then" } })).toEqual(["break.pendingPrompt.declinedAt"]);
   });
 
 
@@ -2240,7 +2240,7 @@ describe("every dial has an outcome", () => {
     // The outcome names the task by its assignment, so a late one lands on the assignment it names; the retired name is refused.
     expect(check({ ...answered, assignmentId: "alloc-91" })).toEqual([]);
     expect(check({ ...answered, assignmentId: "" })).toEqual(["event.dialOutcome.assignmentId"]);
-    expect(check({ ...answered, assignmentId: "alloc-91", taskId: "call-91" })).toEqual(["event.assignmentId.renamed"]);
+    expect(check({ ...answered, assignmentId: "alloc-91", tpromptId: "call-91" })).toEqual(["event.assignmentId.renamed"]);
     expect(check({ ...answered, outcome: "no-answer", reason: "No route to destination" })).toEqual([]);
     // A dial called off before anyone answered is its own outcome, not a no-answer the destination never gave.
     expect(check({ ...answered, outcome: "cancelled" }, manifest({ dialOutcomes: ["answered", "cancelled"] }))).toEqual([]);

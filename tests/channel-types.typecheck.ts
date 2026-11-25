@@ -27,7 +27,7 @@ import {
   type Task,
   type TeamMembers,
   type Ban,
-  type BreakAsk,
+  type PendingPrompt,
   type MemberTask,
   type Shift,
   type PhoneState,
@@ -40,7 +40,7 @@ import {
   type TeamCommand,
 } from "../src/index.js";
 
-const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, askBreak: true, ban: true, setPolicy: true } as const;
+const EVERY_LEAD_CAPABILITY = { join: true, decline: true, listen: true, coach: true, joinCall: true, takeOverCall: true, decideBreakRequest: true, setBreakPolicy: true, promptBreak: true, ban: true, setPolicy: true } as const;
 
 export const voiceManifest = {
   id: "voice-provider",
@@ -402,10 +402,10 @@ export const requestList: TeamMembers = { members: [], requests: [] };
 // A ban the platform placed itself names no person: `provider` says so.
 export const providerBlock: Ban = { by: "provider", reason: "Phone not registered" };
 export const leadBlock: Ban = { by: "L-9", reason: "Compliance review", endsInSeconds: 3600 };
-// A lead's ask: who, on which reason, since when; the agent answers it by id.
-export const trainingAsk: BreakAsk = { id: "ask-1", by: "L-9", reasonId: "training", durationSeconds: 1800, since: "2026-11-25T14:00:00Z" };
-// @ts-expect-error an ask names the lead who asked, never the provider.
-export const providerAsk: BreakAsk = { id: "ask-2", by: undefined, since: "2026-11-25T14:00:00Z" };
+// A lead's prompt: who, on which reason, since when; the agent answers it by id.
+export const trainingAsk: PendingPrompt = { id: "prompt-1", by: "L-9", reasonId: "training", durationSeconds: 1800, since: "2026-11-25T14:00:00Z" };
+// @ts-expect-error a prompt names the lead who prompted it, never the provider.
+export const providerAsk: PendingPrompt = { id: "prompt-2", by: undefined, since: "2026-11-25T14:00:00Z" };
 // Every lead on a member's call, each by user id; the application opens its own audio on its own entry.
 export const twoLeadsListening: TeamMembers = { members: [{ id: "A-2", availability: "on-task", listening: [{ leadId: "L-9", assignmentId: "alloc-7", mode: "coach", since: "2026-08-21T09:04:00Z" }, { leadId: "L-4", assignmentId: "alloc-7", mode: "listen", since: "2026-08-21T09:05:00Z" }] }] };
 // @ts-expect-error renamed away: listening is every lead's, as an array naming each.
@@ -450,9 +450,9 @@ export const openWithoutHostAudio: OpenAudioRequest = { assignmentId: "alloc-42"
 // Everything that names a task after the fact names its life: a task id alone could land on the next customer under a reused id.
 export const endedEvent: ProviderEvent<"voice"> = { type: "task-ended", assignmentId: "alloc-42", outcome: { type: "completed", by: "agent" } };
 // @ts-expect-error An ending names the assignment it ends.
-export const endedByIdAlone: ProviderEvent<"voice"> = { type: "task-ended", taskId: "call-42", outcome: { type: "completed", by: "agent" } };
+export const endedByIdAlone: ProviderEvent<"voice"> = { type: "task-ended", tpromptId: "call-42", outcome: { type: "completed", by: "agent" } };
 // @ts-expect-error A command names the life it acts on.
-export const commandByIdAlone: TaskCommandRequest<"voice"> = { taskId: "call-42", command: { type: "hold" } };
+export const commandByIdAlone: TaskCommandRequest<"voice"> = { tpromptId: "call-42", command: { type: "hold" } };
 export const noMicrophone: HostReport = { online: true, audio: { input: { status: "unavailable", reason: "in-use", failure: { code: "host.in-use", message: "Another application holds the microphone", retryable: true } }, output: { status: "unavailable", reason: "no-device", failure: { code: "host.no-speaker", message: "No speaker", retryable: true } } } };
 export const noAudioHere: HostReport = { online: true };
 // @ts-expect-error An available input carries the microphone it captured and says whether audio flows.
@@ -520,14 +520,14 @@ export type FormerListenMethod = import("../src/index.js").Connection["executeTe
 // @ts-expect-error The former lead-assist action has no compatibility alias.
 export const retiredLeadTakeOver: TaskCommand<"voice"> = { type: "lead-assist", action: "take-over" };
 
-export const askedBreakState: import("../src/index.js").BreakState = { status: "not-requested", canRequestBreak: true, ask: { id: "ask-1", by: "lead-1", since: "2026-11-25T14:00:00Z" } };
+export const askedBreakState: import("../src/index.js").BreakState = { status: "not-requested", canRequestBreak: true, pendingPrompt: { id: "prompt-1", by: "lead-1", since: "2026-11-25T14:00:00Z" } };
 // @ts-expect-error Forced breaks are retired: a lead asks, or bans.
 export const retiredForcedField: import("../src/index.js").BreakState = { status: "on-break", canRequestBreak: false, forced: { by: "lead-1" } };
 // @ts-expect-error The forced break type is retired without an alias.
 import type { ForcedBreak } from "../src/index.js";
 
-export const askMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "ask-break", memberId: "member-1", reasonId: "training", durationSeconds: 1800 };
-export const withdrawMemberAsk: import("../src/index.js").TeamBreakCommand = { type: "withdraw-break-ask", memberId: "member-1" };
+export const askMemberBreak: import("../src/index.js").TeamBreakCommand = { type: "prompt-break", memberId: "member-1", reasonId: "training", durationSeconds: 1800 };
+export const withdrawMemberAsk: import("../src/index.js").TeamBreakCommand = { type: "withdraw-prompt", memberId: "member-1" };
 export const blockMember: import("../src/index.js").TeamBreakCommand = { type: "ban", memberId: "member-1", reason: "Compliance review" };
 export const unblockMember: import("../src/index.js").TeamBreakCommand = { type: "lift-ban", memberId: "member-1" };
 // @ts-expect-error The retired force-break command has no compatibility alias.

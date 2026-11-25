@@ -361,8 +361,8 @@ Migration from the earlier spellings:
 | handlingStepExpectsAPerson, handlingStepDials, and their interaction spellings | `historyStepExpectsAPerson`, `historyStepDials` |
 | handleSeconds | `interactionSeconds` |
 | Task.allocationId, AllocationId, allocationExpiresAt | `Task.assignmentId`, `AssignmentId`, `expiresInSeconds` |
-| Task.id, TaskId, and `taskId` on every event, command, report and lead request | gone: a task is named by `assignmentId` alone, and `assignmentKey(providerId, assignmentId)` scopes it |
-| taskKey, omni.task-not-found, PROVIDER_NAME__TASK_ID__TAB_NAME (ProviderName.TaskId.TabName) | `assignmentKey`, `omni.assignment-not-found`, `PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME` (`ProviderName.AssignmentId.TabName`) |
+| Task.id, TpromptId, and `tpromptId` on every event, command, report and lead request | gone: a task is named by `assignmentId` alone, and `assignmentKey(providerId, assignmentId)` scopes it |
+| taskKey, omni.task-not-found, PROVIDER_NAME__TASK_ID__TAB_NAME (ProviderName.TpromptId.TabName) | `assignmentKey`, `omni.assignment-not-found`, `PROVIDER_NAME__ASSIGNMENT_ID__TAB_NAME` (`ProviderName.AssignmentId.TabName`) |
 | Manifest.disposalSettleMs, Manifest.completionSettleMs | `Manifest.settleMs` (`manifest.settleMs`, `manifest.settleMs.renamed`): the bound after `applied` for `complete` and `schedule` alike |
 | the call command, atDeadline calls and host-calls | `dial`, `"provider-dials"`, `"host-dials"` |
 | media: task-media-started/-ended, team-media-*, Task.media, TaskMediaState, openMedia, OpenMediaRequest/Result, VoiceMediaSession and its session field | audio: `task-audio-started`, `task-audio-ended`, `audio` on the task, `TaskAudioState`, `openAudio`, `OpenAudioRequest`, `OpenAudioResult`, `CallAudio` on the result's `audio`; there is no team audio, the lead's follows `listening` on the member |
@@ -379,7 +379,7 @@ Migration from the earlier spellings:
 | expiresInSeconds on task-offered | `Task.expiresInSeconds`, in `pending` (`task.pending.expiresInSeconds`, `.unexpected`; `event.taskOffered.expiresInSeconds.unexpected`) |
 | the expired outcome naming preview | gone: nothing expires a preview; withdrawn, it is `cancelled` by the provider |
 | schedule on voice alone | `schedule` on every channel, under a manifest that declares `calendar` (`task.capability.calendar.required`), bounded by `settleMs` (`test.schedule.unsettled`) |
-| a forced break: the break state's forced field, force-break, force-team-break, end-forced-break, end-team-break | retired (`break.forced.retired`): a lead asks, `ask-break`, and the agent answers with `answerBreakAsk`; every break in effect says its `type`: `break`, `ban` or `tools-not-ready`; a lead or the platform bans, `ban`, on that provider only, and the ban survives sign-out (`test.signIn.ban`); the platform's holds are `tools-not-ready`; a team break is one ask per member. See **Migration** in `guide/breaks.md` |
+| a forced break: the break state's forced field, force-break, force-team-break, end-forced-break, end-team-break | retired (`break.forced.retired`): a lead prompts, `prompt-break`, and the agent answers with `answerPrompt`; every break in effect says its `type`: `break`, `ban` or `tools-not-ready`; a lead or the platform bans, `ban`, on that provider only, and the ban survives sign-out (`test.signIn.ban`); the platform's holds are `tools-not-ready`; a team break is one prompt per member. See **Migration** in `guide/breaks.md` |
 | MemberShift; the day on the lead's list alone | `Shift`, on `Snapshot.shift` and `shift-updated` for the agent, on `TeamMember.shift` for the lead |
 | TeamMember.listening as this lead's one entry | `MemberListening[]`, every lead's, each with `leadId` (`team.member.listening.leadId`, `.unique`, `.empty`, `.entry`, `.heard`) |
 | a member's history trimmed on the lead's list | the record whole, as the member's computer holds it |
@@ -407,7 +407,7 @@ History and report rule names use `history` and `historyReport`; assignment rule
 phase and conformance rules use `interaction` and final-task rules use `completion`. The former
 fields are refused even when the new field is also supplied (`task.history.renamed`,
 `task.assignmentId.renamed` for a task's `id` or `allocationId`, `event.assignmentId.renamed`,
-`command.request.assignmentId.renamed` and `historyReport.assignmentId.renamed` for a `taskId`).
+`command.request.assignmentId.renamed` and `historyReport.assignmentId.renamed` for a `tpromptId`).
 
 
 `Task.history` is the call record: the steps that brought the task to the agent, oldest
@@ -580,7 +580,7 @@ Four rules a provider has to keep:
   conversation, and on live data that is the ordinary case rather than an edge. A zero is rejected.
 - **`by` is a bare `UserId`, and not necessarily an agent.** A lead or a manager takes part
   during an interaction too — a call taken over, someone added to a call — so the field names whoever it was,
-  from the same directory `BreakAsk.by` names a lead from. It comes from this provider's own directory, the same
+  from the same directory `PendingPrompt.by` names a lead from. It comes from this provider's own directory, the same
   namespace as `AuthenticationState.identity.id` and the team member list, so entries pair
   within a provider and never across one.
 - **A task carries no names.** Omni resolves what to display with `getUserDetails()`. Two people
@@ -1163,8 +1163,8 @@ react rather than only display the message:
 | `omni.break-already-committed` | Cancellation lost the commit/cancel race; Omni must finish commit recovery. |
 | `omni.recording-unsettled` | A recording command the provider could not settle either way: a settled `failed`, never a promise left unresolved. See **Independent task recording** in `guide/voice.md`. |
 | `omni.on-hold` | Refused because the caller is on hold: the agent application's own Mute begun on a `paused` task, or `end-call` there. The agent application says resume first. The test expects this code on both (`test.recordStep.held`, `test.command.held`). |
-| `omni.banned` | The agent is banned on this provider: a dial, a break request, an ask accepted, or an offer that raced the ban. Also a lead lifting a ban the platform placed, which the platform lifts. See **Bans** in `guide/breaks.md`. |
+| `omni.banned` | The agent is banned on this provider: a dial, a break request, a prompt accepted, or an offer that raced the ban. Also a lead lifting a ban the platform placed, which the platform lifts. See **Bans** in `guide/breaks.md`. |
 | `omni.tools-not-ready` | The agent's tools are not ready for this provider's work: a dial, or an offer that raced it. See **Tools not ready** in `guide/breaks.md`. |
-| `omni.break-ask-gone` | The agent answered an ask that no longer stands: answered already, withdrawn, or overtaken by a break of their own. See **A lead asks for a break** in `guide/breaks.md`. |
+| `omni.prompt-gone` | The agent answered a prompt that no longer stands: answered already, withdrawn, or overtaken by a break of their own. See **A lead prompts a break** in `guide/breaks.md`. |
 
 They are published as `OMNI_FAILURE_CODES`.

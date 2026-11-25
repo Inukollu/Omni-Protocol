@@ -79,7 +79,7 @@ const STATE_SUBJECTS = [
   "task.custom",
   "task.locked",
   "break.reasons",
-  "break.ask",
+  "break.pendingPrompt",
   "ban",
   "ban.signIn",
   "toolsNotReady",
@@ -91,7 +91,7 @@ const STATE_SUBJECTS = [
   "team.phone",
   "team.nextCall",
   "team.linedUp",
-  "team.breakAsk",
+  "team.pendingPrompt",
   "team.ban",
   "team.toolsNotReady",
   "shift",
@@ -149,7 +149,7 @@ function observeTask(value: unknown, seen: Set<ContractSubject>): void {
 function observeBreak(value: unknown, seen: Set<ContractSubject>): void {
   if (!isRecord(value)) return;
   if (some(value.reasons)) seen.add("break.reasons");
-  if (value.ask !== undefined) seen.add("break.ask");
+  if (value.pendingPrompt !== undefined) seen.add("break.pendingPrompt");
   if (value.type === "ban") seen.add("ban");
   if (value.type === "tools-not-ready") seen.add("toolsNotReady");
 }
@@ -163,7 +163,7 @@ function observeMember(member: unknown, seen: Set<ContractSubject>): void {
   if (member.phone !== undefined) seen.add("team.phone");
   if (member.nextCall !== undefined) seen.add("team.nextCall");
   if (member.linedUp !== undefined) seen.add("team.linedUp");
-  if (member.breakAsk !== undefined) seen.add("team.breakAsk");
+  if (member.pendingPrompt !== undefined) seen.add("team.pendingPrompt");
   if (member.ban !== undefined) seen.add("team.ban");
   if (member.availability === "tools-not-ready") seen.add("team.toolsNotReady");
 }
@@ -380,7 +380,7 @@ export async function testAdapter<C extends Channel>(
       if (capabilities.breaks === true) {
         // The five stand or fall together: `granted` is a promise to honour a later commit, and
         // an adapter with requestBreak but no commitBreak leaves an agent a break that never starts.
-        for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak", "answerBreakAsk"] as const) {
+        for (const method of ["requestBreak", "commitBreak", "cancelBreak", "endBreak", "answerPrompt"] as const) {
           requireMethod(on, method, "the user's capabilities include breaks");
         }
       }
@@ -744,7 +744,7 @@ export async function testAdapter<C extends Channel>(
         ? first.audio.input.localAudio as MediaStream : undefined;
       violations.push(...await testOneCall({
         connection: live, manifest: adapter.manifest, channel: adapter.manifest.channel, softphone, snapshot, events, waiters, stream, localAudio,
-        everHeldForTask: (taskId: string) => [...watched.everHeld].some(key => namesTask(key, taskId)), snapshotRead,
+        everHeldForTask: (tpromptId: string) => [...watched.everHeld].some(key => namesTask(key, tpromptId)), snapshotRead,
         timeoutMs: options.timeoutMs ?? 5000,
         context: connected, secrets: authenticationSecrets, reader, rebuild: options.rebuild, held: watched.held, handOver,
         streams: { stream, breaks, team },
@@ -876,25 +876,25 @@ export async function testAdapter<C extends Channel>(
  * its shape.
  */
 function publishesUserIds(snapshot: Snapshot | undefined): boolean {
-  if (snapshot?.break?.ask?.by !== undefined) return true;
+  if (snapshot?.break?.pendingPrompt?.by !== undefined) return true;
   if (snapshot?.break?.ban?.by !== undefined && snapshot.break.ban.by !== "provider") return true;
   if (teamNamesUsers(snapshot?.team)) return true;
   if (!Array.isArray(snapshot?.tasks)) return false;
   return snapshot.tasks.some(taskNamesUsers);
 }
 
-/** Every UserId a snapshot publishes: on the record, the room, a lead request, an ask, a ban, the team member list. */
+/** Every UserId a snapshot publishes: on the record, the room, a lead request, a prompt, a ban, the team member list. */
 function userIdsIn(snapshot: Snapshot | undefined): string[] {
   const ids = new Set<string>();
   const add = (value: unknown) => { if (typeof value === "string" && value.length > 0) ids.add(value); };
-  add(snapshot?.break?.ask?.by);
+  add(snapshot?.break?.pendingPrompt?.by);
   if (snapshot?.break?.ban?.by !== "provider") add(snapshot?.break?.ban?.by);
   const team = snapshot?.team as Record<string, unknown> | undefined;
   if (isRecord(team)) {
     for (const member of Array.isArray(team.members) ? team.members : []) {
       if (!isRecord(member)) continue;
       add(member.id);
-      if (isRecord(member.breakAsk)) add(member.breakAsk.by);
+      if (isRecord(member.pendingPrompt)) add(member.pendingPrompt.by);
       if (isRecord(member.ban) && member.ban.by !== "provider") add(member.ban.by);
       for (const entry of Array.isArray(member.listening) ? member.listening : []) if (isRecord(entry)) add(entry.leadId);
     }
@@ -937,7 +937,7 @@ function eventNamesUsers(envelope: unknown): boolean {
   if (!isRecord(event)) return false;
   switch (event.type) {
     case "snapshot": return publishesUserIds(event.snapshot as Snapshot);
-    case "break-state": return isRecord(event.break) && ((isRecord(event.break.ask) && event.break.ask.by !== undefined)
+    case "break-state": return isRecord(event.break) && ((isRecord(event.break.pendingPrompt) && event.break.pendingPrompt.by !== undefined)
       || (isRecord(event.break.ban) && event.break.ban.by !== undefined && event.break.ban.by !== "provider"));
     case "task-offered":
     case "task-updated": return taskNamesUsers(event.task);
@@ -1071,8 +1071,8 @@ function sessionEnded(state: AuthenticationState): boolean {
 }
 
 /** Whether a store key names the task: the id as a delimited token, never as a run of characters inside another id. */
-function namesTask(key: string, taskId: string): boolean {
-  return key.split(/[^A-Za-z0-9_-]+/).includes(taskId);
+function namesTask(key: string, tpromptId: string): boolean {
+  return key.split(/[^A-Za-z0-9_-]+/).includes(tpromptId);
 }
 
 /** Whether a task's party stands locked on its number or email, which is what obliges a run to state the locked values. */
@@ -1248,16 +1248,16 @@ export function assertDuplicateEventDelivery<C extends Channel>(
 export function assertReconnectWithMissedAssignments<C extends Channel>(
   before: Snapshot<C>,
   reconnect: ProviderEventEnvelope<C>,
-  missedTaskIds: readonly string[],
+  missedTpromptIds: readonly string[],
 ): void {
   if (reconnect.event.type !== "snapshot" || reconnect.event.reason !== "reconnected") {
     throw new Error("Reconnect scenario requires a reconnected snapshot event");
   }
   const beforeIds = new Set(before.tasks.map(task => task.assignmentId));
   const refreshedIds = new Set(reconnect.event.snapshot.tasks.map(task => task.assignmentId));
-  for (const taskId of missedTaskIds) {
-    if (beforeIds.has(taskId)) throw new Error(`Task '${taskId}' was not missed before reconnect`);
-    if (!refreshedIds.has(taskId)) throw new Error(`Reconnect snapshot is missing task '${taskId}'`);
+  for (const tpromptId of missedTpromptIds) {
+    if (beforeIds.has(tpromptId)) throw new Error(`Task '${tpromptId}' was not missed before reconnect`);
+    if (!refreshedIds.has(tpromptId)) throw new Error(`Reconnect snapshot is missing task '${tpromptId}'`);
   }
 }
 
@@ -1762,7 +1762,7 @@ interface CallTest<C extends Channel> {
   /** Every key the watched store currently holds. */
   held: ReadonlySet<string>;
   /** Whether the store was ever seen to hold a key naming the task, which is what makes call.store.retained evaluable. */
-  everHeldForTask: (taskId: string) => boolean;
+  everHeldForTask: (tpromptId: string) => boolean;
   /** Takes the first client down and brings the second up in its place: what a host reload is. Coming up holds the second to everything the first was on connect. */
   handOver: { isLive: () => boolean; down: () => Promise<boolean>; up: (session: Awaited<ReturnType<Adapter<C>["createAuthenticationSession"]>>, second: Connection<C>) => Promise<void> };
   /** Reads a snapshot as the connect snapshot was read: observed, validated, its users described, its locks and terms noted. */
@@ -1873,11 +1873,11 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       found.push(...call.streams.breaks.seed(snapshot));
       call.streams.team.seed(snapshot);
       const carried = isRecord(snapshot) && Array.isArray(snapshot.tasks)
-        ? snapshot.tasks.find(task => isRecord(task) && task.assignmentId === taskId) as Record<string, unknown> | undefined : undefined;
+        ? snapshot.tasks.find(task => isRecord(task) && task.assignmentId === tpromptId) as Record<string, unknown> | undefined : undefined;
       ruleTested("test.reload.snapshot");
       if (carried === undefined) {
         refuse("test.reload.snapshot", "test.reload.snapshot",
-          `a second adapter built from the same session does not carry ${taskId} on its snapshot, and the task is still open`);
+          `a second adapter built from the same session does not carry ${tpromptId} on its snapshot, and the task is still open`);
         return;
       }
       ruleTested("test.reload.history");
@@ -1890,12 +1890,12 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
         .map(entry => `${String(entry.step)}@${String(entry.at)}`);
       if (lost.length > 0) {
         refuse("test.reload.history", "test.reload.history",
-          `a second adapter built from the same session carries ${taskId} without ${lost.join(", ")}, which the first had published: a record once read is not unread`);
+          `a second adapter built from the same session carries ${tpromptId} without ${lost.join(", ")}, which the first had published: a record once read is not unread`);
       }
       const leg = steps.find(entry => isRecord(entry) && entry.step === "muted" && entry.at === at) as Record<string, unknown> | undefined;
       if (leg === undefined) {
         refuse("test.reload.history", "test.reload.history",
-          `a second adapter built from the same session carries ${taskId} without the muted leg at ${at}: the record was composed in memory and died with the adapter; the session's store is where it lives`);
+          `a second adapter built from the same session carries ${tpromptId} without the muted leg at ${at}: the record was composed in memory and died with the adapter; the session's store is where it lives`);
       } else if (leg.mutedBy !== "host") {
         refuse("test.reload.history", "test.reload.history",
           `the reloaded record's muted leg at ${at} says mutedBy ${String(leg.mutedBy)}; the host reported host`);
@@ -1910,12 +1910,12 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
         }
         session = undefined;
         ruleTested("test.reload.openAudio");
-        const reopened = await second.openAudio?.({ assignmentId: taskId, localAudio: call.localAudio });
+        const reopened = await second.openAudio?.({ assignmentId: tpromptId, localAudio: call.localAudio });
         const malformed = validateResult(reopened, "openAudio", "test.reload.openAudio");
         found.push(...malformed);
         if (malformed.length === 0 && isRecord(reopened) && reopened.status === "opened") session = reopened.audio as unknown as Record<string, unknown>;
         else if (malformed.length === 0) refuse("test.reload.openAudio", "test.reload.openAudio",
-          `a second adapter built from the same session could not open the audio of ${taskId}, which its own snapshot carries with audio started`);
+          `a second adapter built from the same session could not open the audio of ${tpromptId}, which its own snapshot carries with audio started`);
       }
     } catch (error) {
       refuse("test.reload.rejected", "test.reload", `the second adapter rejected rather than answered: ${String(error)}`);
@@ -1931,12 +1931,12 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     // A task's key names the task delimited, not as a run of characters inside another id, and the
     // rule is evaluated only where the store was ever seen to hold such a key: an adapter whose keys
     // name nothing the harness can see leaves the rule unasked, which the result says.
-    const retained = [...call.held].filter(key => namesTask(key, taskId));
+    const retained = [...call.held].filter(key => namesTask(key, tpromptId));
     retainedAtEnd = new Set(retained);
-    if (call.everHeldForTask(taskId)) ruleTested("test.store.retained");
+    if (call.everHeldForTask(tpromptId)) ruleTested("test.store.retained");
     if (retained.length > 0) {
       refuse("test.store.retained", "test.store",
-        `${taskId} has ended and the session's store still holds ${retained.join(", ")}: a task's keys go with the task, or the next offer of the same id inherits them`);
+        `${tpromptId} has ended and the session's store still holds ${retained.join(", ")}: a task's keys go with the task, or the next offer of the same id inherits them`);
     }
   };
   // A key written about the task after its end -- a persist hung off a timer, a late command -- is the
@@ -1944,10 +1944,10 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
   const nothingLate = (): void => {
     if (retainedAtEnd === undefined) return;
     ruleTested("test.store.late");
-    const late = [...call.held].filter(key => namesTask(key, taskId) && !retainedAtEnd!.has(key));
+    const late = [...call.held].filter(key => namesTask(key, tpromptId) && !retainedAtEnd!.has(key));
     if (late.length > 0) {
       refuse("test.store.late", "test.store",
-        `${taskId} had ended with its keys gone, and the session's store now holds ${late.join(", ")}: something wrote about the task after its end`);
+        `${tpromptId} had ended with its keys gone, and the session's store now holds ${late.join(", ")}: something wrote about the task after its end`);
     }
   };
 
@@ -1963,12 +1963,12 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     if (offered === undefined) return found;
     task = offered.found; cursor = offered.at;
   }
-  let taskId = task.assignmentId as string;
+  let tpromptId = task.assignmentId as string;
   const latestTask = (): Record<string, unknown> => task!;
   const updated = (until: (task: Record<string, unknown>) => boolean, what: string, within?: { ms: number; onExpiry: () => void }) =>
     waitFor(what, envelope => {
       const event = envelope.event as Record<string, unknown>;
-      if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.assignmentId === taskId) {
+      if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.assignmentId === tpromptId) {
         task = event.task;
         return until(event.task) ? event.task : undefined;
       }
@@ -1976,7 +1976,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     }, cursor, within).then(hit => { if (hit) cursor = hit.at; return hit; });
   const ended = (within?: { ms: number; onExpiry: () => void }) => waitFor("a task-ended for the tested task", envelope => {
     const event = envelope.event as Record<string, unknown>;
-    return event.type === "task-ended" && event.assignmentId === taskId ? event : undefined;
+    return event.type === "task-ended" && event.assignmentId === tpromptId ? event : undefined;
   }, cursor, within);
 
   // Every command the test sends is validated against the task as published, and its answer for its method.
@@ -1993,7 +1993,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     ruleTested("test.command.rejected");
     let result: unknown;
     try {
-      result = await call.connection.execute({ assignmentId: taskId, command } as never);
+      result = await call.connection.execute({ assignmentId: tpromptId, command } as never);
     } catch (error) {
       refuse("test.command.rejected", `test.command.${String(command.type)}`, `execute rejected rather than answered: ${String(error)}`);
       return undefined;
@@ -2024,7 +2024,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
   const lapse = latestTask().phase === "pending" ? latestTask().expiresInSeconds : undefined;
   if (typeof lapse === "number" && lapse * 1000 <= call.timeoutMs) {
     ruleTested("test.offer.expired");
-    const lapsedId = taskId;
+    const lapsedId = tpromptId;
     let missed = false;
     const ending = await waitFor(`the expired ending of ${lapsedId}`, envelope => {
       const event = envelope.event as Record<string, unknown>;
@@ -2044,7 +2044,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       return event.type === "task-offered" && isTask(event.task) && event.task.assignmentId !== lapsedId ? event.task : undefined;
     }, ending.at);
     if (next === undefined) return found;
-    task = next.found; cursor = next.at; taskId = task.assignmentId as string;
+    task = next.found; cursor = next.at; tpromptId = task.assignmentId as string;
   }
   const acceptedAt = call.events.length;
   // 1. Accept the offer, if it is one.
@@ -2070,7 +2070,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
         const dialled = await updated(ringing, "the provider dialling at the preview's deadline", { ms: left * 1000 + settleMs, onExpiry: () => { missed = true; } });
         if (dialled === undefined) {
           if (!missed) return found;
-          refuse("test.preview.deadline", "test.preview", `${taskId} is a preview under provider-dials with ${left}s left, and the provider did not dial when it ran out: the party rings on onCall, or the task leaves preview`);
+          refuse("test.preview.deadline", "test.preview", `${tpromptId} is a preview under provider-dials with ${left}s left, and the provider did not dial when it ran out: the party rings on onCall, or the task leaves preview`);
           return found;
         }
         pressCall = false;
@@ -2079,13 +2079,13 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
         // waits the seconds out and expects the task where it left it.
         const moved = await updated(t => t.phase !== "preview", "nothing", { ms: left * 1000, onExpiry: () => undefined });
         if (moved !== undefined) {
-          refuse("test.preview.deadline", "test.preview", `${taskId} is a preview under ${atDeadline} with ${left}s left, and the provider moved it to ${String(moved.found.phase)} before the deadline: under ${atDeadline} the preview stands until the agent computer dials, or for as long as the agent needs`);
+          refuse("test.preview.deadline", "test.preview", `${tpromptId} is a preview under ${atDeadline} with ${left}s left, and the provider moved it to ${String(moved.found.phase)} before the deadline: under ${atDeadline} the preview stands until the agent computer dials, or for as long as the agent needs`);
           return found;
         }
       }
     }
     if (pressCall && latestTask().phase === "preview") {
-      const dialId = `test-${taskId}`;
+      const dialId = `test-${tpromptId}`;
       call.stream.dialled(dialId);
       if (await send({ type: "dial", dialId }, dialId) === undefined) return found;
       call.stream.placedByTest(dialId);
@@ -2100,7 +2100,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     const phase = String(latestTask().phase);
     let answer: unknown;
     try {
-      answer = await call.connection.execute({ assignmentId: taskId, command: { type: "hold" } } as never);
+      answer = await call.connection.execute({ assignmentId: tpromptId, command: { type: "hold" } } as never);
     } catch (error) {
       refuse("test.command.rejected", "test.command.hold", `execute rejected rather than answered: ${String(error)}`);
     }
@@ -2118,12 +2118,12 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     if (latestTask().audio !== "started") {
       const started = await waitFor("task-audio-started for the tested task", envelope => {
         const event = envelope.event as Record<string, unknown>;
-        return event.type === "task-audio-started" && event.assignmentId === taskId ? event : undefined;
+        return event.type === "task-audio-started" && event.assignmentId === tpromptId ? event : undefined;
       }, acceptedAt);
       if (started === undefined) return found;
       cursor = Math.max(cursor, started.at);
     }
-    const opened = await call.connection.openAudio?.({ assignmentId: taskId, localAudio: call.localAudio });
+    const opened = await call.connection.openAudio?.({ assignmentId: tpromptId, localAudio: call.localAudio });
     const malformed = validateResult(opened, "openAudio", "test.openAudio");
     found.push(...malformed);
     if (malformed.length === 0 && isRecord(opened) && opened.status === "opened") session = opened.audio as unknown as Record<string, unknown>;
@@ -2145,7 +2145,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
   const report = async (body: Record<string, unknown>): Promise<void> => {
       ruleTested("test.recordStep.rejected", "test.recordStep.failed");
       // The test holds its own report to the contract before it crosses, as a host must.
-      const leg = { assignmentId: taskId, step: "muted", mutedBy: "host", ...body };
+      const leg = { assignmentId: tpromptId, step: "muted", mutedBy: "host", ...body };
       const own = validateHistoryReport(leg, "test.recordStep.report", call.manifest, latestTask());
       found.push(...own);
       if (own.length > 0) return;
@@ -2198,7 +2198,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
   // so the test sends a mute begun on hold past the validator and expects failed.
   const muteRefusedOnHold = async (): Promise<void> => {
     ruleTested("test.recordStep.rejected", "test.recordStep.held");
-    const leg = { assignmentId: taskId, step: "muted", mutedBy: "host", at: new Date().toISOString() };
+    const leg = { assignmentId: tpromptId, step: "muted", mutedBy: "host", at: new Date().toISOString() };
     let answer: unknown;
     try {
       answer = await call.connection.recordStep!(leg as never);
@@ -2221,7 +2221,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
     ruleTested("test.command.rejected", "test.command.held");
     let answer: unknown;
     try {
-      answer = await call.connection.execute({ assignmentId: taskId, command: { type: "end-call" } } as never);
+      answer = await call.connection.execute({ assignmentId: tpromptId, command: { type: "end-call" } } as never);
     } catch (error) {
       refuse("test.command.rejected", "test.command.end-call", `execute rejected rather than answered: ${String(error)}`);
       return;
@@ -2255,7 +2255,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
   if (latestTask().phase === "in-progress" && offers("schedule")) {
     const publishedAt = call.events.slice(0, cursor).reverse().find(envelope => {
       const event = envelope.event as Record<string, unknown>;
-      return (event.type === "task-offered" || event.type === "task-updated") && isTask(event.task) && event.task.assignmentId === taskId;
+      return (event.type === "task-offered" || event.type === "task-updated") && isTask(event.task) && event.task.assignmentId === tpromptId;
     })?.occurredAt;
     const at = new Date(Date.parse(String(publishedAt ?? "2026-01-01T00:00:00Z")) + 24 * 60 * 60 * 1000).toISOString();
     if (await send({ type: "schedule", at, note: "Follow-up promised on the call" }) !== undefined) {
@@ -2296,8 +2296,8 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       // that is not coming, so the run reads by the rule and not by its timeout.
       const audioEnded = await waitFor("task-audio-ended after end-call", envelope => {
         const event = envelope.event as Record<string, unknown>;
-        if (event.type === "task-audio-ended" && event.assignmentId === taskId) return "ended" as const;
-        if (event.type === "task-updated" && isTask(event.task) && event.task.assignmentId === taskId && event.task.phase === "completing") return "completing" as const;
+        if (event.type === "task-audio-ended" && event.assignmentId === tpromptId) return "ended" as const;
+        if (event.type === "task-updated" && isTask(event.task) && event.task.assignmentId === tpromptId && event.task.phase === "completing") return "completing" as const;
         return undefined;
       }, cursor);
       if (audioEnded?.found === "ended") cursor = audioEnded.at;
@@ -2342,11 +2342,11 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
       else if (unsettled) {
         let resync: unknown;
         try { resync = await call.connection.snapshot(); } catch (error) { refuse("test.command.rejected", "test.completion", `snapshot() after an unsettled completion rejected: ${String(error)}`); }
-        const still = isRecord(resync) && Array.isArray(resync.tasks) && resync.tasks.some(t => isRecord(t) && t.assignmentId === taskId);
+        const still = isRecord(resync) && Array.isArray(resync.tasks) && resync.tasks.some(t => isRecord(t) && t.assignmentId === tpromptId);
         refuse("test.completion.unsettled", "test.completion",
           still
-            ? `complete was applied and ${settle}ms later the task-ended has not come and a snapshot still carries ${taskId}: applied says the provider completed the task, and it has not`
-            : `complete was applied and ${settle}ms later the task-ended has not come; a snapshot no longer carries ${taskId}, so the ending was owed and never sent`);
+            ? `complete was applied and ${settle}ms later the task-ended has not come and a snapshot still carries ${tpromptId}: applied says the provider completed the task, and it has not`
+            : `complete was applied and ${settle}ms later the task-ended has not come; a snapshot no longer carries ${tpromptId}, so the ending was owed and never sent`);
       }
     }
   } else if (latestTask().phase === "completing") {
@@ -2357,7 +2357,7 @@ async function testOneCall<C extends Channel>(call: CallTest<C>): Promise<Protoc
   const lastPublished = (): Record<string, unknown> => {
     for (let index = call.events.length - 1; index >= 0; index -= 1) {
       const event = call.events[index]!.event as Record<string, unknown>;
-      if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.assignmentId === taskId) return event.task;
+      if ((event.type === "task-updated" || event.type === "task-offered") && isTask(event.task) && event.task.assignmentId === tpromptId) return event.task;
     }
     return latestTask();
   };
