@@ -255,10 +255,11 @@ describe("break prerequisites", () => {
       }
     }
   });
-  it("refuses the agent resuming while banned, and allows it once the ban is lifted", () => {
-    expect(validateBreakCommand("endBreak", undefined, state("on-break"), { ...context, ban: { by: "lead" } }).map(v => v.rule))
-      .toEqual(["break.command.end.banned"]);
-    expect(validateBreakCommand("endBreak", undefined, state("on-break"), context)).toEqual([]);
+  it("lets a banned agent end a break of their own, but not a forced one", () => {
+    // Ban time is not break time: ending the break stops it, and the ban still keeps them from work.
+    expect(validateBreakCommand("endBreak", undefined, state("on-break"), { ...context, ban: { by: "lead" } })).toEqual([]);
+    expect(validateBreakCommand("endBreak", undefined, { ...state("on-break"), forced: { by: "lead", scope: "agent" } }, { ...context, ban: { by: "lead" } }).map(v => v.rule))
+      .toEqual(["break.command.end.forced"]);
     // A ban stops work, not asking: the break request is the provider's to answer.
     expect(validateBreakCommand("requestBreak", {}, state("not-requested"), { ...context, ban: { by: "lead" } })).toEqual([]);
   });

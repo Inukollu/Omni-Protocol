@@ -262,10 +262,14 @@ ban: {
 
 **While a ban stands, nothing new starts.** The provider offers nothing, withdraws an offer the ban
 overtook (`snapshot.ban.pending`), and clears any next call asked for or lined up
-(`snapshot.ban.next`). A dial, a Resume or an offer that raced the ban answers `failed` with
-`omni.banned`. The agent application offers no Resume and no dial, and refuses both before they are
-sent (`break.command.end.banned` for Resume). A task in hand runs to its end: the ban stops new work,
-not the call under way.
+(`snapshot.ban.next`). A dial or an offer that raced the ban answers `failed` with `omni.banned`.
+The agent application offers no dial, and refuses one before it is sent. A task in hand runs to its
+end: the ban stops new work, not the call under way.
+
+**A banned agent may end a break of their own.** Ban time is not break time, so the agent may end a
+break they are on, as at any time, and the break time stops there. They are then signed in and
+banned, and still take no work. A forced break stays the provider's to lift, ban or no ban. The
+agent application offers the end of a break to a banned agent, but never takes them back to work.
 
 **A ban stops the agent everywhere.** Like a forced break, it is about the agent, not one provider.
 The agent application states `setCapacity({ count: 0 })` on every other usable provider holding

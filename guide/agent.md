@@ -1170,6 +1170,6 @@ react rather than only display the message:
 | `omni.on-hold` | Refused because the caller is on hold: the agent application's own Mute begun on a `paused` task, or `end-call` there. The agent application says resume first. The test expects this code on both (`test.recordStep.held`, `test.command.held`). |
 | `omni.break-forced-by-provider` | A lead asked to lift a break the platform imposed; the platform lifts its own. See **Forced breaks** in `guide/breaks.md`. |
 | `omni.break-forced` | The agent asked to end a break that is still forced. Only lifting it ends it. See **Forced breaks** in `guide/breaks.md`. |
-| `omni.banned` | The agent is banned: a Resume, a dial or an offer that raced the ban. Nothing new until the ban is lifted. See **Bans** in `guide/breaks.md`. |
+| `omni.banned` | The agent is banned: a dial, or an offer that raced the ban. Nothing new until the ban is lifted. See **Bans** in `guide/breaks.md`. |
 
 They are published as `OMNI_FAILURE_CODES`.

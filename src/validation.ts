@@ -1826,8 +1826,6 @@ export function validateBreakCommand(method: BreakMethod, request: unknown, stat
         "end a committed break, including a returning provider still finishing work");
       into.require(state.forced === undefined, "break.command.end.forced", path,
         "a forced break is not the agent's to end: it ends only when it is lifted");
-      into.require(context.ban === undefined, "break.command.end.banned", path,
-        "the agent is banned: they resume only once the ban is lifted");
     }
   }
   return into.violations;

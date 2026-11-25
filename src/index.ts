@@ -1466,7 +1466,7 @@ export interface BreakState {
 
 /**
  * The agent may not work: signed in or not, they take no new work from this provider. It offers
- * nothing and refuses a dial with `omni.banned`; the agent application offers no Resume and no dial,
+ * nothing and refuses a dial with `omni.banned`; the agent application offers no dial, though the agent may end a break of their own,
  * and stops the agent on every other provider as for a forced break. A task in hand runs to its end.
  * Signing out does not end a ban. It is not a break: its time counts in no break figure. `by` names
  * the lead who placed it, or `provider` where the platform did.
@@ -2017,7 +2017,7 @@ export const OMNI_FAILURE_CODES = [
   "omni.break-forced-by-provider",
   /** The agent asked to end a break that is still forced; only its lifting does. */
   "omni.break-forced",
-  /** The agent is banned: no Resume, no dial and no new work until the ban is lifted. */
+  /** The agent is banned: no dial and no new work until the ban is lifted. */
   "omni.banned",
 ] as const;
 
