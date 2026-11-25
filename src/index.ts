@@ -1577,7 +1577,8 @@ export type LinedUpReleaseResult =
 /**
  * `elsewhere`: signed in here, and the host gives this provider no capacity -- none stated yet since
  * the connection, or `count: 0` while it holds the agent for another provider; not receiving this
- * provider's work, and not on a break. `banned` and `tools-not-ready`: signed in, holding no task, on a break of that type here.
+ * provider's work, and not on a break. A provider that places its own setup hold for the window
+ * before the first capacity shows `tools-not-ready` there instead. `banned` and `tools-not-ready`: signed in, holding no task, on a break of that type here.
  */
 export type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "elsewhere" | "banned" | "tools-not-ready" | "signed-out";
 

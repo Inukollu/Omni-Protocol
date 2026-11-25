@@ -45,7 +45,7 @@ Each availability value means one thing:
 | `ready` | Signed in, able to take work, none assigned. |
 | `on-task` | Working on at least one task. It says nothing about how many, and nothing about whether more will fit. |
 | `on-break` | Stopped and not taking work, whether they asked or somebody stopped them. The reason lives on their own `BreakState`, not here. |
-| `elsewhere` | Signed in here, and the agent application gives this provider no capacity: none stated yet since the connection, or `count: 0` while it holds the agent for another provider. Not receiving this provider's work, and not on a break. A provider that holds the agent out of work until the first capacity arrives shows them here, never as `ready`. See **Capacity and break actions** in `guide/breaks.md`. |
+| `elsewhere` | Signed in here, and the agent application gives this provider no capacity: none stated yet since the connection, or `count: 0` while it holds the agent for another provider. Not receiving this provider's work, and not on a break. A provider that holds the agent out of work until the first capacity arrives shows them here, never as `ready`, unless it places its own setup hold for that window: then the member is `tools-not-ready`, and the window counts in `toolsNotReadySeconds`. See **Capacity and break actions** in `guide/breaks.md`. |
 | `banned` | Signed in, banned on this provider, and holding no task. A member shown here carries the `ban` (`team.member.ban.required`). |
 | `tools-not-ready` | Signed in, holding no task, and kept from this provider's work because their tools are not ready. See **Tools not ready** in `guide/breaks.md`. |
 | `signed-out` | Known to this team but not signed in to this provider. |
@@ -92,11 +92,11 @@ none.
 | --- | --- | --- |
 | `talkSeconds` | Time on calls. | `talk` |
 | `holdSeconds` | Time with a caller on hold. | `hold` |
-| `breakSeconds` | Every stretch the member's `BreakState` showed `on-break` with `type: "break"`. Nothing else: the time before the first capacity is `elsewhere`, not a break, signed-out time is never break time, and a ban or tools not ready is not a break. | `break` |
+| `breakSeconds` | Every stretch the member's `BreakState` showed `on-break` with `type: "break"`. Nothing else: the time before the first capacity is `elsewhere`, or tools not ready where the provider places its own setup hold, and not a break; signed-out time is never break time, and a ban or tools not ready is not a break. | `break` |
 | `breaks` | `breakSeconds` by `reasonId`, one entry per reason, adding up to it exactly (`shift.breaks.total`). | the running `break`, on the `activeReasonId` the member's `BreakState` names |
 | `wrapSeconds` | Time in wrap: after the call, before the task closed. | `wrap` |
 | `banSeconds` | Time signed in under a ban; never the time the member is signed out, though the ban stands. | `ban` |
-| `toolsNotReadySeconds` | Time signed in with tools not ready. | `tools-not-ready` |
+| `toolsNotReadySeconds` | Time signed in with tools not ready, a provider's own setup hold after sign-in included. | `tools-not-ready` |
 | `previewSeconds` | Time in preview, before the agent placed an outbound call. | `preview` |
 | `signedInSeconds` | All time signed in today: breaks, bans, tools not ready, wrap and preview included. Not running while the member is signed out, and neither is a ban or tools not ready (`shift.running.signedOut`). | `signed-in` |
 | `tasksHandled` | Tasks closed today. | -- |

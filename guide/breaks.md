@@ -138,7 +138,10 @@ It is on one of the platform's own reasons, marked `providerOnly`
 (`break.activeReasonId.toolsNotReady`), which the agent application shows by its label.
 
 It ends when the tools are ready: the phone registers, the station is set up, and the platform
-clears it. The agent cannot end it, so the agent application offers no Resume, and `endBreak()` is
+clears it. A provider that holds every agent in a setup hold after sign-in, until the agent
+application is ready, publishes that window as tools not ready and counts it in
+`toolsNotReadySeconds`; only a provider that places no hold of its own shows the window before the
+first capacity as `elsewhere`. The agent cannot end it, so the agent application offers no Resume, and `endBreak()` is
 refused before it is sent (`break.command.end.type`). A dial or an offer that raced it answers
 `failed` with `omni.tools-not-ready`.
 
