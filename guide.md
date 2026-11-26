@@ -26,7 +26,7 @@ every cross-reference names the file it points into.
 | `guide/chat.md` | **Chat.** What is true of a chat and of nothing else. |
 | `guide/email.md` | **Email.** What is true of an email and of nothing else. |
 | `guide/queue.md` | **The agent's own queue.** The next call, lined up for this agent while they finish the one they are on: the ask, the lined-up call, and the release. |
-| `guide/breaks.md` | **Breaks.** Asking for a break, a break forced on the agent, capacity, and one break across several providers. |
+| `guide/breaks.md` | **Breaks.** The three kinds of time away -- a break, a ban, tools not ready -- a lead prompting the agent to take a break, capacity, and one break across several providers. |
 | `guide/lead.md` | **Team leads.** The lead's own surface: the team member list, the lead's commands, lead assist, listening to a call. |
 
 ## Terms
@@ -317,8 +317,8 @@ type LeadCapabilities = {
   takeOverCall?: true;
   decideBreakRequest?: true;
   setBreakPolicy?: true;
-  forceBreak?: true;
-  endForcedBreak?: true;
+  promptBreak?: true;
+  ban?: true;
   setPolicy?: true;
 };
 
@@ -1027,13 +1027,24 @@ type BreakRequest = {
   reasonId?: string;
 };
 
-type ForcedBreakScope = "team" | "agent";
-
-type ForcedBreak = {
-  by: UserId | "provider";
-  scope: ForcedBreakScope;
-  endsInSeconds?: DurationSeconds;
+type PendingPrompt = {
+  id: string;
+  by: UserId;
+  reasonId?: string;
+  reason?: string;
+  durationSeconds?: DurationSeconds;
+  since: IsoTimestamp;
 };
+
+type MemberPendingPrompt = PendingPrompt & {
+  declinedAt?: IsoTimestamp;
+};
+
+type PromptAnswer = { promptId: string; answer: "accepted" | "declined" };
+
+type PromptAnswerResult =
+  | { status: "answered" }
+  | { status: "failed"; failure: ProtocolFailure };
 
 type BreakState = {
   status: BreakStatus;
@@ -1042,9 +1053,20 @@ type BreakState = {
   decisionReason?: string;
   retryRequestInSeconds?: DurationSeconds;
   reasons?: BreakReason[];
+  type?: BreakType;
   activeReasonId?: string;
-  forced?: ForcedBreak;
+  ban?: Ban;
+  pendingPrompt?: PendingPrompt;
 };
+
+type BreakType = "break" | "ban" | "tools-not-ready";
+
+type Ban = {
+  by: UserId | "provider";
+  reason?: string;
+  endsInSeconds?: DurationSeconds;
+};
+
 
 type BreakRequestResult =
   | { status: "requested" }
@@ -1090,7 +1112,7 @@ type LinedUpReleaseResult =
 ### Team
 
 ```ts
-type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "elsewhere" | "signed-out";
+type TeamMemberAvailability = "ready" | "on-task" | "on-break" | "elsewhere" | "banned" | "tools-not-ready" | "signed-out";
 
 type TeamMember = {
   id: UserId;
@@ -1104,6 +1126,8 @@ type TeamMember = {
   phone?: PhoneState;
   nextCall?: NextCallRequest;
   linedUp?: LinedUpCall;
+  pendingPrompt?: MemberPendingPrompt;
+  ban?: Ban;
 };
 
 type MemberRequest = {
@@ -1144,7 +1168,7 @@ type ShiftEvent = {
   kind: ShiftEventKind;
 };
 
-type ShiftFigure = "talk" | "hold" | "break" | "wrap" | "preview" | "signed-in";
+type ShiftFigure = "talk" | "hold" | "break" | "ban" | "tools-not-ready" | "wrap" | "preview" | "signed-in";
 
 type ShiftBreak = {
   reasonId: string;
@@ -1163,6 +1187,8 @@ type Shift = {
   holdSeconds?: DurationSeconds;
   breakSeconds?: DurationSeconds;
   breaks?: ShiftBreak[];
+  banSeconds?: DurationSeconds;
+  toolsNotReadySeconds?: DurationSeconds;
   wrapSeconds?: DurationSeconds;
   previewSeconds?: DurationSeconds;
   signedInSeconds?: DurationSeconds;
@@ -1208,10 +1234,10 @@ type TeamCallCommand =
 type TeamBreakCommand =
   | { type: "decide-break-request"; memberId: UserId; decision: "granted" | "denied"; reason?: string }
   | { type: "set-break-policy"; policy: "approval-required" | "automatically-approved" | "requests-suspended" }
-  | { type: "force-break"; memberId: UserId; reasonId?: string; reason?: string; durationSeconds?: DurationSeconds }
-  | { type: "force-team-break"; reasonId?: string; reason?: string; durationSeconds: DurationSeconds }
-  | { type: "end-forced-break"; memberId: UserId }
-  | { type: "end-team-break" };
+  | { type: "prompt-break"; memberId: UserId; reasonId?: string; reason?: string; durationSeconds?: DurationSeconds }
+  | { type: "withdraw-prompt"; memberId: UserId }
+  | { type: "ban"; memberId: UserId; reason?: string; durationSeconds?: DurationSeconds }
+  | { type: "lift-ban"; memberId: UserId };
 
 type TeamCommand = TeamFeatureCommand | TeamBreakCommand | TeamCallCommand | TeamPolicyCommand;
 
@@ -1338,6 +1364,7 @@ type Connection<C extends Channel = Channel> = {
   commitBreak?(): Promise<BreakCommitResult>;
   cancelBreak?(): Promise<BreakCancelResult>;
   endBreak?(): Promise<BreakEndResult>;
+  answerPrompt?(answer: PromptAnswer): Promise<PromptAnswerResult>;
   requestNextCall?(): Promise<NextCallResult>;
   cancelNextCall?(): Promise<NextCallCancelResult>;
   releaseLinedUp?(): Promise<LinedUpReleaseResult>;
@@ -1406,8 +1433,9 @@ const OMNI_FAILURE_CODES = [
   "omni.break-already-committed",
   "omni.recording-unsettled",
   "omni.on-hold",
-  "omni.break-forced-by-provider",
-  "omni.break-forced",
+  "omni.banned",
+  "omni.tools-not-ready",
+  "omni.prompt-gone",
 ] as const;
 type OmniFailureCode = (typeof OMNI_FAILURE_CODES)[number];
 ```
@@ -2169,7 +2197,7 @@ to infer them from what arrives later.
 | --- | --- |
 | `breaks` | This session may request a break. Requires the four break methods on the connection. |
 | `nextCall` | The platform lines calls up for this agent: pressing Next call while on a call puts the next queued call in the agent's own queue, to start when their wrap ends unless somebody else takes it first. Requires `requestNextCall`, `cancelNextCall` and `releaseLinedUp` on the connection. See **The agent's own queue** in `guide/queue.md`. |
-| `lead` | This session leads a team, with the `LeadCapabilities` it holds for the whole session: one key per lead command it allows -- `join`, `decline`, `listen`, `coach`, `joinCall`, `takeOverCall`, `decideBreakRequest`, `setBreakPolicy`, `forceBreak`, `endForcedBreak`, `setPolicy` -- each by presence, at least one (`authentication.capability.lead.*`). Switching the team feature and leaving a call are every lead's and are not listed. Its presence turns on the team feature in the agent application, which offers only the lead commands the lead holds; any other is refused before it is sent (`team.command.notGranted`). A team lead may hold listen, coach and break decisions, a floor manager all of them. While the lead has the feature on, the provider publishes a `TeamMembers` object to them on every snapshot — `members: []` when nobody is in it — and to nobody else. Requires `executeTeam`. See **Team leads** in `guide/lead.md`. |
+| `lead` | This session leads a team, with the `LeadCapabilities` it holds for the whole session: one key per lead command it allows -- `join`, `decline`, `listen`, `coach`, `joinCall`, `takeOverCall`, `decideBreakRequest`, `setBreakPolicy`, `promptBreak`, `ban`, `setPolicy` -- each by presence, at least one (`authentication.capability.lead.*`). Switching the team feature and leaving a call are every lead's and are not listed. Its presence turns on the team feature in the agent application, which offers only the lead commands the lead holds; any other is refused before it is sent (`team.command.notGranted`). A team lead may hold listen, coach and break decisions, a floor manager all of them. While the lead has the feature on, the provider publishes a `TeamMembers` object to them on every snapshot — `members: []` when nobody is in it — and to nobody else. Requires `executeTeam`. See **Team leads** in `guide/lead.md`. |
 | `preferences` | What the team left to this person, with where each stands and who set it. Omitted when nothing was. Requires `setPreference`. See **Who decides what an agent may do**. |
 
 A session action is available only when both the capability and Omni local policy permit it.
@@ -2283,7 +2311,7 @@ failure:
 ```
 
 The `User` it carries is the **root of this provider's user namespace**. Every other person this
-provider names — a team member, the manager on a forced break, the agent on a history step —
+provider names — a team member, the lead who prompted a break, the agent on a history step —
 is identified from the same directory and carries the same `UserId` type.
 
 | Field | Contract |
@@ -2449,7 +2477,7 @@ a capability it agrees with the user's capabilities: a lead's snapshot carries `
 | `transport` | Current `TransportStatus` — whether this provider's transport can serve the session. Defined under **`transport-status`**. |
 | `sessionId` | Identity of this session. It must match the connection context. |
 | `providerTime` | The provider's own instant of this read. Required of a provider that declares `timeCheck` (`snapshot.providerTime`), forbidden of one that does not (`snapshot.providerTime.unexpected`): a clock sample the agent computer counts durations from, saving it a `checkTime`. |
-| `break` | Complete break state, including status, whether the agent may ask, reasons, retry details, and any forced break. |
+| `break` | Complete break state, including status, its type -- the agent's own break, a ban, or tools not ready -- whether the agent may ask, reasons, retry details, a ban's terms, and any lead's prompt. See **Breaks** in `guide/breaks.md`. |
 | `tasks` | Complete set of tasks currently offered to or owned by this agent. |
 | `taskCount` | The provider's own count of those tasks, stated rather than inferred, and it must equal `tasks.length`. A snapshot with no work says `taskCount: 0` in so many words — a blank or unanswered state lacks the count and cannot pass as a confirmed empty. |
 | `contacts` | Required complete contact contribution when the manifest declares `contacts`; `[]` clears it. Omitted only when it does not. |
@@ -2476,12 +2504,13 @@ surface in one place, and what obliges an adapter to implement each one.
 | `refused(report)` | Always. The agent application tells the adapter what it would not take -- a snapshot it did not replace its state with, an event it dropped -- with every rule broken, so a refusal is visible on both sides. See **What the agent application does with what it refuses**. |
 | `setCapacity(capacity)` | Always. Nothing may be assigned until a capacity is stated, so there is no connection that does not receive it. |
 | `execute(request)` | Always. Every channel has commands no capability gates — see **Which commands need a capability** in `guide/agent.md`. |
-| `getUserDetails(ids)` | The adapter publishes any `UserId`: on `ForcedBreak.by` where a person forced it, a team member list, or `history[].by`. A `User` carries `timeZone` where the provider knows where that person last signed in from, and omits it where it does not. |
+| `getUserDetails(ids)` | The adapter publishes any `UserId`: on a lead's `PendingPrompt.by`, on `Ban.by` where a person placed it, a team member list, or `history[].by`. A `User` carries `timeZone` where the provider knows where that person last signed in from, and omits it where it does not. |
 | `dial(request)` | The manifest declares `idleCapabilities.dial`, and with it `dialOutcomes`. |
 | `requestBreak(request)` | The user's capabilities include `breaks`. |
 | `commitBreak()` | The user's capabilities include `breaks`. Commit and cancel are not optional halves of it. |
 | `cancelBreak()` | The user's capabilities include `breaks`. |
 | `endBreak()` | The user's capabilities include `breaks`. |
+| `answerPrompt(answer)` | The user's capabilities include `breaks`. |
 | `requestNextCall()`, `cancelNextCall()`, `releaseLinedUp()` | The user's capabilities include `nextCall`. The three stand together: a lined-up call the agent could neither withdraw nor let go is a promise with no way out. See **The agent's own queue** in `guide/queue.md`. |
 | `executeTeam(request)` | The user's capabilities include `lead`: the lead commands its lead capabilities allow, on the team surface and nowhere else. See **Lead commands** in `guide/lead.md`. |
 | `setPreference(request)` | The user's capabilities include `preferences`: the person's choice has to have somewhere to go. |
@@ -2533,7 +2562,7 @@ Turns `UserId` values into something an agent can read.
 getUserDetails(ids: UserId[]): Promise<User[]>
 ```
 
-Required of any adapter that publishes a `UserId` — on `ForcedBreak.by` where a person forced it, a
+Required of any adapter that publishes a `UserId` — on a lead's `PendingPrompt.by`, on `Ban.by` where a person placed it, a
 team member list, or `history[].by`. Publishing an identifier Omni cannot resolve puts a name on screen
 that reads as a database key.
 
@@ -2843,12 +2872,12 @@ covers a `diagnostic`: shown where the agent works, and counted.
 Replaces this provider's complete `break` object. Its `status` uses the canonical
 `not-requested`, `awaiting-approval`, `granted`, `starting-after-task` and
 `on-break` states defined under Breaks; the event also carries the corresponding may-ask state,
-reasons, retry details, and any forced break.
+reasons, retry details, and any lead's prompt.
 
 Each state is also held to the one before it. A commit's states, `starting-after-task` and
-`on-break`, follow a grant — the one arrival in a committed state nobody asked for is a forced
-break, which says so with `forced`: in effect at once, or `starting-after-task` while the member
-finishes the call they are on (`stream.breakState.commitBeforeGrant`); and a break never moves backwards —
+`on-break`, follow a grant when the break is the agent's own, `type: "break"` — an accepted prompt is a
+grant — while a ban and tools not ready arrive unasked, and a ban may replace a break in effect; nothing
+else becomes the agent's own break (`stream.breakState.commitBeforeGrant`); and a break never moves backwards —
 from `on-break` or `starting-after-task` to a grant or a request, or from `granted` to
 `awaiting-approval` — a new request passes through `not-requested` (`stream.breakState.backwards`).
 `testAdapter` holds the stream to that from the connect snapshot on;
@@ -2880,8 +2909,9 @@ Normal order is `not-requested` → `awaiting-approval` → `granted` →
 `starting-after-task` → `on-break` → `not-requested`. Auto-approval may go directly to
 `granted`; a commit with no outstanding work may go directly to `on-break`. Denial/cancel
 returns a precommit request to `not-requested`; an explicit agent end returns a committed
-break there, once it is not `forced`. Same-state restatements are allowed. An evidenced forced break is the explicit
-exception to requesting/granting, and must carry its forced actor/state. Neither skipped
+break there, a ban and tools not ready only as their own rules allow. Same-state restatements are
+allowed. A ban and tools not ready are the exceptions to requesting and granting. An accepted ask
+reaches `granted` without a request. Neither skipped
 publication nor an agent application-local guess creates another exception. A later normal attempt starts
 from `not-requested`, never by regressing an active break into a request.
 
@@ -3115,7 +3145,7 @@ issued by each provider independently, so two providers will eventually issue th
 different people. Encode and join before storing or comparing.
 
 Use it for every `UserId` — `history[].by`, team members, `memberId` on a
-lead command, `ForcedBreak.by` where it names a person rather than `"provider"`. A bare one is only ever compared against another from the **same** provider; anything
+lead command, `PendingPrompt.by`, and `Ban.by` where it names a person rather than `"provider"`. A bare one is only ever compared against another from the **same** provider; anything
 wider goes through this key.
 
 ### `sameCapabilities(a, b)`
@@ -3250,7 +3280,7 @@ A capability granted by a later session requires its methods just as one declare
 
 `result.notTested` lists what the run never reached — one subject per family of rules: each
 optional part of a task (`task.browsers`, `task.history`, `task.leadAssist`, …), the break's
-`reasons` and `forced`, the team member list's `members` and a member's `request`, each declared contribution, and
+`reasons`, `pendingPrompt`, a ban and tools not ready, the team member list's `members` and a member's `request`, each declared contribution, and
 each event type (`event.task-ended`, …) — and so what a clean `violations` says nothing about.
 Nothing there is a violation: an adapter with no team has nothing to exercise. But a fixture with
 no tasks exercises no task rule, and a pass over it reads as coverage it is not.
@@ -3374,12 +3404,11 @@ cannot be established from TypeScript structure alone.
 | `assertAuthenticationRestoreAndExpiry(states, manifest)` | A restored authenticated session can refresh and ends in expiry. Every state is validated, against the manifest's levels. |
 | `assertReconnectWithMissedAssignments(before, reconnect, ids)` | A reconnect snapshot restores assignments received while offline. |
 | `stillHost(report?, guarantees?, mute?)` | An agent application that reports one thing and never changes, for a test context: `{ online: true }` by default, a report with audio for a softphone voice adapter, and never for a hardphone. |
-| `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for an agent application that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. |
-| `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and a forced break arriving in effect with `forced`. The harness applies the same rules after the connect snapshot. |
+| `TaskStream`, `BreakStream` | The cross-event models the harness applies after the connect snapshot, exported for an agent application that wants the same rules at its boundary: `seed(snapshot)`, then `apply(envelope)` returns the violations. `new BreakStream({ softphone: true })` also refuses a softphone session the platform's own break (`stream.breakState.softphone`). |
+| `assertBreakFollowsItsRequests(envelopes, snapshot?)` | A break follows its requests: a commit's states only after a grant, never backwards, and only the platform's own break arriving in effect unasked. The harness applies the same rules after the connect snapshot. |
 | `assertAudioFollowsTheTask(envelopes, snapshot?)` | The audio follows the task and never decides it: every task is introduced once, `task-audio-started` and `task-audio-ended` alternate on work that has begun, audio ends only where it arrived, and what follows the audio ending is `completing` or `task-ended`. The harness applies the same rules to every event after the connect snapshot (`stream.*`). A sequence with no audio satisfies it by never testing it — pair it with the assertion that the audio end is present. |
 | `assertHistoryAgreesAcrossTasks(earlier, later)` | Two tasks of one call -- a hand-over, a take-over, a callback: the later restates every earlier step in order, with the same step, instant, person, dial and destination, and any duration already stated unchanged. Throws when either carries no history. |
 | `assertBreakAttemptProviders(candidates, asked)` | A break attempt asks every usable provider holding capacity, `refreshing` included, and nothing of a provider whose session is `expired`. |
-| `assertForcedBreakStopsTheRest(forcedOn, candidates, stopped)` | A forced break on one provider stops the agent everywhere else: capacity zero stated on every other usable provider holding capacity, nothing on the forcing one, nothing on a dead session. See **Forced breaks** in `guide/breaks.md`. |
 | `assertBreakBeginsAfterTask(steps)` | A break asked for on a task is committed as `starting-after-task` while work remains and reaches `on-break` only once nothing is outstanding — never beside a task, never later than the step that has none. |
 | `assertDeniedAndRetriedBreak(states)` | A denial transitions directly to `not-requested`; a later request can still be granted. |
 | `assertBrowserProfileIsolation(left, right, expected)` | Browser reuse follows only the declared isolation scheme. |

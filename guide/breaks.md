@@ -1,6 +1,6 @@
 # `@xema/omni-protocol`: Breaks
 
-Asking for a break, a break forced on the agent, capacity, and one break across several providers. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
+The three kinds of time away -- a break, a ban, tools not ready -- a lead prompting the agent to take a break, capacity, and one break across several providers. Part of the contract in `guide.md`, which holds the terms, the shapes and the rules every file here relies on; a reference in bold names the file it points into where that is not this one.
 
 ## Breaks
 
@@ -17,8 +17,10 @@ nothing while none are being accepted — so they are not published separately.
 | `decisionReason` | The words whoever decided attached, from `decide.reason`. About one request and one decision, not a standing gate. |
 | `retryRequestInSeconds` | Whole seconds until the agent may ask for a break again, as of this publication and restated on each, when the provider can say. |
 | `reasons` | Not-ready codes this provider offers. Omitted when it defines none; an empty list is refused, being a second spelling of the same fact. |
-| `activeReasonId` | The `BreakReason.id` the current break is on. Omitted when there is no break. Required on a break `on-break` or `starting-after-task` where the provider publishes `reasons`, a forced break included (`break.activeReasonId.required`): a break with a kind the provider cannot name is a break whose rules nobody can apply. |
-| `forced` | Set when the break was forced on the agent rather than requested. |
+| `activeReasonId` | The `BreakReason.id` the current break is on. Omitted when there is no break. Required on a break `on-break` or `starting-after-task` where the provider publishes `reasons`, tools not ready included and a ban excepted (`break.activeReasonId.required`): a break with a kind the provider cannot name is a break whose rules nobody can apply. |
+| `type` | Which kind of time away a break in effect is: `break`, `ban` or `tools-not-ready`. See **Three kinds of time away**. |
+| `ban` | A ban's terms, with `type: "ban"` alone. See **Bans**. |
+| `pendingPrompt` | A lead's prompt that the agent take a break, while it stands. See **A lead prompts a break**. |
 
 A request can be waiting for two unrelated things, and they are separate values because
 rendering one as the other tells an agent to wait for somebody who is never coming:
@@ -44,17 +46,187 @@ it; it sends the commit again only from a reconnect snapshot that shows the gran
 refused. A `BreakReason` marked `alwaysAvailable` survives it: a mandatory rest period is not
 something a busy hour can cancel, and Omni keeps offering those while the rest are withdrawn.
 
-**The provider's own reasons are offered to nobody.** A break the platform puts the agent on
-itself -- a phone that will not register, a station still being set up, a call that rang out
-unanswered -- still needs a reason, since `activeReasonId` names every break where reasons are
-published. Mark it `providerOnly`. The break may be forced, when only the platform can lift it, or
-an ordinary one the agent ends when ready: the flag says who chose the reason, not who ends it. Omni
-leaves it out of the agent's choices and out of a lead's `force-break`, and a request or a
-`force-break` naming it is refused (`break.request.reasonId.providerOnly`,
-`team.command.reasonId.providerOnly`). It is never `alwaysAvailable`
+**The provider's own reasons are offered to nobody.** Tools not ready -- a phone that will not
+register, a station being set up -- still needs a reason, since `activeReasonId` names it where
+reasons are published, and so does the one break the platform places itself, after an offer rang
+out unanswered on a hardphone. Mark it `providerOnly`: the flag says the platform chose it. Omni
+leaves it out of the agent's choices and out of a lead's `prompt-break`, and a request or a prompt
+naming it is refused
+(`break.request.reasonId.providerOnly`, `team.command.reasonId.providerOnly`). It is never `alwaysAvailable`
 (`break.reason.providerOnly.alwaysAvailable`).
 
-### Forced breaks
+### A lead prompts a break
+
+A break is the agent's own: their time away from work, which counts as break time and reaches
+every provider they work. Nobody else puts them on one, with one exception: after an offer rang out
+unanswered on a hardphone, the platform puts the agent on a break on its own reason, and the agent
+ends it when they are back. A hardphone is one the agent could have answered. On a softphone the
+agent had no choice, so a missed offer there is tools not ready, not a break: on a softphone
+session, a `break` on a `providerOnly` reason is refused (`stream.breakState.softphone`).
+
+A lead who wants the agent somewhere else -- training, a meeting, a coaching session -- prompts a
+break, and the agent answers. The agent has a say because the hours are theirs. Prompting is an act,
+not a kind of break: an accepted prompt is the agent's own break, and nothing on it records the
+prompt.
+
+The prompt arrives on the agent's own break state as `BreakState.pendingPrompt`, and travels with
+`break-state` like the rest of it.
+
+| Field | Contract |
+| --- | --- |
+| `id` | Names this prompt (`break.pendingPrompt.id`). The answer names it. |
+| `by` | The lead who prompted it, by user id (`break.pendingPrompt.by`). `getUserDetails()` is owed for them. |
+| `reasonId` | The break it prompts: one of the published reasons, required where reasons are published, and never a `providerOnly` one (`break.pendingPrompt.reasonId`, `.providerOnly`). |
+| `reason` | Optional. The lead's words, shown to the agent (`break.pendingPrompt.reason`). |
+| `durationSeconds` | Optional. How long the lead expects it to take, for the agent to decide by (`break.pendingPrompt.durationSeconds`). It ends nothing: the agent ends their break. |
+| `since` | When the lead prompted it (`break.pendingPrompt.since`). |
+
+For example:
+
+```ts
+pendingPrompt: {
+  id: "prompt-77",
+  by: "manager-1042",
+  reasonId: "training",
+  reason: "New billing flow, room 4",
+  durationSeconds: 1800,
+  since: "2026-11-25T14:00:00Z"
+}
+```
+
+**The agent answers it.** The agent application shows the prompt with Accept and Decline, and sends
+the answer as `answerPrompt({ promptId, answer })`. An answer that names a prompt the break state
+does not carry is refused before it is sent (`break.command.answer.prompt`), and a provider that
+receives one answers `failed` with `omni.prompt-gone`.
+
+- **Accepted**, it is the agent's own request for that break, already approved. The provider clears
+  the prompt and moves the break to `granted`, on the prompt's reason. From there it is any grant:
+  the agent application commits it on every provider the agent works, as **One break across several
+  providers** below sets out, and the break starts at once, or as `starting-after-task` while a task
+  is in hand. The agent ends it when they are back, as they end any break.
+- **Declined**, the provider clears the prompt, and the break state says nothing more.
+
+**One prompt at a time, and only while there is no break.** A prompt stands beside `not-requested`
+and nothing else (`break.pendingPrompt.status`). It goes when the agent answers it, when the lead
+withdraws it, when the agent takes a break of their own anyway, and when they sign out: a prompt is
+for the session it was made in. A failover within that session keeps it.
+
+**The lead sees the answer.** The member's entry on the lead's team list carries the prompt as
+`pendingPrompt`, standing while the member has not answered. A declined prompt stays there with
+`declinedAt` until the lead withdraws it or prompts again, so a lead can tell "no" from "not yet".
+An accepted prompt is gone from the list, and the member's break shows instead. The lead sends
+`prompt-break` and `withdraw-prompt`; see **Lead commands** in `guide/lead.md`. A lead prompting the
+whole team prompts each member: one prompt, and one answer, per person.
+
+### Three kinds of time away
+
+A break in effect -- `on-break`, or `starting-after-task` while a task in hand finishes -- is one of
+three kinds, and says which as `type` (`break.type`, `break.type.required`). They never overlap: the
+agent is on one, or on none.
+
+| `type` | What it is | Who starts it | Who ends it | Reaches | Counts as | Signing out |
+| --- | --- | --- | --- | --- | --- | --- |
+| `break` | Time off work | The agent, asking or accepting a lead's prompt; or the platform, after an offer rang out unanswered on a hardphone | The agent | Every provider they work; the platform's own, this provider | `breakSeconds` | Ends it |
+| `ban` | A lead's judgement, or the platform's, that the agent may not take this provider's work | A lead, or the platform | Whoever placed it, or its time running out | This provider alone | `banSeconds` | Does not end it |
+| `tools-not-ready` | The agent's tools cannot carry this provider's work | The platform | The platform, when the tools are ready | This provider alone | `toolsNotReadySeconds` | Ends it |
+
+A break follows a grant, but for the one the platform places on a `providerOnly` reason; a ban and
+tools not ready arrive unasked (`stream.breakState.commitBeforeGrant`). None of the three counts while the agent is signed out.
+A task in hand runs to its end first, as `starting-after-task`, whatever the kind.
+
+### Tools not ready
+
+The platform cannot give the agent work because their tools are not ready: a phone that will not
+register, a microphone it cannot reach, a station still being set up, an agent application that is
+not ready, an offer a softphone missed. Nobody chose it, so it is not a break, and nobody judged the agent, so it is not a ban.
+It is on one of the platform's own reasons, marked `providerOnly`
+(`break.activeReasonId.toolsNotReady`), which the agent application shows by its label.
+
+It ends when the tools are ready: the phone registers, the station is set up, and the platform
+clears it. A provider that holds every agent in a setup hold after sign-in, until the agent
+application is ready, publishes that window as tools not ready and counts it in
+`toolsNotReadySeconds`; only a provider that places no hold of its own shows the window before the
+first capacity as `elsewhere`. The agent cannot end it, so the agent application offers no Resume, and `endBreak()` is
+refused before it is sent (`break.command.end.type`). A dial or an offer that raced it answers
+`failed` with `omni.tools-not-ready`.
+
+### Bans
+
+A ban keeps the agent from this provider's work. A lead places it when they judge the agent not fit
+to take it, and the platform may place its own, on a rule of its own. The agent stays signed in,
+takes no work here, and works on everywhere else. It travels on the break state as `type: "ban"`,
+with its terms as `ban` (`break.ban.required`, `break.ban.type`).
+
+| Field | Contract |
+| --- | --- |
+| `by` | The lead who placed it, by user id, or `provider` where the platform did (`ban.by`). `getUserDetails()` is owed for a person. |
+| `reason` | Optional words saying why, shown to the agent and their leads (`ban.reason`). A ban names no break reason (`break.activeReasonId.ban`). |
+| `endsInSeconds` | How long it has left, in whole seconds from this publication, restated on each (`ban.endsInSeconds`). Its clock runs while the agent is signed out. When it runs out, the provider lifts the ban. Absent, it stands until it is lifted. |
+
+For example:
+
+```ts
+break: {
+  status: "on-break",
+  canRequestBreak: false,
+  type: "ban",
+  ban: { by: "manager-1042", reason: "Compliance review", endsInSeconds: 3600 }
+}
+```
+
+**A ban ends a break.** An agent on a break of their own when the ban comes is on the ban instead,
+and the break time stops there. A lead's prompt standing is withdrawn. While banned the agent cannot
+ask for a break, accept a prompt, or end the ban: the agent application offers none of those, and the
+provider answers any that arrives `failed` with `omni.banned`. A lead cannot prompt a banned member
+(`team.command.promptBreak.member`). A ban replaces tools not ready too; when it lifts and the tools are
+still not ready, tools not ready follows.
+
+**While a ban stands, nothing new starts here.** The provider offers nothing, and clears any next
+call asked for or lined up, as for any break in effect. A dial or an offer that raced the ban answers
+`failed` with `omni.banned`, and the agent application offers no dial on this provider. A task in
+hand runs to its end first: the ban stops new work, not the call under way.
+
+**A ban is this provider's alone.** The lead's judgement is about this provider's work. The agent's
+other providers, and the leads there, are untouched, and the agent application leaves the capacity
+it states on them as it was.
+
+**Signing out does not end a ban.** The provider keeps it, and the first snapshot of the agent's next
+session carries it again while it stands. Without that, signing out and straight back in would undo
+any ban. Its time while the agent is away counts toward no figure, `banSeconds` and
+`signedInSeconds` included, though its clock runs on. `testAdapter` holds a provider to this when
+given `signInAgain`: a run that ends with the agent banned signs out, signs in again, and expects the
+same ban, placed by the same one, its time left having run on and never grown (`test.signIn.ban`). A
+run without `signInAgain`, or with no ban to carry, lists `ban.signIn` under `notTested`.
+
+**Whoever placed it lifts it.** A lead holding the `ban` capability sends `ban` and `lift-ban`; see
+**Lead commands** in `guide/lead.md`. A ban the platform placed is the platform's to lift: a lead's
+`lift-ban` on it is refused before it is sent (`team.command.liftBan.provider`), and a provider that
+receives one answers `failed` with `omni.banned`. When it lifts, the agent takes this provider's work
+again, or is on tools not ready if those still are not.
+
+### Migration
+
+Forced breaks are retired. The break state's forced field and its type, the lead commands
+force-break, force-team-break, end-forced-break and end-team-break, the forceBreak and
+endForcedBreak lead capabilities, the two forced-break failure codes, and the harness check that a
+forced break stops the other providers are all gone. A break state carrying forced is refused
+(`break.forced.retired`), and the old commands are unknown types. What each did
+now has its own place:
+
+| Was | Now |
+| --- | --- |
+| A lead taking the agent away, such as for training | `prompt-break`: the agent accepts or declines |
+| A lead stopping the agent from working | `ban`, on this provider only |
+| The platform holding the agent until its tools are ready | `type: "tools-not-ready"`, which the platform ends |
+| The platform's short break after an offer rang out on a hardphone, which the agent clears with Resume | `type: "break"`, on a `providerOnly` reason |
+| The same hold after an offer a softphone missed | `type: "tools-not-ready"`, which the platform ends |
+| A team break | One prompt per member, from the lead's desk |
+
+Every break in effect now says its `type` (`break.type.required`). A platform hold that becomes tools
+not ready, or a ban, stops counting as break time and counts in its own figure, `toolsNotReadySeconds`
+or `banSeconds`, so the day's figures change for it. Hosts and providers update together.
+
+Earlier renames, still in force:
 
 Migration: the former awaiting-decision value is now `awaiting-approval` in break status
 and the team member’s pending break state. The old value is rejected without an alias;
@@ -90,9 +262,6 @@ rejected even beside the new field. Validation diagnostics use canRequestBreak i
 mayAsk. Request eligibility remains distinct from approval; existing alwaysAvailable reason
 exceptions are unchanged. Hosts and providers must update together.
 
-Migration: ImposedBreak is now `ForcedBreak`, and the former imposed field is now
-`BreakState.forced`. Diagnostic and harness coverage names use `break.forced`. Update hosts and providers together. The old field
-is rejected, including when both spellings are sent; no compatibility alias is provided.
 The break policy value formerly named auto-approve is now `automatically-approved`.
 Requests are approved automatically; approval does not skip commitment or the prerequisites
 for starting a break. The former value is rejected without an alias.
@@ -106,138 +275,6 @@ command is rejected without an alias; its policy field is unchanged. Hosts and p
 The team break command formerly named decide is now `decide-break-request`. The former
 spelling is rejected without an alias; the granted/denied decisions and pending-request
 prerequisite are unchanged.
-The team break command formerly named place is now `force-break`. Hosts and providers must
-adopt the new command together; place and the interim force spelling are rejected without aliases.
-The team break command formerly named release is now `end-forced-break`, and its diagnostic is
-`team.command.endForcedBreak`. The former release command and the interim end spelling are rejected without aliases.
-Migration: the agent's `endBreak` no longer ends a forced break. It is refused before it is sent
-(`break.command.end.forced`), and a provider that receives one answers `failed` with
-`omni.break-forced`. The agent application no longer offers Resume on a forced break.
-Migration: `ForcedBreak` now says whom it covers, as `scope` (`break.forced.scope`), and its
-`expectedEndsInSeconds` is now `endsInSeconds`, since the break is lifted when it runs out
-(`break.forced.expectedEndsInSeconds.renamed`). The `force-break` command's
-`expectedDurationSeconds` is now `durationSeconds` (`team.command.expectedDurationSeconds.renamed`).
-
-`ForcedBreak` names who forced the break, whom it covers, and how long it has left.
-
-**There are two kinds, by `scope`.**
-
-| `scope` | Covers | Its end | Signed-out time |
-| --- | --- | --- | --- |
-| `team` | The whole team, members who sign in while it runs included. A lead's `force-team-break`, or a break the platform schedules. | One end for everyone, always stated (`break.forced.team.endsInSeconds`). | Counts. A member who signs back in after the end finds no break. |
-| `agent` | One agent. A lead's `force-break`, or a hold the platform puts on one agent. | A length, where one was given; without one it stands until lifted. | Does not count. The clock stops at sign-out and goes on at the next sign-in, so thirty minutes means thirty minutes signed in. |
-
-`endsInSeconds` is how long the break has left: whole seconds from the publication that carries
-it, restated on every publication, so every screen -- the agent's, reloaded or not, and every
-lead's -- counts down the same number from receipt (`break.forced.endsInSeconds`). The length the
-lead asked for travels on the command alone, as `durationSeconds`; the state says what is left.
-**When it runs out, the provider lifts the break**, as a lead's `end-forced-break` would: it clears
-`forced` and leaves an ordinary break, and the agent resumes when ready. The agent application
-counts down but never acts on zero; the provider's publication lifts it. The retired
-endsAutomatically and endsAt fields are rejected. Who forced it is `by`, as **A forced break is
-the provider's act** below sets out.
-
-Omni resolves the name to show with `getUserDetails()`, so a provider sends the identifier and never
-a display name.
-
-**A forced break travels with `on-break` or `starting-after-task`, and nothing else.** It is a
-break in progress or about to be; beside `granted` or `awaiting-approval` the agent application would read a
-request the agent never made and commit it (`break.forced.status`). Where the provider publishes
-`reasons`, the lead's `force-break` named one, and the member's state carries it as `activeReasonId`.
-A break the platform forced itself names one of its `providerOnly` reasons.
-
-For example:
-
-```ts
-forced: {
-  by: "manager-1042",
-  scope: "agent",
-  endsInSeconds: 600
-}
-```
-
-**The agent cannot end a forced break.** Forcing a break is how a lead or the platform takes the
-agent off work, and a break the agent could end at will would take nobody off anything. So the
-agent application offers no Resume while `forced` is present, and `endBreak()` on it is refused
-before it is sent (`break.command.end.forced`). A provider that receives one answers `failed`
-with `omni.break-forced` and leaves the break as it was.
-
-**Only lifting ends it.** A lead's `end-forced-break` or `end-team-break`, the platform lifting
-its own, or `endsInSeconds` running out clears `forced` and leaves an ordinary break. The agent
-then resumes when ready, as from any break.
-
-**Signing out does not end it.** The agent may sign out on a forced break, as at any time, but
-that ends the session and not the break. The provider keeps the break, and the first snapshot of
-the agent's next session carries it again while it stands, `on-break` with the same `forced`,
-`activeReasonId` and what is left of `endsInSeconds` by its kind's clock. Without that, signing
-out and straight back in would undo any forced break. While the agent is away, the lead's team
-list shows them `signed-out`, not `on-break`: someone who has gone home is not on a break. The
-break is held for their return, not shown.
-
-`testAdapter` holds a provider to this when given `signInAgain`, a way to build the adapter again
-that signs the same agent in, as a sign-in screen would. A run that ends with the agent on a
-forced break signs out, signs in again, and reads the new session's snapshot. That snapshot
-carries the same break, from the same person, on the same reason, or the run names it
-(`test.signIn.forcedBreak`). Its time left is held to its kind's clock: a team break's ran on
-while the agent was away, an agent's own stood still, and neither grows
-(`test.signIn.endsInSeconds`). A sign-in that does not come back as the same agent is named too
-(`test.signIn.session`). A run without `signInAgain`, or with no forced break to carry, lists
-`break.forced.signIn` under `notTested`: the rule was not checked, and the result says so.
-
-The expectation is whole seconds still to run, restated on every publication; omission
-means none was stated, or it has run out. Neither its reaching zero nor an overdue indication
-authorizes the agent application or provider to end the break, restore availability, or route
-work to the agent.
-
-**A forced break is the provider's act.** A lead's `force-break` is a command to the provider,
-which forces the break on the member; `by` names the lead who asked it to. A break the platform
-imposed on its own -- a schedule, a compliance hold -- says `by: "provider"`, and is the platform's
-to lift: a lead's `end-forced-break` on it is refused before it is sent
-(`team.command.endForcedBreak.provider`), and a provider that receives one answers `failed` with
-`omni.break-forced-by-provider`. The agent computer offers End forced break on a member only where
-`forced.by` names a lead.
-
-**A lead lifting the restriction does not resume the agent.** On an applied
-`end-forced-break`, the provider clears `BreakState.forced` while preserving the current
-`on-break` or `starting-after-task` status and `activeReasonId`. This command cannot publish
-`not-requested`, restore readiness, or start routing work. Ordinary progress from
-`starting-after-task` to `on-break` still happens when work finishes. The agent application follows the
-published state and waits for the agent's explicit Resume, even after reconnect. Historical
-attribution is not rewritten by clearing the current forced marker.
-
-The agent resumes only after the restriction is lifted, and only by their own choice. A lead
-command, timer, late snapshot or reconnect is never a substitute for that choice. A stream that
-takes a forced break straight back to `not-requested`, without clearing `forced` first, is
-refused (`stream.breakState.forcedEnded`). Providers
-must correlate resumption to the authenticated agent's action; a state-only ordering validator
-cannot establish the cause of a transition. The usual multi-provider end/reconciliation flow
-still applies, and work resumes only on confirmed provider state.
-
-An agent application counts `endsInSeconds` down from receipt, on every publication that
-carries it, and shows nothing of it where the provider sends none. It invents no start and no
-return time, and the agent application does not act on the number reaching zero: the provider's
-publication lifting the break does. It shows a `team` break as the team's and an `agent` break as
-the agent's own.
-
-A break applies to the **agent**, not to one provider. When a provider forces one, Omni stops the
-agent everywhere else at once, and not by asking: it states `setCapacity({ count: 0 })` on every
-other usable provider holding capacity, which is taken and never refused, and which their team
-lists show as `elsewhere`. Nobody on those providers can deny it, and the agent cannot cancel it,
-because there is nothing to cancel: a break request on them would be the agent's own to withdraw
-and a lead's to refuse, and a forced break is neither. When the forcing provider ends the forced
-break and the agent resumes there, the agent application restates its capacity on the rest. A
-provider whose session is not usable is left alone, as a break attempt leaves it;
-`assertForcedBreakStopsTheRest` holds an agent application to this set. **The provider keeps its
-shift totals true.** A member held elsewhere is one the provider sees -- `elsewhere` is a state it
-publishes -- and the day's `shift` is its own account of the day, so the time the agent was
-stopped for a break forced on another provider is the provider's to count, as a break of a kind
-its platform has, or introduces, for exactly this. A `breakSeconds` that leaves it out is a total
-the provider knew to be short, and **Never report a value you cannot observe** cuts the other way
-here: the provider observed it.
-
-`ForcedBreak.by` says who forced it: a lead, by user id, or `provider` where the platform itself
-did -- on its own rule, a schedule, a compliance hold. The agent sees who, and `getUserDetails()`
-is owed for a person, never for `provider` (`break.forced.by`).
 
 ## Capacity and break actions
 
@@ -320,22 +357,24 @@ in flight or in effect does the same, since the break wins.
 Use `validateBreakCommand(method, request, state, context)` from the validation entry point
 before any agent break dispatch. The context supplies current authentication and transport, and
 the manifest's `levels` the session is validated against;
-all four methods require the live session's break capability and active transport. Pass the
-request object only to the request method, and undefined to the other three.
+all five methods require the live session's break capability and active transport. Pass the
+request object to the request method and the answer to `answerPrompt`, and undefined to the other three.
 
 | Method | Required current state |
 | --- | --- |
 | `requestBreak` | `not-requested`; selected current reason code when codes exist, never a `providerOnly` one; `canRequestBreak` or the selected reason's `alwaysAvailable` exception. Free text does not replace a code. |
 | `commitBreak` | `granted`, or already committed for an idempotent repeat. A later change to `canRequestBreak` does not revoke the grant. |
 | `cancelBreak` | `awaiting-approval` or `granted`. A concurrent commit winning still answers `omni.break-already-committed` and requires recovery. |
-| `endBreak` | `on-break` or `starting-after-task` during reconciliation, and not `forced` (`break.command.end.forced`): the agent ends a break they asked for, or one whose restriction was lifted. |
+| `endBreak` | `on-break` or `starting-after-task` during reconciliation, on a `break`; never a ban or tools not ready (`break.command.end.type`). |
+| `answerPrompt` | A standing `pendingPrompt` with the id the answer names (`break.command.answer.prompt`), and an answer of `accepted` or `declined` (`break.answer.answer`). |
 
 Use `validateTeamCommand(request, context)` before every lead act, its context carrying the manifest's `levels` as the break check's does: the team feature switch, break
-decisions, forcing and ending a forced break, for a member or the team, policy, and every act on a member's call. It requires
+decisions, prompting a member's break and withdrawing the prompt, banning and unblocking, policy, and every act on a member's call. It requires
 the live `lead` capability the command needs and active transport, a current team member list for any command naming a
-member, and the target's complete break state for forcing/ending a break. Approve/deny requires an
-awaiting decision; forcing a break uses the target's reason codes; ending a forced break requires a
-forced committed break; join and decline need the member's request on the list; coach, join-call
+member, and the target's complete break state for a prompt. Approve/deny requires an
+awaiting decision; a prompt uses the target's reason codes and needs a member signed in with no break of their own and no prompt
+standing (`team.command.promptBreak.member`, `.standing`); a withdrawal needs the prompt on the list; a ban needs none standing, and
+an lift-ban a lead's ban on the list; join and decline need the member's request on the list; coach, join-call
 and leave need the lead already on that member's call; an assignment named must be one the list
 shows the member holding. The context's target state must belong to the named member; that
 association and backend authorization are provider responsibilities.
@@ -357,13 +396,13 @@ required; per-provider validation does not implement the multi-provider coordina
 ### `requestBreak(request)`
 
 **Explanatory text is optional.** An agent may omit `BreakRequest.reason` for any break type.
-A lead may likewise omit reason text from `force-break`. Do not require a text explanation
-just because a break is agent-requested or forced. If supplied, text must be nonempty; omit
+A lead may likewise omit reason text from `prompt-break`. Do not require a text explanation
+just because a break is agent-requested or prompted by a lead. If supplied, text must be nonempty; omit
 it rather than sending an empty string. A selected `reasonId` identifies a published break
 choice and is separate from this optional text.
 
 With published choices, `{ reasonId: "lunch" }` is a valid request without explanation;
-without published choices, `{}` is valid. A lead can similarly send a `force-break` command
+without published choices, `{}` is valid. A lead can similarly send an `prompt-break` command
 with its member ID and, where required, the selected reason ID, without reason text.
 
 Requests permission to stop the agent later; it does not itself stop work. The provider continues
@@ -436,11 +475,6 @@ and the other scheduled maintenance, match on it, and nothing could tell the dif
 `training`, `coaching` and `meeting` can all fit one session, so take them in that order of
 specificity: about this agent's own work is `coaching`, else something they must know afterwards is
 `training`, else `meeting`.
-
-**A break somebody forced on the agent is not automatically one of these.** Where the agent was
-stopped rather than choosing to stop — see **Forced breaks** — set `BreakState.forced` and prefer
-omitting `kind` to reaching for `other`. None of the ten describes "something was done to this
-agent", and `other` claims a classification that was never made.
 
 Omni matches in this order:
 
@@ -566,11 +600,6 @@ because no stop was ever committed.
 If cancel races with a late approval, the provider remains on the cancel path. If commit has already
 won, cancel returns `omni.break-already-committed`, and Omni resumes commit recovery rather than
 returning the agent to `working`.
-
-A forced break is not rolled back by this algorithm. If one appears during either the request or
-cancellation, the attempt is abandoned: Omni cancels every grant still outstanding and states
-`setCapacity({ count: 0 })` on every other usable provider, as **Forced breaks** sets out; no grant
-is committed, because the agent has already stopped everywhere.
 
 This is two-phase coordination across vendor systems: the approval phase keeps the agent working;
 the durable commit decision and snapshot reconciliation provide convergence after partial delivery.

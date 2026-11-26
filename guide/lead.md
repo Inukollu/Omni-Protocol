@@ -33,8 +33,10 @@ computes nothing. See **`team-updated`** in `guide.md` and its companions.
 | `listening` | Every lead on this member's call — listening, coaching or joined — published to every lead alike: each entry names the lead by `leadId`, which of the member's calls by `assignmentId`, the `mode` they are heard in, and since when. The entry naming the signed-in lead is what their own audio opens on. Absent while nobody is on the call, never `[]` (`team.member.listening.*`); a lead is on one member's call at a time (`team.listening.single`), and a lead who is heard is also in the task's `onCall`: marked `coaching` where the member alone hears them (`team.member.listening.coaching`), unmarked once heard by everyone (`team.member.listening.heard`), and absent while listening in silence (`team.member.listening.silent`). |
 | `request` | Present while the member is asking a lead to join one of their calls: which assignment, the note they wrote, since when. The call named is one their `tasks` carry (`team.member.request.assignment`). Absent when they are not asking. See **Lead assist**. |
 | `nextCall`, `linedUp` | The member's own queue as their own snapshot carries it: their standing ask for the next call, and the call lined up for them. See **The agent's own queue** in `guide/queue.md`. |
+| `pendingPrompt` | A lead's prompt that the member take a break: standing until they answer, as their own break state carries it, or declined, with `declinedAt`, until the lead withdraws it or prompts again. A standing prompt is for a member signed in with no break of their own (`team.member.pendingPrompt.standing`). An accepted prompt is gone, and the member's break shows instead. See **A lead prompts a break** in `guide/breaks.md`. |
+| `ban` | The member's ban on this provider, as their own break state carries it. It is shown while they are signed out too, so a lead can lift it. A banned member is `banned`, `on-task` with a task in hand, or `signed-out` (`team.member.ban.availability`). See **Bans** in `guide/breaks.md`. |
 | `phone` | The member's phone as the platform sees it: the same `PhoneState` the member's own snapshot carries, so a lead sees a hardphone that is down, or a call on it that is no task, as the member does. Present where the provider declares `phoneStatus`. See **The phone's own view** in `guide/phone.md`. |
-| `shift` | The member's own history for the day, about the person rather than any one call: `signedInAt`, the day's first sign-in; `signedOutAt`, present only while the member is signed out; today's totals as the provider counts them — `talkSeconds`, `holdSeconds`, `breakSeconds` and its split by reason in `breaks`, `wrapSeconds`, `previewSeconds`, `signedInSeconds`, `tasksHandled` and `averageHandleSeconds`, each present only when the provider knows it; `running`, the stretches still under way, which the totals leave out; and the day's sign-in, sign-out and break `events`, oldest first. The same instants and count the member's own snapshot carries, cut by the lead's day. Omitted where the provider cannot say. |
+| `shift` | The member's own history for the day, about the person rather than any one call: `signedInAt`, the day's first sign-in; `signedOutAt`, present only while the member is signed out; today's totals as the provider counts them — `talkSeconds`, `holdSeconds`, `breakSeconds` and its split by reason in `breaks`, `banSeconds`, `toolsNotReadySeconds`, `wrapSeconds`, `previewSeconds`, `signedInSeconds`, `tasksHandled` and `averageHandleSeconds`, each present only when the provider knows it; `running`, the stretches still under way, which the totals leave out; and the day's sign-in, sign-out and break `events`, oldest first. The same instants and count the member's own snapshot carries, cut by the lead's day. Omitted where the provider cannot say. |
 
 Each availability value means one thing:
 
@@ -43,7 +45,9 @@ Each availability value means one thing:
 | `ready` | Signed in, able to take work, none assigned. |
 | `on-task` | Working on at least one task. It says nothing about how many, and nothing about whether more will fit. |
 | `on-break` | Stopped and not taking work, whether they asked or somebody stopped them. The reason lives on their own `BreakState`, not here. |
-| `elsewhere` | Signed in here, and the agent application gives this provider no capacity: none stated yet since the connection, or `count: 0` while it holds the agent for another provider. Not receiving this provider's work, and not on a break. A provider that holds the agent out of work until the first capacity arrives shows them here, never as `ready`. See **Capacity and break actions** in `guide/breaks.md`. |
+| `elsewhere` | Signed in here, and the agent application gives this provider no capacity: none stated yet since the connection, or `count: 0` while it holds the agent for another provider. Not receiving this provider's work, and not on a break. A provider that holds the agent out of work until the first capacity arrives shows them here, never as `ready`, unless it places its own setup hold for that window: then the member is `tools-not-ready`, and the window counts in `toolsNotReadySeconds`. See **Capacity and break actions** in `guide/breaks.md`. |
+| `banned` | Signed in, banned on this provider, and holding no task. A member shown here carries the `ban` (`team.member.ban.required`). |
+| `tools-not-ready` | Signed in, holding no task, and kept from this provider's work because their tools are not ready. See **Tools not ready** in `guide/breaks.md`. |
 | `signed-out` | Known to this team but not signed in to this provider. |
 
 **Publish the whole team once, then each member whole.** Team presence typically reaches an
@@ -88,11 +92,13 @@ none.
 | --- | --- | --- |
 | `talkSeconds` | Time on calls. | `talk` |
 | `holdSeconds` | Time with a caller on hold. | `hold` |
-| `breakSeconds` | Every stretch the member's `BreakState` showed `on-break`, and time held elsewhere for a break another provider forced. Nothing else: the time before the first capacity is `elsewhere`, not a break. | `break` |
-| `breaks` | `breakSeconds` by `reasonId`, one entry per reason, adding up to it exactly (`shift.breaks.total`). Time held for another provider goes under one of the provider's `providerOnly` reasons. | the running `break`, on the `activeReasonId` the member's `BreakState` names |
+| `breakSeconds` | Every stretch the member's `BreakState` showed `on-break` with `type: "break"`. Nothing else: the time before the first capacity is `elsewhere`, or tools not ready where the provider places its own setup hold, and not a break; signed-out time is never break time, and a ban or tools not ready is not a break. | `break` |
+| `breaks` | `breakSeconds` by `reasonId`, one entry per reason, adding up to it exactly (`shift.breaks.total`). | the running `break`, on the `activeReasonId` the member's `BreakState` names |
 | `wrapSeconds` | Time in wrap: after the call, before the task closed. | `wrap` |
+| `banSeconds` | Time signed in under a ban; never the time the member is signed out, though the ban stands. | `ban` |
+| `toolsNotReadySeconds` | Time signed in with tools not ready, a provider's own setup hold after sign-in included. | `tools-not-ready` |
 | `previewSeconds` | Time in preview, before the agent placed an outbound call. | `preview` |
-| `signedInSeconds` | All time signed in today, breaks, wrap and preview included. Not running while the member is signed out (`shift.running.signedOut`). | `signed-in` |
+| `signedInSeconds` | All time signed in today: breaks, bans, tools not ready, wrap and preview included. Not running while the member is signed out, and neither is a ban or tools not ready (`shift.running.signedOut`). | `signed-in` |
 | `tasksHandled` | Tasks closed today. | -- |
 | `averageHandleSeconds` | Today's average handle time, as the provider counts it. | -- |
 
@@ -150,10 +156,10 @@ assignment from the member alone.
 | `{ type: "lead-features", enabled }` | The team feature on or off. See **The lead switches the feature on and off** above. |
 | `{ type: "decide-break-request", memberId, decision, reason? }` | Settles one pending request. `decision` is `granted` or `denied`. A grant moves the member to `granted`; a denial ends the request and moves it directly to `not-requested`. |
 | `{ type: "set-break-policy", policy }` | `approval-required`, `automatically-approved`, or `requests-suspended`. |
-| `{ type: "force-break", memberId, reasonId?, reason?, durationSeconds? }` | Puts one member on a break they did not ask for, `scope: "agent"`. `reasonId` names a published `BreakReason.id`, never a `providerOnly` one, and is required whenever the provider publishes `reasons`; the member's forced break carries it as `activeReasonId`, so its kind is known. With `durationSeconds`, the break publishes what is left as `endsInSeconds`, counted only while the member is signed in, and is lifted when it runs out; without it, it stands until a lead lifts it. |
-| `{ type: "force-team-break", reasonId?, reason?, durationSeconds }` | Puts the whole team on a break, `scope: "team"`, members who sign in while it runs included. `durationSeconds` is required (`team.command.durationSeconds`): one end for everyone, which runs on while a member is signed out. The provider lifts it for all when it runs out. |
-| `{ type: "end-forced-break", memberId }` | Asks the provider to lift a forced-break restriction a lead asked for, by clearing `BreakState.forced`; one the platform imposed is its own to lift (`team.command.endForcedBreak.provider`, `omni.break-forced-by-provider`). The committed break continues; only the agent resumes work. It lifts a team break for this member alone. |
-| `{ type: "end-team-break" }` | Lifts the team break for every member, as `end-forced-break` does for one. With no team break running it changes nothing. |
+| `{ type: "prompt-break", memberId, reasonId?, reason?, durationSeconds? }` | Prompts the member to take a break, such as for training, as **A lead prompts a break** in `guide/breaks.md` sets out. `reasonId` names a published `BreakReason.id`, never a `providerOnly` one, and is required whenever the provider publishes `reasons`. `reason` is the lead's words, and `durationSeconds` how long the lead expects; it ends nothing. The member must be signed in, not banned, with no break in effect and none of their own under way (`team.command.promptBreak.member`), and with no prompt standing (`team.command.promptBreak.standing`); a declined one is replaced. Prompting the whole team is one prompt per member. |
+| `{ type: "withdraw-prompt", memberId }` | Withdraws the member's prompt, standing or declined. A member with none is refused (`team.command.withdrawPrompt`). |
+| `{ type: "ban", memberId, reason?, durationSeconds? }` | Bans the member on this provider, as **Bans** in `guide/breaks.md` sets out. `reason` is shown to them. With `durationSeconds`, the ban publishes what is left as `endsInSeconds` and is lifted when it runs out; without it, it stands until it is lifted. A member banned already is refused (`team.command.ban.standing`). |
+| `{ type: "lift-ban", memberId }` | Lifts a ban a lead placed, signed in or not. The member takes work again, or is on tools not ready if those still are not. A member with no ban is refused (`team.command.liftBan`), and so is a ban the platform placed, which the platform lifts (`team.command.liftBan.provider`, `omni.banned`). |
 | `{ type: "join", memberId, assignmentId? }` | Answers the member's request: the provider bridges the lead's channel into the call. See **Lead assist**. |
 | `{ type: "decline", memberId, assignmentId?, reason? }` | Refuses the member's request. |
 | `{ type: "listen", memberId, assignmentId? }` | The lead's channel joins the member's call unasked, in silence. See **Listening to a call**. |
@@ -170,8 +176,8 @@ stands -- see **Runtime break prerequisite checks** in `guide/breaks.md`.
 
 `requests-suspended` means requests are **rejected outright** rather than left pending — nobody is coming to
 approve them. A provider that suspends break requests must also publish `canRequestBreak: false` to the team's
-agents so they see it before asking. A `force-break` must likewise reach that member as a `forced` break
-on their own `BreakState`, or they are stopped from working with no way to see why.
+agents so they see it before asking. A `ban` must likewise reach that member on their own break state
+on their own desk, or they are stopped from working with no way to see why.
 
 What happens when no lead is online — auto-approving, for instance — is the provider's decision and is
 never expressed here.
